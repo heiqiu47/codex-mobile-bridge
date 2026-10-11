@@ -34,6 +34,33 @@ class WindowsDiscoveryTests(unittest.TestCase):
         return discover_clients(preferences, platform='win32', home=self.home,
                                 env=self.env, windows_inventory=inventory)
 
+    def test_removed_store_versions_follow_same_registered_package_repeatedly(self):
+        from bridge.platforms.windows.discovery_ext import updated_codex_executable
+        selected = self.root/'WindowsApps/OpenAI.Codex_1.0_x64__publisher/app/ChatGPT.exe'
+        for version in ('2.0', '3.0'):
+            gui = self.executable(f'WindowsApps/OpenAI.Codex_{version}_x64__publisher/app/ChatGPT.exe')
+            (gui.parent.parent/'AppxManifest.xml').write_text(
+                '<Package xmlns="urn:appx" xmlns:uap="urn:uap"><Applications>'
+                '<Application Id="App" Executable="app/ChatGPT.exe"><uap:VisualElements/>'
+                '</Application></Applications></Package>')
+            inventory = {'packages': [{'Name': 'OpenAI.Codex',
+                'InstallLocation': str(gui.parent.parent), 'PackageFamilyName': 'OpenAI.Codex_publisher'}]}
+            with patch('bridge.platforms.windows.discovery_ext.windows_installations', return_value=inventory):
+                self.assertEqual(updated_codex_executable(selected), str(gui))
+            gui.unlink()
+
+    def test_store_resolution_preserves_custom_paths_and_rejects_other_families(self):
+        from bridge.platforms.windows.discovery_ext import updated_codex_executable
+        custom = self.root/'selected.exe'
+        with patch('bridge.platforms.windows.discovery_ext.windows_installations') as inventory:
+            self.assertEqual(updated_codex_executable(custom), str(custom))
+            inventory.assert_not_called()
+        selected = self.root/'WindowsApps/OpenAI.Codex_1.0_x64__publisher/app/ChatGPT.exe'
+        with patch('bridge.platforms.windows.discovery_ext.windows_installations', return_value={
+                'packages': [{'Name': 'OpenAI.Codex', 'InstallLocation': str(self.root),
+                              'PackageFamilyName': 'OpenAI.Codex_other'}]}):
+            self.assertEqual(updated_codex_executable(selected), str(selected))
+
     def test_store_registration_finds_apps_without_listing_windowsapps(self):
         codex = self.executable('Protected/OpenAI.Codex_1/app/ChatGPT.exe')
         claude = self.executable('Protected/Claude_2/app/Claude.exe')

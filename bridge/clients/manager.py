@@ -429,7 +429,7 @@ class DesktopSessions:
     def _codex_executable(self, accounts):
         from bridge.clients.desktop_app import DesktopApp
         # Windows may cache the CLI outside its Store-installed desktop bundle.
-        return (accounts.index.get('desktopExecutable') or DesktopApp.discover(accounts.runtime)
+        return DesktopApp.resolve_executable(accounts.index.get('desktopExecutable') or DesktopApp.discover(accounts.runtime)
                 or self.config.get('discovered', {}).get('codex', {}).get('executable', ''))
 
     def _verified(self, provider):

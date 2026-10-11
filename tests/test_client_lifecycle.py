@@ -97,6 +97,19 @@ class ClientLifecycleTests(unittest.TestCase):
             self.assertFalse(descriptor['installed'])
             discover.assert_not_called()
 
+    def test_status_resolves_updated_codex_without_rescan_or_launch(self):
+        selected = str(self.root/'removed-version.exe')
+        self.accounts.index['desktopExecutable'] = selected
+        replacement = self.manager.config['discovered']['codex']['executable']
+        with patch('bridge.clients.desktop_app.DesktopApp.resolve_executable', return_value=replacement):
+            rows = self.manager.clients(refresh=True)['clients']
+            self.assertEqual(self.manager._descriptor('codex')['executable'], replacement)
+        codex = next(row for row in rows if row['id'] == 'codex')
+        self.assertTrue(codex['running'])
+        self.assertTrue(codex['connected'])
+        self.assertEqual(self.accounts.index['desktopExecutable'], selected)
+        self.launch.assert_not_called()
+
     def test_missing_scanned_codex_gui_does_not_report_configured(self):
         self.accounts.index['desktopExecutable'] = ''
         self.manager.config['discovered']['codex']['executable'] = str(self.root/'missing.exe')

@@ -219,7 +219,7 @@ class Accounts:
     def desktop_status(self):
         result = self.public()
         with self.lock:
-            result.update(desktopExecutable=self.index.get('desktopExecutable') or DesktopApp.discover(self.runtime),
+            result.update(desktopExecutable=DesktopApp.resolve_executable(self.index.get('desktopExecutable') or DesktopApp.discover(self.runtime)),
                           enrollment=self.enrollment, discovery=self.discovery, codexHome=str(self.home))
         return result
 

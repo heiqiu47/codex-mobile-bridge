@@ -28,13 +28,20 @@ def process_inventory(executables):
 
 class DesktopApp:
     def __init__(self, executable, home):
-        self.executable = Path(executable).expanduser().resolve()
+        self.executable = Path(self.resolve_executable(executable)).expanduser().resolve()
         if self.executable.suffix == '.app':
             try:
                 self.executable = native_discovery('darwin').bundle_executable(self.executable)
             except (OSError, ValueError, KeyError):
                 raise ValueError('请选择有效的 Codex / ChatGPT 应用程序包') from None
         self.home = Path(home).resolve()
+
+    @staticmethod
+    def resolve_executable(executable):
+        if executable and sys.platform == 'win32':
+            from bridge.platforms.windows.discovery_ext import updated_codex_executable
+            return updated_codex_executable(executable)
+        return executable
 
     @staticmethod
     def discover(runtime):

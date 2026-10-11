@@ -61,6 +61,32 @@ def windows_installations():
         return {}
 
 
+def updated_codex_executable(executable):
+    """Follow a removed Store version only within its original package family."""
+    executable = Path(executable)
+    if executable.is_file():
+        return str(executable)
+    package = executable.parent.parent
+    match = re.fullmatch(r'OpenAI\.Codex_[\d.]+_(?:x64|x86|arm64|neutral)__([A-Za-z0-9]+)',
+                         package.name, re.IGNORECASE)
+    if (not match or package.parent.name.casefold() != 'windowsapps'
+            or executable.parent.name.casefold() != 'app'
+            or executable.name.casefold() not in ('chatgpt.exe', 'codex.exe')):
+        return str(executable)
+    family = 'OpenAI.Codex_' + match.group(1)
+    matches = set()
+    inventory = windows_installations()
+    for row in _rows(inventory, 'packages'):
+        folder = _path(row.get('InstallLocation'))
+        if (str(row.get('Name', '')).casefold() != 'openai.codex' or not folder
+                or str(row.get('PackageFamilyName', '')).casefold() != family.casefold()):
+            continue
+        for candidate, _ in _package_entries(folder, ('ChatGPT.exe', 'Codex.exe')):
+            if candidate.is_file():
+                matches.add(str(candidate.resolve()))
+    return next(iter(matches)) if len(matches) == 1 else str(executable)
+
+
 def _rows(inventory, key):
     value = inventory.get(key, [])
     if isinstance(value, dict):
