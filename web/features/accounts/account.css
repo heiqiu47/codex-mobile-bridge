@@ -37,7 +37,28 @@
 .accounts-panel .account-bucket.is-current{border-color:var(--accent,#4664ed);background:var(--soft,#f3f6ff)}
 .accounts-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;border-top:1px solid var(--line,#dfe3eb);padding-top:10px;margin-top:12px}
 .accounts-panel .accounts-actions button{font-size:12px;margin:0}.accounts-actions .accounts-models{flex-basis:100%}
+.accounts-usage-controls{display:flex;align-items:center;gap:6px;min-width:0;margin-left:auto}
+.accounts-panel .accounts-actions .accounts-usage-refresh{display:grid;place-items:center;flex:none;width:32px;height:32px;margin:0;padding:0;border:0;border-radius:8px;cursor:pointer}
+.accounts-usage-refresh svg{display:block;width:18px;height:18px}
+.accounts-usage-refresh:hover{background:var(--line,#e3e6df)}
+.accounts-usage-refresh:disabled{opacity:.4;cursor:default}
 .accounts-panel .accounts-reset{color:var(--accent,#4664ed);border-color:var(--accent,#4664ed);font-size:12px}
+.accounts-identity.accounts-official{display:block}
+.accounts-official .accounts-usage{display:grid;grid-template-columns:minmax(0,1fr);align-items:start;gap:12px;min-width:0;margin:12px 0 0}
+.accounts-official .accounts-window{grid-template-columns:minmax(0,1fr) auto;min-width:0;max-width:none;width:100%}
+.accounts-official .accounts-window strong{text-align:right;white-space:nowrap}
+.accounts-reset-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin-top:14px;border-radius:10px;background:var(--soft,#f3f6ff)}
+.is-current .accounts-reset-summary{background:var(--raised,#fff)}
+.accounts-reset-info{min-width:0}.accounts-reset-count{font-size:13px;font-weight:600}.accounts-reset-expiry{margin-top:3px;font-size:12px}.accounts-reset-expiry time{white-space:nowrap;font-variant-numeric:tabular-nums}
+.accounts-panel .accounts-reset-summary .accounts-reset{flex:none;margin:0;white-space:nowrap;background:var(--accent,#4664ed);color:var(--accent-ink,#fff)}
+.accounts-panel .accounts-name>p:first-of-type{margin:0}
+.accounts-name .account-subscription{display:flex;margin:2px 0 0}
+.accounts-panel .account-bucket .account-subscription-info{margin:0}
+.accounts-panel .account-subscription-info{display:inline-flex;align-items:center;max-width:100%;min-height:20px;margin:0;padding:0;border:0;background:transparent;color:var(--muted,#65705d);font-size:12px;line-height:1.5;font-variant-numeric:tabular-nums;white-space:normal;text-align:left;cursor:pointer}
+.accounts-panel .account-subscription-info:hover{background:transparent;text-decoration:underline}
+.accounts-panel .account-bucket .account-subscription-note{margin:4px 0 0;font-size:12px}
+.accounts-panel .account-updated{min-width:0;flex-basis:auto;margin:0;font-size:12px}
+@media(pointer:coarse){.accounts-panel .accounts-reset-summary .accounts-reset,.accounts-panel .account-subscription-info{min-height:44px}}
 .accounts-management{border-top:1px solid var(--line,#dfe3eb);padding-top:4px}
 .accounts-management>details{border-bottom:1px solid var(--line,#dfe3eb);padding:0 0 16px}
 .accounts-management summary{font-size:14px}.accounts-management .account-reminder{display:flex}
@@ -50,6 +71,10 @@
 .account-reset-dialog::backdrop{background:#0006}.account-reset-dialog .picker-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.account-reset-dialog .picker-head h2{margin:0;font-size:18px;overflow-wrap:anywhere}
 
 .account-reset-dialog button{font:inherit;padding:9px 13px;border:1px solid var(--line,#dfe3eb);border-radius:8px;background:var(--raised,#fff);color:inherit;cursor:pointer}.account-reset-dialog button:disabled{opacity:.5;cursor:default}.account-reset-dialog .picker-head>button{flex:none}
+.account-reset-dialog .account-heading{font-size:13px}.account-reset-dialog .account-heading button{font-size:12px;padding:7px 10px}
+.account-reset-dialog .account-cards{margin:12px 0 0}.account-reset-dialog .account-card{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.account-reset-dialog .account-card-info{min-width:0;overflow-wrap:anywhere}.account-reset-dialog .account-card p{margin:4px 0 0;font-size:12px}.account-reset-dialog .account-card>button{flex:none;font-size:12px;white-space:nowrap}
+@media(pointer:coarse){.account-reset-dialog .account-card>button,.account-reset-dialog .account-heading button{min-height:44px}}
 
 .accounts-panel .accounts-import-name{max-width:320px}
 .accounts-client-editor{margin-top:18px;padding:18px;border:1px solid var(--line,#dfe3eb);border-radius:12px}.accounts-client-editor label{display:grid;gap:6px;margin:12px 0}.accounts-client-editor input,.accounts-client-editor textarea,.accounts-client-editor select{box-sizing:border-box;width:100%;font:inherit}.accounts-client-editor textarea{resize:vertical;min-height:80px}.accounts-client-editor>button{margin-right:8px}

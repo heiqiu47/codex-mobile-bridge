@@ -211,7 +211,8 @@ class Accounts:
             return {'accounts': [{**{k: row[k] for k in ('id', 'name', 'kind', 'email', 'planType', 'baseUrl', 'model') if k in row},
                                   'details': copy.deepcopy(self.info.entries.get(row['id'], {}))}
                                  for row in self.index['accounts']],
-                    'activeId': current.get('id'), 'activeVerified': verified, 'current': current, 'blockers': self.blockers(),
+                    'activeId': current.get('id'), 'activeVerified': verified, 'current': current,
+                    'loginAccount': copy.deepcopy(self.info.current_login()), 'blockers': self.blockers(),
                     'externalChange': bool(self.index.get('activeId')) and not verified, 'switch': dict(self.state),
                     'reminders':dict(self.monitor.preferences), 'reminderError':self.monitor.last_error,
                     'desktopUpdate':self.updates.status()}
@@ -504,12 +505,34 @@ class Accounts:
             raise ValueError('账号重置请求包含不支持的字段')
         with self.gate, self.bridge.account.lock, self.lock:
             self.check_ready()
+            from bridge.features.accounts.info import CURRENT_LOGIN_ID
+            if value.get('id') == CURRENT_LOGIN_ID:
+                row = self.info.current_login()
+                if not row or not row.get('transient'):
+                    raise ValueError('账号身份已变化，请刷新列表')
+                target = Account(self.home, self.bridge.data_dir, executable=self.runtime)
+                target.usage_cache = self.bridge.account.usage_cache
+                target.subscription_cache = self.bridge.account.subscription_cache
+                expected_owner = self.info.identity['login']['owner']
+                def checked_login(rpc):
+                    context = Account.login_context(rpc)
+                    if (not context or context['accountKey'] != row['accountKey'] or
+                            token_owner(read_json(self.home/'auth.json', {})) != expected_owner):
+                        raise ValueError('账号身份已变化，请刷新列表')
+                    return context
+                target.context = checked_login
+                result = target.control({**{k:v for k,v in value.items() if k not in ('action','id','operation')}, 'action':action})
+                if action == 'consume':
+                    self.info.entries.get(CURRENT_LOGIN_ID, {}).pop('usage', None)
+                return result
             row = dict(self.row(value.get('id')))
             if row['kind'] != 'chatgpt':
                 raise ValueError('仅官方 ChatGPT 账号可使用重置卡')
             identity = self.info.read_identity()
             active = self.info.match(identity)
-            home = self.home if active and active['id'] == row['id'] else self.directory(row['id'])
+            login = identity.get('login')
+            native_login = bool(login and login.get('owner') and login['owner'] == row.get('tokenOwner'))
+            home = self.home if native_login or active and active['id'] == row['id'] else self.directory(row['id'])
             if token_owner(read_json(home/'auth.json', {})) != row.get('tokenOwner'):
                 raise ValueError('账号身份不匹配')
             if home != self.home:
@@ -518,8 +541,9 @@ class Accounts:
             target.usage_cache = self.bridge.account.usage_cache
             target.subscription_cache = self.bridge.account.subscription_cache
             def checked_context(rpc):
-                context = Account.context(rpc)
-                if (context.get('loginType') != 'chatgpt' or context.get('email') != row.get('email') or
+                context = Account.login_context(rpc) if native_login else Account.context(rpc)
+                if (not context or context.get('loginType') != 'chatgpt' or context.get('email') != row.get('email') or
+                        native_login and context['accountKey'] != login['context']['accountKey'] or
                         token_owner(read_json(home/'auth.json', {})) != row.get('tokenOwner')):
                     raise ValueError('账号身份已变化')
                 return context

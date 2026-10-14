@@ -71,6 +71,13 @@ test('quota updates on opening details, and only after five minutes while visibl
  ui.run('document.hidden=false');ui.nodes.get('accounts-dialog').open=false;quota.fn();
  ui.events.focus();await new Promise(setImmediate);assert.equal(ui.requests.filter(u=>u.startsWith('/api/account')&&!u.startsWith('/api/accounts')).length,2);
 });
+test('saved official accounts use their card while unsaved accounts retain the current-account entry',async()=>{
+ const ui=await fixture(r=>r(official));ui.nodes.get('account-details').open=true;
+ ui.run("accountsPanel.accept({...accountsPanel.value,activeId:'saved',accounts:[{id:'saved',name:'Official',kind:'chatgpt'}]})");
+ assert.equal(ui.nodes.get('account-button').hidden,true);assert.equal(ui.nodes.get('account-details').open,false);
+ assert.equal(ui.requests.filter(url=>url==='/api/account').length,0);
+ ui.run("accountsPanel.accept({...accountsPanel.value,activeId:null})");assert.equal(ui.nodes.get('account-button').hidden,false);
+});
 test('read failure does not start repeated automatic quota queries',async()=>{
  const ui=await fixture(r=>r({error:'offline'},409));
  ui.nodes.get('account-details').open=true;ui.nodes.get('account-details').ontoggle();await new Promise(setImmediate);

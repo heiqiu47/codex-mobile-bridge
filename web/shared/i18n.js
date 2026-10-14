@@ -2,6 +2,7 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"已登录":"Signed in",
 "第三方通知":"Third-party notifications",
 "显示第三方通知入口":"Show notification shortcut",
 "微信":"WeChat",
@@ -716,6 +717,11 @@ const en={
 
 "未能读取此模型的推理能力，请重新打开模型设置": "Reasoning capabilities could not be loaded for this model. Reopen model settings.",
 "查询到的订阅周期截止日期：": "Subscription period end date: ",
+"订阅周期截至：": "Subscription period ends: ",
+"订阅周期至 ": "Subscription period ends ",
+"订阅日期说明": "About the subscription date",
+"最近到期：": "Next expiry: ",
+" 张可用": " available",
 "订阅信息暂不可用，请稍后刷新": "Subscription details are unavailable. Refresh again later.",
 "订阅日期来自在线查询，续订与扣费状态请以 ChatGPT 订阅页面为准。": "Date retrieved online. Check the ChatGPT subscription page for renewal and billing status.",
 "此账号暂不可使用重置卡，请刷新后重试": "Reset credits are unavailable for this account. Refresh and retry.",
@@ -1294,6 +1300,7 @@ const en={
   "需要在桌面端恢复原接入": "Restore the previous account from the desktop app",
   "尚未添加账号。请在电脑端添加官方账号或自定义 API。": "No saved accounts. Add a ChatGPT account or custom API in the desktop app.",
   "当前接入": "Current account",
+  "使用中": "In use",
   "切换到此接入": "Switch to this account",
   "重新登录": "Sign in again",
   "修改": "Edit",
@@ -2111,6 +2118,7 @@ const en={
   "后恢复": " until reset",
   "等待刷新": "Waiting for refresh",
   "重置卡": "Usage resets",
+  "完全重置（每周＋5 小时）": "Full reset (Weekly + 5 hr)",
   "暂未提供重置卡信息": "Usage reset information is not available",
   "可用数量：": "Available: ",
   "请先在 Codex 桌面设置中允许使用额度重置": "Allow usage resets in Codex desktop settings first",
@@ -2120,8 +2128,12 @@ const en={
   "未提供到期时间": "No expiry provided",
   "到期时间：": "Expires at: ",
   "使用重置卡": "Use reset",
+  "查看": "View",
+  "查看所选账号的重置卡": "View reset credits for the selected account",
+  "刷新重置卡": "Refresh resets",
   "卡片详情暂不可用，请刷新后重试": "Reset details are unavailable. Refresh and try again.",
   "更新于：": "Updated at: ",
+  "{time} 更新": "Updated {time}",
   "确认重试同一次重置？": "Retry this same reset request?",
   "确认使用一张重置卡？": "Use one usage reset?",
   "成功后会消耗一张卡，重置符合条件的账号额度。": "Success consumes one reset and restores eligible account limits.",
