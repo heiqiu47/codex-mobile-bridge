@@ -71,6 +71,7 @@ test('quota updates on opening details, and only after five minutes while visibl
  ui.run('document.hidden=false');ui.nodes.get('accounts-dialog').open=false;quota.fn();
  ui.events.focus();await new Promise(setImmediate);assert.equal(ui.requests.filter(u=>u.startsWith('/api/account')&&!u.startsWith('/api/accounts')).length,2);
 });
+
 test('saved official accounts use their card while unsaved accounts retain the current-account entry',async()=>{
  const ui=await fixture(r=>r(official));ui.nodes.get('account-details').open=true;
  ui.run("accountsPanel.accept({...accountsPanel.value,activeId:'saved',accounts:[{id:'saved',name:'Official',kind:'chatgpt'}]})");
@@ -106,10 +107,14 @@ test('API chat picker shows upstream Gemini models and requires replacing the un
  const select=ui.nodes.get('model-select');assert.ok(select.children.some(o=>o.value==='gemini-fixture'));
  assert.equal(select.children.some(o=>o.value.startsWith('gpt')),false);assert.equal(select.value,'');
  assert.match(ui.nodes.get('model-error').textContent,/当前聊天模型不在上游/);assert.equal(ui.nodes.get('model-save').disabled,true);
- assert.equal(ui.responses.length,0);select.value='gemini-fixture';select.onchange();
+ assert.equal(ui.responses.length,0);
+ const modelChoice=ui.nodes.get('model-options').children.find(row=>row.children[0].value==='gemini-fixture').children[0];
+ modelChoice.checked=true;modelChoice.onchange();assert.equal(select.value,'gemini-fixture');
+ const effortChoice=ui.nodes.get('effort-options').children.find(row=>row.children[0].value==='xhigh').children[0];
+ effortChoice.checked=true;effortChoice.onchange();
  assert.equal(ui.nodes.get('model-save').disabled,false);assert.equal(ui.nodes.get('fast-mode-control').hidden,true);
  await ui.nodes.get('model-form').onsubmit({preventDefault(){}});
- assert.equal(ui.responses[0].model,'gemini-fixture');assert.equal(ui.responses[0].effort,'high');
+ assert.equal(ui.responses[0].model,'gemini-fixture');assert.equal(ui.responses[0].effort,'xhigh');
  assert.equal(ui.responses[0].fastMode,undefined);
 });
 test('API model discovery failure shows its error with manual input instead of stale GPT options',async()=>{
@@ -119,6 +124,21 @@ test('API model discovery failure shows its error with manual input instead of s
  assert.match(ui.nodes.get('model-error').textContent,/上游拒绝/);assert.equal(ui.nodes.get('custom-model-label').hidden,false);
  assert.equal(ui.nodes.get('model-select').children.some(o=>o.value.startsWith('gpt')),false);
  assert.equal(ui.responses.length,0);
+});
+
+test('a native aggregate route exposes Fast and submits the full routed model ID',async()=>{
+ const route='route/gpt-fixture',other='route/other-fixture',catalog={models:[{id:route,name:'GPT fixture',efforts:['high'],fastTier:'priority'},{id:other,name:'Other fixture',efforts:['low']}],modelSource:'codex',fastMode:{allowed:true,provider:'custom'}};
+ const ui=await fixture(r=>r(official),'api',catalog);
+ ui.run("currentId='11111111-1111-4111-8111-111111111111';state={model:'route/gpt-fixture',provider:'custom',connected:true,effort:'high',serviceTier:'default'}");
+ await ui.nodes.get('model-button').onclick();assert.equal(ui.nodes.get('fast-mode-control').hidden,false);assert.equal(ui.nodes.get('fast-mode-enabled').checked,false);
+ const choices=ui.nodes.get('model-options').children;
+ const choose=id=>{const input=choices.find(row=>row.children[0].value===id).children[0];input.checked=true;input.onchange();};
+ choose(other);assert.equal(ui.nodes.get('model-select').value,other);assert.equal(ui.nodes.get('fast-mode-control').hidden,true);
+ choose(route);assert.equal(ui.nodes.get('model-select').value,route);assert.equal(ui.nodes.get('fast-mode-control').hidden,false);
+ assert.equal(ui.nodes.get('effort-options').children[0].children[0].value,'high');
+ ui.nodes.get('fast-mode-enabled').checked=true;ui.nodes.get('fast-mode-enabled').onchange();
+ await ui.nodes.get('model-form').onsubmit({preventDefault(){}});
+ assert.deepEqual(ui.responses[0],{model:route,effort:'high',fastMode:true});
 });
 test('selected skill pills render before the catalog response arrives',async()=>{
   const ui=await fixture(r=>r(official));
@@ -278,14 +298,17 @@ test('account switch discards API model capabilities before opening the official
  await ui.nodes.get('model-form').onsubmit({preventDefault(){}});
  assert.equal(ui.responses.at(-1).effort,'low');
 });
-test('official model with unknown capabilities does not offer every effort or allow saving',async()=>{
- const catalog={models:[{id:'official-missing',name:'Missing',efforts:[]}],modelSource:'codex'};
+test('official model with unknown capabilities explains the disabled save until a supported model is selected',async()=>{
+ const catalog={models:[{id:'official-missing',name:'Missing',efforts:[]},{id:'official-ready',name:'Ready',efforts:['high']}],modelSource:'codex'};
  const ui=await fixture(r=>r(official),'chatgpt',catalog);
  ui.run("currentId='11111111-1111-4111-8111-111111111111';state={connected:true,model:'official-missing',effort:'minimal'}");
  await ui.nodes.get('model-button').onclick();
  assert.equal(ui.nodes.get('effort-select').disabled,true);
  assert.equal(ui.nodes.get('effort-select').children.some(o=>o.value==='none'||o.value==='minimal'),false);
  assert.equal(ui.nodes.get('model-save').disabled,true);
+ assert.match(ui.nodes.get('model-error').textContent,/未能读取此模型/);
+ ui.nodes.get('model-select').value='official-ready';ui.nodes.get('model-select').onchange();
+ assert.equal(ui.nodes.get('model-error').textContent,'');assert.equal(ui.nodes.get('model-save').disabled,false);
 });
 test('model default must belong to its supported efforts',async()=>{
  const catalog={models:[{id:'official-fixture',name:'Fixture',efforts:['low','high'],defaultEffort:'minimal'}],modelSource:'codex'};
@@ -296,16 +319,20 @@ test('model default must belong to its supported efforts',async()=>{
 });
 
 
-test('explicit upstream refresh replaces the list and reports its access name',async()=>{
+test('model picker reuses a fresh list and refreshes only when stale or explicitly requested',async()=>{
  const catalog={models:[{id:'gpt-fixture',name:'GPT',efforts:[]}],modelSource:'api',modelAccessName:'Old access'};
  const ui=await fixture(r=>r(official),'api',catalog);
  ui.run("currentId='11111111-1111-4111-8111-111111111111';state={connected:true,model:'gpt-fixture',effort:'high'}");
  await ui.nodes.get('model-button').onclick();
+ const modelReads=()=>ui.requests.filter(r=>r.includes('catalog?kind=models'));
+ assert.equal(modelReads().length,1);assert.equal(modelReads()[0].includes('refresh=true'),false);
+ ui.nodes.get('model-dialog').close();await ui.nodes.get('model-button').onclick();assert.equal(modelReads().length,1);
+ ui.run('modelCatalogCheckedAt=Date.now()-300001');ui.nodes.get('model-dialog').close();
+ await ui.nodes.get('model-button').onclick();assert.equal(modelReads().length,2);assert.equal(modelReads()[1].includes('refresh=true'),false);
  catalog.models=[{id:'gemini-pro',name:'Gemini',efforts:[]}];catalog.modelAccessName='suopan-antigravity';
  await ui.nodes.get('model-refresh').onclick();
  assert.equal(ui.nodes.get('model-select').children.some(o=>o.value==='gpt-fixture'),false);
  assert.equal(ui.nodes.get('model-select').children.some(o=>o.value==='gemini-pro'),true);
- assert.match(ui.nodes.get('model-access').textContent,/suopan-antigravity/);
  assert.equal(ui.responses.length,0);
- assert.ok(ui.requests.filter(r=>r.includes('catalog?kind=models&refresh=true')).length>=2);
+ assert.equal(modelReads().length,3);assert.equal(modelReads()[2].includes('refresh=true'),true);
 });
