@@ -319,6 +319,39 @@ class ApiCatalogTests(unittest.TestCase):
         self.assertEqual(refreshed['cache']['state'],'fresh');self.assertEqual(calls,['skills'])
 
 
+
+    def test_failed_model_results_are_retried_and_successes_share_the_backend_cache(self):
+        for kind in ('models', 'catalog'):
+            with self.subTest(kind=kind):
+                self.reader.invalidate_models()
+                read = (lambda **kw: self.reader.get_kind('models', str(self.home), **kw)) if kind == 'models' else (
+                    lambda **kw: self.reader.get(str(self.home), **kw))
+                with patch.object(self.reader, '_fetch', side_effect=[
+                        {'modelSource': 'api', 'models': [], 'modelError': 'Temporary failure', 'skillEntries': []},
+                        {'modelSource': 'api', 'models': [{'id': 'recovered'}], 'skillEntries': []}]) as fetch:
+                    first, second, third = read(), read(), read()
+                self.assertEqual(first['modelError'], 'Temporary failure')
+                self.assertEqual(second['models'][0]['name'], 'recovered')
+                self.assertEqual(third, second)
+                self.assertEqual(fetch.call_count, 2)
+
+    def test_a_failed_explicit_refresh_discards_the_old_model_cache(self):
+        for kind in ('models', 'catalog'):
+            with self.subTest(kind=kind):
+                self.reader.invalidate_models()
+                read = (lambda **kw: self.reader.get_kind('models', str(self.home), **kw)) if kind == 'models' else (
+                    lambda **kw: self.reader.get(str(self.home), **kw))
+                with patch.object(self.reader, '_fetch', side_effect=[
+                        {'models': [{'model': 'old'}], 'skillEntries': []}, CatalogError('Temporary failure'),
+                        {'models': [{'model': 'new'}], 'skillEntries': []}]) as fetch:
+                    read()
+                    with self.assertRaises(CatalogError):
+                        read(refresh=True)
+                    result = read()
+                self.assertEqual(result['models'][0]['id'], 'new')
+                self.assertEqual(fetch.call_count, 3)
+
+
 class RemoteCatalogTests(unittest.TestCase):
     def test_remote_source_includes_helpers_and_keeps_provider_cache_separate(self):
         from bridge.clients.codex.remote import RemoteCatalog

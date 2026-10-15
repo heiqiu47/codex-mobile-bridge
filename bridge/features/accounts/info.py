@@ -36,12 +36,15 @@ class AccountInfo:
                 ('base_url','env_key','experimental_bearer_token','http_headers','env_http_headers','auth','gateway_oauth'))
             auth = read_json(manager.home/'auth.json', {})
             try:
-                login = Account.login_context(rpc)
+                native_auth = rpc.request('account/read', {'refreshToken': False})
+                login = Account.login_context(rpc, auth=native_auth)
             except AccountError:
+                if not custom:
+                    raise
                 login = None
             login = {'context': login, 'owner': token_owner(auth)} if login else None
             if not custom:
-                account = rpc.request('account/read', {'refreshToken': False}).get('account') or {}
+                account = native_auth.get('account') or {}
                 if account.get('type') == 'chatgpt':
                     return {'kind':'chatgpt', 'name':account.get('email') or 'ChatGPT',
                             'owner': token_owner(auth) if config.get('cli_auth_credentials_store') != 'keyring' else None,
@@ -153,10 +156,13 @@ class AccountInfo:
             info[section] = {**cached, 'status':'loading', 'error':None}
             if row.get('transient'):
                 info[section]['accountKey'] = row['accountKey']
-            threading.Thread(target=self.read, args=(row,section,value.get('refresh',False)), daemon=True).start()
+            threading.Thread(target=self.read, args=(row,section,value.get('refresh',False),info[section]), daemon=True).start()
             return manager.public()
 
-    def read(self, row, section, refresh=False):
+    def read(self, row, section, refresh=False, pending=None):
+        with self.manager.lock:
+            if pending is None:
+                pending = self.entries.get(row['id'], {}).get(section)
         if row.get('transient'):
             try:
                 result = self.manager.account({'id': CURRENT_LOGIN_ID, 'operation': 'read', 'refresh': refresh})
@@ -167,23 +173,29 @@ class AccountInfo:
                 result = {'status': 'error', 'checkedAt': time.time(), 'accountKey': row['accountKey'],
                           'error': '额度暂不可用，请检查登录后重试'}
             with self.manager.lock:
+                info = self.entries.setdefault(CURRENT_LOGIN_ID, {})
+                # A replaced slot belongs to a newer query, even for the same login.
+                if info.get(section) is not pending:
+                    return
                 current = self.current_login()
                 if current and current.get('accountKey') == row['accountKey']:
                     if result['status'] == 'error':
-                        result = {**self.entries.get(CURRENT_LOGIN_ID, {}).get(section, {}), **result}
-                    self.entries.setdefault(CURRENT_LOGIN_ID, {})[section] = result
+                        result = {**info.get(section, {}), **result}
+                    info[section] = result
+                else:
+                    info.pop(section, None)
             return
         from bridge.features.accounts.accounts import ManagedRPC, token_owner, private_bytes
         manager = self.manager
         result = {}
         try:
-            with manager.bridge.account.lock:
-                with manager.lock:
-                    manager.check_ready()
-                    manager.row(row['id'])
-                if row['kind'] == 'api':
-                    result = {'models':manager.api_models(row, refresh)}
-                else:
+            if row['kind'] == 'api':
+                result = {'models':manager.api_models(row, refresh)}
+            else:
+                with manager.bridge.account.lock:
+                    with manager.lock:
+                        manager.check_ready()
+                        manager.row(row['id'])
                     identity = self.read_identity()
                     active = self.match(identity)
                     login = identity.get('login')
@@ -227,6 +239,8 @@ class AccountInfo:
             result = {'status':'error','checkedAt':time.time(),
                       'error':'额度暂不可用，请检查登录后重试' if section == 'usage' else '模型列表暂不可用，请检查接入后重试'}
         with manager.lock:
+            if self.entries.get(row['id'], {}).get(section) is not pending:
+                return
             if any(r['id'] == row['id'] for r in manager.index['accounts']):
                 if result['status'] == 'error':
                     result = {**self.entries.get(row['id'], {}).get(section, {}), **result}

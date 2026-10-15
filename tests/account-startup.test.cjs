@@ -329,16 +329,15 @@ test('model default must belong to its supported efforts',async()=>{
 });
 
 
-test('model picker reuses a fresh list and refreshes only when stale or explicitly requested',async()=>{
+test('model picker uses the backend cache on every open and only explicit refresh bypasses it',async()=>{
  const catalog={models:[{id:'gpt-fixture',name:'GPT',efforts:[]}],modelSource:'api',modelAccessName:'Old access'};
  const ui=await fixture(r=>r(official),'api',catalog);
  ui.run("currentId='11111111-1111-4111-8111-111111111111';state={connected:true,model:'gpt-fixture',effort:'high'}");
  await ui.nodes.get('model-button').onclick();
  const modelReads=()=>ui.requests.filter(r=>r.includes('catalog?kind=models'));
  assert.equal(modelReads().length,1);assert.equal(modelReads()[0].includes('refresh=true'),false);
- ui.nodes.get('model-dialog').close();await ui.nodes.get('model-button').onclick();assert.equal(modelReads().length,1);
- ui.run('modelCatalogCheckedAt=Date.now()-300001');ui.nodes.get('model-dialog').close();
- await ui.nodes.get('model-button').onclick();assert.equal(modelReads().length,2);assert.equal(modelReads()[1].includes('refresh=true'),false);
+ ui.nodes.get('model-dialog').close();await ui.nodes.get('model-button').onclick();assert.equal(modelReads().length,2);
+ assert.equal(modelReads()[1].includes('refresh=true'),false);
  catalog.models=[{id:'gemini-pro',name:'Gemini',efforts:[]}];catalog.modelAccessName='suopan-antigravity';
  await ui.nodes.get('model-refresh').onclick();
  assert.equal(ui.nodes.get('model-select').children.some(o=>o.value==='gpt-fixture'),false);
@@ -351,4 +350,58 @@ test('startup assembles the shared settings module with notification roots',asyn
  const ui=await fixture(r=>r(official));
  assert.equal(ui.run('accountSettings instanceof AccountSettingsPanel'),true);
  assert.equal(ui.run('accountSettings.remindersRoot'),ui.nodes.get('notification-account-reminders'));
+});
+
+test('a provider change replaces its model list and discards an old in-flight response',async()=>{
+ const catalog={models:[{id:'old',name:'Old'}],modelSource:'api'},ui=await fixture(r=>r(official),'api',catalog);
+ ui.run("currentId='11111111-1111-4111-8111-111111111111';state={connected:true,provider:'old',model:'old'};var releaseOld;const readApi=api;api=(url,body)=>url.includes('catalog?kind=models')&&state.provider==='old'?new Promise(resolve=>releaseOld=resolve):readApi(url,body)");
+ const pending=ui.nodes.get('model-button').onclick();
+ catalog.models=[{id:'new',name:'New'}];ui.run("state.provider='new';state.model='new'");
+ await ui.nodes.get('model-button').onclick();
+ ui.run("releaseOld({modelSource:'api',models:[{id:'old',name:'Old'}]})");await pending;
+ assert.deepEqual(ui.nodes.get('model-select').children.map(row=>row.value),['','new','__custom__']);
+ assert.equal(ui.nodes.get('model-error').textContent,'');
+});
+
+test('reopening a failed model query reads the recovered backend result',async()=>{
+ const catalog={models:[],modelSource:'api',modelError:'Temporary failure'},ui=await fixture(r=>r(official),'api',catalog);
+ ui.run("currentId='11111111-1111-4111-8111-111111111111';state={connected:true,provider:'api'}");
+ await ui.nodes.get('model-button').onclick();assert.match(ui.nodes.get('model-error').textContent,/Temporary failure/);
+ delete catalog.modelError;catalog.models=[{id:'ready',name:'Ready'}];
+ await ui.nodes.get('model-button').onclick();
+ assert.equal(ui.requests.filter(url=>url.includes('catalog?kind=models')).length,2);
+ assert.ok(ui.nodes.get('model-select').children.some(row=>row.value==='ready'));
+ assert.doesNotMatch(ui.nodes.get('model-error').textContent,/Temporary failure/);
+});
+
+test('legacy model fields are normalized and a failed directory ends the loading state',async()=>{
+ const ui=await fixture(r=>r(official),'api',{modelSource:'api',models:[{model:'legacy',displayName:'Legacy name'},'string-model']});
+ ui.run("currentId='11111111-1111-4111-8111-111111111111';state={connected:true,provider:'api'}");
+ await ui.nodes.get('model-button').onclick();
+ assert.ok(ui.nodes.get('model-select').children.some(row=>row.value==='legacy'&&row.textContent==='Legacy name'));
+ assert.ok(ui.nodes.get('model-select').children.some(row=>row.value==='string-model'));
+ ui.run("api=async()=>{throw Error('Offline')}");await ui.nodes.get('model-refresh').onclick();
+ assert.doesNotMatch(ui.nodes.get('model-options').textContent,/读取模型列表/);
+ assert.match(ui.nodes.get('model-options').textContent,/读取失败/);
+ assert.equal(ui.nodes.get('model-save').disabled,true);assert.equal(ui.nodes.get('model-refresh').disabled,false);
+});
+
+test('a failed model save retains the selected effort and pending Fast preference',async()=>{
+ const ui=await fixture(r=>r(official),'chatgpt',{modelSource:'codex',models:[{id:'model',name:'Model',efforts:['low','high'],fastTier:'priority'}],fastMode:{allowed:true,provider:'openai'}});
+ ui.run("currentId='11111111-1111-4111-8111-111111111111';state={connected:true,provider:'openai',model:'model',effort:'high',serviceTier:'default'}");
+ await ui.nodes.get('model-button').onclick();ui.nodes.get('effort-select').value='low';
+ ui.nodes.get('fast-mode-enabled').checked=true;ui.nodes.get('fast-mode-enabled').onchange();
+ ui.run("api=async()=>{throw Error('Save failed')}");await ui.nodes.get('model-form').onsubmit({preventDefault(){}});
+ assert.equal(ui.nodes.get('effort-select').value,'low');assert.equal(ui.nodes.get('fast-mode-enabled').checked,true);
+ assert.equal(ui.run('fastModeControl.payload().fastMode'),true);assert.match(ui.nodes.get('model-error').textContent,/Save failed/);
+});
+
+test('large model lists resolve display metadata with linear work',async()=>{
+ const catalog={modelSource:'api',models:Array.from({length:1000},(_,i)=>({id:'model-'+i,name:'Model '+i}))};
+ const ui=await fixture(r=>r(official),'api',catalog);
+ ui.run("currentId='11111111-1111-4111-8111-111111111111';state={connected:true,provider:'api'}");
+ await ui.nodes.get('model-button').onclick();
+ const reads=ui.run("var idReads=0;for(const row of catalogData.models){const id=row.id;Object.defineProperty(row,'id',{get(){idReads++;return id;}});}renderModelChoices();idReads");
+ assert.ok(reads<=catalog.models.length*3,'rendering should scale with the model count');
+ assert.equal(ui.nodes.get('model-options').children.length,1001);
 });

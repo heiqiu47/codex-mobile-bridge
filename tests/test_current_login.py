@@ -3,13 +3,22 @@ import time
 import unittest
 import uuid
 import copy
-from unittest.mock import patch
+import threading
+from unittest.mock import Mock, patch
 
 import test_account
 import test_account_info
 from bridge.features.accounts.account import Account
 from bridge.features.accounts.info import CURRENT_LOGIN_ID
-from bridge.features.accounts.accounts import private_json
+from bridge.features.accounts.monitor import AccountMonitor
+from bridge.features.accounts.accounts import operation, private_json
+from bridge.features.notifications.channels import save_settings
+
+
+def immediate_worker(*, target, args, **kwargs):
+    thread = Mock()
+    thread.start.side_effect = lambda: target(*args)
+    return thread
 
 
 class CurrentLoginTests(unittest.TestCase):
@@ -133,6 +142,196 @@ class CurrentLoginTests(unittest.TestCase):
         self.assertFalse(self.manager.directory('a' * 32).exists())
         self.assertNotIn('owner', json.dumps(value))
 
+    def check_native_reminders(self, saved_api=False, imported=False):
+        if imported:
+            _, _, rpc, _ = self.saved_login()
+        else:
+            rpc, _ = self.login()
+        if saved_api:
+            row = self.manager.add_api({'name': 'API', 'baseUrl': 'https://fixture.test/v1',
+                                        'apiKey': 'fixture-key', 'model': 'fixture'})['accounts'][-1]
+            self.manager.info.identity.update(baseUrl=row['baseUrl'], key='fixture-key', model=row['model'])
+            self.assertEqual(self.manager.info.current()['id'], row['id'])
+        rpc.limits['rateLimits']['primary']['usedPercent'] = 95
+        before = self.manager.snapshot_files()
+        save_settings(self.root, {'barkEnabled': True, 'barkKey': 'fixture'})
+        self.manager.monitor.configure({'lowQuota': True})
+        identity = copy.deepcopy(self.manager.info.identity)
+        with patch('bridge.features.accounts.info.threading.Thread', side_effect=immediate_worker), \
+                patch.object(self.manager.info, 'read_identity', return_value=identity), \
+                patch('bridge.features.accounts.accounts.ManagedRPC', return_value=rpc), \
+                patch('bridge.features.accounts.account.Account.rpc', return_value=rpc), \
+                patch('bridge.features.accounts.account.subscription_period', return_value={}), \
+                patch('bridge.features.accounts.monitor.publish_bark') as send:
+            self.manager.monitor.scan()
+            self.manager.monitor.scan()
+            send.assert_called_once()
+        self.assertEqual(sum(method == 'account/rateLimits/read' for method, _ in rpc.calls), 1)
+        self.assertEqual(self.manager.snapshot_files(), before)
+
+    def test_unimported_native_login_reminders_work_with_aggregation_and_share_quota_cache(self):
+        self.check_native_reminders()
+
+    def test_saved_api_connection_keeps_unimported_native_login_reminders(self):
+        self.check_native_reminders(saved_api=True)
+
+    def test_imported_native_login_is_checked_and_notified_once(self):
+        self.check_native_reminders(imported=True)
+
+    def test_reminder_history_survives_import_delete_reimport_and_restart(self):
+        _, _, rpc, _ = self.saved_login()
+        self.manager.index['accounts'] = []
+        now = time.time()
+        rpc.limits['rateLimits']['primary'].update(usedPercent=95, resetsAt=now+60)
+        save_settings(self.root, {'barkEnabled': True, 'barkKey': 'fixture'})
+        self.manager.monitor.configure({'lowQuota': True, 'quotaReset': True})
+        identity = copy.deepcopy(self.manager.info.identity)
+        with patch('bridge.features.accounts.info.threading.Thread', side_effect=immediate_worker), \
+                patch.object(self.manager.info, 'read_identity', return_value=identity), \
+                patch('bridge.features.accounts.accounts.ManagedRPC', return_value=rpc), \
+                patch('bridge.features.accounts.account.Account.rpc', return_value=rpc), \
+                patch('bridge.features.accounts.monitor.publish_bark') as send:
+            self.manager.monitor.scan()
+            self.assertEqual(send.call_count, 1)
+            candidate = next(row for row in self.manager.scan({})['discovery']['candidates'] if row['kind'] == 'chatgpt')
+            imported = self.manager.import_account({'candidateId': candidate['id'], 'name': 'Native login'})['loginAccount']
+            self.manager.monitor.scan()
+            self.assertEqual(send.call_count, 1)
+            self.manager.control({'action': 'delete', 'id': imported['id']})
+            self.manager.monitor.scan()
+            self.assertEqual(send.call_count, 1)
+            self.manager.import_account({'candidateId': candidate['id'], 'name': 'Native login'})
+            self.manager.monitor.scan()
+            self.assertEqual(send.call_count, 1)
+            rpc.limits['rateLimits']['primary'].update(usedPercent=0, resetsAt=now+18000)
+            with patch('bridge.features.accounts.monitor.time.time', return_value=now+301):
+                self.manager.monitor.scan()
+                self.assertEqual([call.args[1] for call in send.call_args_list], ['Codex 额度不足', 'Codex 额度已恢复'])
+                AccountMonitor(self.manager).scan()
+                self.assertEqual(send.call_count, 2)
+
+    def test_legacy_native_login_and_saved_profile_share_reminder_identity(self):
+        row, _, rpc, _ = self.saved_login()
+        self.manager.index['accounts'] = []
+        self.manager.info.identity = {'kind': 'chatgpt', 'name': row['email'], 'owner': row['tokenOwner']}
+        rpc.config = {'model_provider': 'openai'}
+        rpc.limits['rateLimits']['primary']['usedPercent'] = 95
+        save_settings(self.root, {'barkEnabled': True, 'barkKey': 'fixture'})
+        self.manager.monitor.configure({'lowQuota': True})
+        identity = copy.deepcopy(self.manager.info.identity)
+        with patch('bridge.features.accounts.info.threading.Thread', side_effect=immediate_worker), \
+                patch.object(self.manager.info, 'read_identity', return_value=identity), \
+                patch('bridge.features.accounts.accounts.ManagedRPC', return_value=rpc), \
+                patch('bridge.features.accounts.account.Account.rpc', return_value=rpc), \
+                patch('bridge.features.accounts.monitor.publish_bark') as send:
+            self.manager.monitor.scan()
+            self.assertEqual(send.call_count, 1)
+            candidate = next(row for row in self.manager.scan({})['discovery']['candidates'] if row['kind'] == 'chatgpt')
+            self.manager.import_account({'candidateId': candidate['id'], 'name': 'Native login'})
+            self.manager.monitor.scan()
+            send.assert_called_once()
+
+    def test_reminders_discard_a_native_login_snapshot_after_identity_changes(self):
+        _, context = self.login()
+        self.manager.info.entries[CURRENT_LOGIN_ID] = {'usage': {
+            'status': 'ready', 'accountKey': context['accountKey'], 'updatedAt': time.time(),
+            'limits': [{'id': 'codex', 'windows': [{'kind': 'primary', 'remainingPercent': 5,
+                                                  'resetsAt': time.time() + 3600}]}]}}
+        save_settings(self.root, {'barkEnabled': True, 'barkKey': 'fixture'})
+        self.manager.monitor.configure({'lowQuota': True})
+        def change_login(value):
+            self.manager.info.identity['login']['context'] = {**context, 'accountKey': 'b' * 64}
+        with patch.object(self.manager.info, 'request', side_effect=change_login), \
+                patch('bridge.features.accounts.monitor.publish_bark') as send:
+            self.manager.monitor.scan()
+            send.assert_not_called()
+
+    def test_slow_account_reads_release_status_and_chat_gates_but_keep_credential_lock(self):
+        for imported, stage in [(saved, phase) for saved in (False, True) for phase in ('quota', 'subscription')]:
+            with self.subTest(imported=imported, stage=stage):
+                if imported:
+                    self.manager.index['accounts'] = []
+                    row, _, rpc, _ = self.saved_login()
+                    account_id = row['id']
+                else:
+                    rpc, _ = self.login()
+                    account_id = CURRENT_LOGIN_ID
+                identity = copy.deepcopy(self.manager.info.identity)
+                entered, release = threading.Event(), threading.Event()
+                status_ready, operation_ready = threading.Event(), threading.Event()
+                errors = []
+                def slow_read(*args):
+                    entered.set()
+                    if not release.wait(3):
+                        raise RuntimeError('Fixture timeout')
+                    return {}
+                rpc.on_limits = slow_read if stage == 'quota' else None
+                @operation
+                def harmless_operation(bridge):
+                    operation_ready.set()
+                def read():
+                    try:
+                        self.manager.account({'id': account_id, 'operation': 'read', 'refresh': True})
+                    except Exception as error:
+                        errors.append(error)
+                def status():
+                    self.manager.public()
+                    status_ready.set()
+                with patch('bridge.features.accounts.account.Account.rpc', return_value=rpc), \
+                        patch.object(self.manager.info, 'read_identity', return_value=identity), \
+                        patch('bridge.features.accounts.account.subscription_period', side_effect=slow_read if stage == 'subscription' else lambda *args: {}):
+                    worker = threading.Thread(target=read)
+                    worker.start()
+                    other = []
+                    try:
+                        self.assertTrue(entered.wait(2))
+                        other = [threading.Thread(target=status), threading.Thread(target=lambda: harmless_operation(self.bridge))]
+                        for thread in other:
+                            thread.start()
+                        self.assertTrue(status_ready.wait(1), 'Status waits for quota I/O')
+                        self.assertTrue(operation_ready.wait(1), 'Chat gate waits for quota I/O')
+                        acquired = self.bridge.account.lock.acquire(blocking=False)
+                        if acquired:
+                            self.bridge.account.lock.release()
+                        self.assertFalse(acquired, 'Credential reads must remain serialized')
+                    finally:
+                        release.set()
+                        worker.join(3)
+                        for thread in other:
+                            thread.join(3)
+                    self.assertFalse(worker.is_alive())
+                    self.assertEqual(errors, [])
+
+    def test_saved_read_discards_results_after_its_profile_is_deleted(self):
+        row, _, rpc, _ = self.saved_login()
+        identity = copy.deepcopy(self.manager.info.identity)
+        rpc.on_limits = lambda: self.manager.control({'action': 'delete', 'id': row['id']})
+        with patch('bridge.features.accounts.account.Account.rpc', return_value=rpc), \
+                patch.object(self.manager.info, 'read_identity', return_value=identity):
+            with self.assertRaises(ValueError):
+                self.manager.account({'id': row['id'], 'operation': 'read', 'refresh': True})
+
+    def test_native_read_rechecks_owner_after_subscription(self):
+        _, _, rpc, _ = self.saved_login()
+        self.manager.index['accounts'] = []
+        def replace_owner(*args):
+            private_json(self.home/'auth.json', {'tokens': {'account_id': 'other'}})
+            return {}
+        with patch('bridge.features.accounts.account.Account.rpc', return_value=rpc), \
+                patch('bridge.features.accounts.account.subscription_period', side_effect=replace_owner):
+            with self.assertRaises(ValueError):
+                self.manager.account({'id': CURRENT_LOGIN_ID, 'operation': 'read', 'refresh': True})
+
+    def test_native_read_discards_results_if_switching_starts_during_subscription(self):
+        rpc, _ = self.login()
+        def begin_switch(*args):
+            self.manager.state['phase'] = 'preparing'
+            return {}
+        with patch('bridge.features.accounts.account.Account.rpc', return_value=rpc), \
+                patch('bridge.features.accounts.account.subscription_period', side_effect=begin_switch):
+            with self.assertRaises(ValueError):
+                self.manager.account({'id': CURRENT_LOGIN_ID, 'operation': 'read', 'refresh': True})
+
     def test_usage_reads_native_login_and_preserves_configuration_and_saved_list(self):
         rpc, _ = self.login()
         before = self.manager.snapshot_files()
@@ -145,6 +344,54 @@ class CurrentLoginTests(unittest.TestCase):
         self.assertEqual(self.manager.snapshot_files(), before)
         self.assertEqual(value['accounts'], [])
         self.assertFalse(any(method.endswith('/consume') for method, _ in rpc.calls))
+
+    def test_discarded_native_query_releases_its_slot_and_can_refresh_after_configuration_returns(self):
+        rpc, _ = self.login()
+        info = self.manager.info
+        original = (self.home/'config.toml').read_bytes()
+        with patch('bridge.features.accounts.info.threading.Thread') as worker:
+            info.request({'id': CURRENT_LOGIN_ID, 'section': 'usage'})
+            args = worker.call_args.kwargs['args']
+        rpc.on_limits = lambda: (self.home/'config.toml').write_text('# external change')
+        with patch('bridge.features.accounts.account.Account.rpc', return_value=rpc), \
+                patch('bridge.features.accounts.account.subscription_period', return_value={}):
+            info.read(*args)
+        self.assertNotIn('usage', info.entries[CURRENT_LOGIN_ID])
+        (self.home/'config.toml').write_bytes(original)
+        rpc.on_limits = None
+        with patch('bridge.features.accounts.info.threading.Thread') as worker:
+            info.request({'id': CURRENT_LOGIN_ID, 'section': 'usage', 'refresh': True})
+            worker.assert_called_once()
+            args = worker.call_args.kwargs['args']
+        with patch('bridge.features.accounts.account.Account.rpc', return_value=rpc), \
+                patch('bridge.features.accounts.account.subscription_period', return_value={}):
+            info.read(*args)
+        self.assertEqual(info.entries[CURRENT_LOGIN_ID]['usage']['status'], 'ready')
+
+    def test_old_native_worker_preserves_new_loading_and_completed_slots(self):
+        _, original = self.login()
+        info = self.manager.info
+        for same_login in (False, True):
+            for completed in (False, True):
+                with self.subTest(same_login=same_login, completed=completed):
+                    info.entries.clear()
+                    info.identity['login']['context'] = original
+                    with patch('bridge.features.accounts.info.threading.Thread') as worker:
+                        info.request({'id': CURRENT_LOGIN_ID, 'section': 'usage'})
+                        old_args = worker.call_args.kwargs['args']
+                        info.entries[CURRENT_LOGIN_ID].pop('usage')
+                        context = original if same_login else {**original, 'accountKey': 'b'*64}
+                        info.identity['login']['context'] = context
+                        info.request({'id': CURRENT_LOGIN_ID, 'section': 'usage'})
+                        new_args = worker.call_args.kwargs['args']
+                    if completed:
+                        with patch.object(self.manager, 'account', return_value={'visible': True, **context}):
+                            info.read(*new_args)
+                    newest = info.entries[CURRENT_LOGIN_ID]['usage']
+                    with patch.object(self.manager, 'account', return_value={'visible': True, **original}):
+                        info.read(*old_args)
+                    self.assertIs(info.entries[CURRENT_LOGIN_ID]['usage'], newest)
+                    self.assertEqual(newest['status'], 'ready' if completed else 'loading')
 
     def test_proxy_shaped_metadata_and_changed_identity_are_rejected(self):
         rpc, _ = self.login()

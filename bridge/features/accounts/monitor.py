@@ -1,5 +1,7 @@
 """Opt-in account reminders. No model runs, account switching, or credit consumption."""
 import copy
+import hashlib
+import json
 import math
 import threading
 import time
@@ -13,6 +15,11 @@ DEFAULTS = {'lowQuota':False, 'quotaReset':False, 'resetExpiry':False,
 GLOBAL_REMINDERS = ('globalReset', 'globalResetSignal')
 
 
+def account_identity(owner, fallback):
+    # Credential ownership survives importing or replacing a local profile and separates workspaces.
+    return 'account:' + hashlib.sha256(json.dumps(owner, separators=(',', ':')).encode()).hexdigest() if owner else fallback
+
+
 def events(account, previous, now, preferences):
     result = []
     for bucket in account.get('limits', []):
@@ -24,7 +31,7 @@ def events(account, previous, now, preferences):
                 continue
             if preferences['lowQuota'] and remaining <= 10 and reset > now:
                 result.append(('lowQuota', f'{key}:{reset}', 'Codex 额度不足', '某个额度窗口剩余不超过 10%，请打开账号与额度查看。'))
-            if (preferences['quotaReset'] and before.get('resetsAt') and now >= before['resetsAt']
+            if (preferences['quotaReset'] and before.get('resetsAt')
                     and reset > before['resetsAt'] and remaining > before.get('remainingPercent', 100)):
                 result.append(('quotaReset', f'{key}:{reset}', 'Codex 额度已恢复', '额度窗口已更新，查询已确认可用额度增加。'))
     if preferences['resetExpiry']:
@@ -63,9 +70,24 @@ class AccountMonitor:
         self.global_watch_path = manager.root/'global-reset-watch.json'
         self.global_watch = read_json(self.global_watch_path, {})
 
-    def observe(self, identity, value):
+    def adopt_identity(self, identity, aliases):
+        before = self.ledger.copy()
+        for alias in set(aliases) - {identity}:
+            if alias in self.previous:
+                self.previous.setdefault(identity, self.previous.pop(alias))
+            for key in [key for key in self.ledger if key.startswith(alias+'|')]:
+                target = identity + key[len(alias):]
+                record = self.ledger.pop(key)
+                current = self.ledger.get(target)
+                records = [record] if current is None else [current, record]
+                self.ledger[target] = max(records, key=lambda row: (bool(row.get('sent')), row.get('time', 0)))
+        if self.ledger != before:
+            write_json(self.ledger_path, self.ledger)
+
+    def observe(self, identity, value, aliases=()):
         if value.get('error') or not value.get('updatedAt') or time.time()-value['updatedAt'] > 360:
             return
+        self.adopt_identity(identity, aliases)
         before = self.previous.get(identity, {})
         delivered = True
         for event in events(value, before, time.time(), self.preferences):
@@ -162,8 +184,12 @@ class AccountMonitor:
             self.manager.check_ready()
             rows = [dict(row) for row in self.manager.index['accounts'] if row['kind'] == 'chatgpt']
             current = self.manager.info.current()
-        # Native logins need not have been imported into the saved-account list.
-        if not current.get('id'):
+            current_owner = (self.manager.info.identity or {}).get('owner') if current.get('status') == 'ready' else None
+            login = self.manager.info.current_login()
+            if login and login.get('transient'):
+                rows.append({**login, 'tokenOwner': self.manager.info.identity['login']['owner']})
+        # Older runtimes may expose native account data without a verified login card.
+        if not login and not current.get('id'):
             stamp = self.manager.info.source_stamp()
             if stamp != self.current_stamp or time.time()-self.current_checked >= 300:
                 self.current_checked = time.time()
@@ -171,16 +197,26 @@ class AccountMonitor:
                 self.current_stamp = stamp
                 self.current_value = self.manager.bridge.account.read(refresh=False)
             if self.current_value and self.current_value.get('visible'):
-                self.observe(self.current_value['accountKey'], self.current_value)
+                key = self.current_value['accountKey']
+                self.observe(account_identity(current_owner, key), self.current_value, aliases=(key,))
         for row in rows:
             if self.closed.is_set():
                 return
             self.manager.info.request({'id':row['id'], 'section':'usage'})
             with self.manager.lock:
                 value = copy.deepcopy(self.manager.info.entries.get(row['id'], {}).get('usage', {}))
+                if row.get('transient'):
+                    current_login = self.manager.info.current_login()
+                    if (not current_login or current_login['accountKey'] != row['accountKey'] or
+                            value.get('accountKey') != row['accountKey']):
+                        continue
             if value.get('status') != 'ready' or time.time()-value.get('updatedAt', 0) > 360:
                 continue
-            self.observe(row['id'], value)
+            aliases = [] if row.get('transient') else [row['id']]
+            if login and login['id'] == row['id']:
+                aliases.append(login['accountKey'])
+            key = account_identity(row.get('tokenOwner'), row.get('accountKey') or row['id'])
+            self.observe(key, value, aliases=aliases)
 
     def start(self):
         def run():

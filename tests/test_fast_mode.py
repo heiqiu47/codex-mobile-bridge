@@ -101,6 +101,29 @@ class FastCapabilityTests(unittest.TestCase):
         self.assertNotIn('serviceTier', normalize_state(support.state()))
 
 
+
+    def test_route_reasoning_metadata_uses_visible_base_and_preserves_explicit_efforts(self):
+        reader = Catalog('/unused', 'unused')
+        base = {'model': 'base', 'supportedReasoningEfforts': [{'reasoningEffort': 'high'}],
+                'defaultReasoningEffort': 'high'}
+        models = [base, {'model': 'route/base', 'supportedReasoningEfforts': []},
+                  {'model': 'override/base', 'supportedReasoningEfforts': [{'reasoningEffort': 'low'}],
+                   'defaultReasoningEffort': 'low'},
+                  {'model': 'hidden', 'hidden': True, **{key: value for key, value in base.items() if key != 'model'}},
+                  {'model': 'route/hidden'}]
+        def request(method, params):
+            if method == 'config/read':
+                return {'config': {'model_provider': 'custom', 'model_catalog_json': 'models.json'}}
+            return {'data': copy.deepcopy(models)}
+        result = reader.read_models(request, '/project', 'custom')['models']
+        self.assertEqual(result[1]['model'], 'route/base')
+        self.assertEqual(result[1]['supportedReasoningEfforts'], base['supportedReasoningEfforts'])
+        self.assertEqual(result[1]['defaultReasoningEffort'], 'high')
+        self.assertEqual(result[2]['supportedReasoningEfforts'], [{'reasoningEffort': 'low'}])
+        self.assertEqual(result[2]['defaultReasoningEffort'], 'low')
+        self.assertNotIn('supportedReasoningEfforts', result[4])
+
+
 class FastSettingsTests(unittest.TestCase):
     setUp = support.IntegrationTests.setUp
     tearDown = support.IntegrationTests.tearDown

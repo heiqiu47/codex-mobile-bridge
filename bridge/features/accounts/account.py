@@ -165,8 +165,9 @@ class Account:
         return AccountRPC(self.home, executable)
 
     @staticmethod
-    def login_context(rpc):
-        auth = rpc.request('account/read', {'refreshToken': False})
+    def login_context(rpc, auth=None):
+        if auth is None:
+            auth = rpc.request('account/read', {'refreshToken': False})
         account = auth.get('account') or {}
         # The routing origin proves this is the native login, not proxy-shaped metadata.
         if (account.get('type') != 'chatgpt' or auth.get('requiresOpenaiAuth') is not True or
