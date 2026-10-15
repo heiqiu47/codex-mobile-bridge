@@ -2078,6 +2078,7 @@ class Bridge:
         self.closed.set()
         if self.host == "local" and self.accounts:
             self.accounts.login_cancel.set()
+            self.accounts.reset_forecast.close()
         for bridge in list(self.remote_bridges.values()):
             bridge.close()
         with self.lock:

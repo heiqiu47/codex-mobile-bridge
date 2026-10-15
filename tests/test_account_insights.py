@@ -32,6 +32,16 @@ class InsightsTests(unittest.TestCase):
         self.assertEqual(events({'subscription':{'periodEndsAt':now-1,'source':'login'}}, {}, now,
                                 {**DEFAULTS, 'subscriptionExpiry':True}), [])
 
+    def test_desktop_update_reminder_points_to_client_management(self):
+        monitor = self.manager.monitor
+        monitor.configure({'desktopUpdate': True})
+        save_settings(self.root, {'barkEnabled': True, 'barkKey': 'fixture'})
+        with patch.object(self.manager.updates, 'check'), patch.object(
+                self.manager.updates, 'status', return_value={'state': 'available', 'targetBuild': '101'}), patch.object(
+                monitor, 'deliver') as deliver:
+            monitor.scan()
+        self.assertIn('客户端管理的 Codex 版本与更新', deliver.call_args.args[1][3])
+
     def test_reminders_do_not_guess_recovery_from_a_passed_timestamp(self):
         now=2000000000
         value={'limits':[{'id':'codex','windows':[{'kind':'primary','remainingPercent':5,'resetsAt':now-1}]}]}

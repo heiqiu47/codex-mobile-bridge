@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const official={visible:true,loginType:'chatgpt',accountKey:'a'.repeat(64),limits:[],resetCredits:null,canReset:false,updatedAt:1900000000};
 
-async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage){
+async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage,sharedRelay=false){
   const nodes=new Map(),timers=new Map(),requests=[],intervals=[],events={},responses=[];let timerId=0,delayNextSkill=null,failNextSkill=false;
   const node=(tag='div')=>({tagName:tag.toUpperCase(),getBoundingClientRect(){return {width:0};},value:'',checked:false,disabled:false,hidden:false,open:false,textContent:'',dataset:{},options:[],children:[],style:{setProperty(k,v){this[k]=v;}},scrollTop:0,parentElement:{},
     classList:{add(){},remove(){},toggle(){},contains(){return false;}},addEventListener(){},setAttribute(k,v){this[k]=v;},closest(selector){return selector==='dialog'?nodes.get('accounts-dialog'):null;},
@@ -15,8 +15,8 @@ async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage){
   }
   const storage=()=>({getItem(){return null;},setItem(){},clear(){}});
   const response=(data,status=200)=>({ok:status===200,status,json:async()=>data});
-  const context=vm.createContext({ClientNavigation:class{constructor(){this.provider="codex";}async refresh(){}async openChatLink(hash){assert.equal(hash,'','This fixture enters without a chat deep link');return false;}},DesktopSessionsView:class{clear(){}},Workbench:class{open(){}reset(){}setThumbnails(){}relabel(){}},Event:class{constructor(type){this.type=type;}},navigator:{userAgent:'test'},Date,Option:function(text,value){return {...node('option'),textContent:text,value};},document:{addEventListener(){},dispatchEvent(){},documentElement:{},getElementById:id=>nodes.get(id),querySelector:()=>({classList:{toggle(){}}}),querySelectorAll:()=>[],createElement:node},
-    window:{addEventListener:(name,fn)=>events[name]=fn},localStorage:storage(),sessionStorage:storage(),
+  const context=vm.createContext({ClientNavigation:class{constructor(options){Object.assign(this,options);this.provider="codex";}async refresh(){}async openChatLink(hash){assert.equal(hash,'','This fixture enters without a chat deep link');return false;}},DesktopSessionsView:class{clear(){}},Workbench:class{open(){}reset(){}setThumbnails(){}relabel(){}},Event:class{constructor(type){this.type=type;}},navigator:{userAgent:'test'},Date,Option:function(text,value){return {...node('option'),textContent:text,value};},document:{addEventListener(){},dispatchEvent(){},documentElement:{},getElementById:id=>nodes.get(id),querySelector:()=>({classList:{toggle(){}}}),querySelectorAll:()=>[],createElement:node},
+    window:{BridgeSharedRelay:sharedRelay,addEventListener:(name,fn)=>events[name]=fn},localStorage:storage(),sessionStorage:storage(),
     location:{hash:'',pathname:'/',search:''},history:{replaceState(){}},
     setTimeout(fn,delay){timers.set(++timerId,{fn,delay});return timerId;},clearTimeout(id){timers.delete(id);},setInterval(fn,delay){intervals.push({fn,delay});},
     fetch:async(url,options={})=>{
@@ -24,7 +24,7 @@ async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage){
       if(url==='/api/auth')return response({authenticated:true,csrf:'fixture',uiLanguage:gatewayLanguage});
       if(url.startsWith('/api/sessions?'))return response({sessions:[]});
       if(url==='/api/account'||url==='/api/account?cached=1')return read(response);
-      if(url==='/api/accounts')return response({accounts:[],activeId:null,current:{kind,status:'ready',name:'Fixture'},switch:{phase:'idle'}});
+      if(url==='/api/accounts'||url.startsWith('/api/accounts?resetForecast='))return response({accounts:[],activeId:null,current:{kind,status:'ready',name:'Fixture'},switch:{phase:'idle'}});
       if(url.includes('/catalog?kind=skills')){
         if(failNextSkill){failNextSkill=false;return response({error:'Skill fixture error'},500);}
         if(delayNextSkill){const wait=delayNextSkill;delayNextSkill=null;await wait.promise;}
@@ -39,7 +39,7 @@ async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage){
       if(url.includes('/respond')){responses.push(JSON.parse(options.body));return response({});}
       throw Error('Unexpected request '+url);
     }});
-  for(const file of ['web/hosts/environment.js','web/shared/i18n.js','web/features/chat/list-sync.js','web/features/accounts/account.js','web/features/accounts/accounts.js','web/features/chat/modes.js','web/features/chat/attachments.js','web/features/chat/activity.js','web/features/chat/fast-mode.js','web/features/chat/message-actions.js','web/features/chat/permissions.js','web/shell/app.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+  for(const file of ['web/hosts/environment.js','web/shared/i18n.js','web/features/chat/list-sync.js','web/features/accounts/account.js','web/features/accounts/accounts.js','web/features/accounts/account-settings.js','web/features/chat/modes.js','web/features/chat/attachments.js','web/features/chat/activity.js','web/features/chat/fast-mode.js','web/features/chat/message-actions.js','web/features/chat/permissions.js','web/shell/app.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
   await new Promise(setImmediate);
   return {nodes,requests,timers,intervals,events,responses,run:code=>vm.runInContext(code,context),
     failNextSkill(){failNextSkill=true;},
@@ -47,14 +47,24 @@ async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage){
     async retry(){const entry=[...timers.entries()].find(([,t])=>t.delay<=5000);assert.ok(entry,'Account read should retry promptly without user input');timers.delete(entry[0]);await entry[1].fn();await new Promise(setImmediate);}};
 }
 
+test('version updates are offered only on hosts with account management',async()=>{
+ for(const sharedRelay of [false,true]){
+  const ui=await fixture(response=>response(official),'chatgpt',null,undefined,sharedRelay);
+  assert.equal(ui.run('typeof clientNavigation.onCodexUpdates'),sharedRelay?'object':'function');
+  if(sharedRelay)assert.equal(ui.run('clientNavigation.onCodexUpdates'),null);
+ }
+});
+
 test('official and API connections share one fixed clickable entry without querying quota on startup',async()=>{
  for(const [kind,label] of [['chatgpt','账号与额度'],['api','API 接入']]){
   const ui=await fixture(r=>r(official),kind);
   assert.equal(ui.nodes.get('accounts-button').textContent,'账号管理');
   assert.equal(ui.nodes.has('account-status'),false);assert.equal(ui.nodes.has('account-dialog'),false);
   assert.equal(ui.requests.filter(url=>url==='/api/account').length,0);
+  assert.equal(ui.requests.includes('/api/accounts?resetForecast=refresh'),false);
   ui.nodes.get('accounts-button').onclick();await new Promise(setImmediate);
   assert.equal(ui.nodes.get('accounts-dialog').open,true);
+  assert.equal(ui.requests.includes('/api/accounts?resetForecast=refresh'),true);
   assert.equal(ui.nodes.get('account-button').hidden,kind!=='chatgpt');
   assert.equal(ui.requests.filter(url=>url==='/api/account').length,0);
  }
@@ -63,7 +73,7 @@ test('quota updates on opening details, and only after five minutes while visibl
  const ui=await fixture(r=>r(official));
  ui.nodes.get('accounts-button').onclick();await new Promise(setImmediate);
  ui.nodes.get('account-details').open=true;ui.nodes.get('account-details').ontoggle();await new Promise(setImmediate);
- const quota=[...ui.timers.values()].find(i=>i.delay>299000);assert.ok(quota);
+ const quota=ui.timers.get(ui.run('accountPanel.timer'));assert.ok(quota&&quota.delay>299000);
  assert.equal(ui.requests.filter(u=>u==='/api/account').length,1);
  ui.run('accountPanel.checkedAt=Date.now()-300001');quota.fn();await new Promise(setImmediate);
  assert.equal(ui.requests.filter(u=>u.startsWith('/api/account')&&!u.startsWith('/api/accounts')).length,2);
@@ -335,4 +345,10 @@ test('model picker reuses a fresh list and refreshes only when stale or explicit
  assert.equal(ui.nodes.get('model-select').children.some(o=>o.value==='gemini-pro'),true);
  assert.equal(ui.responses.length,0);
  assert.equal(modelReads().length,3);assert.equal(modelReads()[2].includes('refresh=true'),true);
+});
+
+test('startup assembles the shared settings module with notification roots',async()=>{
+ const ui=await fixture(r=>r(official));
+ assert.equal(ui.run('accountSettings instanceof AccountSettingsPanel'),true);
+ assert.equal(ui.run('accountSettings.remindersRoot'),ui.nodes.get('notification-account-reminders'));
 });

@@ -33,7 +33,7 @@ const workModes=new WorkModes({select:$('work-mode'),hint:$('mode-hint'),goalRoo
   onCancel:payload=>goalAction('cancel',payload),onStatus:payload=>goalAction('status',payload),onEdit:payload=>goalAction('edit',payload)});
 const accountPanel=new AccountPanel({root:$('account-content'),button:$('account-button'),read:refresh=>api('/api/account'+(refresh?'':'?cached=1')),consume:body=>api('/api/account/reset',body),onConsumed:()=>{const id=accountsPanel?.value?.activeId;if(id)accountsPanel.perform({action:'details',id,section:'usage',refresh:true});},onHidden:()=>{$('account-details').open=false;},visible:()=>!$('app').hidden&&!document.hidden&&$('accounts-dialog').open&&$('account-details').open});
 $('account-details').ontoggle=()=>{if($('account-details').open)accountPanel.refresh();};
-window.addEventListener('focus',()=>{if(!$('app').hidden)accountsPanel?.refresh();});
+window.addEventListener('focus',()=>{if(!$('app').hidden&&accountsPanel?.visible())accountsPanel.refresh();});
 function chatKey(id=currentId,host=currentHost){return host+'|'+id;}
 function sessionUrl(id,action='',host=currentHost){const path='/api/sessions/'+id+(action?'/'+action:'')+'?host='+encodeURIComponent(host);return window.BridgeRelayURL?.(path)||path;}
 function hostUrl(path,host=currentHost){const value=/^\/api\/sessions\/[0-9a-f-]{36}/.test(path)&&!/[?&]host=/.test(path)?path+(path.includes('?')?'&':'?')+'host='+encodeURIComponent(host):path;return window.BridgeRelayURL?.(value)||value;}
@@ -48,7 +48,7 @@ const desktopSessions=new DesktopSessionsView({root:$('app'),select:$('desktop-b
   if(provider!=='codex'){saveDraft();chatTimeline?.dispose();chatTimeline=null;currentId=null;state=null;workbench.reset();$('chat').hidden=true;$('welcome').hidden=false;$('app').classList.remove('chat-open');history.replaceState(null,'',location.pathname);}
   else if(clientNavigation.provider==='codex'&&!$('app').hidden)loadList(true).catch(error=>toast(error.message));
 }});
-const clientNavigation=new ClientNavigation({view:desktopSessions,request:api,notify:toast});
+const clientNavigation=new ClientNavigation({view:desktopSessions,request:api,notify:toast,onCodexUpdates:window.BridgeSharedRelay?null:()=>openCodexUpdates()});
 desktopSessions.onListEnter=()=>{clientNavigation.listReadDone=false;clientNavigation.listVisit=(clientNavigation.listVisit||0)+1;if(clientNavigation.provider!=='codex')desktopSessions.refresh();};
 desktopSessions.onListReady=(provider,value)=>clientNavigation.acknowledgeList(provider,value);
 async function uploadAttachment(key,id,file){const separator=key.indexOf('|'),host=key.slice(0,separator),thread=key.slice(separator+1);const response=await fetch(sessionUrl(thread,'uploads',host)+'&id='+encodeURIComponent(id)+'&name='+encodeURIComponent(file.name),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/octet-stream','X-CSRF-Token':csrf},body:file});const result=await response.json();if(!response.ok){if(response.status===401)authLost();const error=Error(result.error||t('附件上传失败，请重试'));error.retryable=response.status>=500||response.status===429;throw error;}return result;}
@@ -78,7 +78,7 @@ function renderLoginStatus(status=loginStatus){
   $('login-attempts').textContent=loginStatus.blocked?t('此 IP 已被封禁，请在电脑网关 App 的“登录设备”中解除。'):t('剩余尝试次数：')+loginStatus.attemptsRemaining+'/'+loginStatus.attemptLimit+t('；连续输错 5 次将封禁此 IP。');
   $('login-button').disabled=loginStatus.blocked;
 }
-function showLogin(passwordless=false,status){window.BridgeDownloads?.clear();$('mobile-binding-status').hidden=true;if(window.BridgeSharedRelay){location.replace((window.BridgeRelayBase||'')+'/relay/');return;}desktopSessions.clear();workbench.reset();if(typeof accountsPanel!=='undefined')accountsPanel?.clear();accountPanel.clear();chatTimeline?.dispose();chatTimeline=null;document.querySelectorAll('dialog[open]').forEach(d=>d.close());$('app').hidden=true;$('login').hidden=false;$('credentials').hidden=passwordless;$('noauth').hidden=!passwordless;$('username').required=!passwordless;$('password').required=!passwordless;$('password').value='';$('remember-login').parentElement.hidden=passwordless||BridgeHost.isNativeApp();$('login-attempts').hidden=passwordless;renderLoginStatus(status);$('bootstrap-status').hidden=true;window.BridgeBootstrap?.ready();}
+function showLogin(passwordless=false,status){window.BridgeDownloads?.clear();$('mobile-binding-status').hidden=true;if(window.BridgeSharedRelay){location.replace((window.BridgeRelayBase||'')+'/relay/');return;}desktopSessions.clear();workbench.reset();if(typeof accountsPanel!=='undefined')accountsPanel?.clear();if(typeof accountSettings!=='undefined')accountSettings?.clear();accountPanel.clear();chatTimeline?.dispose();chatTimeline=null;document.querySelectorAll('dialog[open]').forEach(d=>d.close());$('app').hidden=true;$('login').hidden=false;$('credentials').hidden=passwordless;$('noauth').hidden=!passwordless;$('username').required=!passwordless;$('password').required=!passwordless;$('password').value='';$('remember-login').parentElement.hidden=passwordless||BridgeHost.isNativeApp();$('login-attempts').hidden=passwordless;renderLoginStatus(status);$('bootstrap-status').hidden=true;window.BridgeBootstrap?.ready();}
 async function start(pairingToken=null){
   window.BridgeBootstrap?.waitingForAuth();
   const auth=await api('/api/auth');
@@ -640,13 +640,14 @@ $('rename-form').onsubmit=async event=>{
   }catch(error){$('rename-error').textContent=t(error.message);}
   finally{renameBusy=false;$('rename-save').disabled=false;}
 };
-let notificationChannelBusy=false,selectedNotificationChannel='',notificationListRequest=0,notificationCommonLoaded=false;
+let notificationChannelBusy=false,selectedNotificationChannel='',notificationListRequest=0,notificationCommonLoaded=false,notificationCommonSaved=null,notificationProviderSaved=null;
 const notificationChannelDetails={
   bark:{name:'Bark',enabled:'barkEnabled',server:'barkServer',secret:'barkKey',hasSecret:'hasBarkKey',clear:'clearBarkKey',secretLabel:'Device Key',help:'在 iPhone 的 Bark 中获取 Device Key，并填写服务地址。'},
   ntfy:{name:'ntfy',enabled:'enabled',server:'server',secret:'token',hasSecret:'hasToken',clear:'clearToken',secretLabel:'Token',help:'在 Android 的 ntfy 中订阅相同服务和主题。公共主题可以留空 Token。'},
   pushplus:{name:'PushPlus',enabled:'pushplusEnabled',secret:'pushplusToken',hasSecret:'hasPushplusToken',clear:'clearPushplusToken',secretLabel:'Token',help:'通过微信获取 PushPlus Token，保存后可以发送测试通知。'}
 };
 function renderNotificationChannel(config){
+  notificationProviderSaved=config;
   const channel=notificationChannelDetails[selectedNotificationChannel];
   $('pushplus-heading').textContent=channel.name;
   $('notification-channel-help').textContent=t(channel.help);
@@ -665,13 +666,12 @@ function renderNotificationChannel(config){
   $('pushplus-token').value='';$('pushplus-clear').checked=false;
   $('pushplus-token').placeholder=t(config[channel.hasSecret]?'已保存，留空保留':'填写 '+channel.name+' '+channel.secretLabel);
 }
-function renderNotificationCommon(config){
+function renderNotificationCommon(config,textFields=true){
   for(const id of ['security-enabled','address-enabled','include-title'])$('notification-'+id).checked=!!config[{'security-enabled':'securityEnabled','address-enabled':'addressEnabled','include-title':'includeTitle'}[id]];
-  $('notification-address-name').value=config.addressName||'';
-  $('notification-click-base').value=config.clickBase||'';
+  if(textFields){$('notification-address-name').value=config.addressName||'';$('notification-click-base').value=config.clickBase||'';}
 }
 function notificationCommonControls(enabled){
-  for(const id of ['security-enabled','address-enabled','address-name','include-title','click-base','common-save'])$('notification-'+id).disabled=!enabled;
+  for(const id of ['security-enabled','address-enabled','address-name','include-title','click-base','advanced-save'])$('notification-'+id).disabled=!enabled;
 }
 async function loadNotificationCommon(request){
   notificationCommonLoaded=false;notificationCommonControls(false);
@@ -679,7 +679,7 @@ async function loadNotificationCommon(request){
   try{
     const config=await api('/api/notifications/channels/common');
     if(request!==notificationListRequest||!$('notification-channels-dialog').open)return;
-    renderNotificationCommon(config);notificationCommonLoaded=true;notificationCommonControls(true);
+    notificationCommonSaved=config;renderNotificationCommon(config);notificationCommonLoaded=true;notificationCommonControls(true);
   }catch(error){
     if(request!==notificationListRequest||!$('notification-channels-dialog').open)return;
     $('notification-common-error').textContent=t(error.message);$('notification-common-retry').hidden=false;
@@ -699,6 +699,7 @@ $('pushplus-settings').onclick=async()=>{
   if(notificationChannelBusy)return;
   const request=++notificationListRequest;
   $('notification-channels-dialog').showModal();
+  accountSettings?.refresh();window.loadNotificationDefaults();
   await Promise.all([loadNotificationCommon(request),loadNotificationChannelStatuses(request)]);
 };
 $('notification-channels-dialog').addEventListener('close',()=>{notificationListRequest++;notificationCommonLoaded=false;notificationCommonControls(false);});
@@ -720,21 +721,39 @@ for(const button of document.querySelectorAll('[data-notification-channel]'))but
   finally{notificationChannelBusy=false;button.disabled=false;}
 };
 $('notification-channel-back').onclick=()=>{$('pushplus-dialog').close();$('pushplus-settings').onclick();};
-$('notification-common-save').onclick=async()=>{
+async function saveNotificationCommon(patch,textFields=false){
   if(notificationChannelBusy||!notificationCommonLoaded||!$('notification-channels-dialog').open)return;
-  notificationChannelBusy=true;$('notification-common-save').disabled=true;$('notification-common-error').textContent='';
+  notificationChannelBusy=true;notificationCommonControls(false);$('notification-common-error').textContent='';
   const request=notificationListRequest;
   try{
-    const config=await api('/api/notifications/channels/common',{
-      securityEnabled:$('notification-security-enabled').checked,
-      addressEnabled:$('notification-address-enabled').checked,
-      addressName:$('notification-address-name').value.trim(),
-      includeTitle:$('notification-include-title').checked,
-      clickBase:$('notification-click-base').value.trim()
-    });
-    if(request===notificationListRequest&&$('notification-channels-dialog').open){renderNotificationCommon(config);toast('通用通知设置已保存');}
-  }catch(error){if(request===notificationListRequest&&$('notification-channels-dialog').open)$('notification-common-error').textContent=t(error.message);}
+    const config=await api('/api/notifications/channels/common',patch);
+    if(request===notificationListRequest&&$('notification-channels-dialog').open){
+      notificationCommonSaved=config;renderNotificationCommon(config,textFields);if(textFields)toast('设置已保存');
+    }
+  }catch(error){if(request===notificationListRequest&&$('notification-channels-dialog').open){
+    if(notificationCommonSaved)renderNotificationCommon(notificationCommonSaved,false);
+    $('notification-common-error').textContent=t(error.message);if(!textFields)toast(error.message);
+  }}
   finally{notificationChannelBusy=false;if(request===notificationListRequest&&notificationCommonLoaded)notificationCommonControls(true);}
+}
+for(const [id,key] of [['security-enabled','securityEnabled'],['address-enabled','addressEnabled'],['include-title','includeTitle']]){
+  $('notification-'+id).onchange=()=>saveNotificationCommon({[key]:$('notification-'+id).checked});
+}
+$('notification-advanced-save').onclick=()=>saveNotificationCommon({
+  addressName:$('notification-address-name').value.trim(),clickBase:$('notification-click-base').value.trim()
+},true);
+$('pushplus-enabled').onchange=async()=>{
+  if(notificationChannelBusy||!selectedNotificationChannel||!$('pushplus-dialog').open)return;
+  const selected=selectedNotificationChannel,channel=notificationChannelDetails[selected],prior=notificationProviderSaved;
+  notificationChannelBusy=true;$('pushplus-error').textContent='';
+  for(const id of ['pushplus-enabled','pushplus-save','pushplus-test'])$(id).disabled=true;
+  try{
+    const config=await api('/api/notifications/channels/'+selected,{[channel.enabled]:$('pushplus-enabled').checked});
+    if(selected===selectedNotificationChannel&&$('pushplus-dialog').open){notificationProviderSaved=config;$('pushplus-enabled').checked=!!config[channel.enabled];}
+  }catch(error){if(selected===selectedNotificationChannel&&$('pushplus-dialog').open){
+    $('pushplus-enabled').checked=!!prior?.[channel.enabled];$('pushplus-error').textContent=t(error.message);
+  }}
+  finally{notificationChannelBusy=false;for(const id of ['pushplus-enabled','pushplus-save','pushplus-test'])$(id).disabled=false;}
 };
 async function notificationChannelAction(test){
   if(notificationChannelBusy||!selectedNotificationChannel)return;
@@ -762,13 +781,24 @@ async function notificationChannelAction(test){
 $('pushplus-form').onsubmit=event=>{event.preventDefault();return notificationChannelAction(false);};
 $('pushplus-test').onclick=()=>notificationChannelAction(true);
 
-const accountsPanel=window.BridgeSharedRelay||typeof AccountsPanel==='undefined'?null:new AccountsPanel({root:$('accounts-content'),toolbar:$('accounts-heading'),read:()=>api('/api/accounts'),request:({action,...value})=>action==='ignoreSubmission'?ignoreSubmission(value):api(action==='account'?'/api/accounts/account':action==='details'?'/api/accounts/details':action==='reminders'?'/api/accounts/reminders':action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?'/api/accounts/desktop-update':'/api/accounts/switch',action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?{action,...value}:value),onReset:async()=>{$('account-details').open=true;await accountPanel.refresh();$('account-content').querySelector('.account-cards')?.scrollIntoView({block:'nearest'});},onChanged:()=>{accountPanel.clear();resetModelCatalog();},onUpdate:value=>{accountPanel.schedule();const official=value.current?.kind==='chatgpt'&&!value.activeId&&!value.loginAccount;$('account-button').hidden=!official;if(!official)$('account-details').open=false;const label='账号管理';$('accounts-button').setAttribute('data-i18n',label);$('accounts-button').textContent=t(label);}});
+const accountStateSync=typeof AccountStateSync==='undefined'?null:new AccountStateSync();
+let accountSettings=null;
+const accountsPanel=window.BridgeSharedRelay||typeof AccountsPanel==='undefined'?null:new AccountsPanel({stateSync:accountStateSync,notify:toast,root:$('accounts-content'),toolbar:$('accounts-heading'),read:refresh=>api('/api/accounts'+(refresh?'?resetForecast=refresh':accountsPanel.visible()?'?resetForecast=1':'')),request:({action,...value})=>action==='ignoreSubmission'?ignoreSubmission(value):api(action==='account'?'/api/accounts/account':action==='details'?'/api/accounts/details':action==='reminders'?'/api/accounts/reminders':action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?'/api/accounts/desktop-update':'/api/accounts/switch',action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?{action,...value}:value),onReset:async()=>{$('account-details').open=true;await accountPanel.refresh();$('account-content').querySelector('.account-cards')?.scrollIntoView({block:'nearest'});},onChanged:()=>{accountPanel.clear();resetModelCatalog();},onUpdate:value=>{accountSettings?.accept(value);accountPanel.schedule();const official=value.current?.kind==='chatgpt'&&!value.activeId&&!value.loginAccount;$('account-button').hidden=!official;if(!official)$('account-details').open=false;const label='账号管理';$('accounts-button').setAttribute('data-i18n',label);$('accounts-button').textContent=t(label);}});
+if(accountsPanel&&typeof AccountSettingsPanel!=='undefined')accountSettings=new AccountSettingsPanel({
+  stateSync:accountStateSync,remindersRoot:$('notification-account-reminders'),read:()=>api('/api/accounts'),request:value=>accountsPanel.request(value),requestId:()=>accountsPanel.requestId(),onUpdate:value=>accountsPanel.acceptReminders(value)
+});
+function openCodexUpdates(){
+  if(!accountSettings)return;
+  const dialog=desktopSessions.dialog('Codex Desktop 更新'),content=el('div');dialog.append(content);
+  dialog.addEventListener('close',()=>{if(accountSettings.updatesRoot===content)accountSettings.updatesRoot=null;});
+  dialog.showModal();accountSettings.mountUpdates(content);
+}
 function openCurrentAccounts(){
   const provider=clientNavigation.provider;
   if(!provider)return false;
   if(provider==='codex'){
     if(!accountsPanel)return false;
-    $('accounts-dialog').showModal();accountsPanel.refresh();return true;
+    $('accounts-dialog').showModal();accountsPanel.refresh(true);return true;
   }
   const name=clientNavigation.clients.find(row=>row.id===provider)?.name||provider;
   const dialog=desktopSessions.dialog('账号与接入'),content=el('div','provider-account');

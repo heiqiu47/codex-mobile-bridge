@@ -23,6 +23,7 @@ from bridge.features.accounts.account import AccountRPC, AccountError, Account
 from bridge.clients.desktop_app import DesktopApp
 from bridge.features.accounts.models import model_ids
 from bridge.features.accounts.info import AccountInfo
+from bridge.features.accounts.reset_forecast import ResetForecast
 from bridge.clients.codex.transport import connect_stream
 from bridge.features.notifications.channels import read_json
 
@@ -136,6 +137,7 @@ class Accounts:
         self.discovery = None
         self.candidates = {}
         self.info = AccountInfo(self)
+        self.reset_forecast = ResetForecast()
         from bridge.features.updates.codex import DesktopUpdates
         from bridge.features.accounts.monitor import AccountMonitor
         self.updates = DesktopUpdates(self)
@@ -215,6 +217,7 @@ class Accounts:
                     'loginAccount': copy.deepcopy(self.info.current_login()), 'blockers': self.blockers(),
                     'externalChange': bool(self.index.get('activeId')) and not verified, 'switch': dict(self.state),
                     'reminders':dict(self.monitor.preferences), 'reminderError':self.monitor.last_error,
+                    'globalReset':self.reset_forecast.status(),
                     'desktopUpdate':self.updates.status()}
 
     def desktop_status(self):
@@ -572,6 +575,8 @@ class Accounts:
             self.info.request(value)
             return self.desktop_status()
         if action == 'list':
+            if value.get('resetForecast') is True or value.get('resetForecast') == 'refresh':
+                self.reset_forecast.request(refresh=value.get('resetForecast') == 'refresh')
             return self.desktop_status()
         if action in ('scan', 'import', 'models'):
             return {'scan': self.scan, 'import': self.import_account, 'models': self.models}[action](value)
