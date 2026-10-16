@@ -626,9 +626,17 @@ class Handler(BaseHTTPRequestHandler):
                         raise PermissionError('免密访问不能修改 CLI 接入')
                     return self.output(200, manager.change(self.read_json()))
                 return self.output(200, manager.public())
+            if write and path.startswith('/api/account') and query.get('entry', ['desktop'])[0] != 'desktop':
+                raise ValueError('WSL 接入由原环境管理，不能对它执行桌面账号操作')
             if not write and path == '/api/accounts':
+                entry = query.get('entry', ['desktop'])[0]
+                if entry != 'desktop':
+                    if not entry.startswith('wsl:'):
+                        raise ValueError('未知 Codex 入口')
+                    return self.output(200, self.server.bridge.for_host(entry).access_summary())
                 result = self.server.bridge.accounts.public()
-                result['canSwitch'] = self.server.auth.config.get('mode') != 'none'
+                result['canSwitch'] = result.get('canSwitch', True) and self.server.auth.config.get('mode') != 'none'
+                result['canManageDesktop'] = self.server.auth.config.get('mode') != 'none'
                 return self.output(200, result)
             if write and path == '/api/accounts/reminders':
                 body = self.read_json()
@@ -670,6 +678,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('账号切换请求包含不支持的字段')
                 return self.output(202, self.server.bridge.accounts.switch(body))
             if not write and path == '/api/account':
+                if query.get('entry', ['desktop'])[0] != 'desktop':
+                    return self.output(200, {'visible': False, 'reason': 'WSL 接入由原环境管理'})
                 return self.output(200, self.server.bridge.account.read(refresh=query.get('cached', [''])[0] != '1'))
             if write and path == '/api/account/reset':
                 return self.output(200, self.server.bridge.account.consume(self.read_json()))
@@ -683,7 +693,10 @@ class Handler(BaseHTTPRequestHandler):
                 if source not in ('all', 'desktop', 'cli'):
                     raise ValueError('不支持的会话来源')
                 feed = self.server.notifications.mobile.checkpoint() if self.server.notifications else None
+                entry = query.get('entry', [None])[0]
                 if query.get('scope', [None])[0] == 'host':
+                    if entry not in (None, 'desktop'):
+                        raise ValueError('Codex 入口与主机范围不能同时指定')
                     host = query.get('host', ['local'])[0]
                     host_infos = self.server.bridge.hosts.hosts()
                     if host != 'local' and host not in host_infos:
@@ -700,9 +713,30 @@ class Handler(BaseHTTPRequestHandler):
                                              'remoteHosts': list(host_infos) if host == 'local' else [],
                                              'complete': not target.host_errors,
                                              'notificationRead': {key: feed[key] for key in ('streamId', 'cursor')} if feed else None})
-                rows, available = self.server.bridge.list(query=query.get("q", [""])[0][:200], offset=max(0, int(query.get("offset", [0])[0])), archived=query.get("archived", ["false"])[0] == "true", source=source, include_sources=True)
-                return self.output(200, {"sessions": rows, "availableSources": available, "unavailableHosts": self.server.bridge.host_errors,
-                                        'notificationRead': {key: feed[key] for key in ('streamId', 'cursor')} if feed else None})
+                entry_options = {'entry': entry} if entry else {}
+                rows, available = self.server.bridge.list(
+                    query=query.get("q", [""])[0][:200],
+                    offset=max(0, int(query.get("offset", [0])[0])),
+                    archived=query.get("archived", ["false"])[0] == "true",
+                    source=source, include_sources=True, **entry_options)
+                return self.output(200, {
+                    "sessions": rows, "availableSources": available,
+                    "unavailableHosts": self.server.bridge.host_errors,
+                    'notificationRead': {key: feed[key] for key in ('streamId', 'cursor')} if feed else None})
+            if path == '/api/codex/entries':
+                entries = getattr(self.server.bridge, 'entries', None)
+                if entries is None:
+                    return self.output(200, {'entries': []})
+                if self.server.desktop_sessions:
+                    self.server.desktop_sessions.require_enabled('codex')
+                if not write:
+                    return self.output(200, entries.public())
+                body = self.read_json()
+                if body == {'action': 'scan'}:
+                    return self.output(200, entries.scan())
+                if set(body) != {'action', 'id', 'enabled'} or body['action'] != 'configure':
+                    raise ValueError('Codex 入口请求无效')
+                return self.output(200, entries.configure(body['id'], body['enabled']))
             if not write and path == '/api/projects':
                 return self.output(200, {'projects': self.server.bridge.projects()})
             if write and path == '/api/activity':
@@ -946,6 +980,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('附件上传中断，请重试')
                 return self.output(200, bridge.side_attachment(thread_id, side, 'put', query.get('id', [''])[0], query.get('name', [''])[0], data) if side is not None else bridge.upload(thread_id, query.get('id', [''])[0], query.get('name', [''])[0], data))
             if action == 'notifications':
+                if getattr(bridge, 'capabilities', {}).get('notifications') is False:
+                    if write:
+                        raise ValueError('此 WSL 入口暂不提供后台通知')
+                    return self.output(200, {'available': False, 'watching': False, 'notifyOnCompletion': False})
                 if self.server.notifications is None:
                     return self.output(200, {'available': False, 'watching': False, 'notifyOnCompletion': False})
                 body = self.read_json() if write else {}

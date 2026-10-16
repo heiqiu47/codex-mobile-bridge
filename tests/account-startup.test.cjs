@@ -46,6 +46,15 @@ async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage,accountS
     async retry(){const entry=[...timers.entries()].find(([,t])=>t.delay<=5000);assert.ok(entry,'Account read should retry promptly without user input');timers.delete(entry[0]);await entry[1].fn();await new Promise(setImmediate);}};
 }
 
+test('WSL account URLs stay scoped and an explicit desktop choice restores desktop scope',async()=>{
+ const ui=await fixture(r=>r(official));
+ ui.run("currentId='fixture';currentHost='wsl:original';");
+ assert.equal(ui.run("accountUrl('/api/accounts')"),'/api/accounts?entry=wsl%3Aoriginal');
+ assert.equal(ui.run("accountUrl('/api/account?cached=1')"),'/api/account?cached=1&entry=wsl%3Aoriginal');
+ ui.run("codexEntries.value='wsl:selected';");assert.equal(ui.run("accountUrl('/api/accounts')"),'/api/accounts?entry=wsl%3Aselected');
+ ui.run("codexEntries.value='desktop';");assert.equal(ui.run("accountUrl('/api/accounts')"),'/api/accounts');
+});
+
 test('official and API connections have no current-account fallback outside saved cards',async()=>{
  const desktopHtml=fs.readFileSync(path.join(__dirname,'../desktop/index.html'),'utf8');
  assert.doesNotMatch(desktopHtml,/id="account-(?:details|button|content)"/);

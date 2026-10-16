@@ -158,6 +158,11 @@ class Bridge:
         self._draft_remote_pending = set()
         self.data_dir = Path(data_dir)
         self.hosts = AppHosts(codex_home)
+        if host == 'local':
+            from bridge.features.endpoints.registry import Entries
+            self.entries = Entries(data_dir, codex_home)
+        else:
+            self.entries = None
         self.remote_bridges = {}
         self.host_errors = []
         self.listed = set()
@@ -744,6 +749,8 @@ class Bridge:
     def for_host(self, host):
         if host == self.host:
             return self
+        if isinstance(host, str) and host.startswith('wsl:') and self.entries is not None:
+            return self.entries.get(host)
         available = self.hosts.hosts()
         if self.host != "local" or host not in available:
             raise KeyError("未知 SSH 主机")
@@ -993,7 +1000,12 @@ class Bridge:
         return {'schemaVersion': 1, 'generatedAt': int(time.time()),
                 'remoteHostCount': len(sources) - 1, 'hosts': reports}
 
-    def list(self, query="", limit=100, offset=0, archived=False, source='all', include_sources=False, local_only=False, host_label=None):
+    def list(self, query="", limit=100, offset=0, archived=False, source='all', include_sources=False,
+             local_only=False, host_label=None, entry=None):
+        if entry and entry not in ('desktop', 'all'):
+            return self.for_host(entry).list(
+                query=query, limit=limit, offset=offset, archived=archived,
+                source=source, include_sources=include_sources)
         sources = [(self, host_label or "此电脑")]
         if self.host == 'local' and not local_only:
             sources.extend((self.for_host(host), info.get('displayName') or info['alias']) for host, info in self.hosts.hosts().items())
@@ -1018,9 +1030,16 @@ class Bridge:
             results = list(pool.map(read, sources))
         self.host_errors = [error for _, error, _ in results if error]
         rows = [row for group, _, _ in results for row in group]
+        available_sources = {source for _, _, available in results for source in available}
+        if self.entries is not None and entry != 'desktop' and source != 'desktop':
+            extra, errors = self.entries.lists(
+                query=query, limit=limit + offset, archived=archived, source=source)
+            rows.extend(extra)
+            self.host_errors.extend(errors)
+            available_sources.add('cli')
         rows.sort(key=lambda row: (row['recency'], row['id'], row['host']), reverse=True)
         page = rows[offset:offset + limit]
-        return (page, sorted({source for _, _, available in results for source in available})) if include_sources else page
+        return (page, sorted(available_sources)) if include_sources else page
 
     def activity(self, identifiers):
         if not isinstance(identifiers, list) or len(identifiers) > 500 or any(not isinstance(v, str) for v in identifiers):
@@ -2781,6 +2800,8 @@ class Bridge:
             for timer in self.native_model_timers.values():
                 timer.cancel()
             self.native_model_timers.clear()
+        if self.entries is not None:
+            self.entries.close()
         if self.host == "local" and self.accounts:
             self.accounts.login_cancel.set()
             with self.accounts.lock:

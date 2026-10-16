@@ -19,10 +19,22 @@ class StoreUnavailable(RuntimeError):
 class SessionStore:
     DESKTOP_ORIGINATORS = ('Codex Desktop', 'codex_work_desktop', 'codex_mobile_bridge')
 
-    def __init__(self, codex_home):
+    def __init__(self, codex_home, source='all'):
+        if source not in ('all', 'desktop', 'cli'):
+            raise ValueError('未知会话来源')
+        self.source = source
         self.home = Path(codex_home).resolve()
         self.history_cache = OrderedDict()
         self.history_lock = threading.Lock()
+
+    def _owner_filter(self, columns):
+        if self.source == 'all':
+            return self._user_origin_filter(columns)
+        return self._source_filter(columns, self.source)
+
+    def _matches(self, row):
+        origin = self._origin(row)
+        return origin in ('desktop', 'cli') if self.source == 'all' else origin == self.source
 
     @contextmanager
     def _connect(self):
@@ -72,6 +84,9 @@ class SessionStore:
             where = ["archived = ?"]
             params = [int(archived)]
             where.append(self._user_origin_filter(columns))
+            # The selected source narrows the otherwise shared user inventory.
+            if self.source != 'all':
+                where[-1] = self._owner_filter(columns)
             if "thread_source" in columns:
                 where.append("COALESCE(thread_source, '') != 'subagent'")
             if "source" in columns:
@@ -90,7 +105,7 @@ class SessionStore:
         """Original sources across the complete visible inventory, independent of list filters."""
         with self._connect() as conn:
             columns = {r[1] for r in conn.execute("PRAGMA table_info(threads)")}
-            where = [self._user_origin_filter(columns)]
+            where = [self._owner_filter(columns)]
             if 'thread_source' in columns:
                 where.append("COALESCE(thread_source, '') != 'subagent'")
             if 'source' in columns:
@@ -138,6 +153,8 @@ class SessionStore:
                       for name in ('updated_at', 'updated_at_ms', 'recency_at', 'recency_at_ms') if name in columns]
             clock = 'MAX(' + ','.join('COALESCE(' + c + ',0)' for c in clocks) + ',0)'
             owner = self._user_origin_filter(columns)
+            if self.source != 'all':
+                owner = self._owner_filter(columns)
             filters = [owner, clock + ' >= ?']
             if 'thread_source' in columns:
                 filters.append("COALESCE(thread_source, '') != 'subagent'")
@@ -152,9 +169,8 @@ class SessionStore:
             columns = {r[1] for r in conn.execute('PRAGMA table_info(threads)')}
             fields = [name for name in ('id', 'originator', 'source') if name in columns]
             rows = [dict(row) for row in conn.execute('SELECT ' + ','.join(fields) + ' FROM threads')]
-        desktop = {row['id'] for row in rows if 'originator' not in columns
-                   or row.get('originator') in ('Codex Desktop', 'codex_work_desktop', 'codex_mobile_bridge')
-                   or (row.get('originator') is None and row.get('source') == 'vscode')}
+        desktop = {row['id'] for row in rows if ('originator' not in columns and self.source == 'desktop')
+                   or self._matches(row)}
         children = {}
         for row in rows:
             parent = self._agent_source(row).get('parent_thread_id')
@@ -185,6 +201,9 @@ class SessionStore:
             result = dict(row)
             origin = self._origin(result)
             if origin not in ('desktop', 'cli'):
+                raise KeyError("不是可访问的 Codex 会话")
+            result['origin'] = origin
+            if origin not in ('desktop', 'cli') or not self._matches(result):
                 raise KeyError("不是可访问的 Codex 会话")
             result['origin'] = origin
             return result
