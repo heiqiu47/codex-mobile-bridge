@@ -1003,6 +1003,7 @@ class Bridge:
     def list(self, query="", limit=100, offset=0, archived=False, source='all', include_sources=False,
              local_only=False, host_label=None, entry=None):
         if entry and entry not in ('desktop', 'all'):
+            self.host_errors = []
             return self.for_host(entry).list(
                 query=query, limit=limit, offset=offset, archived=archived,
                 source=source, include_sources=include_sources)

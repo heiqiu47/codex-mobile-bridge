@@ -61,6 +61,7 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
       }
       return response(saved.get(url)||{available:true,watching:false,notifyOnCompletion:false,requests:'inherit',completion:'inherit'});
     }});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/clients/client-navigation.js'),'utf8').match(/^function isCodexClient.*$/m)[0],context);
   for(const file of ['web/hosts/environment.js','web/shared/i18n.js','web/features/chat/list-sync.js','web/features/accounts/account.js','web/features/chat/modes.js','web/features/chat/attachments.js','web/features/chat/activity.js','web/features/chat/fast-mode.js','web/features/chat/message-actions.js','web/features/chat/permissions.js','web/shell/app.js']){
     let source=fs.readFileSync(path.join(__dirname,'..',file),'utf8');
     if(skipStartup&&file==='web/shell/app.js')source=source.replace('startFromLink(initialPairingToken);initialPairingToken=null;','initialPairingToken=null;');

@@ -300,6 +300,25 @@ class SkillStore:
 
 
 class Catalog:
+    @classmethod
+    def normalize_models(cls, rows):
+        """Public model schema shared by desktop and existing WSL runtimes."""
+        result = []
+        for row in rows:
+            if not isinstance(row, dict) or row.get('hidden'):
+                continue
+            identifier = row.get('model') or row.get('id')
+            if not isinstance(identifier, str) or not identifier.strip():
+                continue
+            result.append({'id': identifier, 'name': row.get('displayName') or identifier,
+                           'description': row.get('description') or '',
+                           'efforts': [e['reasoningEffort'] for e in row.get('supportedReasoningEfforts') or []
+                                       if isinstance(e, dict) and e.get('reasoningEffort')],
+                           'defaultEffort': row.get('defaultReasoningEffort'),
+                           'isDefault': row.get('isDefault', False), 'fastTier': cls.fast_tier(row),
+                           'defaultServiceTier': row.get('defaultServiceTier')})
+        return result
+
     METHODS = {"initialize", "model/list", "skills/list", "config/read", "account/read", "configRequirements/read"}
 
     def __init__(self, codex_home, executable=None, allow_background_refresh=True):
@@ -817,10 +836,7 @@ class Catalog:
                         return {**persisted[1], 'modelError': str(exc),
                                 'cache': {'state': 'stale', 'updatedAt': persisted[0], 'identity': identity}}
                     raise
-                models = [{'id': m.get('model', m.get('id')), 'name': m.get('displayName') or m.get('name') or m.get('model') or m.get('id'),
-                           'description': m.get('description', ''), 'efforts': [e['reasoningEffort'] for e in m.get('supportedReasoningEfforts', [])],
-                           'defaultEffort': m.get('defaultReasoningEffort'), 'isDefault': m.get('isDefault', False), 'fastTier': self.fast_tier(m),
-                           'defaultServiceTier': m.get('defaultServiceTier')} for m in raw['models'] if not m.get('hidden')]
+                models = self.normalize_models(raw['models'])
                 value = {'models': models, 'kind': 'models', 'modelSource': raw.get('modelSource', 'codex'),
                          'fastMode': raw.get('fastMode', {'allowed': False}),
                          'modelError': raw.get('modelError'), 'currentModel': raw.get('currentModel'),
@@ -917,10 +933,7 @@ class Catalog:
             except CatalogError:
                 self.cache.pop(key, None)
                 raise
-            models = [{'id': m.get('model', m.get('id')), 'name': m.get('displayName') or m.get('name') or m.get('model') or m.get('id'),
-                       'description': m.get('description', ''), 'efforts': [e['reasoningEffort'] for e in m.get('supportedReasoningEfforts', [])],
-                       'defaultEffort': m.get('defaultReasoningEffort'), 'isDefault': m.get('isDefault', False), 'fastTier': self.fast_tier(m),
-                       'defaultServiceTier': m.get('defaultServiceTier')} for m in raw['models'] if not m.get('hidden')]
+            models = self.normalize_models(raw['models'])
             skills, errors = [], []
             for entry in raw['skillEntries']:
                 errors.extend(entry.get('errors', []))
