@@ -157,6 +157,28 @@ class RuntimeMonitorTests(unittest.TestCase):
             self.assertFalse((Path(folder)/'network-status.json').exists())
             self.assertTrue(manager.closed)
 
+    def test_stable_network_change_notifies_quick_tunnel_once(self):
+        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as folder:
+            manager = FakeRuntimeManager()
+            rows = [dict(row) for row in ROWS]
+            next(row for row in rows if row['id'] == 'en0')['addresses'] = ['192.168.1.7']
+            monitor = RuntimeNetworkMonitor(folder, {'lan': True, 'lanInterfaces': ['en0']},
+                                            8787, manager, 'instance', enumerator=lambda: rows,
+                                            clock=lambda: 0)
+            monitor.scan(initial=True)
+            callbacks = []
+            monitor.network_changed = lambda: callbacks.append(list(manager.active))
+            rows[0]['addresses'] = ['192.168.1.8']
+            monitor.clock = lambda: 2
+            monitor.scan()
+            self.assertEqual(callbacks, [])
+            monitor.clock = lambda: 8
+            monitor.scan()
+            self.assertEqual(callbacks, [['192.168.1.8']])
+            monitor.scan()
+            self.assertEqual(len(callbacks), 1)
+            monitor.close()
+
     def test_selected_offline_adapter_has_no_lan_fallback(self):
         with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as folder:
             manager = FakeRuntimeManager()

@@ -162,6 +162,7 @@ class RuntimeNetworkMonitor:
         self.pending_since = None
         self.interfaces = []
         self.active = []
+        self.network_changed = None
 
     def _desired(self):
         selected = self.preferences.get('lanInterfaces')
@@ -194,6 +195,7 @@ class RuntimeNetworkMonitor:
     def scan(self, initial=False):
         rows = self.enumerator()
         with self.lock:
+            previous = list(self.active)
             self.interfaces = rows
             desired = self._desired()
             signature = json.dumps(desired, separators=(',', ':'))
@@ -205,9 +207,12 @@ class RuntimeNetworkMonitor:
             if ready:
                 self.active, _ = self.manager.apply(desired)
             self.active = self.manager.addresses()
+            changed = ready and self.active != previous
             status = self._status(desired, self.pending_since, ready)
             status.pop('_pendingSince', None)
             _write_status(self.path, status)
+            if changed and self.network_changed:
+                self.network_changed()
             return list(self.active)
 
     def _run(self):

@@ -242,6 +242,7 @@ def main(connections=None, connection_secrets=None):
                 server.hosts.add(host)
                 server.secure_hosts.add(host)
             tunnel = QuickTunnel(args.cloudflared, args.port, args.config.parent, allow_origin)
+            monitor.network_changed = tunnel.network_changed
             def connect_tunnel():
                 try:
                     url = tunnel.start()

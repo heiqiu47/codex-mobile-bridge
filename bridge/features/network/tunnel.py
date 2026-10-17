@@ -33,6 +33,22 @@ class QuickTunnel:
     def status(self, state, message):
         write_json(self.data_dir/'cloudflare-status.json', {'pid': os.getpid(), 'state': state, 'message': message})
 
+    def network_changed(self):
+        """Replace a healthy Quick Tunnel after the local route has changed.
+
+        cloudflared often recovers by itself, but a long-lived edge session can
+        remain half-alive on the previous interface.  A stable address change
+        is the explicit signal to retire the old session and publish a fresh
+        Quick Tunnel; the supervisor owns the replacement.
+        """
+        with self.lifecycle_lock:
+            if self.closed.is_set() or not self.ready.is_set():
+                return False
+            self.ready.clear()
+            self.broken.set()
+        self.status('reconnecting', '电脑网络已变化，正在重建临时 HTTPS；网址会变化。')
+        return True
+
     def start(self):
         if self.closed.is_set():
             raise RuntimeError("隧道已停止")
@@ -61,7 +77,8 @@ class QuickTunnel:
                     pass
                 if self.closed.is_set():
                     break
-                self.status('reconnecting', '临时 HTTPS 已中断，正在自动重建连接；网址会变化。')
+                if self.finished.is_set():
+                    self.status('reconnecting', '临时 HTTPS 已中断，正在自动重建连接；网址会变化。')
             elif self.closed.is_set():
                 break
             elif not self.url:
