@@ -122,14 +122,14 @@ class SessionStore:
             originators = "originator IN ('Codex Desktop', 'codex_work_desktop', 'codex_mobile_bridge')" if 'originator' in columns else '0'
             legacy = "(originator IS NULL AND source = 'vscode')" if 'originator' in columns and 'source' in columns else "source = 'vscode'" if 'source' in columns else '0'
             return '(' + originators + ' OR ' + legacy + ')'
-        originators = "originator IN ('codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli')" if 'originator' in columns else '0'
+        originators = "originator IN ('codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli', 'codex_mobile_bridge_wsl')" if 'originator' in columns else '0'
         legacy = "(originator IS NULL AND source = 'cli')" if 'originator' in columns and 'source' in columns else "source = 'cli'" if 'source' in columns else '0'
         return '(' + originators + ' OR ' + legacy + ')'
 
     @staticmethod
     def _user_origin_filter(columns):
         if 'originator' in columns:
-            recognized = "originator IN ('Codex Desktop', 'codex_work_desktop', 'codex_mobile_bridge', 'codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli')"
+            recognized = "originator IN ('Codex Desktop', 'codex_work_desktop', 'codex_mobile_bridge', 'codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli', 'codex_mobile_bridge_wsl')"
             if 'source' in columns:
                 return '(' + recognized + " OR (originator IS NULL AND source IN ('vscode', 'cli')))"
             return recognized
@@ -141,7 +141,7 @@ class SessionStore:
             return 'subagent'
         if row.get('originator') in cls.DESKTOP_ORIGINATORS or (row.get('originator') is None and row.get('source') == 'vscode'):
             return 'desktop'
-        if row.get('originator') in ('codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli') or (row.get('originator') is None and row.get('source') == 'cli'):
+        if row.get('originator') in ('codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli', 'codex_mobile_bridge_wsl') or (row.get('originator') is None and row.get('source') == 'cli'):
             return 'cli'
         return 'other'
 

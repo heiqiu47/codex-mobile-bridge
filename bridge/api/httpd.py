@@ -738,11 +738,20 @@ class Handler(BaseHTTPRequestHandler):
                 body = self.read_json()
                 if body == {'action': 'scan'}:
                     return self.output(200, entries.scan())
+                if set(body) == {'action', 'id'} and body['action'] == 'connect':
+                    if self.server.desktop_sessions:
+                        self.server.desktop_sessions.require_enabled(body['id'])
+                    return self.output(200, entries.get(body['id']).connect())
                 if set(body) != {'action', 'id', 'enabled'} or body['action'] != 'configure':
                     raise ValueError('Codex 入口请求无效')
                 return self.output(200, entries.configure(body['id'], body['enabled']))
             if not write and path == '/api/projects':
-                return self.output(200, {'projects': self.server.bridge.projects()})
+                entry = query.get('entry', ['desktop'])[0]
+                if self.server.desktop_sessions:
+                    self.server.desktop_sessions.require_enabled(entry if entry.startswith('wsl:') else 'codex')
+                if entry != 'desktop':
+                    return self.output(200, {'projects': self.server.bridge.entries.get(entry).projects()})
+                return self.output(200, {'projects': self.server.bridge.hosts.projects()})
             if write and path == '/api/activity':
                 groups = self.read_json().get('hosts')
                 if not isinstance(groups, dict) or len(groups) > 20:
@@ -755,6 +764,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.output(200, {'sessions': rows})
             if write and path == '/api/sessions':
                 body = self.read_json()
+                entry = query.get('entry', ['desktop'])[0]
+                if self.server.desktop_sessions:
+                    self.server.desktop_sessions.require_enabled(entry if entry.startswith('wsl:') else 'codex')
+                if entry != 'desktop':
+                    return self.output(200, self.server.bridge.entries.get(entry).create_chat(
+                        body.get('project'), body.get('title'), body.get('id')))
                 fields = (body.get('project'), body.get('title'), body.get('id'))
                 result = (self.server.bridge.create_chat(*fields, kind=body['kind']) if 'kind' in body
                           else self.server.bridge.create_chat(*fields))

@@ -77,11 +77,16 @@ function codexScope(){return clientNavigation.provider?.startsWith('wsl:')?clien
 function codexEntry(){const scope=codexScope();return scope==='desktop'?'':scope;}
 function accountUrl(path){const entry=codexScope();return entry==='desktop'?path:path+(path.includes('?')?'&':'?')+'entry='+encodeURIComponent(entry);}
 function refreshEntryAccounts(){accountsPanel?.clear();if($('accounts-dialog').open)accountsPanel?.refresh();}
-clientNavigation.onApplicationChange=(previous,provider)=>{
+clientNavigation.onApplicationChange=(previous,provider,{activate=false}={})=>{
   listGeneration++;saveDraft();listRows=[];availableSources=[];listOffset=0;listHasMore=true;listComplete=false;listReadFinished=false;listFilterKey='';listRenderStamp='';sourceFilterStamp='';
   $('sessions').replaceChildren();$('host-errors').hidden=true;chatTimeline?.dispose();chatTimeline=null;currentId=null;state=null;workbench.reset();$('chat').hidden=true;$('welcome').hidden=false;$('app').classList.remove('chat-open');history.replaceState(null,'',location.pathname);
-  $('new-chat').hidden=!!provider?.startsWith('wsl:');refreshEntryAccounts();renderSourceFilter();
-  if(isCodexClient(provider)&&!$('app').hidden)return loadList(true).catch(e=>toast(e.message));
+  $('new-chat').hidden=false;refreshEntryAccounts();renderSourceFilter();
+  if(isCodexClient(provider)&&!$('app').hidden)return (async()=>{
+    if(activate&&provider.startsWith('wsl:')){
+      try{await api('/api/codex/entries',{action:'connect',id:provider});}catch(e){toast(e.message);}
+    }
+    if(clientNavigation.provider===provider)return loadList(true);
+  })().catch(e=>toast(e.message));
 };
 desktopSessions.onListEnter=()=>{clientNavigation.listReadDone=false;clientNavigation.listVisit=(clientNavigation.listVisit||0)+1;if(!isCodexClient(clientNavigation.provider))desktopSessions.refresh();};
 desktopSessions.onListReady=(provider,value)=>clientNavigation.acknowledgeList(provider,value);
@@ -367,21 +372,37 @@ $('session-diagnostics-export').onclick=event=>{if(BridgeHost.isNativeApp()&&win
 $('archived').onchange=()=>loadList(true).catch(e=>toast(e.message));
 const listSync=window.BridgeListSync=new ListSync({root:$('sessions'),status:$('list-sync'),refresh:()=>loadList(true),visible:()=>!$('app').hidden&&$('sidebar').getBoundingClientRect().width>0,ready:()=>!listLoading&&document.activeElement!==$('search')});
 const contextUsageControl=new ContextUsageControl();$('permissions-button').after(contextUsageControl.button);
-let newChatProjects=[],creatingChat=false,approvalBusy=0;
+let newChatProjects=[],newChatEntry='desktop',creatingChat=false,approvalBusy=0;
+const newChatUrl=path=>path+(newChatEntry.startsWith('wsl:')?'?entry='+encodeURIComponent(newChatEntry):'');
+const independentProject=()=>newChatEntry.startsWith('wsl:')?newChatEntry+'|independent':'local|independent';
 $('new-chat-title').value=t('新聊天');
 $('new-chat-title').oninput=()=>{$('new-chat-title').dataset.edited='true';};
 $('new-chat').onclick=async()=>{
-  if(codexScope().startsWith('wsl:')){toast('WSL 新聊天请先在原终端创建，再在这里选择。');return;}
+  newChatEntry=codexScope();
+  const wsl=newChatEntry.startsWith('wsl:');
+  $('new-chat-client').textContent=clientNavigation.clients.find(row=>row.id===clientNavigation.provider)?.name||'Codex';
+  $('new-chat-description').textContent=t(wsl?'选择 WSL 中的已有项目，或创建独立聊天。创建后可直接发送消息，无需打开终端。':'选择已有项目，或不选择项目创建独立聊天。电脑会打开这条聊天。');
+  $('new-chat-type').closest('label').hidden=wsl;$('new-chat-help').hidden=wsl;
   $('new-chat-error').textContent='';$('new-chat-submit').disabled=true;
   $('new-chat-project').replaceChildren();$('new-chat-path').textContent=t('正在读取电脑项目…');
   $('new-chat-dialog').showModal();
   try{
-    newChatProjects=(await api('/api/projects')).projects;
-    $('new-chat-type').onchange();
+    if(wsl)await api('/api/codex/entries',{action:'connect',id:newChatEntry});
+    newChatProjects=(await api(newChatUrl('/api/projects'))).projects;
+    if(wsl){
+      $('new-chat-project').append(new Option(t('不选择项目'),independentProject()));
+      for(const project of newChatProjects)$('new-chat-project').append(new Option(project.name+' · '+(project.host==='local'?t('此电脑'):project.hostLabel),project.key));
+      const selected=listRows.find(row=>row.id===currentId&&row.host===currentHost)?.projectKey;
+      if(newChatProjects.some(p=>p.key===selected))$('new-chat-project').value=selected;
+      $('new-chat-project').onchange();
+      $('new-chat-submit').disabled=!$('new-chat-project').value;
+      $('new-chat-submit').textContent=t('创建聊天');
+    }else $('new-chat-type').onchange();
   }catch(e){$('new-chat-error').textContent=t(e.message);$('new-chat-path').textContent='';}
 };
 $('new-chat-type').onchange=()=>{
   const kind=$('new-chat-type').value,selected=listRows.find(row=>row.id===currentId&&row.host===currentHost)?.projectKey;
+  $('new-chat-type').closest('label').hidden=false;$('new-chat-help').hidden=false;
   $('new-chat-help').textContent=t(kind==='cli'?'选择已有 CLI 项目目录，在此创建聊天。':'选择已有项目，或不选择项目创建独立聊天。电脑会打开这条聊天。');
   $('new-chat-project').replaceChildren();
   if(kind==='desktop')$('new-chat-project').append(new Option(t('不选择项目'),'local|independent'));
@@ -391,21 +412,23 @@ $('new-chat-type').onchange=()=>{
   $('new-chat-submit').disabled=!$('new-chat-project').value;
   $('new-chat-submit').textContent=t(kind==='cli'?'创建聊天':'创建并打开');
 };
-$('new-chat-project').onchange=()=>{$('new-chat-path').textContent=$('new-chat-project').value==='local|independent'?t('在此电脑创建独立聊天'):newChatProjects.find(p=>p.key===$('new-chat-project').value)?.cwd||'';};
+$('new-chat-project').onchange=()=>{$('new-chat-path').textContent=$('new-chat-project').value===independentProject()?t(newChatEntry.startsWith('wsl:')?'在 WSL 中创建独立聊天':'在此电脑创建独立聊天'):newChatProjects.find(p=>p.key===$('new-chat-project').value)?.cwd||'';};
 $('new-chat-dialog').addEventListener('cancel',event=>{if(creatingChat)event.preventDefault();});
 $('new-chat-form').onsubmit=async event=>{
   event.preventDefault();if(creatingChat)return;
-  const project=$('new-chat-project').value,title=$('new-chat-title').value.trim(),kind=$('new-chat-type').value;
+  const project=$('new-chat-project').value,title=$('new-chat-title').value.trim(),kind=newChatEntry.startsWith('wsl:')?'wsl':$('new-chat-type').value;
   if(!project||!title){$('new-chat-error').textContent=t('请选择项目或不选择项目，并填写聊天名称。');return;}
   let attempt;
   try{attempt=JSON.parse(sessionStorage.getItem('new-chat-attempt')||'null');}catch{}
-  if(!attempt||attempt.project!==project||attempt.title!==title||attempt.kind!==kind)attempt={id:uuid(),project,title,kind};
+  const attemptKind=kind==='wsl'?undefined:kind;
+  if(!attempt||attempt.project!==project||attempt.title!==title||attempt.entry!==newChatEntry||attempt.kind!==attemptKind)attempt={id:uuid(),project,title,entry:newChatEntry,...(attemptKind?{kind:attemptKind}:{})};
   sessionStorage.setItem('new-chat-attempt',JSON.stringify(attempt));
   creatingChat=true;setLanguageBusy();$('new-chat-error').textContent='';$('new-chat-submit').textContent=t('正在创建…');
   $('new-chat-form').querySelectorAll('input,select,button').forEach(n=>n.disabled=true);
   document.querySelector('[data-close="new-chat-dialog"]').disabled=true;
   try{
-    const result=await api('/api/sessions',attempt);
+    const {entry,...request}=attempt;
+    const result=await api(newChatUrl('/api/sessions'),request);
     sessionStorage.removeItem('new-chat-attempt');$('new-chat-dialog').close();
     $('search').value='';$('archived').value='false';
     loadList(true).catch(e=>toast(e.message));toast(result.message);
@@ -414,7 +437,7 @@ $('new-chat-form').onsubmit=async event=>{
     if($('new-chat-dialog').open)$('new-chat-error').textContent=t(e.message)+t('；若结果不确定，请先刷新列表检查，避免重复创建。');
     else toast(t('聊天已创建，连接暂未完成：')+t(e.message));
   }finally{
-    creatingChat=false;setLanguageBusy();$('new-chat-submit').textContent=t(kind==='cli'?'创建聊天':'创建并打开');
+    creatingChat=false;setLanguageBusy();$('new-chat-submit').textContent=t(kind==='desktop'?'创建并打开':'创建聊天');
     $('new-chat-form').querySelectorAll('input,select,button').forEach(n=>n.disabled=false);
     $('new-chat-submit').disabled=!$('new-chat-project').value;
     document.querySelector('[data-close="new-chat-dialog"]').disabled=false;
@@ -532,7 +555,18 @@ async function saveNotificationDefaults(){
 }
 $('notification-requests').onchange=$('notification-completions').onchange=saveNotificationDefaults;
 $('back').onclick=()=>{workbench.cancelLocate();desktopSessions.onListEnter();workbench.rememberScroll();workbench.stopThumbnails();$('app').classList.remove('chat-open');history.replaceState(null,'',location.pathname);loadList(true).catch(e=>toast(e.message));};
+function applyEntryCapabilities(view){
+  if(!view?.endpointId?.startsWith('wsl:')||!view.capabilities)return;
+  const caps=view.capabilities;
+  for(const [id,capability] of [['permissions-button','permissions'],['skills-button','skills'],['notify-button','notifications']])$(id).hidden=caps[capability]===false;
+  const queue=$('send-mode').querySelector('[value=queue]');if(queue)queue.disabled=caps.queue===false;
+  if(caps.queue===false&&$('send-mode').value==='queue')$('send-mode').value='send';
+  if(caps.skills===false){selectedSkills.clear();invalidSkills.clear();renderSkillPills();}
+  if(caps.plan===false){workModes.selection='default';$('work-mode').value='default';}
+  $('work-mode').hidden=caps.plan===false;
+}
 function renderState(view){
+  applyEntryCapabilities(view);
   contextUsageControl.update(view);state=view;if(typeof bindCodexDraft==='function')bindCodexDraft(view);
   if(typeof document!=='undefined')for(const dialog of document.querySelectorAll('dialog[data-permission-runtime]')){
     if(!view.connected||dialog.dataset.permissionThread!==currentId||dialog.dataset.permissionHost!==currentHost||
@@ -552,10 +586,10 @@ function renderState(view){
   $('model-name').textContent=view.model||t('模型');
   $('model-effort').textContent=view.effort?'· '+view.effort:'';$('model-effort').hidden=!view.effort;
   $('model-button').title=[view.model||t('模型'),view.effort].filter(Boolean).join(' · ');$('provider').textContent=[view.model,view.provider].filter(Boolean).join(' · ');
-  $('status').textContent=!view.connected?(view.loadingHistory?t('读取历史中'):access.source==='cli'?t('历史记录'):view.activating?t('正在加载桌面聊天…'):view.connecting?t('连接桌面中'):t('历史记录')):view.requests.length?t('等待回应'):view.status==='active'?t('运行中'):t('已连接');
+  $('status').textContent=!view.connected?(view.loadingHistory?t('读取历史中'):view.activating?t('正在恢复会话…'):access.source==='cli'?t('历史记录'):view.connecting?t('连接桌面中'):t('历史记录')):view.requests.length?t('等待回应'):view.status==='active'?t('运行中'):t('已连接');
   $('status').classList.toggle('offline',!view.connected);
   $('notice').hidden=view.connected;
-  $('notice-text').textContent=access.source==='cli'?(t(reconnectFailure||view.connectionError)||t(access.canReconnect?'可先阅读聊天历史；继续时将连接或恢复原 CLI 会话。':access.reason||'CLI 聊天历史可阅读；当前无法继续此会话。')):limited&&!access.canReconnect?(t(access.reason)||t('已保存的历史可阅读；当前来源未提供远程控制。')):view.activating?t('正在自动连接；必要时会在电脑 Codex 中打开此聊天。'):view.connecting?t('正在连接桌面，可先阅读已保存的历史。'):t(view.connectionError)||t('暂未连接，可先阅读历史或点击重新连接。');
+  $('notice-text').textContent=view.readOnlyReason?t(view.readOnlyReason):access.source==='cli'?(t(reconnectFailure||view.connectionError)||t(access.canReconnect?'可先阅读聊天历史；继续时将连接或恢复原 CLI 会话。':access.reason||'CLI 聊天历史可阅读；当前无法继续此会话。')):limited&&!access.canReconnect?(t(access.reason)||t('已保存的历史可阅读；当前来源未提供远程控制。')):view.activating?t('正在自动连接；必要时会在电脑 Codex 中打开此聊天。'):view.connecting?t('正在连接桌面，可先阅读已保存的历史。'):t(view.connectionError)||t('暂未连接，可先阅读历史或点击重新连接。');
   $('reconnect').hidden=limited&&!access.canReconnect;
   $('reconnect').textContent=t(access.source==='cli'?'继续会话':'重新连接');
   $('history').hidden=view.historyComplete||!view.connected;
