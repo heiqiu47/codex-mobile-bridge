@@ -84,18 +84,20 @@ class LinuxTests(unittest.TestCase):
     def test_linux_interfaces_do_not_depend_on_hostname_dns(self):
         data = [{'addr_info': [{'family': 'inet', 'local': ip} for ip in
                               ('127.0.0.1', '192.168.1.7', '172.16.1.2', '192.168.1.7', '0.0.0.0')]}]
-        with patch('run.sys.platform', 'linux'), patch('run.shutil.which', return_value='/usr/sbin/ip'), \
-                patch('run.subprocess.run', return_value=subprocess.CompletedProcess([], 0, json.dumps(data))) as command, \
-                patch('run.socket.getaddrinfo') as dns:
+        with patch('bridge.features.network.interfaces.platform.system', return_value='Linux'), \
+                patch('bridge.features.network.interfaces.shutil.which', return_value='/usr/sbin/ip'), \
+                patch('bridge.features.network.interfaces.subprocess.run',
+                      return_value=subprocess.CompletedProcess([], 0, json.dumps(data))) as command, \
+                patch('bridge.features.network.interfaces.socket.getaddrinfo') as dns:
             self.assertEqual(run.addresses(), ['127.0.0.1', '172.16.1.2', '192.168.1.7', 'localhost'])
             self.assertEqual(command.call_args.args[0], ['/usr/sbin/ip', '-j', '-4', 'address', 'show', 'up'])
             dns.assert_not_called()
 
     def test_ip_failures_fall_back_without_breaking_startup(self):
         for value in ('invalid json', '{}', '[null]'):
-            with self.subTest(value=value), patch('run.sys.platform', 'linux'), \
-                    patch('run.shutil.which', return_value='/usr/sbin/ip'), \
-                    patch('run.subprocess.run', return_value=subprocess.CompletedProcess([], 0, value)), \
-                    patch.object(Path, 'exists', return_value=False), \
-                    patch('run.socket.getaddrinfo', return_value=[(None, None, None, None, ('192.168.1.9', 0))]):
+            with self.subTest(value=value), patch('bridge.features.network.interfaces.platform.system', return_value='Linux'), \
+                    patch('bridge.features.network.interfaces.shutil.which', return_value='/usr/sbin/ip'), \
+                    patch('bridge.features.network.interfaces.subprocess.run', return_value=subprocess.CompletedProcess([], 0, value)), \
+                    patch('bridge.features.network.interfaces._linux_rows', return_value=[]), \
+                    patch('bridge.features.network.interfaces.socket.getaddrinfo', return_value=[(None, None, None, None, ('192.168.1.9', 0))]):
                 self.assertIn('192.168.1.9', run.addresses())

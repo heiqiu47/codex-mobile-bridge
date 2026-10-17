@@ -51,14 +51,22 @@ class SelectionTests(unittest.TestCase):
             value = desktop.snapshot()
             value['preferences'].update(codexHome=folder, lanAddresses=['192.0.2.7'], localAccess=False)
             saved = desktop.save(value)
-            self.assertEqual(saved['urls'], ['http://192.0.2.7:8787/'])
+            self.assertEqual(saved['urls'], [])
             self.assertEqual(desktop.config()['lanAddresses'], ['192.0.2.7'])
+            self.assertEqual(desktop.config()['lanInterfaces'], [])
             self.assertFalse(desktop.config()['localAccess'])
-            with patch('bridge.app.desktop.socket.socket') as sock, patch('bridge.app.desktop.subprocess.Popen') as spawn:
+            with patch('bridge.app.desktop.interfaces.enumerate_interfaces', return_value=[]), \
+                    patch('bridge.app.desktop.socket.socket') as sock, \
+                    patch('bridge.app.desktop.subprocess.Popen') as spawn:
                 sock.return_value.bind.side_effect = OSError('address unavailable')
                 with self.assertRaisesRegex(ValueError, '不会自动开放'):
                     desktop.start()
                 spawn.assert_not_called()
+            with patch('bridge.app.desktop.interfaces.enumerate_interfaces', return_value=[]), \
+                    patch('bridge.app.desktop.socket.socket'), \
+                    patch('bridge.app.desktop.subprocess.Popen') as spawn:
+                desktop.start()
+                spawn.assert_called_once()
             invalid = copy.deepcopy(value)
             invalid['preferences']['lanAddresses'] = ['0.0.0.0']
             with self.assertRaises(ValueError):

@@ -37,7 +37,7 @@ def ready_url(tunnel, port, instance_id):
     return url
 
 
-def entry_urls(preferences, hosts, quick_url='', external_status=None):
+def entry_urls(preferences, hosts, quick_url='', external_status=None, lan_addresses=None):
     """Enabled fixed entries, live tunnels, and selected LAN listeners, in click order."""
     urls = []
     for entry in preferences.get('connections', []):
@@ -50,7 +50,8 @@ def entry_urls(preferences, hosts, quick_url='', external_status=None):
     if quick_url:
         urls.append(quick_url.rstrip('/'))
     if preferences.get('lan'):
-        selected = preferences.get('lanAddresses')
+        selected = preferences.get('lanAddresses') if lan_addresses is None else None
+        allowed = set(lan_addresses) if lan_addresses is not None else None
         for host in hosts:
             try:
                 address = ipaddress.ip_address(host)
@@ -58,7 +59,9 @@ def entry_urls(preferences, hosts, quick_url='', external_status=None):
                 continue
             if address.is_loopback or address.is_unspecified or address.is_multicast:
                 continue
-            if selected is None or host in selected:
+            if allowed is not None or selected is None or host in selected:
+                if allowed is not None and host not in allowed:
+                    continue
                 urls.append(f'http://{host}:{preferences["port"]}')
     return list(dict.fromkeys(urls))
 

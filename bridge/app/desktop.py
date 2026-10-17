@@ -22,6 +22,7 @@ from bridge.clients.codex.remote import AppHosts
 from bridge.clients.codex.catalog import Catalog
 import bridge.features.network.access as access
 import bridge.features.network.addresses as network
+import bridge.features.network.interfaces as interfaces
 from bridge.api.validation import FieldError, at_field
 
 
@@ -101,13 +102,21 @@ class Desktop:
         detected = str(bundled) if bundled.is_file() else str(executable) if executable.is_file() else shutil.which(name) or ''
         if not detected and sys.platform == 'darwin':
             detected = next((value for value in ('/opt/homebrew/bin/cloudflared', '/usr/local/bin/cloudflared') if Path(value).is_file()), '')
-        defaults = {'autoStart': False, 'port': 8787, 'lan': True, 'lanAddresses': None, 'localAccess': True, 'tunnel': (self.data_dir/'外网地址.txt').exists(),
+        defaults = {'autoStart': False, 'port': 8787, 'lan': True, 'lanAddresses': None, 'lanInterfaces': None,
+                    'localAccess': True, 'tunnel': (self.data_dir/'外网地址.txt').exists(),
                     'cloudflared': detected,
                     'codexHome': os.environ.get('CODEX_HOME', str(Path.home()/'.codex')),
                     'ipcPath': '', 'codexBin': ''}
         saved = read_json(self.data_dir/'desktop.json', {})
         if not saved.get('cloudflared') or not Path(saved['cloudflared']).is_file():
             saved['cloudflared'] = defaults['cloudflared']
+        if 'lanInterfaces' not in saved:
+            if saved.get('lanAddresses') is not None:
+                rows = interfaces.enumerate_interfaces()
+                saved['lanInterfaces'] = interfaces.migrate_addresses_to_interfaces(
+                    rows, network.selected_addresses(saved.get('lanAddresses')))
+            else:
+                saved['lanInterfaces'] = None
         rows = access.connections({**defaults, **saved})
         return {**defaults, **{k: v for k, v in saved.items() if k not in access.DEFAULTS},
                 'connections': rows, 'tunnel': any(c['enabled'] and c['accessMode'] == 'quick' for c in rows)}
@@ -153,9 +162,22 @@ class Desktop:
         config = self.config()
         preferences = self.preferences()
         runtime = self.status()
-        from run import addresses
-        selected = preferences.get('lanAddresses')
-        hosts = (addresses() if selected is None else ['127.0.0.1'] + selected) if preferences['lan'] else ['127.0.0.1']
+        rows = interfaces.enumerate_interfaces()
+        selected = interfaces.selected_interfaces(preferences.get('lanInterfaces'))
+        static_addresses = interfaces.addresses_for_interfaces(rows, selected)
+        network_status = {}
+        if runtime['running']:
+            value = read_json(self.data_dir/'network-status.json', {})
+            if (value.get('pid') == runtime.get('pid') and
+                    value.get('instanceId') == runtime.get('instanceId') and
+                    value.get('mode') == ('off' if not preferences['lan'] else
+                                          'all' if selected is None else 'selected')):
+                network_status = value
+                static_addresses = interfaces.addresses_for_interfaces(
+                    value.get('interfaces', []), value.get('selectedInterfaces', selected)) \
+                    if selected is not None or value.get('mode') == 'selected' else \
+                    interfaces.interface_addresses(value.get('interfaces', []))
+        hosts = ['127.0.0.1', 'localhost'] + static_addresses if preferences['lan'] else ['127.0.0.1', 'localhost']
         if not preferences['localAccess']:
             hosts = [host for host in hosts if host not in ('127.0.0.1', 'localhost')]
         urls = [f'http://{host}:{preferences["port"]}/' for host in hosts if host != 'localhost']
@@ -180,7 +202,8 @@ class Desktop:
         executable = preferences['cloudflared']
         cloudflared = {'path': executable, 'available': bool(executable and Path(executable).is_file() and os.access(executable, os.X_OK))}
         from bridge.features.notifications.addresses import entry_urls
-        notification_urls = entry_urls(preferences, hosts, quick_url, external) if runtime['running'] else []
+        notification_urls = entry_urls(preferences, hosts, quick_url, external,
+                                       lan_addresses=static_addresses) if runtime['running'] else []
         notifications = settings(self.data_dir)
         return {'preferences': preferences, 'auth': {'username': config['auth'].get('username', 'admin'), 'mode': config['auth']['mode'], 'sessionHours': config['auth'].get('sessionHours', 12)},
                 'origins': config.get('origins', []), 'notifications': {**notifications, 'token': '', 'hasToken': bool(notifications['token']), 'barkKey': '', 'hasBarkKey': bool(notifications['barkKey']), 'pushplusToken': '', 'hasPushplusToken': bool(notifications['pushplusToken']), **visible_webhook(notifications)},
@@ -190,6 +213,7 @@ class Desktop:
                 'addressNotificationStatus': read_json(self.data_dir/'address-notifications.json', {}),
                 'notificationStatus': read_json(self.data_dir/'notification-status.json', {}),
                 'dataDir': str(self.data_dir), 'credentialsAvailable': (self.data_dir/'首次登录.txt').exists(),
+                'networkInterfaces': rows, 'networkStatus': network_status,
                 'runtime': runtime, 'urls': urls, 'externalStatus': external, 'cloudflared': cloudflared, 'quickTunnel': quick}
 
     def save(self, value):
@@ -199,12 +223,21 @@ class Desktop:
     def _save(self, value):
         old_preferences = self.preferences()
         preferences = {**old_preferences, **{k: v for k, v in value['preferences'].items() if k in old_preferences}}
+        incoming_preferences = value.get('preferences', {})
+        incoming_interfaces = incoming_preferences.get('lanInterfaces')
+        if (incoming_interfaces is None and 'lanInterfaces' not in incoming_preferences) or \
+                (incoming_interfaces is None and incoming_preferences.get('lanAddresses') is not None):
+            preferences['lanInterfaces'] = interfaces.migrate_addresses_to_interfaces(
+                interfaces.enumerate_interfaces(), incoming_preferences.get('lanAddresses',
+                                                                          preferences.get('lanAddresses')))
         preferences['connections'] = access.validate_connections(preferences)
         preferences['tunnel'] = any(c['enabled'] and c['accessMode'] == 'quick' for c in preferences['connections'])
         port = preferences['port']
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
             raise FieldError('端口必须为 1–65535', 'port')
         preferences['lanAddresses'] = at_field('lan-scope', network.selected_addresses, preferences['lanAddresses'])
+        preferences['lanInterfaces'] = at_field('lan-scope', interfaces.selected_interfaces,
+                                                preferences['lanInterfaces'])
         for key in ('lan', 'tunnel', 'autoStart', 'localAccess'):
             if not isinstance(preferences[key], bool):
                 raise ValueError('网络开关格式不正确')
@@ -257,6 +290,7 @@ class Desktop:
         config['publicUrl'] = access.public_url(preferences)
         config['connections'] = preferences['connections']
         config['lanAddresses'] = preferences['lanAddresses']
+        config['lanInterfaces'] = preferences['lanInterfaces']
         config['localAccess'] = preferences['localAccess']
         if preserve_bound_devices:
             Auth.preserve_trusted_on_password_change(old_auth, config['auth'], self.data_dir,
@@ -311,14 +345,15 @@ class Desktop:
                 if entry['accessMode'] == 'server' and entry.get('sshAuth') == 'password' and not secret.get('password'):
                     raise FieldError('请先填写并保存 SSH 密码。', 'password', entry['id'])
                 temporary[entry['id']] = secret
-        for address in network.bindings(preferences):
+        rows = interfaces.enumerate_interfaces()
+        for address in network.bindings(preferences, rows):
             probe = socket.socket()
             if os.name != "nt":
                 probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 probe.bind((address, preferences['port']))
             except OSError as exc:
-                raise ValueError('所选地址不可用或端口已被占用，请检查网卡与端口；不会自动开放其他地址') from exc
+                raise ValueError('所选网卡地址不可用或端口已被占用，请检查网卡与端口；不会自动开放其他网卡') from exc
             finally:
                 probe.close()
         command = [sys.executable] if getattr(sys, 'frozen', False) else [sys.executable, str(project_root()/'desktop.py')]
