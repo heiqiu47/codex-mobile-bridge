@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 def addresses():
-    return sorted({'127.0.0.1', 'localhost'} | set(interfaces.interface_addresses()))
+    return sorted({'127.0.0.1', 'localhost'} | set(interfaces.eligible_lan_addresses()))
 
 
 def save_config(path, config):
@@ -112,7 +112,7 @@ def main(connections=None, connection_secrets=None):
         if parsed.scheme != "https" or not parsed.hostname or parsed.path or parsed.query or parsed.fragment or parsed.username or parsed.password:
             parser.error("额外 origin 必须是完整 HTTPS 源且不能有路径")
     if args.lan and preferences['lanInterfaces'] is None:
-        hosts = ['127.0.0.1', 'localhost'] + interfaces.interface_addresses(rows)
+        hosts = ['127.0.0.1', 'localhost'] + interfaces.eligible_lan_addresses(rows)
     elif args.lan:
         hosts = ['127.0.0.1', 'localhost'] + interfaces.addresses_for_interfaces(
             rows, preferences['lanInterfaces'])
@@ -125,9 +125,9 @@ def main(connections=None, connection_secrets=None):
     tailscale_port = None
     try:
         startup_bindings = network.bindings(preferences, rows)
-        if args.lan and preferences['lanInterfaces'] is not None:
-            # Selected adapter listeners are owned by the runtime monitor so a
-            # DHCP change can replace them without restarting the process.
+        if args.lan:
+            # Both auto-LAN and selected adapters are owned by the runtime
+            # monitor, so DHCP changes replace listeners without a restart.
             startup_bindings = ['127.0.0.1']
         for address in startup_bindings:
             servers.append(GatewayServer((address, args.port), bridge, config, ROOT / 'web', args.config.parent,
@@ -147,10 +147,9 @@ def main(connections=None, connection_secrets=None):
         bridge.close()
         raise
     server = servers[0]
-    selected_mode = args.lan and preferences['lanInterfaces'] is not None
     listener_manager = DynamicListenerManager(
         server, args.port, bridge, config, ROOT / 'web', GatewayServer,
-        wildcard=args.lan and preferences['lanInterfaces'] is None)
+        wildcard=False)
     listener_threads = []
     pid_file = args.config.parent / "gateway.pid"
     pid_file.write_text(str(os.getpid()), encoding='utf-8')

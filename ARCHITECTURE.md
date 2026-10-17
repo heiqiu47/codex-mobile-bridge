@@ -128,7 +128,7 @@ Windows `desktop/shell/tray.cjs` 管理托盘状态、手机地址和两种退�
 
 ## 固定 HTTPS 入口
 
-桌面 `connections` 保存可独立启用的 Quick Tunnel、自有服务器 SSH 和 NAS 配置，局域网监听由 `lan` 控制。`lanInterfaces: null` 保持所有 IPv4 网卡监听；数组保存网卡身份，同一网卡 DHCP 地址变化后由网关运行时替换 listener 并同步通知，空数组只保留回环，未选网卡不会自动开放。`lanAddresses` 仅兼容旧配置。各监听器共享同一个认证、配对、通知和会话状态。`localAccess: false` 关闭本机网页入口，回环仅允许无会话信息的私有 `/api/health` 检查和保留 Host 的已授权 HTTPS 隧道；停机关闭全部监听器。地址集合需连续 6 秒稳定才应用；旧 HTTP 网卡来源不会跨启动继续信任。旧单入口配置在读取时转换，保存前不改写文件。`bridge/features/network/access.py` 验证地址，生成不含凭据的 Caddy/Nginx Compose 部署包；所有启用的固定 URL 自动加入允许源，第一个启用的固定 URL 优先用于通知链接（显式 clickBase 仍优先）。停用或删除配置时移除对应托管固定源，保留其他手动 HTTPS 源。
+桌面 `connections` 保存可独立启用的 Quick Tunnel、自有服务器 SSH 和 NAS 配置，局域网监听由 `lan` 控制。`lanInterfaces: null` 表示自动内网地址：只发布物理网卡上的 RFC1918 地址，Parallels/WSL/Docker/VPN 等虚拟网卡和公网地址不会成为入口或通知；数组保存网卡身份，同一网卡 DHCP 地址变化后由网关运行时替换 listener 并同步通知，空数组只保留回环，未选网卡不会自动开放。`lanAddresses` 仅兼容旧配置。各监听器共享同一个认证、配对、通知和会话状态。`localAccess: false` 关闭本机网页入口，回环仅允许无会话信息的私有 `/api/health` 检查和保留 Host 的已授权 HTTPS 隧道；停机关闭全部监听器。地址集合需连续 6 秒稳定才应用；旧 HTTP 网卡来源不会跨启动继续信任。旧单入口配置在读取时转换，保存前不改写文件。`bridge/features/network/access.py` 验证地址，生成不含凭据的 Caddy/Nginx Compose 部署包；所有启用的固定 URL 自动加入允许源，第一个启用的固定 URL 优先用于通知链接（显式 clickBase 仍优先）。停用或删除配置时移除对应托管固定源，保留其他手动 HTTPS 源。
 
 `accessMode: external` 只保存用户自管穿透或同机 HTTPS 反代的 `publicUrl`，要求可信 HTTPS 根地址，可包含端口；上游由用户指向电脑网关的实际回环端口。该模式不管理 SSH、frpc 或反代进程，即使 `lan: false`、`localAccess: false` 仍保留受公开 Host 约束的回环上游。跨设备 NAS 继续使用 `nas`，要求启用 LAN 并填写端口匹配、非回环的 `proxyUpstream`。固定入口和扫码前的探测不发送凭据、不跟随重定向、不跳过证书验证；仅核对本次网关实例，不用 `instanceId` 迁移或授予登录凭据。
 

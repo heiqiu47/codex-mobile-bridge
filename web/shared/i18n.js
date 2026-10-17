@@ -1622,9 +1622,9 @@ const en={
 
   "PushPlus 通知": "PushPlus notifications",
   "局域网访问范围": "LAN access scope",
-  "所有 IPv4 地址": "All IPv4 addresses",
+  "自动内网地址": "Automatic LAN addresses",
   "仅选中的网卡": "Selected adapters only",
-  "按网卡选择可排除 WSL、VMware 等虚拟网卡。同一网卡的 IP 变化会自动跟随；不会自动开放未选网卡。": "Select adapters to exclude virtual adapters such as WSL or VMware. Address changes on a selected adapter are followed automatically; unselected adapters are never opened.",
+  "自动模式只发布物理网卡上的私有内网地址；Parallels、WSL、Docker 和 VPN 虚拟网卡不会出现在通知里。选择网卡可自定义范围，同一网卡的 IP 变化会自动跟随。": "Automatic mode publishes private LAN addresses on physical adapters only; Parallels, WSL, Docker and VPN virtual adapters never appear in notifications. Select adapters for a custom scope, and address changes on a selected adapter are followed automatically.",
   "允许本机网页访问（127.0.0.1 / localhost）": "Allow local browser access (127.0.0.1 / localhost)",
   "关闭后隐藏本机地址并拒绝本机网页访问；桌面状态检查和 HTTPS 隧道仍保留内部回环连接。": "When off, local URLs are hidden and local browser access is blocked. Desktop status checks and HTTPS tunnels retain an internal loopback connection.",
   "项目主页 ↗": "Project home ↗",

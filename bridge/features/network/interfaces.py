@@ -190,6 +190,48 @@ def interface_addresses(rows=None):
     return sorted({address for row in rows for address in row['addresses']})
 
 
+VIRTUAL_MARKERS = (
+    'bridge', 'vmenet', 'vmnet', 'veth', 'virbr', 'docker', 'vEthernet',
+    'utun', 'tun', 'tap', 'wg', 'awdl', 'llw', 'anpi', 'ap1', 'loopback', 'WSL',
+)
+
+
+def is_virtual_interface(row):
+    text = f"{row.get('id', '')} {row.get('name', '')}".lower()
+    return any(marker.lower() in text for marker in VIRTUAL_MARKERS)
+
+
+def eligible_lan_addresses(rows=None):
+    """Addresses that may be published as same-LAN HTTP entries.
+
+    Virtual host-only and provider networks (Parallels/WSL/Docker/VPN) must not
+    become notification entries merely because the adapter has an RFC1918 IP.
+    Public addresses are also never published as LAN entries.
+    """
+    rows = enumerate_interfaces() if rows is None else rows
+    result = []
+    private_networks = (ipaddress.IPv4Network('10.0.0.0/8'),
+                        ipaddress.IPv4Network('172.16.0.0/12'),
+                        ipaddress.IPv4Network('192.168.0.0/16'))
+    for row in rows:
+        if is_virtual_interface(row):
+            continue
+        for value in row.get('addresses', []):
+            try:
+                address = ipaddress.IPv4Address(value)
+            except (ipaddress.AddressValueError, TypeError):
+                continue
+            if (address.is_loopback or address.is_unspecified or address.is_multicast or
+                    address.is_link_local or not any(address in network for network in private_networks)):
+                continue
+            if address in ipaddress.IPv4Network('100.64.0.0/10'):
+                continue
+            address = str(address)
+            if address not in result:
+                result.append(address)
+    return sorted(result, key=ipaddress.IPv4Address)
+
+
 def selected_interfaces(value):
     if value is None:
         return None

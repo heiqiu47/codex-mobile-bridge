@@ -168,7 +168,8 @@ class RuntimeNetworkMonitor:
         if not self.preferences.get('lan'):
             return []
         if selected is None:
-            return sorted({address for row in self.interfaces for address in row['addresses']})
+            from bridge.features.network.interfaces import eligible_lan_addresses
+            return eligible_lan_addresses(self.interfaces)
         wanted = set(selected)
         return sorted({address for row in self.interfaces if row['id'] in wanted
                        for address in row['addresses']})

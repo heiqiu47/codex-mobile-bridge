@@ -164,7 +164,8 @@ class Desktop:
         runtime = self.status()
         rows = interfaces.enumerate_interfaces()
         selected = interfaces.selected_interfaces(preferences.get('lanInterfaces'))
-        static_addresses = interfaces.addresses_for_interfaces(rows, selected)
+        static_addresses = (interfaces.eligible_lan_addresses(rows) if selected is None else
+                            interfaces.addresses_for_interfaces(rows, selected))
         network_status = {}
         if runtime['running']:
             value = read_json(self.data_dir/'network-status.json', {})
@@ -176,7 +177,7 @@ class Desktop:
                 static_addresses = interfaces.addresses_for_interfaces(
                     value.get('interfaces', []), value.get('selectedInterfaces', selected)) \
                     if selected is not None or value.get('mode') == 'selected' else \
-                    interfaces.interface_addresses(value.get('interfaces', []))
+                    interfaces.eligible_lan_addresses(value.get('interfaces', []))
         hosts = ['127.0.0.1', 'localhost'] + static_addresses if preferences['lan'] else ['127.0.0.1', 'localhost']
         if not preferences['localAccess']:
             hosts = [host for host in hosts if host not in ('127.0.0.1', 'localhost')]

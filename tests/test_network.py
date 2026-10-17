@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class SelectionTests(unittest.TestCase):
     def test_all_selected_empty_and_disabled_have_distinct_bindings(self):
-        self.assertEqual(network.bindings({'lan': True}), ['0.0.0.0'])
+        self.assertEqual(network.bindings({'lan': True}), ['127.0.0.1'])
         self.assertEqual(network.bindings({'lan': True, 'lanAddresses': []}), ['127.0.0.1'])
         self.assertEqual(network.bindings({'lan': True, 'lanAddresses': ['192.168.1.5', '172.20.0.1']}), ['127.0.0.1', '192.168.1.5', '172.20.0.1'])
         self.assertEqual(network.bindings({'lan': False, 'lanAddresses': ['192.168.1.5']}), ['127.0.0.1'])

@@ -17,6 +17,8 @@ ROWS = [
     {'id': 'en0', 'name': 'Wi-Fi', 'addresses': ['192.168.1.7']},
     {'id': 'bridge', 'name': 'Bridge', 'addresses': ['192.168.1.7', '10.0.0.2']},
     {'id': 'VMnet8', 'name': 'VMnet8', 'addresses': ['192.168.55.1']},
+    {'id': 'bridge100', 'name': 'bridge100', 'addresses': ['10.211.55.2']},
+    {'id': 'public', 'name': 'public', 'addresses': ['203.0.113.7', '100.64.0.1']},
 ]
 
 
@@ -24,6 +26,8 @@ class InterfaceSelectionTests(unittest.TestCase):
     def test_addresses_are_deduplicated_by_interface_identity(self):
         self.assertEqual(interfaces._rows(ROWS), [
             {'id': 'bridge', 'name': 'Bridge', 'addresses': ['10.0.0.2', '192.168.1.7']},
+            {'id': 'bridge100', 'name': 'bridge100', 'addresses': ['10.211.55.2']},
+            {'id': 'public', 'name': 'public', 'addresses': ['100.64.0.1', '203.0.113.7']},
             {'id': 'VMnet8', 'name': 'VMnet8', 'addresses': ['192.168.55.1']},
             {'id': 'en0', 'name': 'Wi-Fi', 'addresses': ['192.168.1.7']},
         ])
@@ -42,10 +46,16 @@ class InterfaceSelectionTests(unittest.TestCase):
         self.assertEqual(interfaces.migrate_addresses_to_interfaces(ROWS, ['192.0.2.7']), [])
         self.assertIsNone(interfaces.migrate_addresses_to_interfaces(ROWS, None))
 
+    def test_automatic_addresses_exclude_virtual_public_and_carrier_nat(self):
+        self.assertEqual(interfaces.eligible_lan_addresses(ROWS), ['192.168.1.7'])
+        self.assertTrue(interfaces.is_virtual_interface({'id': 'bridge100', 'name': 'bridge100'}))
+        self.assertFalse(interfaces.is_virtual_interface({'id': 'en0', 'name': 'Wi-Fi'}))
+
     def test_bindings_keep_all_selected_empty_and_disabled_distinct(self):
-        self.assertEqual(network.bindings({'lan': True}), ['0.0.0.0'])
+        self.assertEqual(network.bindings({'lan': True}), ['127.0.0.1'])
         self.assertEqual(network.bindings({'lan': True, 'lanAddresses': []}), ['127.0.0.1'])
-        self.assertEqual(network.bindings({'lan': True, 'lanInterfaces': None}), ['0.0.0.0'])
+        self.assertEqual(network.bindings({'lan': True, 'lanInterfaces': None}, ROWS),
+                         ['127.0.0.1', '192.168.1.7'])
         self.assertEqual(network.bindings({'lan': True, 'lanInterfaces': []}), ['127.0.0.1'])
         self.assertEqual(network.bindings({'lan': True, 'lanInterfaces': ['en0']}, ROWS),
                          ['127.0.0.1', '192.168.1.7'])
@@ -156,6 +166,15 @@ class RuntimeMonitorTests(unittest.TestCase):
                                             8787, manager, 'instance', enumerator=lambda: rows,
                                             clock=lambda: 0)
             self.assertEqual(monitor.scan(initial=True), [])
+            monitor.close()
+
+    def test_automatic_mode_ignores_virtual_adapters(self):
+        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as folder:
+            manager = FakeRuntimeManager()
+            monitor = RuntimeNetworkMonitor(folder, {'lan': True, 'lanInterfaces': None},
+                                            8787, manager, 'instance', enumerator=lambda: ROWS,
+                                            clock=lambda: 0)
+            self.assertEqual(monitor.scan(initial=True), ['192.168.1.7'])
             monitor.close()
 
 
