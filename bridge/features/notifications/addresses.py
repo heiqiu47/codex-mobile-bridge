@@ -52,7 +52,11 @@ def entry_urls(preferences, hosts, quick_url='', external_status=None, lan_addre
     if preferences.get('lan'):
         selected = preferences.get('lanAddresses') if lan_addresses is None else None
         allowed = set(lan_addresses) if lan_addresses is not None else None
-        for host in hosts:
+        # The caller's host list is a startup snapshot.  After DHCP or Wi-Fi
+        # changes, the monitor's allowed addresses are the live authority.
+        live_hosts = (sorted(set(lan_addresses), key=ipaddress.ip_address)
+                      if allowed is not None else hosts)
+        for host in live_hosts:
             try:
                 address = ipaddress.ip_address(host)
             except ValueError:
