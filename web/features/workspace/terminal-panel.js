@@ -72,8 +72,7 @@ class TerminalPanel {
     this.term.parser.registerOscHandler(52,()=>true);
     this.fit=new FitAddon.FitAddon();this.term.loadAddon(this.fit);this.term.open(this.screen);
     this.term.onWriteParsed(()=>this.syncTouchMode());
-    this.term.element.addEventListener('wheel',e=>this.beginWheelInput(e),true);
-    this.term.element.addEventListener('wheel',e=>this.endWheelInput(e));
+    this.term.attachCustomWheelEventHandler(e=>{this.beginWheelInput(e);return true;});
     this.screen.addEventListener('touchstart',e=>this.touchStart(e),{capture:true,passive:true});
     this.screen.addEventListener('touchmove',e=>this.touchMove(e),{capture:true,passive:false});
     this.screen.addEventListener('touchend',e=>this.touchEnd(e),{capture:true,passive:true});
@@ -94,7 +93,7 @@ class TerminalPanel {
   beginWheelInput(e){
     if(this.inputMode!=='draft'||!this.running||this.inputError||this.term.modes.mouseTrackingMode==='none')return;
     this.wheelEvent=e;this.wheelInput=true;this.wheelRestore=this.term.options.disableStdin;this.term.options.disableStdin=false;
-    // xterm normally stops propagation, not same-element listeners; keep a fallback if that changes.
+    // Restore after xterm finishes encoding this wheel event, including late mouse-protocol listeners.
     queueMicrotask(()=>this.endWheelInput(e));
   }
   endWheelInput(e){

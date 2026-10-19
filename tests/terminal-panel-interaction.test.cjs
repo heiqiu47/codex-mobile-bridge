@@ -305,7 +305,7 @@ test('draft mode forwards tracked wheel data without enabling keyboard or untrac
   const wheel={};panel.beginWheelInput(wheel);
   assert.equal(panel.term.options.disableStdin,false);
   panel.terminalData('\x1b[<64;2;3M');
-  panel.endWheelInput(wheel);
+  await tick();
   assert.equal(panel.term.options.disableStdin,true);
   assert.equal(panel.operations[0].data,'\x1b[<64;2;3M');
   panel.terminalData('keyboard');assert.equal(panel.operations[0].data,'\x1b[<64;2;3M');
