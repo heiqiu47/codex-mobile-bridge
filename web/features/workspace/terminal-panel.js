@@ -32,7 +32,7 @@ class TerminalPanel {
     const head=n('div','wb-terminal-head wb-terminal-font-head');this.location=n('strong','',info.shell||BridgeI18n.t('连接终端…'));
     this.reopen=b(BridgeI18n.t('重新打开'),()=>this.restart());this.reopen.hidden=true;
     const font=TerminalFont.control(this.workbench);this.fontControl=font;
-    head.append(this.location,b(BridgeI18n.t('清屏'),()=>this.clearScreen()),font.label,this.reopen);
+    head.append(this.location,font.label,b(BridgeI18n.t('清屏'),()=>this.clearScreen()),this.reopen);
     this.shellHint=n('small','wb-terminal-shell-hint',BridgeI18n.t('跨盘切换示例：cd /d D:\\（进入 D 盘根目录）。'));this.shellHint.hidden=!/(^|[\\/])cmd(?:\.exe)?$/i.test(info.shell||'');
     this.screen=n('div','wb-terminal-screen');this.screen.setAttribute("data-i18n-aria-label",'交互终端');this.screen.setAttribute('aria-label',BridgeI18n.t('交互终端'));
     this.status=n('p','wb-status');this.status.setAttribute('role','status');
@@ -51,8 +51,8 @@ class TerminalPanel {
     // Enter in the mobile composer ALWAYS inserts a newline. Submit is explicit.
     this.retry=b(BridgeI18n.t('重试未确认输入'),()=>{this.inputError=false;this.retry.hidden=true;this.flush();});this.retry.hidden=true;
     this.tab.body.append(head,this.shellHint,this.screen,keys,this.form,this.completions,this.status,this.retry);
-    this.term=new Terminal({fontSize:TerminalFont.size(),fontFamily:'Menlo, Consolas, monospace',cursorBlink:true,scrollback:2000,
-      theme:{background:'#11151b',foreground:'#e2e8f0',cursor:'#7ee0b6'},allowProposedApi:false,
+    this.term=new Terminal({fontSize:TerminalFont.size(),fontFamily:'Menlo, Consolas, monospace',cursorBlink:false,scrollback:2000,
+      theme:{background:'#11151b',foreground:'#e2e8f0',cursor:'#ffffff',cursorAccent:'#11151b'},cursorStyle:'block',cursorInactiveStyle:'block',allowProposedApi:false,
       linkHandler:{activate:()=>{}},disableStdin:true});
     // Terminal output must never write to or read the system clipboard (OSC 52).
     this.term.parser.registerOscHandler(52,()=>true);

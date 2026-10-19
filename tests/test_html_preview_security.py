@@ -1,5 +1,7 @@
 """Synthetic request checks for the fixed, isolated HTML preview shell."""
+import gzip
 import http.client
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,6 +27,25 @@ class GatewayHtmlPreviewTests(unittest.TestCase):
             return response.status, dict(response.getheaders()), response.read()
         finally:
             conn.close()
+
+    def test_terminal_style_nonce_is_per_document_and_does_not_allow_inline_scripts(self):
+        nonces = []
+        for headers in ({}, {'Accept-Encoding': 'gzip'}):
+            status, response, body = self.raw('/', headers)
+            self.assertEqual(status, 200)
+            if response.get('Content-Encoding') == 'gzip':
+                body = gzip.decompress(body)
+            nonce = re.search(rb'<meta name="bridge-style-nonce" content="([A-Za-z0-9_-]{32})">', body).group(1).decode()
+            policy = response['Content-Security-Policy']
+            self.assertIn("style-src 'self' 'nonce-" + nonce + "';", policy)
+            self.assertIn("script-src 'self';", policy)
+            self.assertNotIn("style-src 'self' 'unsafe-inline'", policy)
+            self.assertEqual(response['Cache-Control'], 'no-store')
+            nonces.append(nonce)
+        self.assertNotEqual(*nonces)
+        status, response, _ = self.raw('/terminal-panel.js')
+        self.assertEqual(status, 200)
+        self.assertNotIn('nonce-', response['Content-Security-Policy'])
 
     def test_fixed_shell_requires_login_and_has_independent_csp(self):
         self.assertEqual(self.raw('/html-preview-shell')[0], 401)
