@@ -30,5 +30,7 @@ module.exports=async context=>{
       throw Error('Bundled ConPTY does not match the target; rebuild the gateway.');
     for(const name of ['conpty.dll','x86/OpenConsole.exe','x64/OpenConsole.exe','arm64/OpenConsole.exe','LICENSE'])
       fs.accessSync(path.join(conpty,name),fs.constants.R_OK);
+    // Nsis7z in electron-builder 26.15.3 silently skips ARM64-filtered executables.
+    process.env.ELECTRON_BUILDER_7Z_FILTER='BCJ';
   }
 };

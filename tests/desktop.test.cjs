@@ -515,6 +515,7 @@ test('Windows packaging requires the complete locked ConPTY pair',async()=>{
   const fs=require('node:fs/promises'),os=require('node:os'),{Arch}=require('builder-util');
   const verify=require('../scripts/verify-build.cjs'),root=await fs.mkdtemp(path.join(os.tmpdir(),'gateway-conpty-build-'));
   const context={packager:{projectDir:root,appInfo:{version:'1.2.2'}},arch:Arch.x64,electronPlatformName:'win32'};
+  const priorFilter=process.env.ELECTRON_BUILDER_7Z_FILTER;
   try{
     const runtime=path.join(root,'dist/gateway/_internal');
     await fs.mkdir(path.join(runtime,'client-helpers'),{recursive:true});
@@ -538,9 +539,14 @@ test('Windows packaging requires the complete locked ConPTY pair',async()=>{
       await fs.writeFile(path.join(conpty,name),'fixture');
     }
     await verify(context);
+    assert.equal(process.env.ELECTRON_BUILDER_7Z_FILTER,'BCJ');
     await fs.writeFile(path.join(conpty,'version.json'),JSON.stringify({version:'other',arch:'x64',packageSha256:'fixturehash'}));
     await assert.rejects(verify(context),/ConPTY does not match/);
-  }finally{await fs.rm(root,{recursive:true,force:true});}
+  }finally{
+    if(priorFilter===undefined)delete process.env.ELECTRON_BUILDER_7Z_FILTER;
+    else process.env.ELECTRON_BUILDER_7Z_FILTER=priorFilter;
+    await fs.rm(root,{recursive:true,force:true});
+  }
 });
 test('Cloudflare installer selects official platform assets and rejects unsafe redirects',async()=>{
   assert.equal(cloudflared.assetName('darwin','arm64'),'cloudflared-darwin-arm64.tgz');
