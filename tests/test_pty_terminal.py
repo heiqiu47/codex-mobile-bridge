@@ -80,6 +80,32 @@ class PtyTests(unittest.TestCase):
         self.assertEqual(result['cwd'],str(self.root/'nested'))
         self.assertEqual(result['candidates'][0]['insertText'],"'目标 文件'")
 
+    @unittest.skipUnless(sys.platform == 'darwin', 'macOS ls color defaults')
+    def test_ll_colors_file_types_without_coloring_piped_output(self):
+        (self.root/'directory').mkdir()
+        (self.root/'plain.txt').write_text('')
+        (self.root/'executable').write_text('#!/bin/sh\n')
+        (self.root/'executable').chmod(0o700)
+        (self.root/'link').symlink_to('plain.txt')
+        with (self.root/'.zshrc').open('a') as rc: rc.write("alias ll='/bin/ls -l'\n")
+        with patch.dict(os.environ), patch('bridge.platforms.posix.terminal.default_shell', return_value='/bin/zsh'):
+            for key in ('CLICOLOR', 'CLICOLOR_FORCE', 'LSCOLORS'): os.environ.pop(key, None)
+            s=self.session()
+        self.wait_output(s,'fixture')
+        self.send(s,"printf '__LIST_%s__\\n' begin; ll; printf '__LIST_%s__\\n' end\r")
+        output=self.wait_output(s,'__LIST_end__').split('__LIST_begin__\r\n',1)[1].split('__LIST_end__',1)[0]
+        self.assertRegex(output,r'\x1b\[[0-9;]*mdirectory')
+        self.assertRegex(output,r'\x1b\[[0-9;]*mexecutable')
+        self.assertRegex(output,r'\x1b\[[0-9;]*mlink')
+        self.send(s,"printf '__PIPE_%s__\\n' begin; ll | cat; printf '__PIPE_%s__\\n' end\r")
+        piped=self.wait_output(s,'__PIPE_end__').split('__PIPE_begin__\r\n',1)[1].split('__PIPE_end__',1)[0]
+        self.assertNotIn('\x1b[',piped)
+
+    def test_explicit_terminal_color_setting_is_inherited(self):
+        with patch.dict(os.environ, {'CLICOLOR':'custom'}): s=self.session()
+        self.send(s,"printf 'COLOR_SETTING:%s\\n' \"$CLICOLOR\"\r")
+        self.wait_output(s,'COLOR_SETTING:custom')
+
     def test_long_poll_wakes_on_output_and_is_bounded(self):
         s=self.session(); self.wait_output(s,'fixture'); time.sleep(.1)
         cursor=s.read()['cursor']; started=time.monotonic(); self.assertEqual(s.read(cursor,80)['output'],'')
