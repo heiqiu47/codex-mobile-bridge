@@ -38,6 +38,20 @@ def dimensions(cols, rows):
     return cols, rows
 
 
+def utf8_terminal_environment(env):
+    effective = env.get('LC_ALL') or env.get('LC_CTYPE') or env.get('LANG', 'C')
+    if 'UTF8' in effective.upper().replace('-', '').replace('_', ''):
+        return env
+    available = subprocess.run(['locale', '-a'], capture_output=True, text=True, check=True).stdout.splitlines()
+    locales = {name.upper().replace('-', '').replace('_', ''): name for name in available}
+    selected = locales.get('C.UTF8') or locales.get('ENUS.UTF8')
+    if not selected:
+        raise ValueError('系统没有可用的 UTF-8 locale，无法启动终端')
+    env.pop('LC_ALL', None)
+    env['LC_CTYPE'] = selected
+    return env
+
+
 def child_main(shell):
     # Executed in a fresh process, never preexec_fn inside the threaded gateway.
     import fcntl
@@ -66,6 +80,7 @@ class TerminalSession:
             # Unlike CLICOLOR_FORCE, it keeps redirected output free of escapes.
             env.setdefault('CLICOLOR', '1')
             env.pop('NO_COLOR', None)
+            utf8_terminal_environment(env)
             if getattr(sys, 'frozen', False): env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
             self.process = subprocess.Popen(args, cwd=root, stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True)
             os.set_blocking(self.master, False)

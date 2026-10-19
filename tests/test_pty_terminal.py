@@ -106,6 +106,24 @@ class PtyTests(unittest.TestCase):
         self.send(s,"printf 'COLOR_SETTING:%s\\n' \"$CLICOLOR\"\r")
         self.wait_output(s,'COLOR_SETTING:custom')
 
+    def test_terminal_shell_uses_utf8_when_gateway_locale_is_c(self):
+        with patch.dict(os.environ, {'LANG':'C', 'LC_ALL':'C', 'LC_CTYPE':'C'}):
+            s = self.session()
+        self.send(s,"locale charmap\r")
+        output = self.wait_output(s, 'locale charmap')
+        deadline = time.monotonic() + 5
+        while 'UTF-8' not in output and time.monotonic() < deadline:
+            time.sleep(.02); output = s.read()['output']
+        self.assertIn('UTF-8', output)
+        self.send(s,"printf '中文输出\\n'\r")
+        self.wait_output(s, '中文输出\r\n')
+
+    def test_terminal_preserves_existing_utf8_locale(self):
+        with patch.dict(os.environ, {'LANG':'zh_CN.UTF-8', 'LC_ALL':'zh_CN.UTF-8', 'LC_CTYPE':'zh_CN.UTF-8'}):
+            s = self.session()
+        self.send(s,"printf 'LOCALE:%s:%s:%s\\n' \"$LANG\" \"$LC_ALL\" \"$LC_CTYPE\"\r")
+        self.wait_output(s, 'LOCALE:zh_CN.UTF-8:zh_CN.UTF-8:zh_CN.UTF-8')
+
     def test_long_poll_wakes_on_output_and_is_bounded(self):
         s=self.session(); self.wait_output(s,'fixture'); time.sleep(.1)
         cursor=s.read()['cursor']; started=time.monotonic(); self.assertEqual(s.read(cursor,80)['output'],'')
@@ -159,6 +177,17 @@ class PtyTests(unittest.TestCase):
         self.send(s,"printf 'REMOTE:%s\\n' \"$REMOTE_VALUE\"\r")
         self.wait_output(s,'REMOTE:kept'); self.assertTrue(s.shell.startswith('/'))
         s.resize(91,29);self.send(s,'stty size\r');self.wait_output(s,'29 91')
+
+    def test_remote_source_shell_uses_utf8_when_remote_locale_is_c(self):
+        original = subprocess.Popen
+        def launch(args, **kwargs):
+            return original([sys.executable, '-u', '-c', shlex.split(args[-1])[-1]], **kwargs)
+        with patch.dict(os.environ, {'LANG':'C', 'LC_ALL':'C', 'LC_CTYPE':'C'}), \
+             patch('bridge.platforms.posix.terminal.subprocess.Popen', side_effect=launch):
+            s = RemoteTerminalSession('fixture', self.root)
+        self.sessions.append(s)
+        self.send(s, 'locale charmap\r')
+        self.wait_output(s, 'UTF-8\r\n')
     def test_manager_scopes_retries_and_does_not_resurrect_closed_terminal(self):
         m=TerminalManager();self.addCleanup(m.close); identifier=str(uuid.uuid4())
         m.open_session('a','thread',identifier,self.root,80,24);s=m.session('a','thread',identifier)
