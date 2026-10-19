@@ -2,7 +2,7 @@
 
 class TerminalPanel {
   constructor(workbench, session, tab) {
-    Object.assign(this, {workbench, session, tab});this.disposed=false;this.cursor=0;this.running=false;this.operations=[];this.composing=false;this.completionVersion=0;this.inputMode='draft';
+    Object.assign(this, {workbench, session, tab});this.disposed=false;this.cursor=0;this.running=false;this.operations=[];this.composing=false;this.completionVersion=0;this.inputMode='direct';
     this.visibility=()=>{clearTimeout(this.timer);if(document.hidden)this.readController?.abort();else if(this.running){if(this.polling)this.resumeRead=true;else this.poll();}};
     document.addEventListener('visibilitychange',this.visibility);
     this.key='pty:'+session.key;
