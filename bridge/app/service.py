@@ -30,7 +30,12 @@ from bridge.features.workspace.workspace import operate as workspace_operation
 from bridge.clients.codex.catalog import Catalog, CatalogError, ModelStore, MODEL_REFRESH_SECONDS
 from bridge.platforms.codex_daemon_env import DaemonEnvironmentUnavailable
 from bridge.clients.codex.remote import AppHosts, RemoteStore, RemoteCatalog, RemoteUnavailable, ssh_read, ssh_download, payload
-from bridge.features.sessions.create import rename_thread, independent_directory, create_empty, fork_copy, open_in_desktop, CreationError, CreationUnavailable, ForkUnavailable
+from bridge.features.sessions.create import (
+    rename_thread, independent_directory, create_empty, fork_copy, open_in_desktop,
+    CreationError, CreationUnavailable, ForkUnavailable, project_directory,
+    project_directory_listing,
+)
+from bridge.features.sessions.projects import Projects
 from bridge.features.sessions.timeline import Timeline
 from bridge.features.sessions.tool_images import TOOL_IMAGE_CACHE, public_turns
 from bridge.features.accounts.account import Account
@@ -158,6 +163,7 @@ class Bridge:
         self._draft_remote_pending = set()
         self.data_dir = Path(data_dir)
         self.hosts = AppHosts(codex_home)
+        self.directory_projects = Projects(data_dir)
         if host == 'local':
             from bridge.features.endpoints.registry import Entries
             self.entries = Entries(data_dir, codex_home)
@@ -490,7 +496,14 @@ class Bridge:
         target.replace(self.creations_path)
 
     def projects(self):
-        projects = [dict(project, type='desktop') for project in self.hosts.projects()]
+        projects = [dict(project, type=project.get('type', 'desktop'))
+                    for project in self.directory_projects.list({'local', *self.hosts.hosts()})]
+        known = {(project['host'], project.get('cwd')) for project in projects}
+        for project in self.hosts.projects():
+            identity = (project['host'], project.get('cwd'))
+            if identity not in known:
+                projects.append(dict(project, type='desktop'))
+                known.add(identity)
         candidates = [(self.host, self)]
         if self.host == 'local':
             for host in self.hosts.hosts():
@@ -516,6 +529,29 @@ class Bridge:
         return projects
 
     @operation
+    def register_project(self, path, create=False, host='local'):
+        if host == 'local':
+            identity = project_directory(path, create)
+            label = '此电脑'
+        else:
+            info = self.hosts.hosts().get(host)
+            if info is None: raise ValueError('请选择已登记的运行主机')
+            source = source_text('features/sessions/create.py')
+            source += '\nprint(json.dumps(project_directory(**' + payload({'value': path, 'create': create}) + ')))\n'
+            identity = ssh_read(info['alias'], source)
+            label = info.get('displayName') or info['alias']
+        return self.directory_projects.save(host, label, identity)
+
+    @operation
+    def project_directories(self, host, path=None, hidden=False, name=None, identity=None):
+        if host == 'local': return project_directory_listing(path, hidden, name, identity)
+        info = self.hosts.hosts().get(host)
+        if info is None: raise ValueError('请选择已登记的运行主机')
+        source = source_text('features/sessions/create.py')
+        source += '\nprint(json.dumps(project_directory_listing(**' + payload({'value':path,'hidden':hidden,'name':name,'identity':identity}) + ')))\n'
+        return ssh_read(info['alias'], source)
+
+    @operation
     def create_chat(self, project_key, title, request_id, kind='desktop'):
         if not isinstance(request_id, str):
             raise ValueError('创建请求标识无效')
@@ -524,7 +560,7 @@ class Bridge:
             raise ValueError('请输入 1–120 字的聊天名称')
         if kind not in ('desktop', 'cli'):
             raise ValueError('未知聊天类型')
-        available = self.projects() if kind == 'cli' else self.hosts.projects()
+        available = [project for project in self.projects() if (project.get('type') or 'desktop') == kind]
         project = next((p for p in available if p['key'] == project_key), None)
         if kind == 'desktop' and project_key == 'local|independent':
             project = {'host': 'local', 'cwd': None}
@@ -544,7 +580,8 @@ class Bridge:
                 if kind == 'desktop':
                     self.ipc.connect()
                 entry = {'project': project_key, 'title': title, 'kind': kind,
-                         'cwd': project['cwd'], 'host': project['host'], 'at': time.time()}
+                         'cwd': project['cwd'], 'host': project['host'],
+                         'directoryIdentity': project.get('directoryIdentity'), 'at': time.time()}
                 self.creations[request_id] = entry
                 self._save_creations()
                 if kind == 'cli':
@@ -567,7 +604,8 @@ class Bridge:
                         raise
                 elif project['host'] == 'local':
                     try:
-                        cwd = project['cwd'] or independent_directory(self.data_dir, request_id)
+                        cwd = (project_directory(project['cwd'], expected=project['directoryIdentity'])['cwd']
+                               if project.get('directoryIdentity') else project['cwd']) or independent_directory(self.data_dir, request_id)
                         thread_id = create_empty(self.catalog_reader.executable, self.codex_home, cwd, title)
                     except CreationUnavailable:
                         # No process started: retrying this request cannot create
@@ -580,6 +618,8 @@ class Bridge:
                     source = source_text('features/sessions/create.py')
                     source += '\nimport shutil\nhome=Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex")))\n'
                     source += 'runtime=shutil.which("codex") or str(Path.home()/".local/bin/codex")\n'
+                    if project.get('directoryIdentity'):
+                        source += 'project_directory(**' + payload({'value': project['cwd'], 'expected': project['directoryIdentity']}) + ')\n'
                     source += 'print(json.dumps({"id":create_empty(runtime, home, **' + payload({'cwd': project['cwd'], 'title': title}) + ')}))\n'
                     thread_id = ssh_read(host['alias'], source, timeout=90)['id']
                 uuid.UUID(thread_id)
@@ -1037,7 +1077,8 @@ class Bridge:
                 query=query, limit=limit + offset, archived=archived, source=source)
             rows.extend(extra)
             self.host_errors.extend(errors)
-            available_sources.add('cli')
+            if extra:
+                available_sources.add('cli')
         rows.sort(key=lambda row: (row['recency'], row['id'], row['host']), reverse=True)
         page = rows[offset:offset + limit]
         return (page, sorted(available_sources)) if include_sources else page
