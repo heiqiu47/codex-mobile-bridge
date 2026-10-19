@@ -2550,6 +2550,7 @@ const en={
   "输入命令或回复，换行键可换行": "Enter a command or reply. Return inserts a new line.",
   "终端输入": "Terminal input",
   "发送到终端": "Send to terminal",
+  "所有终端字号": "All terminals · font size",
   "重试未确认输入": "Retry unconfirmed input",
   "没有匹配的路径": "No matching path",
   "选择路径补全": "Choose a path completion",

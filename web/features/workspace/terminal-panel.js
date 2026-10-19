@@ -29,9 +29,10 @@ class TerminalPanel {
   render(info){
     const n=(...a)=>this.workbench.node(...a),b=(...a)=>this.workbench.button(...a);
     this.tab.body.replaceChildren();this.tab.body.classList.add('wb-pty');
-    const head=n('div','wb-terminal-head');this.location=n('strong','',info.shell||BridgeI18n.t('连接终端…'));
+    const head=n('div','wb-terminal-head wb-terminal-font-head');this.location=n('strong','',info.shell||BridgeI18n.t('连接终端…'));
     this.reopen=b(BridgeI18n.t('重新打开'),()=>this.restart());this.reopen.hidden=true;
-    head.append(this.location,b(BridgeI18n.t('清屏'),()=>this.clearScreen()),this.reopen);
+    const font=TerminalFont.control(this.workbench);this.fontSelect=font.select;
+    head.append(this.location,b(BridgeI18n.t('清屏'),()=>this.clearScreen()),font.label,this.reopen);
     this.shellHint=n('small','wb-terminal-shell-hint',BridgeI18n.t('跨盘切换示例：cd /d D:\\（进入 D 盘根目录）。'));this.shellHint.hidden=!/(^|[\\/])cmd(?:\.exe)?$/i.test(info.shell||'');
     this.screen=n('div','wb-terminal-screen');this.screen.setAttribute("data-i18n-aria-label",'交互终端');this.screen.setAttribute('aria-label',BridgeI18n.t('交互终端'));
     this.status=n('p','wb-status');this.status.setAttribute('role','status');
@@ -50,7 +51,7 @@ class TerminalPanel {
     // Enter in the mobile composer ALWAYS inserts a newline. Submit is explicit.
     this.retry=b(BridgeI18n.t('重试未确认输入'),()=>{this.inputError=false;this.retry.hidden=true;this.flush();});this.retry.hidden=true;
     this.tab.body.append(head,this.shellHint,this.screen,keys,this.form,this.completions,this.status,this.retry);
-    this.term=new Terminal({fontSize:14,fontFamily:'Menlo, Consolas, monospace',cursorBlink:true,scrollback:2000,
+    this.term=new Terminal({fontSize:TerminalFont.size(),fontFamily:'Menlo, Consolas, monospace',cursorBlink:true,scrollback:2000,
       theme:{background:'#11151b',foreground:'#e2e8f0',cursor:'#7ee0b6'},allowProposedApi:false,
       linkHandler:{activate:()=>{}},disableStdin:true});
     // Terminal output must never write to or read the system clipboard (OSC 52).
@@ -59,6 +60,11 @@ class TerminalPanel {
     this.term.onData(data=>this.enqueue(data));
     this.term.onResize(({cols,rows})=>this.queueResize(cols,rows));
     this.observer=new ResizeObserver(()=>this.layout());this.observer.observe(this.screen);this.layout();
+    TerminalFont.register(this);
+  }
+  applyFontSize(size){
+    this.fontSelect.value=String(size);this.input.style.fontSize=Math.max(16,size)+'px';
+    this.term.options.fontSize=size;this.layout();
   }
   mobile(){return BridgeHost.hasNativeLayout()||!!(navigator.userAgentData?.mobile||/\b(?:iPhone|iPad|iPod|Android|Mobile)\b/i.test(navigator.userAgent||'')||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1));}
   shortcut(label,value){if(label==='Tab'&&this.mobile())this.complete();else this.enqueue(value);if(!this.mobile())this.focusOnSelect();}
@@ -193,7 +199,7 @@ class TerminalPanel {
     finally{this.restarting=false;this.schedule();}
   }
   dispose(){
-    this.disposed=true;document.removeEventListener('visibilitychange',this.visibility);this.readController?.abort();clearTimeout(this.timer);clearTimeout(this.flushTimer);clearTimeout(this.resizeTimer);this.pendingResize=null;this.observer?.disconnect();this.term?.dispose();this.fallback?.dispose();
+    this.disposed=true;TerminalFont.unregister(this);document.removeEventListener('visibilitychange',this.visibility);this.readController?.abort();clearTimeout(this.timer);clearTimeout(this.flushTimer);clearTimeout(this.resizeTimer);this.pendingResize=null;this.observer?.disconnect();this.term?.dispose();this.fallback?.dispose();
     if(!this.fallback)this.workbench.request(this.url(),{action:'close',id:this.id}).catch(()=>{});
     try{sessionStorage.removeItem(this.key);}catch{}
   }
