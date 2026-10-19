@@ -511,6 +511,37 @@ test('packaging rejects a gateway from another architecture, OS or version',asyn
     await assert.rejects(verify(context),/ENOENT/);
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+test('Windows packaging requires the complete locked ConPTY pair',async()=>{
+  const fs=require('node:fs/promises'),os=require('node:os'),{Arch}=require('builder-util');
+  const verify=require('../scripts/verify-build.cjs'),root=await fs.mkdtemp(path.join(os.tmpdir(),'gateway-conpty-build-'));
+  const context={packager:{projectDir:root,appInfo:{version:'1.2.2'}},arch:Arch.x64,electronPlatformName:'win32'};
+  try{
+    const runtime=path.join(root,'dist/gateway/_internal');
+    await fs.mkdir(path.join(runtime,'client-helpers'),{recursive:true});
+    await fs.mkdir(path.join(runtime,'cloudflared'),{recursive:true});
+    await fs.mkdir(path.join(runtime,'conpty'),{recursive:true});
+    await fs.mkdir(path.join(root,'scripts'));
+    await fs.writeFile(path.join(root,'dist/update-version.json'),JSON.stringify({platform:'win32',arch:'x64',version:'1.2.2'}));
+    await fs.writeFile(path.join(root,'dist/gateway/codex-mobile-gateway.exe'),'fixture');
+    for(const name of ['claude-bridge-helper.exe','codex-quit-helper.exe'])
+      await fs.writeFile(path.join(runtime,'client-helpers',name),'fixture');
+    await fs.writeFile(path.join(root,'scripts/cloudflared-lock.json'),JSON.stringify({version:'fixture'}));
+    await fs.writeFile(path.join(runtime,'cloudflared/version.json'),JSON.stringify({platform:'win32',arch:'amd64',version:'fixture'}));
+    await fs.writeFile(path.join(runtime,'cloudflared/cloudflared.exe'),'fixture');
+    await fs.writeFile(path.join(runtime,'cloudflared/LICENSE'),'fixture');
+    const conpty=path.join(runtime,'conpty');
+    await fs.writeFile(path.join(root,'scripts/conpty-lock.json'),JSON.stringify({version:'1.25',sha256:'fixturehash'}));
+    await fs.writeFile(path.join(conpty,'version.json'),JSON.stringify({version:'1.25',arch:'x64',packageSha256:'fixturehash'}));
+    await assert.rejects(verify(context),/ENOENT/);
+    for(const name of ['conpty.dll','x86/OpenConsole.exe','x64/OpenConsole.exe','arm64/OpenConsole.exe','LICENSE']){
+      await fs.mkdir(path.dirname(path.join(conpty,name)),{recursive:true});
+      await fs.writeFile(path.join(conpty,name),'fixture');
+    }
+    await verify(context);
+    await fs.writeFile(path.join(conpty,'version.json'),JSON.stringify({version:'other',arch:'x64',packageSha256:'fixturehash'}));
+    await assert.rejects(verify(context),/ConPTY does not match/);
+  }finally{await fs.rm(root,{recursive:true,force:true});}
+});
 test('Cloudflare installer selects official platform assets and rejects unsafe redirects',async()=>{
   assert.equal(cloudflared.assetName('darwin','arm64'),'cloudflared-darwin-arm64.tgz');
   assert.equal(cloudflared.assetName('darwin','x64'),'cloudflared-darwin-amd64.tgz');

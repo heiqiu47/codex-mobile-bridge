@@ -143,7 +143,8 @@ def main():
                 'Terminal open must require CSRF')
         info = http.checked('GET', path)
         require(info['cwd'] == stored_cwd, 'Synthetic chat cwd was not resolved')
-        with patch.object(sys, 'executable', str(gateway)), patch.object(sys, 'frozen', True, create=True):
+        with patch.object(sys, 'executable', str(gateway)), patch.object(sys, 'frozen', True, create=True), \
+             patch('bridge.platforms.windows.terminal.project_root', return_value=gateway.parent / '_internal'):
             opened = http.checked('POST', path, {'action': 'open', 'id': tab_id, 'cols': 80, 'rows': 24})
         require(opened['running'], 'ConPTY did not start')
         until(lambda: streamed(lambda text: '>' in text), 'Initial cmd prompt')

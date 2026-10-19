@@ -22,4 +22,13 @@ module.exports=async context=>{
   if(tunnel.platform!==platform||tunnel.arch!==({x64:'amd64',arm64:'arm64'}[arch])||tunnel.version!==lock.version)throw Error('Bundled cloudflared does not match the target; rebuild the gateway.');
   fs.accessSync(path.join(bundled,platform==='win32'?'cloudflared.exe':'cloudflared'),fs.constants.R_OK);
   fs.accessSync(path.join(bundled,'LICENSE'),fs.constants.R_OK);
+  if(platform==='win32'){
+    const conpty=path.join(root,'dist/gateway/_internal/conpty');
+    const version=JSON.parse(fs.readFileSync(path.join(conpty,'version.json'),'utf8'));
+    const lock=JSON.parse(fs.readFileSync(path.join(root,'scripts/conpty-lock.json'),'utf8'));
+    if(version.version!==lock.version||version.arch!==arch||version.packageSha256!==lock.sha256)
+      throw Error('Bundled ConPTY does not match the target; rebuild the gateway.');
+    for(const name of ['conpty.dll','x86/OpenConsole.exe','x64/OpenConsole.exe','arm64/OpenConsole.exe','LICENSE'])
+      fs.accessSync(path.join(conpty,name),fs.constants.R_OK);
+  }
 };

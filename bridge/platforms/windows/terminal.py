@@ -1,4 +1,4 @@
-"""Windows 10 1809+ ConPTY transport; no third-party terminal dependency."""
+"""Windows 10 1809+ transport with an app-local Microsoft ConPTY host."""
 import codecs
 import collections
 import ctypes as C
@@ -144,8 +144,29 @@ class JOB_EXTENDED_LIMITS(C.Structure):
                 ('peak_process_memory', C.c_size_t), ('peak_job_memory', C.c_size_t)]
 
 
-def api():
+def _load_conpty(kernel):
+    frozen = getattr(sys, 'frozen', False)
+    folder = project_root() / ('conpty' if frozen else 'dist/conpty')
+    # Source checkouts may use the inbox console until the build dependency is
+    # prepared. A packaged or partial bundle must never silently fall back to
+    # Windows 10's console, which drops mouse tracking and SGR input.
+    if not folder.exists() and not frozen:
+        return
+    files = ['conpty.dll', *(arch + '/OpenConsole.exe' for arch in ('x64', 'arm64', 'x86'))]
+    if not all((folder / name).is_file() for name in files):
+        raise OSError('Windows 终端组件不完整，请重新安装网关')
+    library = C.WinDLL(str(folder / 'conpty.dll'), use_last_error=True)
+    for name in ('CreatePseudoConsole', 'ResizePseudoConsole', 'ClosePseudoConsole'):
+        setattr(kernel, name, getattr(library, 'Conpty' + name))
+    # Keep the DLL alive for the whole session; create/resize/close must use the
+    # same implementation and HPCON layout.
+    kernel._conpty_library = library
+
+
+def api(conpty=False):
     kernel = C.WinDLL('kernel32', use_last_error=True)
+    if conpty:
+        _load_conpty(kernel)
     signatures = {
         'CreatePipe': (W.BOOL, [C.POINTER(W.HANDLE), C.POINTER(W.HANDLE), C.c_void_p, W.DWORD]),
         'SetConsoleCtrlHandler': (W.BOOL, [C.c_void_p, W.BOOL]),
@@ -210,7 +231,7 @@ class WindowsTerminalSession(TerminalSession):
 
     def __init__(self, root, cols=80, rows=24):
         dimensions(cols, rows)
-        self.kernel = k = api()
+        self.kernel = k = api(conpty=True)
         self.lock = threading.RLock(); self.changed = threading.Event(); self.input_lock = threading.Lock(); self.close_lock = threading.Lock()
         self.text = ''; self.end = 0; self.reason = ''; self.code = None
         self.done = threading.Event(); self.output_done = threading.Event(); self.stopping = threading.Event(); self.touched = time.monotonic()
