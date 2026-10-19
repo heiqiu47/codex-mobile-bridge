@@ -6,7 +6,10 @@ async function runTerminalTests(){
  const output=()=>{const lines=[];for(let i=0;i<p.term.buffer.active.length;i++)lines.push(p.term.buffer.active.getLine(i)?.translateToString(true)||'');return lines.join('\n');};
  await wait(()=>p.running);await wait(()=>p.term.modes.bracketedPasteMode);
  check(p.location.textContent.endsWith('zsh'),'Server reports actual default zsh');
- check(p.tab.body.classList.contains('wb-terminal-touch'),'Phone uses explicit multiline composer');
+ check(p.tab.body.classList.contains('wb-terminal-touch')&&p.inputMode==='direct'&&!p.term.options.disableStdin,'Phone starts with live direct input');
+ check(getComputedStyle(p.form).display==='none','Direct input hides the compose form');
+ p.toggleInputMode();
+ check(p.inputMode==='draft'&&p.term.options.disableStdin&&p.term.textarea.readOnly,'Compose mode disables xterm input');
  check(getComputedStyle(p.input).fontSize==='16px','Mobile composer avoids input zoom');
  p.input.value="printf 'LINE_%s\\n' one\nprintf 'LINE_%s\\n' two";
  // Keyboard newline must not submit the form or enqueue any input.

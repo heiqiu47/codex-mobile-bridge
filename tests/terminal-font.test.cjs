@@ -12,7 +12,7 @@ function tab(storage){
     addEventListener:(type,fn)=>listeners[type]=fn});
   vm.runInContext(source+';globalThis.font=TerminalFont;globalThis.Command=CommandTerminalPanel;',context);
   vm.runInContext(pty+';globalThis.Pty=TerminalPanel;',context);
-  const node=(tag,cls,text)=>({tag,cls,textContent:text||'',dataset:{},style:{},children:[],setAttribute(){},append(...items){this.children.push(...items);}});
+  const node=(tag,cls,text)=>({tag,cls,textContent:text||'',dataset:{},style:{},attributes:{},children:[],setAttribute(key,value){this.attributes[key]=value;},append(...items){this.children.push(...items);}});
   const button=(text,click,title)=>Object.assign(node('button','',text),{onclick:click,title});
   return {context,font:context.font,Command:context.Command,Pty:context.Pty,listeners,node,workbench:{node,button}};
 }
@@ -54,6 +54,14 @@ test('stepper changes exactly 1px, disables at 6 and 24, and rejects fractional 
   a.font.set(24);assert.equal(panel.fontControl.increase.disabled,true);assert.equal(panel.fontControl.decrease.disabled,false);
   panel.fontControl.increase.onclick();assert.equal(panel.size,24);
   a.font.set(7.5);assert.equal(panel.size,24);assert.equal(storage.get('bridge-terminal-font-size'),'24');
+});
+
+test('font control omits the visible title while retaining its accessible label',()=>{
+  const a=tab(new Map()),control=a.font.control(a.workbench);
+  assert.equal(control.label.children.length,3);
+  assert.equal(control.label.title,'所有终端字号');
+  assert.equal(control.label.attributes['aria-label'],'所有终端字号');
+  assert.deepEqual(control.label.children.map(item=>item.textContent),['−','14px','+']);
 });
 
 test('legal historic sizes migrate without rounding and invalid stored values start at 14',()=>{

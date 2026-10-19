@@ -17,12 +17,12 @@ const TerminalFont=(()=>{
     paint,
     control(workbench){
       const label=workbench.node('div','wb-terminal-font');
-      const title=workbench.node('span','','字号');
       label.setAttribute('data-i18n-title','所有终端字号');label.title=BridgeI18n.t('所有终端字号');
+      label.setAttribute('data-i18n-aria-label','所有终端字号');label.setAttribute('aria-label',BridgeI18n.t('所有终端字号'));
       const decrease=workbench.button('−',()=>TerminalFont.step(-1),'减小所有终端字号');
       const value=workbench.node('output','wb-terminal-font-value');
       const increase=workbench.button('+',()=>TerminalFont.step(1),'增大所有终端字号');
-      label.append(title,decrease,value,increase);
+      label.append(decrease,value,increase);
       const control={label,decrease,value,increase};paint(control,size);return control;
     },
   };

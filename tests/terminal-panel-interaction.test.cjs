@@ -244,15 +244,15 @@ test('unsent desktop draft stays local and is never written to session storage',
   assert.deepEqual(f.storage,[]);
 });
 
-test('mobile shortcut buttons retain remote Esc and arrow behavior',()=>{
-  const f=fixture();f.panel.input.value='local mobile draft';
+test('mobile direct shortcut buttons send remote Esc and arrows',()=>{
+  const f=fixture();f.panel.inputMode='direct';f.panel.input.value='unsent draft';
   f.panel.shortcut('Esc','\x1b');f.panel.shortcut('↑','\x1b[A');
-  assert.equal(f.panel.input.value,'local mobile draft');
+  assert.equal(f.panel.input.value,'unsent draft');
   assert.equal(f.panel.operations[0].data,'\x1b\x1b[A');
 });
 
 
-test('new desktop terminal starts direct; optional local draft does not replace mobile composer',()=>{
+test('new desktop and phone terminals start direct and both can switch modes',()=>{
   const f=fixture();f.context.navigator.userAgent='Desktop';
   f.context.document.addEventListener=()=>{};
   f.context.Panel.prototype.load=()=>{};
@@ -262,7 +262,40 @@ test('new desktop terminal starts direct; optional local draft does not replace 
   panel.layout=()=>{};panel.toggleInputMode();assert.equal(panel.inputMode,'draft');
   panel.toggleInputMode();assert.equal(panel.inputMode,'direct');
   f.context.navigator.userAgent='iPhone Mobile';assert.equal(panel.mobile(),true);
+  panel.toggleInputMode();assert.equal(panel.inputMode,'draft');
   panel.toggleInputMode();assert.equal(panel.inputMode,'direct');
+});
+
+test('phone direct enables xterm input; compose disables it and makes its hidden textarea read-only',()=>{
+  const f=fixture();f.panel.screen={clientHeight:300,clientWidth:400};
+  f.panel.fit={proposeDimensions:()=>({cols:80,rows:24})};
+  f.panel.term.textarea={readOnly:false,tabIndex:0};
+  f.panel.term.cols=80;f.panel.term.rows=24;
+  f.panel.modeButton=f.node('button');
+  f.panel.inputMode='direct';f.panel.layout();
+  assert.equal(f.panel.term.options.disableStdin,false);
+  assert.equal(f.panel.term.textarea.readOnly,false);
+  assert.equal(f.panel.modeButton.hidden,false);
+  assert.equal(f.panel.modeButton.textContent,'终端直接输入模式');
+  assert.equal(f.panel.term.focused,undefined,'layout does not open the mobile keyboard');
+  f.panel.inputMode='draft';f.context.document.activeElement=f.panel.term.textarea;
+  f.panel.term.blur=()=>{f.panel.term.blurred=true;};f.panel.layout();
+  assert.equal(f.panel.term.options.disableStdin,true);
+  assert.equal(f.panel.term.textarea.readOnly,true);
+  assert.equal(f.panel.term.textarea.tabIndex,-1);
+  assert.equal(f.panel.term.blurred,true);
+  assert.equal(f.panel.modeButton.textContent,'编写后发送模式');
+  f.panel.inputMode='direct';f.panel.layout();
+  assert.equal(f.panel.term.options.disableStdin,false);
+  assert.equal(f.panel.term.textarea.readOnly,false);
+});
+
+test('phone direct Tab bypasses stale draft completion and compose Tab uses it',()=>{
+  const f=fixture();f.panel.input.value='old draft';f.panel.input.selectionStart=f.panel.input.selectionEnd=9;
+  f.panel.inputMode='direct';f.panel.shortcut('Tab','\t');
+  assert.equal(f.panel.operations[0].data,'\t');assert.equal(f.requests.length,0);
+  f.panel.inputMode='draft';f.panel.input.value='';f.panel.shortcut('Tab','\t');
+  assert.equal(f.panel.operations[0].data,'\t\t');assert.equal(f.requests.length,0);
 });
 
 test('Enter shortcut sends only one CR in every mode and preserves the unsent draft',()=>{
