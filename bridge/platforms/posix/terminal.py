@@ -62,6 +62,9 @@ class TerminalSession:
             args = ([sys.executable, '--terminal-child', self.shell] if getattr(sys, 'frozen', False) else
                     [sys.executable, '-c', 'import os,fcntl,termios;os.setsid();fcntl.ioctl(0,termios.TIOCSCTTY,0);os.execve('+repr(self.shell)+', ['+repr(self.shell)+',"-l","-i"], os.environ)'])
             env = {**os.environ, 'TERM': 'xterm-256color', 'COLORTERM': 'truecolor', 'SHELL': self.shell}
+            # BSD ls (including ll aliases) needs this to enable automatic colors.
+            # Unlike CLICOLOR_FORCE, it keeps redirected output free of escapes.
+            env.setdefault('CLICOLOR', '1')
             env.pop('NO_COLOR', None)
             if getattr(sys, 'frozen', False): env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
             self.process = subprocess.Popen(args, cwd=root, stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True)
