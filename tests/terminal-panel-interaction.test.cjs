@@ -216,3 +216,17 @@ test('mobile shortcut buttons retain remote Esc and arrow behavior',()=>{
   assert.equal(f.panel.input.value,'local mobile draft');
   assert.equal(f.panel.operations[0].data,'\x1b\x1b[A');
 });
+
+
+test('new desktop terminal starts direct; optional local draft does not replace mobile composer',()=>{
+  const f=fixture();f.context.navigator.userAgent='Desktop';
+  f.context.document.addEventListener=()=>{};
+  f.context.Panel.prototype.load=()=>{};
+  const panel=new f.context.Panel({paint(){}},{key:'direct-default'},{});
+  assert.equal(panel.inputMode,'direct');
+  Object.assign(panel,{tab:f.panel.tab,input:f.panel.input,term:f.panel.term,running:false});
+  panel.layout=()=>{};panel.toggleInputMode();assert.equal(panel.inputMode,'draft');
+  panel.toggleInputMode();assert.equal(panel.inputMode,'direct');
+  f.context.navigator.userAgent='iPhone Mobile';assert.equal(panel.mobile(),true);
+  panel.toggleInputMode();assert.equal(panel.inputMode,'direct');
+});
