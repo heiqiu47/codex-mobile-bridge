@@ -1,24 +1,29 @@
 'use strict';
 
 const TerminalFont=(()=>{
-  const key='bridge-terminal-font-size',sizes=[12,14,16,18,20,24],panels=new Set();
-  const valid=value=>sizes.includes(Number(value))?Number(value):14;
+  const key='bridge-terminal-font-size',panels=new Set();
+  const allowed=value=>Number.isInteger(Number(value))&&Number(value)>=6&&Number(value)<=24;
+  const valid=value=>allowed(value)?Number(value):14;
   let size=14;try{size=valid(localStorage.getItem(key));}catch{}
   function update(value){size=valid(value);for(const panel of panels)panel.applyFontSize(size);}
+  function paint(control,value){control.value.textContent=value+'px';control.decrease.disabled=value<=6;control.increase.disabled=value>=24;}
   globalThis.addEventListener?.('storage',event=>{if(event.key===key)update(event.newValue);});
   return {
     size:()=>size,
     register(panel){panels.add(panel);panel.applyFontSize(size);},
     unregister:panel=>panels.delete(panel),
-    set(value){if(!sizes.includes(Number(value)))return;update(value);try{localStorage.setItem(key,String(size));}catch{}},
+    set(value){if(!allowed(value))return;update(value);try{localStorage.setItem(key,String(size));}catch{}},
+    step(delta){if(delta!==-1&&delta!==1)return;this.set(size+delta);},
+    paint,
     control(workbench){
-      const label=workbench.node('label','wb-terminal-font');
+      const label=workbench.node('div','wb-terminal-font');
       const title=workbench.node('span','','字号');
       label.setAttribute('data-i18n-title','所有终端字号');label.title=BridgeI18n.t('所有终端字号');
-      const select=workbench.node('select');select.setAttribute('data-i18n-aria-label','所有终端字号');select.setAttribute('aria-label',BridgeI18n.t('所有终端字号'));
-      for(const value of sizes){const option=workbench.node('option','',value+'px');option.value=String(value);select.append(option);}
-      select.value=String(size);select.onchange=()=>TerminalFont.set(select.value);label.append(title,select);
-      return {label,select};
+      const decrease=workbench.button('−',()=>TerminalFont.step(-1),'减小所有终端字号');
+      const value=workbench.node('output','wb-terminal-font-value');
+      const increase=workbench.button('+',()=>TerminalFont.step(1),'增大所有终端字号');
+      label.append(title,decrease,value,increase);
+      const control={label,decrease,value,increase};paint(control,size);return control;
     },
   };
 })();
@@ -33,7 +38,7 @@ class CommandTerminalPanel {
     const n=(...args)=>workbench.node(...args), b=(...args)=>workbench.button(...args);
     const head=n('div','wb-terminal-head wb-terminal-font-head'); head.append(n('strong','',BridgeI18n.t('终端')));
     this.stop=b(BridgeI18n.t('停止'),()=>this.cancel());this.stop.disabled=true;
-    const font=TerminalFont.control(workbench);this.fontSelect=font.select;
+    const font=TerminalFont.control(workbench);this.fontControl=font;
     head.append(b(BridgeI18n.t('清屏'),()=>{this.output='';this.screen.textContent='';}),font.label,this.stop);
     this.location=n('p','wb-terminal-location',BridgeI18n.t('正在读取项目…'));
     this.status=n('p','wb-status');this.status.setAttribute('role','status');
@@ -49,7 +54,7 @@ class CommandTerminalPanel {
     TerminalFont.register(this);
     this.load();
   }
-  applyFontSize(size){this.fontSelect.value=String(size);this.screen.style.fontSize=size+'px';this.command.style.fontSize=Math.max(16,size)+'px';this.prompt.style.fontSize=size+'px';}
+  applyFontSize(size){TerminalFont.paint(this.fontControl,size);this.screen.style.fontSize=size+'px';this.command.style.fontSize=Math.max(16,size)+'px';this.prompt.style.fontSize=size+'px';}
   url(extra='') {return this.workbench.endpoint(this.session,'terminal')+extra;}
   async load() {
     try {

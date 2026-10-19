@@ -31,7 +31,7 @@ class TerminalPanel {
     this.tab.body.replaceChildren();this.tab.body.classList.add('wb-pty');
     const head=n('div','wb-terminal-head wb-terminal-font-head');this.location=n('strong','',info.shell||BridgeI18n.t('连接终端…'));
     this.reopen=b(BridgeI18n.t('重新打开'),()=>this.restart());this.reopen.hidden=true;
-    const font=TerminalFont.control(this.workbench);this.fontSelect=font.select;
+    const font=TerminalFont.control(this.workbench);this.fontControl=font;
     head.append(this.location,b(BridgeI18n.t('清屏'),()=>this.clearScreen()),font.label,this.reopen);
     this.shellHint=n('small','wb-terminal-shell-hint',BridgeI18n.t('跨盘切换示例：cd /d D:\\（进入 D 盘根目录）。'));this.shellHint.hidden=!/(^|[\\/])cmd(?:\.exe)?$/i.test(info.shell||'');
     this.screen=n('div','wb-terminal-screen');this.screen.setAttribute("data-i18n-aria-label",'交互终端');this.screen.setAttribute('aria-label',BridgeI18n.t('交互终端'));
@@ -63,7 +63,7 @@ class TerminalPanel {
     TerminalFont.register(this);
   }
   applyFontSize(size){
-    this.fontSelect.value=String(size);this.input.style.fontSize=Math.max(16,size)+'px';
+    TerminalFont.paint(this.fontControl,size);this.input.style.fontSize=Math.max(16,size)+'px';
     this.term.options.fontSize=size;this.layout();
   }
   mobile(){return BridgeHost.hasNativeLayout()||!!(navigator.userAgentData?.mobile||/\b(?:iPhone|iPad|iPod|Android|Mobile)\b/i.test(navigator.userAgent||'')||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1));}
