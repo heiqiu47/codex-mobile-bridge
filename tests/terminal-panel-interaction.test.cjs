@@ -12,7 +12,7 @@ function fixture(){
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/workspace/terminal-panel.js'),'utf8')+';globalThis.Panel=TerminalPanel;',context);
   const requests=[];
   const node=(tag,cl,text)=>({tag,cl,textContent:text||'',hidden:false,children:[],append(...values){this.children.push(...values);},replaceChildren(){this.children=[];}});
-  const input={value:'',selectionStart:0,selectionEnd:0,focus(){this.focused=true;},setRangeText(value,start,end){this.value=this.value.slice(0,start)+value+this.value.slice(end);this.selectionStart=this.selectionEnd=start+value.length;}};
+  const input={value:'',selectionStart:0,selectionEnd:0,focus(){this.focused=true;},setRangeText(value,start,end){this.value=this.value.slice(0,start)+value+this.value.slice(end);this.selectionStart=this.selectionEnd=start+value.length;this.onselect?.();}};
   const panel=Object.create(context.Panel.prototype);
   Object.assign(panel,{id:'pty-id',running:true,disposed:false,operations:[],completionVersion:0,composing:false,input,
     completions:node(),status:node(),retry:node(),send:node(),term:{options:{},focus(){this.focused=true;}},tab:{body:{contains:()=>false}},session:{},
@@ -31,8 +31,17 @@ test('short keyboard burst batches in order and retains inputId after uncertain 
   assert.deepEqual(f.requests.map(r=>r.inputId),[id,id]);assert.equal(f.panel.operations.length,0);
 });
 
+test('continuous typing flushes from the first key rather than postponing the batch',async()=>{
+  const f=fixture();f.panel.enqueue('a');const timer=f.panel.flushTimer;
+  for(let i=0;i<20;i++)f.panel.enqueue('b');
+  assert.equal(f.panel.flushTimer,timer);assert.equal(f.timers.size,1);
+  const scheduled=f.timers.get(timer);assert.equal(scheduled.ms,12);scheduled.fn();await tick();
+  assert.equal(f.requests[0].data,'a'+'b'.repeat(20));
+});
+
 test('single completion changes only the mobile draft and never sends input',async()=>{
   const f=fixture();f.panel.input.value='echo "😀/fo"';f.panel.input.selectionStart=f.panel.input.selectionEnd=12;
+  f.panel.input.onselect=()=>f.panel.clearCompletion();
   f.panel.workbench.request=async(url,body)=>{f.requests.push(body);return {replaceStart:9,replaceEnd:11,candidates:[{label:'foo',insertText:'foo',isDirectory:false}]};};
   await f.panel.complete();
   assert.equal(f.panel.input.value,'echo "😀/foo"');assert.equal(f.requests[0].action,'complete');assert.equal(f.requests[0].selectionStart,12);
@@ -51,6 +60,20 @@ test('multiple, empty and stale completions preserve draft until a current choic
   assert.equal(f.panel.input.value,'edited');
 });
 
+test('late completion failures from another tab or edited draft do not overwrite status',async()=>{
+  const f=fixture();f.panel.input.value='cd x';f.panel.input.selectionStart=f.panel.input.selectionEnd=4;
+  let reject,visible=true;f.panel.workbench.isVisible=()=>visible;
+  f.panel.workbench.request=()=>new Promise((resolve,no)=>reject=no);
+  let pending=f.panel.complete();visible=false;reject(Error('stale tab'));await pending;assert.equal(f.panel.status.textContent,'');
+  visible=true;pending=f.panel.complete();f.panel.input.value='cd y';reject(Error('stale draft'));await pending;assert.equal(f.panel.status.textContent,'');
+});
+
+test('mobile landscape and iPad keep composer while narrow touch laptop stays direct',()=>{
+  const f=fixture();f.context.BridgeLayout.isCompactViewport=()=>false;assert.equal(f.panel.mobile(),true);
+  f.context.navigator={userAgent:'Macintosh',platform:'MacIntel',maxTouchPoints:5};assert.equal(f.panel.mobile(),true);
+  f.context.navigator={userAgent:'Windows NT',platform:'Win32',maxTouchPoints:10};assert.equal(f.panel.mobile(),false);
+});
+
 test('desktop focus is purposeful and never steals selection, dialog, editor or IME',()=>{
   const f=fixture();f.context.navigator.userAgent='Desktop';
   assert.equal(f.panel.mobile(),false,'narrow touch-capable desktop keeps direct input');
@@ -59,4 +82,11 @@ test('desktop focus is purposeful and never steals selection, dialog, editor or 
   f.panel.composing=false;f.context.document.activeElement={matches:()=>true};f.panel.focusOnSelect();assert.equal(f.panel.term.focused,false);
   f.context.document.activeElement=null;f.context.window.getSelection=()=>({toString:()=> 'selected'});f.panel.focusOnSelect();assert.equal(f.panel.term.focused,false);
   f.context.window.getSelection=()=>({toString:()=>''});f.context.document.querySelector=()=>({});f.panel.focusOnSelect();assert.equal(f.panel.term.focused,false);
+});
+
+test('desktop shortcut and clear screen restore input focus without stealing an editor',()=>{
+  const f=fixture();f.context.navigator.userAgent='Windows NT';f.panel.term.clear=()=>{};
+  f.panel.shortcut('Tab','\t');assert.equal(f.panel.term.focused,true);assert.equal(f.panel.operations[0].data,'\t');
+  f.panel.term.focused=false;f.panel.clearScreen();assert.equal(f.panel.term.focused,true);
+  f.panel.term.focused=false;f.context.document.activeElement={matches:()=>true};f.panel.shortcut('Esc','\x1b');assert.equal(f.panel.term.focused,false);
 });

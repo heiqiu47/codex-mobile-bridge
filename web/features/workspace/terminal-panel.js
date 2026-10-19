@@ -31,12 +31,12 @@ class TerminalPanel {
     this.tab.body.replaceChildren();this.tab.body.classList.add('wb-pty');
     const head=n('div','wb-terminal-head');this.location=n('strong','',info.shell||BridgeI18n.t('连接终端…'));
     this.reopen=b(BridgeI18n.t('重新打开'),()=>this.restart());this.reopen.hidden=true;
-    head.append(this.location,b(BridgeI18n.t('清屏'),()=>this.term.clear()),this.reopen);
+    head.append(this.location,b(BridgeI18n.t('清屏'),()=>this.clearScreen()),this.reopen);
     this.shellHint=n('small','wb-terminal-shell-hint',BridgeI18n.t('跨盘切换示例：cd /d D:\\（进入 D 盘根目录）。'));this.shellHint.hidden=!/(^|[\\/])cmd(?:\.exe)?$/i.test(info.shell||'');
     this.screen=n('div','wb-terminal-screen');this.screen.setAttribute("data-i18n-aria-label",'交互终端');this.screen.setAttribute('aria-label',BridgeI18n.t('交互终端'));
     this.status=n('p','wb-status');this.status.setAttribute('role','status');
     const keys=n('div','wb-terminal-keys');
-    for(const [label,value] of [['Ctrl+C','\x03'],['Tab','\t'],['Esc','\x1b'],['↑','\x1b[A'],['↓','\x1b[B'],['←','\x1b[D'],['→','\x1b[C']])keys.append(b(label,()=>label==='Tab'&&this.mobile()?this.complete():this.enqueue(value)));
+    for(const [label,value] of [['Ctrl+C','\x03'],['Tab','\t'],['Esc','\x1b'],['↑','\x1b[A'],['↓','\x1b[B'],['←','\x1b[D'],['→','\x1b[C']])keys.append(b(label,()=>this.shortcut(label,value)));
     this.form=n('form','wb-terminal-input');this.input=n('textarea');this.input.rows=2;this.input.setAttribute("data-i18n-placeholder",'输入命令或回复，换行键可换行');this.input.placeholder=BridgeI18n.t('输入命令或回复，换行键可换行');this.input.setAttribute("data-i18n-aria-label",'终端输入');this.input.setAttribute('aria-label',BridgeI18n.t('终端输入'));this.input.setAttribute('autocapitalize','off');this.input.setAttribute('autocorrect','off');this.input.spellcheck=false;
     this.send=n('button','',BridgeI18n.t('发送到终端'));this.send.type='submit';this.send.disabled=true;
     this.form.append(this.input,this.send);this.form.onsubmit=e=>{e.preventDefault();this.submit();};
@@ -60,7 +60,9 @@ class TerminalPanel {
     this.term.onResize(({cols,rows})=>{clearTimeout(this.resizeTimer);this.resizeTimer=setTimeout(()=>{if(this.running&&!this.disposed)this.workbench.request(this.url(),{action:'resize',id:this.id,cols,rows}).catch(e=>this.status.textContent=BridgeI18n.t(e.message));},120);});
     this.observer=new ResizeObserver(()=>this.layout());this.observer.observe(this.screen);this.layout();
   }
-  mobile(){return BridgeHost.hasNativeLayout()||((navigator.userAgentData?.mobile||/\b(?:iPhone|Android|Mobile)\b/i.test(navigator.userAgent||''))&&BridgeLayout.prefersTouchInput()&&BridgeLayout.isCompactViewport());}
+  mobile(){return BridgeHost.hasNativeLayout()||!!(navigator.userAgentData?.mobile||/\b(?:iPhone|iPad|iPod|Android|Mobile)\b/i.test(navigator.userAgent||'')||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1));}
+  shortcut(label,value){if(label==='Tab'&&this.mobile())this.complete();else this.enqueue(value);if(!this.mobile())this.focusOnSelect();}
+  clearScreen(){this.term.clear();this.focusOnSelect();}
   layout(){
     if(this.disposed||!this.screen?.clientHeight||!this.screen.clientWidth)return;
     this.tab.body.classList.toggle('wb-terminal-touch',this.mobile());this.term.options.disableStdin=!this.running||this.mobile()||this.inputError;
@@ -93,7 +95,7 @@ class TerminalPanel {
       for(const candidate of candidates){const button=this.workbench.button(candidate.label,()=>apply(candidate));button.type='button';this.completions.append(button);}
       if(result.truncated)this.completions.append(this.workbench.node('small','',BridgeI18n.t('仅显示部分匹配项')));
       this.completions.hidden=false;
-    }catch(e){if(!this.disposed&&version===this.completionVersion)this.status.textContent=BridgeI18n.t(e.message);}
+    }catch(e){if(!this.disposed&&id===this.id&&version===this.completionVersion&&text===this.input.value&&selectionStart===this.input.selectionStart&&selectionEnd===this.input.selectionEnd&&this.mobile()&&this.workbench.isVisible(this.session,this.tab))this.status.textContent=BridgeI18n.t(e.message);}
   }
   async submit(){
     if(!this.running||this.send.disabled)return;
@@ -107,7 +109,7 @@ class TerminalPanel {
     // Keep each Unicode character intact while staying below the server input cap.
     let chunk='';for(const char of data){if(chunk.length+char.length>3000){this.queueChunk(chunk);chunk='';}chunk+=char;}
     if(chunk)this.queueChunk(chunk);
-    clearTimeout(this.flushTimer);this.flushTimer=setTimeout(()=>this.flush(),12);
+    if(!this.flushTimer)this.flushTimer=setTimeout(()=>{this.flushTimer=null;this.flush();},12);
   }
   queueChunk(data){
     const tail=this.operations[this.operations.length-1];
@@ -116,7 +118,7 @@ class TerminalPanel {
   }
   async flush(){
     if(this.flushing||this.inputError||this.disposed)return;
-    clearTimeout(this.flushTimer);
+    clearTimeout(this.flushTimer);this.flushTimer=null;
     this.flushing=true;
     try{
       while(this.operations.length&&!this.disposed){
