@@ -120,7 +120,7 @@ def _process_cwd(kernel, pid, shell, job):
         length = struct.unpack_from('<H', unicode)[0]
         address = struct.unpack_from('<Q', unicode, 8)[0]
         if not length or length % 2 or length > 32768: raise OSError('终端当前目录格式无效')
-        cwd = read(address, length).decode('utf-16-le')
+        cwd = ntpath.normpath(read(address, length).decode('utf-16-le'))
         if identity() != started or not ntpath.isabs(cwd): raise OSError('无法确认终端当前目录')
         return cwd
     except (OSError, UnicodeError):
