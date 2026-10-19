@@ -63,6 +63,19 @@ test('flush checks the current layout before sending its first input',async()=>{
   assert.deepEqual([f.requests[0].cols,f.requests[0].rows],[132,39]);
 });
 
+test('large 6px terminal fit stays within PTY limits before input',async()=>{
+  const f=fixture();f.panel.screen={clientWidth:2560,clientHeight:1200};f.panel.tab.body.classList={toggle(){}};
+  f.panel.fit={proposeDimensions:()=>({cols:910,rows:380})};
+  Object.assign(f.panel.term,{cols:80,rows:24,resize(cols,rows){this.cols=cols;this.rows=rows;f.panel.queueResize(cols,rows);}});
+  f.panel.workbench.request=async(url,body)=>{f.requests.push({...body});return {};};
+  f.panel.enqueue('x');await f.panel.flush();
+  assert.deepEqual(f.requests.map(item=>item.action),['resize','input']);
+  assert.deepEqual([f.requests[0].cols,f.requests[0].rows],[500,300]);
+  assert.equal(f.panel.term.cols,500);assert.equal(f.panel.term.rows,300);
+  f.panel.fit.proposeDimensions=()=>({cols:1,rows:0});f.panel.layout();
+  assert.equal(f.panel.term.cols,2);assert.equal(f.panel.term.rows,2);
+});
+
 test('a closed or restarted tab cannot send after waiting for resize',async()=>{
   for(const change of ['disposed','restarting','new-id']){
     const f=fixture();let finishResize;
