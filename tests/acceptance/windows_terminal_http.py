@@ -153,9 +153,8 @@ def main():
         if args.extended_cwd:
             marker = run / 'startup-cwd.txt'
             input_text('cd > "' + str(marker) + '"\r')
-            until(marker.exists, 'Initial CMD cwd')
-            require(run.name in marker.read_bytes().decode('ascii', 'ignore'),
-                    'CMD did not start in the synthetic chat cwd')
+            until(lambda: marker.exists() and run.name in marker.read_bytes().decode('ascii', 'ignore'),
+                  'Initial CMD cwd in the synthetic chat directory')
             summary['checks']['extendedLocalCwd'] = True
 
         input_text('cd nested\rset CMB_HTTP_STATE=retained\r')
@@ -165,8 +164,8 @@ def main():
                 'Resize failed')
         input_text('echo %CMB_HTTP_STATE%> continuity.txt\r')
         continuity = workspace / 'nested' / 'continuity.txt'
-        until(continuity.exists, 'cd/env persistence')
-        require(continuity.read_text().strip() == 'retained', 'Reopened tab lost cwd or environment')
+        until(lambda: continuity.exists() and continuity.read_text().strip() == 'retained',
+              'Reopened tab cwd and environment persistence')
         summary['checks']['reopenResizeCwdEnv'] = True
 
         cursor = poll()['cursor']; output = ''
