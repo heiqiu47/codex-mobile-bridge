@@ -160,6 +160,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     private var routeDiscovery: ConnectionDiscovery?
     private var routeAttempted = false
     private var requestedRoute: URL?
+    private var connectionError: UIView?
     private var pendingStorage: String?
     private var clipboardToken = ""
     private var downloadState = DownloadManager.Snapshot()
@@ -373,7 +374,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
         let inbox = UIBarButtonItem(image: UIImage(systemName: "bell"), style: .plain, target: self, action: #selector(self.inbox)); inbox.accessibilityLabel = MobileStrings.text("通知")
         navigationItem.rightBarButtonItems = [settings, inbox]
     }
-    private func clear() { updateSystemBars(reset: true); pendingStorage = nil; nativeMainNavigation = nil; routeDiscovery?.cancel(); routeDiscovery = nil; cancelSync(); finishUpload(nil); stopComputerChecks(); computerStates.removeAll(); computerNotifications.removeAll(); gatewayMenuTop?.isActive = false; gatewayMenuTop = nil; generation += 1; web?.stopLoading(); web?.navigationDelegate = nil; web?.uiDelegate = nil; web = nil; for v in page.arrangedSubviews where v !== subtitle { page.removeArrangedSubview(v); v.removeFromSuperview() } }
+    private func clear() { updateSystemBars(reset: true); connectionError = nil; pendingStorage = nil; nativeMainNavigation = nil; routeDiscovery?.cancel(); routeDiscovery = nil; cancelSync(); finishUpload(nil); stopComputerChecks(); computerStates.removeAll(); computerNotifications.removeAll(); gatewayMenuTop?.isActive = false; gatewayMenuTop = nil; generation += 1; web?.stopLoading(); web?.navigationDelegate = nil; web?.uiDelegate = nil; web = nil; for v in page.arrangedSubviews where v !== subtitle { page.removeArrangedSubview(v); v.removeFromSuperview() } }
     @objc func home() {
         clear(); navigation(home: true); subtitle.isHidden = true
         let container = UIView(); page.addArrangedSubview(container); let content = scrollContent(in: container)
@@ -636,9 +637,11 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     }
     @objc private func refresh() { routeAttempted = false; if let web { nativeMainNavigation = web.url.map { (web, generation, $0.absoluteString) }; web.reload() } }
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-        let recover = webView === web && response.isForMainFrame && response.response.url.map { GatewayURL.same($0, origin) } == true && ConnectionDiscovery.retryableStatus((response.response as? HTTPURLResponse)?.statusCode ?? 0)
-        decisionHandler(.allow)
-        if recover { recoverConnection() }
+        let status = (response.response as? HTTPURLResponse)?.statusCode ?? 0
+        let recover = webView === web && response.isForMainFrame && response.response.url.map { GatewayURL.same($0, origin) } == true && ConnectionDiscovery.retryableStatus(status)
+        // Tunnel and proxy error pages (e.g. Cloudflare 1033/530) carry no gateway navigation; keep the way back native.
+        decisionHandler(recover ? .cancel : .allow)
+        if recover { showConnectionError(status: status); recoverConnection() }
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
@@ -672,7 +675,25 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { if nativeMainNavigation?.web === webView { nativeMainNavigation = nil }; guard webView === web, let url = webView.url, GatewayURL.same(url, origin) else { return }; subtitle.isHidden = true; registerNativePush(); rememberConnection()
         if let snapshot = pendingStorage { pendingStorage = nil; webView.evaluateJavaScript("(()=>{const data=" + snapshot + ";for(const [k,v] of Object.entries(data))if(typeof v==='string')localStorage.setItem(k,v);location.reload();})()", completionHandler: nil) }
     }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { if nativeMainNavigation?.web === webView { nativeMainNavigation = nil }; guard webView === web else { return }; subtitle.isHidden = false; subtitle.text = MobileStrings.text("连接失败，请检查电脑和地址后刷新"); recoverConnection() }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { if nativeMainNavigation?.web === webView { nativeMainNavigation = nil }; guard webView === web, connectionError == nil else { return }; subtitle.isHidden = false; subtitle.text = MobileStrings.text("连接失败，请检查电脑和地址后刷新")
+        if (error as NSError).code != NSURLErrorCancelled || (error as NSError).domain != NSURLErrorDomain { showConnectionError(status: nil) }
+        recoverConnection()
+    }
+    private func showConnectionError(status: Int?) {
+        guard let web, connectionError == nil, let route = requestedRoute else { return }
+        let address = origin, ticket = generation
+        updateSystemBars(reset: true); web.isHidden = true; subtitle.isHidden = true; gatewayMenu.isHidden = true
+        let container = UIView(); page.addArrangedSubview(container); connectionError = container; let content = scrollContent(in: container)
+        let visual = UIImageView(image: UIImage(systemName: "wifi.exclamationmark")); visual.tintColor = .secondaryLabel; visual.contentMode = .scaleAspectFit; visual.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        let heading = label(MobileStrings.text("暂时无法连接电脑"), size: 22, weight: .semibold); heading.textAlignment = .center
+        let hint = label(MobileStrings.text("电脑可能已锁屏、睡眠或断网，网关暂时无法访问。请稍后重试，或返回电脑列表。"), secondary: true); hint.textAlignment = .center
+        let detail = label(computerName(address) + (status.map { " · HTTP \($0)" } ?? ""), size: 13, secondary: true); detail.textAlignment = .center
+        let hero = column(spacing: 12); [visual, heading, hint, detail].forEach(hero.addArrangedSubview); hero.setCustomSpacing(20, after: visual)
+        content.addArrangedSubview(hero)
+        content.addArrangedSubview(card([button(MobileStrings.text("重试"), symbol: "arrow.clockwise", primary: true) { [weak self] in
+            guard let self, ticket == self.generation, self.saved.contains(address) else { return }; self.connect(route, address: address)
+        }, button(MobileStrings.text("返回电脑列表"), symbol: "desktopcomputer") { [weak self] in self?.home() }]))
+    }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { if nativeMainNavigation?.web === webView { nativeMainNavigation = nil }; guard webView === web else { return }; recoverConnection() }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) { guard frame.isMainFrame else { completionHandler(); return }; let a = UIAlertController(title: nil, message: message, preferredStyle: .alert); a.addAction(UIAlertAction(title: MobileStrings.text("好"), style: .default) { _ in completionHandler() }); present(a, animated: true) }
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) { guard frame.isMainFrame else { completionHandler(false); return }; let a = UIAlertController(title: nil, message: message, preferredStyle: .alert); a.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel) { _ in completionHandler(false) }); a.addAction(UIAlertAction(title: MobileStrings.text("确认"), style: .default) { _ in completionHandler(true) }); present(a, animated: true) }
@@ -1359,6 +1380,9 @@ enum MobileStrings {
 "iOS App 需要使用自己的 Apple 账号重新签名安装，暂不支持 App 内直接覆盖更新。": "The iOS app requires signing the new build with your own Apple account. Direct in-app installation is not available yet.",
 
         "返回电脑列表": "Back to computers",
+        "暂时无法连接电脑": "Can’t reach the computer",
+        "电脑可能已锁屏、睡眠或断网，网关暂时无法访问。请稍后重试，或返回电脑列表。": "The computer may be locked, asleep or offline, so the gateway is unreachable. Try again later or go back to your computers.",
+        "重试": "Try again",
         "外观与显示": "Appearance",
         "隐藏底部 APP 图标": "Hide bottom app icons",
         "显示底部 APP 图标": "Show bottom app icons",
