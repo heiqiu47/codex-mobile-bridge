@@ -39,6 +39,31 @@ test('continuous typing flushes from the first key rather than postponing the ba
   assert.equal(f.requests[0].data,'a'+'b'.repeat(20));
 });
 
+test('input waits for the latest pending resize before reaching the PTY',async()=>{
+  const f=fixture();let finishResize;
+  f.panel.workbench.request=async(url,body)=>{
+    f.requests.push({...body});
+    if(body.action==='resize')return new Promise(resolve=>finishResize=resolve);
+    return {};
+  };
+  f.panel.queueResize(90,24);f.panel.queueResize(120,32);f.panel.enqueue('DIRECT_ok');
+  const pending=f.panel.flush();await tick();
+  assert.deepEqual(f.requests.map(item=>item.action),['resize']);
+  assert.deepEqual([f.requests[0].cols,f.requests[0].rows],[120,32]);
+  finishResize({});await pending;
+  assert.deepEqual(f.requests.map(item=>item.action),['resize','input']);
+  assert.equal(f.requests[1].data,'DIRECT_ok');
+});
+
+test('failed resize keeps input unsent and retry uses the same pending input',async()=>{
+  const f=fixture();let fail=true;
+  f.panel.workbench.request=async(url,body)=>{f.requests.push({...body});if(body.action==='resize'&&fail){fail=false;throw Error('resize failed');}return {};};
+  f.panel.queueResize(100,30);f.panel.enqueue('x');const id=f.panel.operations[0].id;
+  await f.panel.flush();assert.equal(f.panel.inputError,true);assert.deepEqual(f.requests.map(item=>item.action),['resize']);
+  assert.equal(f.panel.operations[0].id,id);f.panel.inputError=false;await f.panel.flush();
+  assert.deepEqual(f.requests.map(item=>item.action),['resize','resize','input']);assert.equal(f.requests[2].inputId,id);
+});
+
 test('single completion changes only the mobile draft and never sends input',async()=>{
   const f=fixture();f.panel.input.value='echo "😀/fo"';f.panel.input.selectionStart=f.panel.input.selectionEnd=12;
   f.panel.input.onselect=()=>f.panel.selectionChanged();

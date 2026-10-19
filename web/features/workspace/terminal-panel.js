@@ -57,7 +57,7 @@ class TerminalPanel {
     this.term.parser.registerOscHandler(52,()=>true);
     this.fit=new FitAddon.FitAddon();this.term.loadAddon(this.fit);this.term.open(this.screen);
     this.term.onData(data=>this.enqueue(data));
-    this.term.onResize(({cols,rows})=>{clearTimeout(this.resizeTimer);this.resizeTimer=setTimeout(()=>{if(this.running&&!this.disposed)this.workbench.request(this.url(),{action:'resize',id:this.id,cols,rows}).catch(e=>this.status.textContent=BridgeI18n.t(e.message));},120);});
+    this.term.onResize(({cols,rows})=>this.queueResize(cols,rows));
     this.observer=new ResizeObserver(()=>this.layout());this.observer.observe(this.screen);this.layout();
   }
   mobile(){return BridgeHost.hasNativeLayout()||!!(navigator.userAgentData?.mobile||/\b(?:iPhone|iPad|iPod|Android|Mobile)\b/i.test(navigator.userAgent||'')||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1));}
@@ -126,17 +126,35 @@ class TerminalPanel {
     if(tail&&!tail.sent&&tail.data.length+data.length<=3000)tail.data+=data;
     else this.operations.push({id:uuid(),data,sent:false});
   }
+  queueResize(cols,rows){
+    if(!this.running||this.disposed||this.restarting)return;
+    this.pendingResize={cols,rows};clearTimeout(this.resizeTimer);
+    this.resizeTimer=setTimeout(()=>{this.resizeTimer=null;this.flushResize().catch(e=>{if(!this.disposed)this.status.textContent=BridgeI18n.t(e.message);});},120);
+  }
+  async flushResize(){
+    clearTimeout(this.resizeTimer);this.resizeTimer=null;
+    while(!this.disposed&&!this.restarting){
+      if(this.resizeFlight){await this.resizeFlight;continue;}
+      if(!this.pendingResize)return;
+      const size=this.pendingResize,id=this.id;this.pendingResize=null;
+      const request=this.resizeFlight=this.workbench.request(this.url(),{action:'resize',id,cols:size.cols,rows:size.rows});
+      try{await request;}
+      catch(e){if(this.id===id&&!this.pendingResize)this.pendingResize=size;throw e;}
+      finally{if(this.resizeFlight===request)this.resizeFlight=null;}
+    }
+  }
   async flush(){
     if(this.flushing||this.inputError||this.disposed)return;
     clearTimeout(this.flushTimer);this.flushTimer=null;
     this.flushing=true;
     try{
       while(this.operations.length&&!this.disposed){
+        await this.flushResize();
         const entry=this.operations[0];entry.sent=true;
         await this.workbench.request(this.url(),{action:'input',id:this.id,inputId:entry.id,data:entry.data});
         this.operations.shift();
       }
-    }catch(e){if(!this.disposed){this.inputError=true;this.status.textContent=BridgeI18n.t(e.message)+BridgeI18n.t(' · 输入结果未确认；重试不会重复输入。');this.retry.hidden=false;this.send.disabled=true;this.term.options.disableStdin=true;}}
+    }catch(e){if(!this.disposed){this.inputError=true;this.status.textContent=BridgeI18n.t(e.message)+BridgeI18n.t(this.operations[0]?.sent?' · 输入结果未确认；重试不会重复输入。':' · 终端尺寸未同步；输入尚未发送。');this.retry.hidden=false;this.send.disabled=true;this.term.options.disableStdin=true;}}
     finally{this.flushing=false;if(!this.disposed&&!this.inputError){this.send.disabled=!this.running;this.layout();}}
   }
   apply(result){
@@ -162,7 +180,7 @@ class TerminalPanel {
     }
   }
   async restart(){
-    if(this.restarting)return;this.restarting=true;this.readController?.abort();clearTimeout(this.timer);
+    if(this.restarting)return;this.restarting=true;this.readController?.abort();clearTimeout(this.timer);clearTimeout(this.resizeTimer);this.pendingResize=null;
     try{
       // Close the previous id even after a lost open response; never orphan a shell.
       try{await this.workbench.request(this.url(),{action:'close',id:this.id});}catch(e){if(e.status!==404)throw e;}
@@ -172,7 +190,7 @@ class TerminalPanel {
     finally{this.restarting=false;this.schedule();}
   }
   dispose(){
-    this.disposed=true;document.removeEventListener('visibilitychange',this.visibility);this.readController?.abort();clearTimeout(this.timer);clearTimeout(this.flushTimer);clearTimeout(this.resizeTimer);this.observer?.disconnect();this.term?.dispose();this.fallback?.dispose();
+    this.disposed=true;document.removeEventListener('visibilitychange',this.visibility);this.readController?.abort();clearTimeout(this.timer);clearTimeout(this.flushTimer);clearTimeout(this.resizeTimer);this.pendingResize=null;this.observer?.disconnect();this.term?.dispose();this.fallback?.dispose();
     if(!this.fallback)this.workbench.request(this.url(),{action:'close',id:this.id}).catch(()=>{});
     try{sessionStorage.removeItem(this.key);}catch{}
   }

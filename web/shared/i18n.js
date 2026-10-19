@@ -2575,6 +2575,7 @@ const en={
   "Windows 路径补全需要 64 位网关": "Windows path completion requires a 64-bit gateway",
   "无法读取终端 shell 进程": "Cannot read the terminal shell process",
   " · 输入结果未确认；重试不会重复输入。": " · Input unconfirmed; retry will not duplicate it.",
+  " · 终端尺寸未同步；输入尚未发送。": " · Terminal size was not updated; input has not been sent.",
   "连续会话 · 关闭标签将结束终端": "Persistent session · Closing this tab ends the terminal",
   "终端已退出": "Terminal exited",
   "新建侧边聊天": "New side chat",
