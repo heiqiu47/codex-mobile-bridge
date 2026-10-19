@@ -5,19 +5,20 @@ const vm=require('node:vm');
 const path=require('node:path');
 
 function fixture(){
-  const timers=new Map();let next=0,uid=0;
+  const timers=new Map(),storage=[];let next=0,uid=0;
   const context=vm.createContext({BridgeI18n:{t:s=>s},BridgeHost:{hasNativeLayout:()=>false},BridgeLayout:{prefersTouchInput:()=>true,isCompactViewport:()=>true},navigator:{userAgent:'iPhone Mobile'},
     uuid:()=>String(++uid),document:{hidden:false,body:{},querySelector:()=>null,activeElement:null},window:{getSelection:()=>({toString:()=>''})},
+    sessionStorage:{setItem:(...args)=>storage.push(args),getItem:()=>null,removeItem:(...args)=>storage.push(args)},
     setTimeout:(fn,ms)=>{timers.set(++next,{fn,ms});return next;},clearTimeout:id=>timers.delete(id)});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/workspace/terminal-panel.js'),'utf8')+';globalThis.Panel=TerminalPanel;',context);
   const requests=[];
   const node=(tag,cl,text)=>({tag,cl,textContent:text||'',hidden:false,children:[],append(...values){this.children.push(...values);},replaceChildren(){this.children=[];}});
-  const input={value:'',selectionStart:0,selectionEnd:0,focus(){this.focused=true;},setRangeText(value,start,end){this.value=this.value.slice(0,start)+value+this.value.slice(end);this.selectionStart=this.selectionEnd=start+value.length;this.onselect?.();}};
+  const input={value:'',selectionStart:0,selectionEnd:0,focus(){this.focused=true;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;},setRangeText(value,start,end){this.value=this.value.slice(0,start)+value+this.value.slice(end);this.selectionStart=this.selectionEnd=start+value.length;this.onselect?.();}};
   const panel=Object.create(context.Panel.prototype);
-  Object.assign(panel,{id:'pty-id',running:true,disposed:false,operations:[],completionVersion:0,composing:false,input,
-    completions:node(),status:node(),retry:node(),send:node(),term:{options:{},focus(){this.focused=true;}},tab:{body:{contains:()=>false}},session:{},
+  Object.assign(panel,{id:'pty-id',running:true,disposed:false,operations:[],completionVersion:0,composing:false,inputMode:'draft',input,
+    completions:node(),status:node(),retry:node(),send:node(),term:{options:{},focus(){this.focused=true;}},tab:{body:{contains:()=>false,classList:{toggle(){}}}},session:{},
     workbench:{node,button:(label,click)=>Object.assign(node('button','',label),{click}),isVisible:()=>true,request:(url,body)=>{requests.push(body);return Promise.resolve({});}},url:()=>'/terminal?mode=pty'});
-  return {panel,requests,timers,context,node};
+  return {panel,requests,timers,storage,context,node};
 }
 async function tick(){await new Promise(resolve=>setImmediate(resolve));}
 
@@ -154,7 +155,9 @@ test('mobile landscape and iPad keep composer while narrow touch laptop stays di
 
 test('desktop focus is purposeful and never steals selection, dialog, editor or IME',()=>{
   const f=fixture();f.context.navigator.userAgent='Desktop';
-  assert.equal(f.panel.mobile(),false,'narrow touch-capable desktop keeps direct input');
+  assert.equal(f.panel.mobile(),false,'narrow touch-capable desktop uses local input');
+  f.panel.focusOnSelect();assert.equal(f.panel.input.focused,true);
+  f.panel.inputMode='direct';f.panel.input.focused=false;
   f.panel.focusOnSelect();assert.equal(f.panel.term.focused,true);
   f.panel.term.focused=false;f.panel.composing=true;f.panel.focusOnSelect();assert.equal(f.panel.term.focused,false);
   f.panel.composing=false;f.context.document.activeElement={matches:()=>true};f.panel.focusOnSelect();assert.equal(f.panel.term.focused,false);
@@ -163,8 +166,46 @@ test('desktop focus is purposeful and never steals selection, dialog, editor or 
 });
 
 test('desktop shortcut and clear screen restore input focus without stealing an editor',()=>{
-  const f=fixture();f.context.navigator.userAgent='Windows NT';f.panel.term.clear=()=>{};
+  const f=fixture();f.context.navigator.userAgent='Windows NT';f.panel.term.clear=()=>{};f.panel.inputMode='direct';
   f.panel.shortcut('Tab','\t');assert.equal(f.panel.term.focused,true);assert.equal(f.panel.operations[0].data,'\t');
   f.panel.term.focused=false;f.panel.clearScreen();assert.equal(f.panel.term.focused,true);
   f.panel.term.focused=false;f.context.document.activeElement={matches:()=>true};f.panel.shortcut('Esc','\x1b');assert.equal(f.panel.term.focused,false);
+});
+
+test('desktop local draft responds immediately and Enter sends once without remote key echo',()=>{
+  const f=fixture();f.context.navigator.userAgent='Windows NT';
+  f.panel.term.paste=text=>f.panel.enqueue(text);f.panel.layout=()=>{};
+  f.panel.input.value='echo local';
+  let prevented=0;const enter={key:'Enter',preventDefault(){prevented++;}};
+  f.panel.handleInputKeydown({key:'Enter',isComposing:true,preventDefault(){throw Error('IME commit blocked');}});
+  assert.equal(f.panel.input.value,'echo local');assert.equal(f.panel.operations.length,0);
+  f.panel.handleInputKeydown({...enter,repeat:true});assert.equal(f.panel.operations.length,0);
+  f.panel.handleInputKeydown(enter);
+  assert.equal(prevented,2);assert.equal(f.panel.input.value,'');
+  assert.equal(f.panel.operations.length,1);assert.equal(f.panel.operations[0].data,'echo local\r');
+  f.panel.handleInputKeydown(enter);
+  assert.equal(f.panel.operations[0].data,'echo local\r','an empty follow-up Enter is not a second command');
+  f.panel.handleInputKeydown({key:'Enter',shiftKey:true,preventDefault(){throw Error('Shift+Enter should insert newline');}});
+});
+
+test('local draft shortcut arrows edit its caret; direct mode restores remote keys',()=>{
+  const f=fixture();f.context.navigator.userAgent='Windows NT';f.panel.layout=()=>{};
+  f.panel.input.value='a😀b\ncd';f.panel.input.selectionStart=f.panel.input.selectionEnd=3;
+  f.panel.shortcut('←','\x1b[D');assert.equal(f.panel.input.selectionStart,1,'emoji remains intact');
+  f.panel.shortcut('→','\x1b[C');assert.equal(f.panel.input.selectionStart,3);
+  f.panel.shortcut('↓','\x1b[B');assert.equal(f.panel.input.selectionStart,7);
+  f.panel.shortcut('↑','\x1b[A');assert.equal(f.panel.input.selectionStart,3);
+  assert.equal(f.panel.operations.length,0);
+  f.panel.shortcut('Ctrl+C','\x03');assert.equal(f.panel.operations[0].data,'\x03');
+  f.panel.toggleInputMode();assert.equal(f.panel.inputMode,'direct');
+  f.panel.shortcut('↑','\x1b[A');assert.equal(f.panel.operations[0].data,'\x03\x1b[A');
+});
+
+test('unsent desktop draft stays local and is never written to session storage',()=>{
+  const f=fixture();f.context.navigator.userAgent='Windows NT';f.panel.layout=()=>{};
+  f.panel.input.value='private command';
+  f.panel.toggleInputMode();f.panel.toggleInputMode();
+  assert.equal(f.panel.input.value,'private command');
+  assert.equal(f.panel.operations.length,0);
+  assert.deepEqual(f.storage,[]);
 });
