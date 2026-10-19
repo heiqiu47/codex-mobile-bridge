@@ -2,7 +2,7 @@
 
 class TerminalPanel {
   constructor(workbench, session, tab) {
-    Object.assign(this, {workbench, session, tab});this.disposed=false;this.cursor=0;this.running=false;this.operations=[];this.composing=false;this.completionVersion=0;
+    Object.assign(this, {workbench, session, tab});this.disposed=false;this.cursor=0;this.running=false;this.operations=[];this.composing=false;this.completionVersion=0;this.inputMode='draft';
     this.visibility=()=>{clearTimeout(this.timer);if(document.hidden)this.readController?.abort();else if(this.running){if(this.polling)this.resumeRead=true;else this.poll();}};
     document.addEventListener('visibilitychange',this.visibility);
     this.key='pty:'+session.key;
@@ -32,7 +32,8 @@ class TerminalPanel {
     const head=n('div','wb-terminal-head wb-terminal-font-head');this.location=n('strong','',info.shell||BridgeI18n.t('连接终端…'));
     this.reopen=b(BridgeI18n.t('重新打开'),()=>this.restart());this.reopen.hidden=true;
     const font=TerminalFont.control(this.workbench);this.fontControl=font;
-    head.append(this.location,b(BridgeI18n.t('清屏'),()=>this.clearScreen()),font.label,this.reopen);
+    this.modeButton=b('',()=>this.toggleInputMode());this.updateInputMode();
+    head.append(this.location,b(BridgeI18n.t('清屏'),()=>this.clearScreen()),this.modeButton,font.label,this.reopen);
     this.shellHint=n('small','wb-terminal-shell-hint',BridgeI18n.t('跨盘切换示例：cd /d D:\\（进入 D 盘根目录）。'));this.shellHint.hidden=!/(^|[\\/])cmd(?:\.exe)?$/i.test(info.shell||'');
     this.screen=n('div','wb-terminal-screen');this.screen.setAttribute("data-i18n-aria-label",'交互终端');this.screen.setAttribute('aria-label',BridgeI18n.t('交互终端'));
     this.status=n('p','wb-status');this.status.setAttribute('role','status');
@@ -46,7 +47,7 @@ class TerminalPanel {
     this.input.addEventListener('input',()=>this.clearCompletion());
     this.input.addEventListener('click',()=>this.clearCompletion());
     this.input.addEventListener('select',()=>this.selectionChanged());
-    this.input.addEventListener('keydown',e=>{if(e.key==='Tab'&&this.mobile()&&!e.isComposing&&!this.composing){e.preventDefault();this.complete();}else if(e.key!=='Tab')this.clearCompletion();});
+    this.input.addEventListener('keydown',e=>this.handleInputKeydown(e));
     this.completions=n('div','wb-terminal-completions');this.completions.hidden=true;
     // Enter in the mobile composer ALWAYS inserts a newline. Submit is explicit.
     this.retry=b(BridgeI18n.t('重试未确认输入'),()=>{this.inputError=false;this.retry.hidden=true;this.flush();});this.retry.hidden=true;
@@ -57,7 +58,7 @@ class TerminalPanel {
     // Terminal output must never write to or read the system clipboard (OSC 52).
     this.term.parser.registerOscHandler(52,()=>true);
     this.fit=new FitAddon.FitAddon();this.term.loadAddon(this.fit);this.term.open(this.screen);
-    this.term.onData(data=>this.enqueue(data));
+    this.term.onData(data=>{if(this.submitting||this.mobile()||this.inputMode==='direct')this.enqueue(data);});
     this.term.onResize(({cols,rows})=>this.queueResize(cols,rows));
     this.observer=new ResizeObserver(()=>this.layout());this.observer.observe(this.screen);this.layout();
     TerminalFont.register(this);
@@ -67,11 +68,37 @@ class TerminalPanel {
     this.term.options.fontSize=size;this.layout();
   }
   mobile(){return BridgeHost.hasNativeLayout()||!!(navigator.userAgentData?.mobile||/\b(?:iPhone|iPad|iPod|Android|Mobile)\b/i.test(navigator.userAgent||'')||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1));}
-  shortcut(label,value){if(label==='Tab'&&this.mobile())this.complete();else this.enqueue(value);if(!this.mobile())this.focusOnSelect();}
+  updateInputMode(){
+    if(this.modeButton){this.modeButton.textContent=BridgeI18n.t(this.inputMode==='draft'?'本地输入 · 切换直接输入':'直接输入 · 切换本地输入');this.modeButton.hidden=this.mobile();}
+    if(this.input){this.input.placeholder=BridgeI18n.t(this.mobile()?'输入命令或回复，换行键可换行':'本地草稿：Enter 发送，Shift+Enter 换行；密码请用直接输入');}
+    this.tab.body.classList.toggle('wb-terminal-draft',!this.mobile()&&this.inputMode==='draft');
+    this.tab.body.classList.toggle('wb-terminal-direct',!this.mobile()&&this.inputMode==='direct');
+  }
+  toggleInputMode(){
+    if(this.mobile())return;
+    this.inputMode=this.inputMode==='draft'?'direct':'draft';
+    this.clearCompletion();this.updateInputMode();this.layout();this.focusOnSelect();
+  }
+  handleInputKeydown(e){
+    if(e.isComposing||this.composing)return;
+    if(e.key==='Tab'){e.preventDefault();this.complete();return;}
+    if(e.key==='Enter'&&!this.mobile()&&!e.shiftKey){e.preventDefault();if(!e.repeat)this.submit();return;}
+    this.clearCompletion();
+  }
+  shortcut(label,value){
+    if(this.mobile()||this.inputMode==='draft'){
+      if(label==='Tab')this.complete();
+      else if(label==='Ctrl+C')this.enqueue(value);
+      else if(label==='Esc'&&this.inputMode==='draft'){this.input.value='';this.clearCompletion();}
+      else if(this.mobile())this.enqueue(value);
+      this.focusOnSelect();return;
+    }
+    this.enqueue(value);this.focusOnSelect();
+  }
   clearScreen(){this.term.clear();this.focusOnSelect();}
   layout(){
     if(this.disposed||!this.screen?.clientHeight||!this.screen.clientWidth)return;
-    this.tab.body.classList.toggle('wb-terminal-touch',this.mobile());this.term.options.disableStdin=!this.running||this.mobile()||this.inputError;
+    this.tab.body.classList.toggle('wb-terminal-touch',this.mobile());this.updateInputMode();this.term.options.disableStdin=!this.running||this.mobile()||this.inputMode==='draft'||this.inputError;
     const size=this.fit.proposeDimensions?.();if(!size||!Number.isFinite(size.cols)||!Number.isFinite(size.rows))return;
     const cols=Math.max(2,Math.min(500,Math.floor(size.cols))),rows=Math.max(2,Math.min(300,Math.floor(size.rows)));
     if(cols!==this.term.cols||rows!==this.term.rows)this.term.resize(cols,rows);
@@ -82,7 +109,7 @@ class TerminalPanel {
     const active=document.activeElement;
     if(active&&active!==document.body&&!this.tab.body.contains(active)&&active.matches?.('input,textarea,[contenteditable="true"]'))return;
     this.layout();
-    this.term.focus();
+    if(this.inputMode==='draft')this.input.focus();else this.term.focus();
   }
   selectionChanged(){
     const state=this.completionSnapshot;
@@ -91,7 +118,7 @@ class TerminalPanel {
   }
   clearCompletion(){this.completionVersion++;this.completionSnapshot=null;if(this.completions){this.completions.hidden=true;this.completions.replaceChildren();}}
   async complete(){
-    if(!this.running||this.disposed||!this.mobile()||this.composing||this.inputError)return;
+    if(!this.running||this.disposed||(!this.mobile()&&this.inputMode!=='draft')||this.composing||this.inputError)return;
     if(this.completing&&this.completing.version===this.completionVersion&&this.completing.id===this.id&&this.completing.text===this.input.value&&this.completing.start===this.input.selectionStart&&this.completing.end===this.input.selectionEnd)return;
     this.clearCompletion();const version=this.completionVersion,id=this.id,text=this.input.value,selectionStart=this.input.selectionStart,selectionEnd=this.input.selectionEnd;
     if(selectionStart!==selectionEnd)return;
@@ -99,7 +126,7 @@ class TerminalPanel {
     this.completions.append(this.workbench.node('span','',BridgeI18n.t('正在补全…')));this.completions.hidden=false;
     try{
       const result=await this.workbench.request(this.url(),{action:'complete',id,text,selectionStart});
-      if(this.disposed||id!==this.id||version!==this.completionVersion||text!==this.input.value||selectionStart!==this.input.selectionStart||selectionEnd!==this.input.selectionEnd||!this.mobile()||!this.workbench.isVisible(this.session,this.tab))return;
+      if(this.disposed||id!==this.id||version!==this.completionVersion||text!==this.input.value||selectionStart!==this.input.selectionStart||selectionEnd!==this.input.selectionEnd||(!this.mobile()&&this.inputMode!=='draft')||!this.workbench.isVisible(this.session,this.tab))return;
       this.completions.replaceChildren();
       const candidates=result.candidates||[];
       const apply=candidate=>{
@@ -112,14 +139,15 @@ class TerminalPanel {
       for(const candidate of candidates){const button=this.workbench.button(candidate.label,()=>apply(candidate));button.type='button';this.completions.append(button);}
       if(result.truncated)this.completions.append(this.workbench.node('small','',BridgeI18n.t('仅显示部分匹配项')));
       this.completions.hidden=false;
-    }catch(e){if(!this.disposed&&id===this.id&&version===this.completionVersion&&text===this.input.value&&selectionStart===this.input.selectionStart&&selectionEnd===this.input.selectionEnd&&this.mobile()&&this.workbench.isVisible(this.session,this.tab)){this.completions.replaceChildren();this.completions.append(this.workbench.node('span','',BridgeI18n.t(e.message)));this.completions.hidden=false;}}
+    }catch(e){if(!this.disposed&&id===this.id&&version===this.completionVersion&&text===this.input.value&&selectionStart===this.input.selectionStart&&selectionEnd===this.input.selectionEnd&&(this.mobile()||this.inputMode==='draft')&&this.workbench.isVisible(this.session,this.tab)){this.completions.replaceChildren();this.completions.append(this.workbench.node('span','',BridgeI18n.t(e.message)));this.completions.hidden=false;}}
     finally{if(this.completing===pending)this.completing=null;}
   }
   async submit(){
-    if(!this.running||this.send.disabled)return;
+    if(!this.running||this.send.disabled||this.composing)return;
     const text=this.input.value;
+    if(!this.mobile()&&!text)return;
     // xterm honours bracketed-paste mode set by the active shell/application.
-    if(text){this.term.options.disableStdin=false;this.term.paste(text);this.layout();}
+    if(text){this.term.options.disableStdin=false;this.submitting=true;try{this.term.paste(text);}finally{this.submitting=false;this.layout();}}
     this.enqueue('\r');this.input.value='';this.clearCompletion();this.input.focus();
   }
   enqueue(data){

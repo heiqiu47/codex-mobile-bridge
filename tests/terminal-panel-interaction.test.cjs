@@ -14,8 +14,8 @@ function fixture(){
   const node=(tag,cl,text)=>({tag,cl,textContent:text||'',hidden:false,children:[],append(...values){this.children.push(...values);},replaceChildren(){this.children=[];}});
   const input={value:'',selectionStart:0,selectionEnd:0,focus(){this.focused=true;},setRangeText(value,start,end){this.value=this.value.slice(0,start)+value+this.value.slice(end);this.selectionStart=this.selectionEnd=start+value.length;this.onselect?.();}};
   const panel=Object.create(context.Panel.prototype);
-  Object.assign(panel,{id:'pty-id',running:true,disposed:false,operations:[],completionVersion:0,composing:false,input,
-    completions:node(),status:node(),retry:node(),send:node(),term:{options:{},focus(){this.focused=true;}},tab:{body:{contains:()=>false}},session:{},
+  Object.assign(panel,{id:'pty-id',running:true,disposed:false,operations:[],completionVersion:0,composing:false,inputMode:'draft',input,
+    completions:node(),status:node(),retry:node(),send:node(),term:{options:{},focus(){this.focused=true;}},tab:{body:{contains:()=>false,classList:{toggle(){}}}},session:{},
     workbench:{node,button:(label,click)=>Object.assign(node('button','',label),{click}),isVisible:()=>true,request:(url,body)=>{requests.push(body);return Promise.resolve({});}},url:()=>'/terminal?mode=pty'});
   return {panel,requests,timers,context,node};
 }
@@ -154,7 +154,9 @@ test('mobile landscape and iPad keep composer while narrow touch laptop stays di
 
 test('desktop focus is purposeful and never steals selection, dialog, editor or IME',()=>{
   const f=fixture();f.context.navigator.userAgent='Desktop';
-  assert.equal(f.panel.mobile(),false,'narrow touch-capable desktop keeps direct input');
+  assert.equal(f.panel.mobile(),false,'narrow touch-capable desktop uses local input');
+  f.panel.focusOnSelect();assert.equal(f.panel.input.focused,true);
+  f.panel.inputMode='direct';f.panel.input.focused=false;
   f.panel.focusOnSelect();assert.equal(f.panel.term.focused,true);
   f.panel.term.focused=false;f.panel.composing=true;f.panel.focusOnSelect();assert.equal(f.panel.term.focused,false);
   f.panel.composing=false;f.context.document.activeElement={matches:()=>true};f.panel.focusOnSelect();assert.equal(f.panel.term.focused,false);
@@ -163,8 +165,32 @@ test('desktop focus is purposeful and never steals selection, dialog, editor or 
 });
 
 test('desktop shortcut and clear screen restore input focus without stealing an editor',()=>{
-  const f=fixture();f.context.navigator.userAgent='Windows NT';f.panel.term.clear=()=>{};
+  const f=fixture();f.context.navigator.userAgent='Windows NT';f.panel.term.clear=()=>{};f.panel.inputMode='direct';
   f.panel.shortcut('Tab','\t');assert.equal(f.panel.term.focused,true);assert.equal(f.panel.operations[0].data,'\t');
   f.panel.term.focused=false;f.panel.clearScreen();assert.equal(f.panel.term.focused,true);
   f.panel.term.focused=false;f.context.document.activeElement={matches:()=>true};f.panel.shortcut('Esc','\x1b');assert.equal(f.panel.term.focused,false);
+});
+
+test('desktop local draft responds immediately and Enter sends once without remote key echo',()=>{
+  const f=fixture();f.context.navigator.userAgent='Windows NT';
+  f.panel.term.paste=text=>f.panel.enqueue(text);f.panel.layout=()=>{};
+  f.panel.input.value='echo local';
+  let prevented=0;const enter={key:'Enter',preventDefault(){prevented++;}};
+  f.panel.handleInputKeydown({key:'Enter',isComposing:true,preventDefault(){throw Error('IME commit blocked');}});
+  assert.equal(f.panel.input.value,'echo local');assert.equal(f.panel.operations.length,0);
+  f.panel.handleInputKeydown({...enter,repeat:true});assert.equal(f.panel.operations.length,0);
+  f.panel.handleInputKeydown(enter);
+  assert.equal(prevented,2);assert.equal(f.panel.input.value,'');
+  assert.equal(f.panel.operations.length,1);assert.equal(f.panel.operations[0].data,'echo local\r');
+  f.panel.handleInputKeydown(enter);
+  assert.equal(f.panel.operations[0].data,'echo local\r','an empty follow-up Enter is not a second command');
+  f.panel.handleInputKeydown({key:'Enter',shiftKey:true,preventDefault(){throw Error('Shift+Enter should insert newline');}});
+});
+
+test('local draft never sends arrow shortcuts; direct mode restores remote keys',()=>{
+  const f=fixture();f.context.navigator.userAgent='Windows NT';f.panel.layout=()=>{};
+  f.panel.shortcut('↑','\x1b[A');assert.equal(f.panel.operations.length,0);
+  f.panel.shortcut('Ctrl+C','\x03');assert.equal(f.panel.operations[0].data,'\x03');
+  f.panel.toggleInputMode();assert.equal(f.panel.inputMode,'direct');
+  f.panel.shortcut('↑','\x1b[A');assert.equal(f.panel.operations[0].data,'\x03\x1b[A');
 });
