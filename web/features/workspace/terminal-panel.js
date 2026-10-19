@@ -44,7 +44,7 @@ class TerminalPanel {
     this.input.addEventListener('compositionend',()=>{this.composing=false;this.clearCompletion();});
     this.input.addEventListener('input',()=>this.clearCompletion());
     this.input.addEventListener('click',()=>this.clearCompletion());
-    this.input.addEventListener('select',()=>this.clearCompletion());
+    this.input.addEventListener('select',()=>this.selectionChanged());
     this.input.addEventListener('keydown',e=>{if(e.key==='Tab'&&this.mobile()&&!e.isComposing&&!this.composing){e.preventDefault();this.complete();}else if(e.key!=='Tab')this.clearCompletion();});
     this.completions=n('div','wb-terminal-completions');this.completions.hidden=true;
     // Enter in the mobile composer ALWAYS inserts a newline. Submit is explicit.
@@ -76,13 +76,18 @@ class TerminalPanel {
     this.layout();
     this.term.focus();
   }
-  clearCompletion(){this.completionVersion++;if(this.completions){this.completions.hidden=true;this.completions.replaceChildren();}}
+  selectionChanged(){
+    const state=this.completionSnapshot;
+    if(state&&state.id===this.id&&state.text===this.input.value&&state.start===this.input.selectionStart&&state.end===this.input.selectionEnd)return;
+    this.clearCompletion();
+  }
+  clearCompletion(){this.completionVersion++;this.completionSnapshot=null;if(this.completions){this.completions.hidden=true;this.completions.replaceChildren();}}
   async complete(){
     if(!this.running||this.disposed||!this.mobile()||this.composing||this.inputError)return;
     if(this.completing&&this.completing.version===this.completionVersion&&this.completing.id===this.id&&this.completing.text===this.input.value&&this.completing.start===this.input.selectionStart&&this.completing.end===this.input.selectionEnd)return;
     this.clearCompletion();const version=this.completionVersion,id=this.id,text=this.input.value,selectionStart=this.input.selectionStart,selectionEnd=this.input.selectionEnd;
     if(selectionStart!==selectionEnd)return;
-    const pending=this.completing={version,id,text,start:selectionStart,end:selectionEnd};
+    const pending=this.completing=this.completionSnapshot={version,id,text,start:selectionStart,end:selectionEnd};
     this.completions.append(this.workbench.node('span','',BridgeI18n.t('正在补全…')));this.completions.hidden=false;
     try{
       const result=await this.workbench.request(this.url(),{action:'complete',id,text,selectionStart});

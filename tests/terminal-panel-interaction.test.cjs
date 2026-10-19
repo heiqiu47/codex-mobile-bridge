@@ -41,7 +41,7 @@ test('continuous typing flushes from the first key rather than postponing the ba
 
 test('single completion changes only the mobile draft and never sends input',async()=>{
   const f=fixture();f.panel.input.value='echo "😀/fo"';f.panel.input.selectionStart=f.panel.input.selectionEnd=12;
-  f.panel.input.onselect=()=>f.panel.clearCompletion();
+  f.panel.input.onselect=()=>f.panel.selectionChanged();
   f.panel.workbench.request=async(url,body)=>{f.requests.push(body);return {replaceStart:9,replaceEnd:11,candidates:[{label:'foo',insertText:'foo',isDirectory:false}]};};
   await f.panel.complete();
   assert.equal(f.panel.input.value,'echo "😀/foo"');assert.equal(f.requests[0].action,'complete');assert.equal(f.requests[0].selectionStart,12);
@@ -75,6 +75,18 @@ test('pending completion shows local feedback and duplicate Tab shares one reque
   assert.equal(calls,1);assert.equal(f.panel.completions.children[0].textContent,'正在补全…');
   finish({replaceStart:3,replaceEnd:6,candidates:[{label:'src/',insertText:'src/'}]});await pending;
   assert.equal(f.panel.input.value,'cd src/');assert.equal(f.panel.completions.hidden,true);
+});
+
+test('delayed unchanged select events preserve pending result and visible candidates',async()=>{
+  const f=fixture();f.panel.input.value='cd tar';f.panel.input.selectionStart=f.panel.input.selectionEnd=6;
+  let finish;f.panel.workbench.request=()=>new Promise(resolve=>finish=resolve);
+  const pending=f.panel.complete(),version=f.panel.completionVersion;
+  f.panel.selectionChanged();assert.equal(f.panel.completionVersion,version);
+  finish({replaceStart:3,replaceEnd:6,candidates:[{label:'target/',insertText:'target/'},{label:'tasks/',insertText:'tasks/'}]});await pending;
+  assert.equal(f.panel.completions.hidden,false);
+  f.panel.selectionChanged();assert.equal(f.panel.completions.hidden,false);
+  f.panel.input.selectionStart=f.panel.input.selectionEnd=5;f.panel.selectionChanged();
+  assert.equal(f.panel.completions.hidden,true);
 });
 
 test('mobile landscape and iPad keep composer while narrow touch laptop stays direct',()=>{
