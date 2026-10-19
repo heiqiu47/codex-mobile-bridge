@@ -42,14 +42,16 @@ class TerminalPanel {
   render(info){
     const n=(...a)=>this.workbench.node(...a),b=(...a)=>this.workbench.button(...a);
     this.tab.body.replaceChildren();this.tab.body.classList.add('wb-pty');
-    const head=n('div','wb-terminal-head wb-terminal-font-head');this.location=n('strong','',info.shell||BridgeI18n.t('连接终端…'));
+    const head=n('div','wb-terminal-head wb-terminal-font-head');
     this.reopen=b(BridgeI18n.t('重新打开'),()=>this.restart());this.reopen.hidden=true;
     const font=TerminalFont.control(this.workbench);this.fontControl=font;
     this.modeButton=b('',()=>this.toggleInputMode());this.updateInputMode();
-    head.append(this.location,this.modeButton,font.label,b(BridgeI18n.t('清屏'),()=>this.clearScreen()),this.reopen);
+    head.append(this.modeButton,font.label,b(BridgeI18n.t('清屏'),()=>this.clearScreen()));
     this.shellHint=n('small','wb-terminal-shell-hint',BridgeI18n.t('跨盘切换示例：cd /d D:\\（进入 D 盘根目录）。'));this.shellHint.hidden=!/(^|[\\/])cmd(?:\.exe)?$/i.test(info.shell||'');
     this.screen=n('div','wb-terminal-screen');this.screen.setAttribute("data-i18n-aria-label",'交互终端');this.screen.setAttribute('aria-label',BridgeI18n.t('交互终端'));
     this.status=n('p','wb-status');this.status.setAttribute('role','status');
+    this.location=n('small','wb-terminal-shell-location',info.shell||BridgeI18n.t('连接终端…'));this.location.title=info.shell||'';
+    const footer=n('div','wb-terminal-footer');footer.append(this.status,this.location,this.reopen);
     const keys=n('div','wb-terminal-keys');
     for(const [label,value] of [['Ctrl+C','\x03'],['Tab','\t'],['Enter','\r'],['Esc','\x1b'],['↑','\x1b[A'],['↓','\x1b[B'],['←','\x1b[D'],['→','\x1b[C']])keys.append(b(label,()=>this.shortcut(label,value)));
     this.form=n('form','wb-terminal-input');this.input=n('textarea');this.input.rows=2;this.input.setAttribute("data-i18n-placeholder",'输入命令或回复，换行键可换行');this.input.placeholder=BridgeI18n.t('输入命令或回复，换行键可换行');this.input.setAttribute("data-i18n-aria-label",'终端输入');this.input.setAttribute('aria-label',BridgeI18n.t('终端输入'));this.input.setAttribute('autocapitalize','off');this.input.setAttribute('autocorrect','off');this.input.spellcheck=false;
@@ -64,7 +66,7 @@ class TerminalPanel {
     this.completions=n('div','wb-terminal-completions');this.completions.hidden=true;
     // Enter in the mobile composer ALWAYS inserts a newline. Submit is explicit.
     this.retry=b(BridgeI18n.t('重试未确认输入'),()=>{this.inputError=false;this.retry.hidden=true;this.flush();});this.retry.hidden=true;
-    this.tab.body.append(head,this.shellHint,this.screen,keys,this.form,this.completions,this.status,this.retry);
+    this.tab.body.append(head,this.shellHint,this.screen,keys,this.form,this.completions,footer,this.retry);
     this.term=new Terminal({fontSize:TerminalFont.size(),fontFamily:'Menlo, Consolas, monospace',cursorBlink:false,scrollback:2000,
       theme:{background:'#11151b',foreground:'#e2e8f0',cursor:'#ffffff',cursorAccent:'#11151b'},cursorStyle:'block',cursorInactiveStyle:'block',allowProposedApi:false,
       linkHandler:{activate:()=>{}},disableStdin:true});
@@ -377,7 +379,7 @@ class TerminalPanel {
     if(result.output)this.term.write(result.output,rendered);else rendered?.();
     this.cursor=result.cursor;this.running=result.running;
     const label=BridgeI18n.t(result.running?'终端 · 已连接':'终端 · 已退出');if(this.tab.name!==label){this.tab.name=label;this.workbench.paint();}
-    this.location.textContent=result.shell||BridgeI18n.t('终端');this.location.title=result.cwd||'';
+    this.location.textContent=result.shell||BridgeI18n.t('终端');this.location.title=result.shell||'';
     if(!this.inputError&&!this.queueFull)this.status.textContent=result.running?BridgeI18n.t('连续会话 · 关闭标签将结束终端'):result.message||BridgeI18n.t('终端已退出');
     this.send.disabled=!this.running||this.inputError;this.reopen.hidden=this.running;this.layout();
   }

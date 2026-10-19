@@ -22,6 +22,32 @@ function fixture(){
 }
 async function tick(){await new Promise(resolve=>setImmediate(resolve));}
 
+test('PTY shell stays beside live status below the screen, including cmd hint',()=>{
+  const f=fixture(),p=f.panel;
+  const node=(tag,cl,text)=>({tag,cl,textContent:text||'',title:'',hidden:false,children:[],style:{},classList:{add(){}},
+    append(...children){this.children.push(...children);},setAttribute(){},addEventListener(){}});
+  p.workbench.node=node;p.workbench.button=(label,click)=>Object.assign(node('button','',label),{click});
+  p.tab.body={children:[],classList:{add(){},toggle(){}},append(...children){this.children.push(...children);},replaceChildren(...children){this.children=children;}};
+  p.workbench.paint=()=>{};p.layout=()=>{};
+  f.context.TerminalFont={control:()=>({label:node('span','font')}),size:()=>14,register(){}};
+  f.context.Terminal=class {constructor(){this.parser={registerOscHandler(){}};this.options={};}loadAddon(){}open(){}onWriteParsed(){}attachCustomWheelEventHandler(){}onData(){}onResize(){}write(){}reset(){}};
+  f.context.FitAddon={FitAddon:class {}};f.context.ResizeObserver=class {observe(){}};
+  p.render({shell:'C:\\Windows\\System32\\cmd.exe'});
+  const [head,hint,screen,,,,footer]=p.tab.body.children;
+  assert.equal(head.children.includes(p.location),false);
+  assert.equal(head.children.length,3);
+  assert.equal(hint.hidden,false);
+  assert.equal(footer.children[0],p.status);
+  assert.equal(footer.children[1],p.location);
+  assert.equal(p.location.title,'C:\\Windows\\System32\\cmd.exe');
+  assert.ok(p.tab.body.children.indexOf(footer)>p.tab.body.children.indexOf(screen));
+  p.status.textContent='Temporary connection error';
+  assert.equal(footer.children[1],p.location);
+  p.apply({cursor:1,running:true,shell:'/very/long/path/to/zsh',cwd:'/project'});
+  assert.equal(p.location.title,'/very/long/path/to/zsh');
+  assert.match(p.status.textContent,/连续会话/);
+});
+
 function cachedTerminal(){
   const f=fixture(),calls=[];
   Object.assign(f.panel,{hadId:true,running:false,cursor:0,screen:{},reopen:f.node(),render(){},apply(result){this.running=result.running;calls.push('apply');},
