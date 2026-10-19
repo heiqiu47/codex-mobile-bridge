@@ -39,7 +39,7 @@ class CommandTerminalPanel {
     const head=n('div','wb-terminal-head wb-terminal-font-head'); head.append(n('strong','',BridgeI18n.t('终端')));
     this.stop=b(BridgeI18n.t('停止'),()=>this.cancel());this.stop.disabled=true;
     const font=TerminalFont.control(workbench);this.fontControl=font;
-    head.append(b(BridgeI18n.t('清屏'),()=>{this.output='';this.screen.textContent='';}),font.label,this.stop);
+    head.append(font.label,b(BridgeI18n.t('清屏'),()=>{this.output='';this.screen.textContent='';}),this.stop);
     this.location=n('p','wb-terminal-location',BridgeI18n.t('正在读取项目…'));
     this.status=n('p','wb-status');this.status.setAttribute('role','status');
     this.screen=n('pre','wb-terminal-output');this.screen.tabIndex=0;this.screen.setAttribute('aria-label',BridgeI18n.t('命令输出'));
