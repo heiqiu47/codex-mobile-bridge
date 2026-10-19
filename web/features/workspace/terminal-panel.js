@@ -79,11 +79,15 @@ class TerminalPanel {
   clearCompletion(){this.completionVersion++;if(this.completions){this.completions.hidden=true;this.completions.replaceChildren();}}
   async complete(){
     if(!this.running||this.disposed||!this.mobile()||this.composing||this.inputError)return;
+    if(this.completing&&this.completing.version===this.completionVersion&&this.completing.id===this.id&&this.completing.text===this.input.value&&this.completing.start===this.input.selectionStart&&this.completing.end===this.input.selectionEnd)return;
     this.clearCompletion();const version=this.completionVersion,id=this.id,text=this.input.value,selectionStart=this.input.selectionStart,selectionEnd=this.input.selectionEnd;
     if(selectionStart!==selectionEnd)return;
+    const pending=this.completing={version,id,text,start:selectionStart,end:selectionEnd};
+    this.completions.append(this.workbench.node('span','',BridgeI18n.t('正在补全…')));this.completions.hidden=false;
     try{
       const result=await this.workbench.request(this.url(),{action:'complete',id,text,selectionStart});
       if(this.disposed||id!==this.id||version!==this.completionVersion||text!==this.input.value||selectionStart!==this.input.selectionStart||selectionEnd!==this.input.selectionEnd||!this.mobile()||!this.workbench.isVisible(this.session,this.tab))return;
+      this.completions.replaceChildren();
       const candidates=result.candidates||[];
       const apply=candidate=>{
         if(version!==this.completionVersion||text!==this.input.value||selectionStart!==this.input.selectionStart||selectionEnd!==this.input.selectionEnd||id!==this.id||!this.workbench.isVisible(this.session,this.tab))return;
@@ -95,7 +99,8 @@ class TerminalPanel {
       for(const candidate of candidates){const button=this.workbench.button(candidate.label,()=>apply(candidate));button.type='button';this.completions.append(button);}
       if(result.truncated)this.completions.append(this.workbench.node('small','',BridgeI18n.t('仅显示部分匹配项')));
       this.completions.hidden=false;
-    }catch(e){if(!this.disposed&&id===this.id&&version===this.completionVersion&&text===this.input.value&&selectionStart===this.input.selectionStart&&selectionEnd===this.input.selectionEnd&&this.mobile()&&this.workbench.isVisible(this.session,this.tab))this.status.textContent=BridgeI18n.t(e.message);}
+    }catch(e){if(!this.disposed&&id===this.id&&version===this.completionVersion&&text===this.input.value&&selectionStart===this.input.selectionStart&&selectionEnd===this.input.selectionEnd&&this.mobile()&&this.workbench.isVisible(this.session,this.tab)){this.completions.replaceChildren();this.completions.append(this.workbench.node('span','',BridgeI18n.t(e.message)));this.completions.hidden=false;}}
+    finally{if(this.completing===pending)this.completing=null;}
   }
   async submit(){
     if(!this.running||this.send.disabled)return;

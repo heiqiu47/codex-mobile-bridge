@@ -68,6 +68,15 @@ test('late completion failures from another tab or edited draft do not overwrite
   visible=true;pending=f.panel.complete();f.panel.input.value='cd y';reject(Error('stale draft'));await pending;assert.equal(f.panel.status.textContent,'');
 });
 
+test('pending completion shows local feedback and duplicate Tab shares one request',async()=>{
+  const f=fixture();f.panel.input.value='cd src';f.panel.input.selectionStart=f.panel.input.selectionEnd=6;
+  let finish,calls=0;f.panel.workbench.request=()=>{calls++;return new Promise(resolve=>finish=resolve);};
+  const pending=f.panel.complete();await f.panel.complete();
+  assert.equal(calls,1);assert.equal(f.panel.completions.children[0].textContent,'正在补全…');
+  finish({replaceStart:3,replaceEnd:6,candidates:[{label:'src/',insertText:'src/'}]});await pending;
+  assert.equal(f.panel.input.value,'cd src/');assert.equal(f.panel.completions.hidden,true);
+});
+
 test('mobile landscape and iPad keep composer while narrow touch laptop stays direct',()=>{
   const f=fixture();f.context.BridgeLayout.isCompactViewport=()=>false;assert.equal(f.panel.mobile(),true);
   f.context.navigator={userAgent:'Macintosh',platform:'MacIntel',maxTouchPoints:5};assert.equal(f.panel.mobile(),true);
