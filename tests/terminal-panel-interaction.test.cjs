@@ -184,7 +184,7 @@ test('desktop local draft responds immediately and Enter sends once without remo
   assert.equal(prevented,2);assert.equal(f.panel.input.value,'');
   assert.equal(f.panel.operations.length,1);assert.equal(f.panel.operations[0].data,'echo local\r');
   f.panel.handleInputKeydown(enter);
-  assert.equal(f.panel.operations[0].data,'echo local\r','an empty follow-up Enter is not a second command');
+  assert.equal(f.panel.operations[0].data,'echo local\r\r','a fresh Enter explicitly sends an empty line');
   f.panel.handleInputKeydown({key:'Enter',shiftKey:true,preventDefault(){throw Error('Shift+Enter should insert newline');}});
 });
 
@@ -208,4 +208,11 @@ test('unsent desktop draft stays local and is never written to session storage',
   assert.equal(f.panel.input.value,'private command');
   assert.equal(f.panel.operations.length,0);
   assert.deepEqual(f.storage,[]);
+});
+
+test('mobile shortcut buttons retain remote Esc and arrow behavior',()=>{
+  const f=fixture();f.panel.input.value='local mobile draft';
+  f.panel.shortcut('Esc','\x1b');f.panel.shortcut('↑','\x1b[A');
+  assert.equal(f.panel.input.value,'local mobile draft');
+  assert.equal(f.panel.operations[0].data,'\x1b\x1b[A');
 });

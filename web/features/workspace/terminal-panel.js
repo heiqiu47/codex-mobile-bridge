@@ -69,7 +69,7 @@ class TerminalPanel {
   }
   mobile(){return BridgeHost.hasNativeLayout()||!!(navigator.userAgentData?.mobile||/\b(?:iPhone|iPad|iPod|Android|Mobile)\b/i.test(navigator.userAgent||'')||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1));}
   updateInputMode(){
-    if(this.modeButton){this.modeButton.textContent=BridgeI18n.t(this.inputMode==='draft'?'本地输入 · 切换直接输入':'直接输入 · 切换本地输入');this.modeButton.hidden=this.mobile();}
+    if(this.modeButton){this.modeButton.textContent=BridgeI18n.t(this.inputMode==='draft'?'本地草稿':'直接输入');this.modeButton.title=BridgeI18n.t(this.inputMode==='draft'?'切换为直接输入（密码与交互程序）':'切换为本地草稿');this.modeButton.hidden=this.mobile();}
     if(this.input){this.input.placeholder=BridgeI18n.t(this.mobile()?'输入命令或回复，换行键可换行':'本地草稿：Enter 发送，Shift+Enter 换行；密码请用直接输入');}
     this.tab.body.classList.toggle('wb-terminal-draft',!this.mobile()&&this.inputMode==='draft');
     this.tab.body.classList.toggle('wb-terminal-direct',!this.mobile()&&this.inputMode==='direct');
@@ -104,12 +104,15 @@ class TerminalPanel {
     this.input.setSelectionRange(position,position);this.clearCompletion();
   }
   shortcut(label,value){
-    if(this.mobile()||this.inputMode==='draft'){
+    if(this.mobile()){
+      if(label==='Tab')this.complete();else this.enqueue(value);
+      return;
+    }
+    if(this.inputMode==='draft'){
       if(label==='Tab')this.complete();
       else if(label==='Ctrl+C')this.enqueue(value);
-      else if(label==='Esc'&&this.inputMode==='draft'){this.input.value='';this.clearCompletion();}
-      else if(this.inputMode==='draft')this.moveDraftCursor(label);
-      else if(this.mobile())this.enqueue(value);
+      else if(label==='Esc'){this.input.value='';this.clearCompletion();}
+      else this.moveDraftCursor(label);
       this.focusOnSelect();return;
     }
     this.enqueue(value);this.focusOnSelect();
@@ -164,7 +167,6 @@ class TerminalPanel {
   async submit(){
     if(!this.running||this.send.disabled||this.composing)return;
     const text=this.input.value;
-    if(!this.mobile()&&!text)return;
     // xterm honours bracketed-paste mode set by the active shell/application.
     if(text){this.term.options.disableStdin=false;this.submitting=true;try{this.term.paste(text);}finally{this.submitting=false;this.layout();}}
     this.enqueue('\r');this.input.value='';this.clearCompletion();this.input.focus();
