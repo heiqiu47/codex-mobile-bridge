@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import shlex
 import tempfile
 import threading
 import unittest
@@ -38,10 +39,11 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(value['candidates'][0]['insertText'], "'a$(touch injected)'")
         self.assertFalse((self.cwd / 'injected').exists())
         self.assertEqual(self.complete('ls fol')['candidates'][0]['insertText'], 'folder/')
-        self.assertEqual(self.complete('ls folder/in')['candidates'][0]['insertText'], "'folder/inner file'")
-        self.assertEqual(self.complete('ls '+str(self.cwd)+'/folder/in')['candidates'][0]['insertText'],
-                         "'"+str(self.cwd)+"/folder/inner file'")
-        self.assertEqual(self.complete('ls "folder/in')['candidates'][0]['insertText'], "'folder/inner file'")
+        expected = shlex.quote(os.path.join('folder', 'inner file'))
+        self.assertEqual(self.complete('ls folder/in')['candidates'][0]['insertText'], expected)
+        self.assertEqual(self.complete('ls '+shlex.quote(str(self.cwd / 'folder' / 'in')))['candidates'][0]['insertText'],
+                         shlex.quote(str(self.cwd / 'folder' / 'inner file')))
+        self.assertEqual(self.complete('ls "folder/in')['candidates'][0]['insertText'], expected)
 
     def test_quotes_utf16_and_unsafe_syntax(self):
         value = self.complete('😀 ls "普', cursor=8)

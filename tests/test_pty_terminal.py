@@ -26,11 +26,24 @@ class PtyTests(unittest.TestCase):
         (self.root/'.zshenv').write_text('unsetopt GLOBAL_RCS\n')
         (self.root/'.zshrc').write_text("PROMPT='fixture% '\nexport BRIDGE_STARTUP_TEST=loaded\n")
         (self.root/'.bashrc').write_text("PS1='fixture$ '\nexport BRIDGE_STARTUP_TEST=loaded\n")
+        self.fixture_shell = shutil.which('zsh') or shutil.which('bash')
+        if not self.fixture_shell:
+            self.env.stop(); self.temp.cleanup()
+            self.skipTest('interactive startup fixture requires zsh or bash')
+        if Path(self.fixture_shell).name == 'bash':
+            launcher = self.root/'fixture-shell'
+            launcher.write_text('#!/bin/sh\nexec '+shlex.quote(self.fixture_shell)+' --noprofile --rcfile '+shlex.quote(str(self.root/'.bashrc'))+' -i\n')
+            launcher.chmod(0o700)
+            self.fixture_shell = str(launcher)
     def tearDown(self):
         for session in self.sessions: session.stop(); self.assertTrue(session.done.wait(5))
         self.env.stop(); self.temp.cleanup()
     def session(self):
-        session = TerminalSession(self.root); self.sessions.append(session); return session
+        # The runner's login shell/profile must not replace the fixture prompt
+        # or locale. Account-shell selection is tested independently below.
+        with patch('bridge.platforms.posix.terminal.default_shell', return_value=self.fixture_shell):
+            session = TerminalSession(self.root)
+        self.sessions.append(session); return session
     def send(self, session, data, identifier=None):
         session.write(identifier or str(uuid.uuid4()), data)
     def wait_output(self, session, marker):
@@ -46,15 +59,7 @@ class PtyTests(unittest.TestCase):
             with self.subTest(actual=actual), patch.object(pwd,'getpwuid',return_value=SimpleNamespace(pw_shell=actual)), patch.dict(os.environ,{'SHELL':inherited}), patch('bridge.platforms.posix.terminal.os.access',return_value=True):
                 self.assertEqual(default_shell(),actual)
     def test_real_tty_startup_cd_environment_and_interactive_read(self):
-        shell = shutil.which('zsh') or shutil.which('bash')
-        if not shell:
-            self.skipTest('interactive startup fixture requires zsh or bash')
-        if Path(shell).name == 'bash':
-            launcher = self.root/'fixture-shell'
-            launcher.write_text('#!/bin/sh\nexec '+shlex.quote(shell)+' --noprofile --rcfile '+shlex.quote(str(self.root/'.bashrc'))+' -i\n')
-            launcher.chmod(0o700)
-            shell = str(launcher)
-        with patch('bridge.platforms.posix.terminal.default_shell',return_value=shell): s=self.session()
+        s=self.session()
         self.send(s,"printf 'STARTUP:%s\\n' \"$BRIDGE_STARTUP_TEST\"; test -t 0 && echo PTY_OK\r")
         self.wait_output(s,'STARTUP:loaded'); self.wait_output(s,'PTY_OK\r\n')
         (self.root/'nested').mkdir()
