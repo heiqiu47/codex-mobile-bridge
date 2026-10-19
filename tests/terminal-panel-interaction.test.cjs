@@ -377,3 +377,39 @@ test('failed upgrade falls back to HTTP and established socket reconnects after 
   f.timers.get(f.panel.reconnectTimer).fn();
   assert.equal(sockets.length,3);
 });
+
+test('draft preflight reserves bracketed paste markers and keeps boundary overflow text',async()=>{
+  const f=fixture();f.context.TextEncoder=TextEncoder;f.panel.layout=()=>{};
+  let pasted=0;f.panel.term.paste=text=>{pasted++;f.panel.enqueue('\x1b[200~'+text+'\x1b[201~');};
+  f.panel.operations=[{id:'pending',data:'x'.repeat(262131),sent:false}];
+  f.panel.input.value='a';await f.panel.submit();
+  assert.equal(pasted,0);assert.equal(f.panel.input.value,'a');
+  f.panel.operations[0].data='x'.repeat(262130);
+  await f.panel.submit();
+  assert.equal(pasted,1);assert.equal(f.panel.input.value,'');
+  assert.equal(f.panel.operations.reduce((total,entry)=>total+entry.data.length,0),262144);
+});
+
+test('WebSocket send failure retains the input and shows the unconfirmed state',()=>{
+  const f=fixture();
+  class FakeSocket{
+    static CONNECTING=0;static OPEN=1;
+    constructor(){this.readyState=0;this.bufferedAmount=0;}
+    send(){throw Error('socket failed');}
+    close(){this.readyState=3;this.onclose?.();}
+  }
+  f.context.WebSocket=FakeSocket;f.context.URL=URL;f.context.location={href:'http://local.example/'};
+  f.panel.workbench.csrf=()=> 'csrf-secret';f.panel.layout=()=>{};
+  f.panel.startDuplex();const socket=f.panel.duplex;socket.readyState=1;socket.onopen();
+  f.panel.queueChunk('still pending');const id=f.panel.operations[0].id;f.panel.flushDuplex();
+  assert.equal(f.panel.inputError,true);assert.equal(f.panel.operations[0].id,id);
+  assert.match(f.panel.status.textContent,/输入结果未确认/);
+});
+
+test('new terminal notices have English translations',()=>{
+  const dictionary=require('../web/shared/i18n.js').dictionary;
+  for(const key of ['终端输入过长或队列已满；草稿仍在，请稍后重试','终端输入队列已满；这部分输入未发送',
+                    '终端连接中断 · 输入结果未确认；重试不会重复输入。','终端连接失败']){
+    assert.ok(dictionary[key]);
+  }
+});

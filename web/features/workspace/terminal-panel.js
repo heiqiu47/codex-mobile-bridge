@@ -173,7 +173,8 @@ class TerminalPanel {
   async submit(){
     if(!this.running||this.send.disabled||this.composing)return;
     const text=this.input.value;
-    if(this.inputBytes(text)+1+this.operations.reduce((size,entry)=>size+this.inputBytes(entry.data),0)>262144){
+    // xterm may wrap bracketed paste in two six-byte markers before onData.
+    if(this.inputBytes(text.replace(/\r?\n/g,'\r'))+13+this.operations.reduce((size,entry)=>size+this.inputBytes(entry.data),0)>262144){
       this.status.textContent=BridgeI18n.t('终端输入过长或队列已满；草稿仍在，请稍后重试');return;
     }
     // xterm honours bracketed-paste mode set by the active shell/application.
@@ -295,17 +296,21 @@ class TerminalPanel {
   flushDuplex(){
     const socket=this.duplex;
     if(!this.duplexReady||!socket||this.disposed||this.restarting||this.inputError||this.flushing)return;
+    const fail=()=>{try{socket.close();}catch{}socket.onclose?.();};
+    if(socket.readyState!==WebSocket.OPEN){fail();return;}
     if(socket.bufferedAmount>131072){clearTimeout(this.flushTimer);this.flushTimer=setTimeout(()=>{this.flushTimer=null;this.flushDuplex();},50);return;}
     if(this.pendingResize){
       const size=this.pendingResize;this.pendingResize=null;this.lastDuplexResize=size;
-      socket.send(JSON.stringify({action:'resize',requestId:uuid(),...size}));
+      if(socket.readyState!==WebSocket.OPEN){fail();return;}
+      try{socket.send(JSON.stringify({action:'resize',requestId:uuid(),...size}));}catch{fail();return;}
     }
     let inFlight=this.operations.filter(entry=>entry.sent).length;
     for(const entry of this.operations){
       if(entry.sent)continue;
       if(socket.bufferedAmount>131072||inFlight>=32)break;
+      if(socket.readyState!==WebSocket.OPEN){fail();return;}
       entry.sent=true;
-      socket.send(JSON.stringify({action:'input',inputId:entry.id,data:entry.data}));
+      try{socket.send(JSON.stringify({action:'input',inputId:entry.id,data:entry.data}));}catch{fail();return;}
       inFlight++;
     }
     if(inFlight<32&&this.operations.some(entry=>!entry.sent)){
