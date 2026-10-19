@@ -142,20 +142,21 @@ class Handler(BaseHTTPRequestHandler):
         # Request bodies, cookies, query strings and conversation IDs are private.
         pass
 
-    def headers_common(self, cache_control="no-store", preview_shell=False):
+    def headers_common(self, cache_control="no-store", preview_shell=False, style_nonce=None):
         self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Frame-Options", "SAMEORIGIN" if preview_shell else "DENY")
-        # KaTeX emits inline layout styles; scripts and stylesheets stay same-origin.
+        # KaTeX uses style attributes; only our terminal gets nonced dynamic styles.
         host = self.headers.get('Host', '')
         origin = ('https://' if host in self.server.secure_hosts else 'http://') + host
         frame_source = origin + SHELL_PATH if host in self.server.hosts else "'none'"
+        style_source = "'self'" + (" 'nonce-" + style_nonce + "'" if style_nonce else "")
         self.send_header("Content-Security-Policy", SHELL_CSP if preview_shell else
-                         "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src " + frame_source + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
+                         "default-src 'self'; script-src 'self'; style-src " + style_source + "; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src " + frame_source + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
-    def output(self, status, data, content_type="application/json; charset=utf-8", cookie=None, content_disposition=None, preview_shell=False):
+    def output(self, status, data, content_type="application/json; charset=utf-8", cookie=None, content_disposition=None, preview_shell=False, style_nonce=None):
         # Keep the browser cookie in step with the renewed server-side deadline,
         # including long-lived pages that do not revisit /api/auth.
         if cookie is None and 200 <= status < 300 and urlsplit(self.path).path.startswith('/api/'):
@@ -172,7 +173,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(candidate) < len(body):
                 body, compressed = candidate, True
         self.send_response(status)
-        self.headers_common(preview_shell=preview_shell)
+        self.headers_common(preview_shell=preview_shell, style_nonce=style_nonce)
         self.send_header("Content-Type", content_type)
         self.send_header('Vary', 'Accept-Encoding')
         if compressed:
@@ -298,7 +299,11 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(urlsplit(self.path).query)
             if not write and path in STATIC:
                 _, content_type = STATIC[path]
-                return self.output(200, asset_bytes(self.server.web_dir, path), content_type)
+                data = asset_bytes(self.server.web_dir, path)
+                nonce = secrets.token_urlsafe(24) if path == '/' else None
+                if nonce:
+                    data = data.replace(b'<head>', ('<head><meta name="bridge-style-nonce" content="' + nonce + '">').encode(), 1)
+                return self.output(200, data, content_type, style_nonce=nonce)
             font = FONT_ROUTE.fullmatch(path)
             if not write and font:
                 file = self.server.web_dir / 'vendor/katex/fonts' / font[1]
