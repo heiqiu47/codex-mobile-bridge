@@ -38,7 +38,7 @@ class TerminalPanel {
     this.screen=n('div','wb-terminal-screen');this.screen.setAttribute("data-i18n-aria-label",'交互终端');this.screen.setAttribute('aria-label',BridgeI18n.t('交互终端'));
     this.status=n('p','wb-status');this.status.setAttribute('role','status');
     const keys=n('div','wb-terminal-keys');
-    for(const [label,value] of [['Ctrl+C','\x03'],['Tab','\t'],['Esc','\x1b'],['↑','\x1b[A'],['↓','\x1b[B'],['←','\x1b[D'],['→','\x1b[C']])keys.append(b(label,()=>this.shortcut(label,value)));
+    for(const [label,value] of [['Ctrl+C','\x03'],['Tab','\t'],['Enter','\r'],['Esc','\x1b'],['↑','\x1b[A'],['↓','\x1b[B'],['←','\x1b[D'],['→','\x1b[C']])keys.append(b(label,()=>this.shortcut(label,value)));
     this.form=n('form','wb-terminal-input');this.input=n('textarea');this.input.rows=2;this.input.setAttribute("data-i18n-placeholder",'输入命令或回复，换行键可换行');this.input.placeholder=BridgeI18n.t('输入命令或回复，换行键可换行');this.input.setAttribute("data-i18n-aria-label",'终端输入');this.input.setAttribute('aria-label',BridgeI18n.t('终端输入'));this.input.setAttribute('autocapitalize','off');this.input.setAttribute('autocorrect','off');this.input.spellcheck=false;
     this.send=n('button','',BridgeI18n.t('发送到终端'));this.send.type='submit';this.send.disabled=true;
     this.form.append(this.input,this.send);this.form.onsubmit=e=>{e.preventDefault();this.submit();};
@@ -104,6 +104,10 @@ class TerminalPanel {
     this.input.setSelectionRange(position,position);this.clearCompletion();
   }
   shortcut(label,value){
+    if(label==='Enter'){
+      if(!this.running||this.disposed||this.restarting||this.composing||this.inputError)return;
+      this.enqueue('\r');this.focusOnSelect();return;
+    }
     if(this.mobile()){
       if(label==='Tab')this.complete();else this.enqueue(value);
       return;
