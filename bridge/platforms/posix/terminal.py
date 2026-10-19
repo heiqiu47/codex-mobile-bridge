@@ -38,6 +38,21 @@ def dimensions(cols, rows):
     return cols, rows
 
 
+def utf8_terminal_environment(env):
+    effective = env.get('LC_ALL') or env.get('LC_CTYPE') or env.get('LANG', 'C')
+    if 'UTF8' in effective.upper().replace('-', '').replace('_', ''):
+        return env
+    available = subprocess.run(['locale', '-a'], capture_output=True, text=True, check=True, timeout=2).stdout.splitlines()
+    locales = {name.upper().replace('-', '').replace('_', ''): name for name in available}
+    selected = (locales.get('C.UTF8') or locales.get('ENUS.UTF8') or
+                next((name for key, name in locales.items() if key.endswith('.UTF8')), None))
+    if not selected:
+        raise ValueError('系统没有可用的 UTF-8 locale，无法启动终端')
+    env.pop('LC_ALL', None)
+    env['LC_CTYPE'] = selected
+    return env
+
+
 def child_main(shell):
     # Executed in a fresh process, never preexec_fn inside the threaded gateway.
     import fcntl
@@ -52,7 +67,7 @@ class TerminalSession:
         if os.name == 'nt':
             raise ValueError('此平台暂不支持连续终端')
         import pty
-        self.lock = threading.RLock(); self.input_lock = threading.Lock()
+        self.lock = threading.RLock(); self.changed = threading.Event(); self.input_lock = threading.Lock()
         self.text = ''; self.end = 0; self.reason = ''; self.code = None
         self.done = threading.Event(); self.touched = time.monotonic()
         self.inputs = collections.OrderedDict(); self.shell = default_shell(); self.root = str(root)
@@ -62,7 +77,11 @@ class TerminalSession:
             args = ([sys.executable, '--terminal-child', self.shell] if getattr(sys, 'frozen', False) else
                     [sys.executable, '-c', 'import os,fcntl,termios;os.setsid();fcntl.ioctl(0,termios.TIOCSCTTY,0);os.execve('+repr(self.shell)+', ['+repr(self.shell)+',"-l","-i"], os.environ)'])
             env = {**os.environ, 'TERM': 'xterm-256color', 'COLORTERM': 'truecolor', 'SHELL': self.shell}
+            # BSD ls (including ll aliases) needs this to enable automatic colors.
+            # Unlike CLICOLOR_FORCE, it keeps redirected output free of escapes.
+            env.setdefault('CLICOLOR', '1')
             env.pop('NO_COLOR', None)
+            utf8_terminal_environment(env)
             if getattr(sys, 'frozen', False): env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
             self.process = subprocess.Popen(args, cwd=root, stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True)
             os.set_blocking(self.master, False)
@@ -77,6 +96,7 @@ class TerminalSession:
     def append(self, text):
         with self.lock:
             self.end += len(text); self.text = (self.text + text)[-MAX_OUTPUT:]
+            if text: self.changed.set()
 
     def _read(self):
         decoder = codecs.getincrementaldecoder('utf-8')('replace')
@@ -94,14 +114,42 @@ class TerminalSession:
             self.code = self.process.wait()
         finally:
             with self.input_lock:
-                self.done.set(); os.close(self.master)
+                self.done.set(); self.changed.set(); os.close(self.master)
 
-    def read(self, after=0):
+    def read(self, after=0, wait_ms=0):
+        if wait_ms:
+            with self.lock:
+                if after == self.end and not self.done.is_set():
+                    self.changed.clear()
+                    waiting = True
+                else: waiting = False
+            if waiting: self.changed.wait(wait_ms / 1000)
         with self.lock:
             start = self.end - len(self.text); reset = after < start or after > self.end
             return {'output': self.text if reset else self.text[after-start:], 'cursor': self.end,
                     'reset': reset, 'truncated': start > 0, 'running': not self.done.is_set(),
                     'exitCode': self.code, 'message': self.reason, 'shell': self.shell, 'cwd': self.root}
+
+    def current_cwd(self):
+        if self.done.is_set(): raise ValueError('终端已关闭，请重新打开')
+        try:
+            if os.tcgetpgrp(self.master) != self.process.pid:
+                raise ValueError('前台程序运行时无法确认 shell 当前目录')
+            if sys.platform == 'linux':
+                cwd = os.readlink('/proc/' + str(self.process.pid) + '/cwd')
+            elif sys.platform == 'darwin':
+                # lsof reads the selected shell's cwd without sending it input.
+                result = subprocess.run(['/usr/sbin/lsof', '-a', '-p', str(self.process.pid), '-d', 'cwd', '-Fn'],
+                                        capture_output=True, timeout=2, check=True)
+                rows = result.stdout.decode('utf-8', 'strict').splitlines()
+                cwd = next((row[1:] for row in rows if row.startswith('n/')), '')
+            else:
+                raise ValueError('此系统无法只读确认终端当前目录')
+            if not cwd or os.tcgetpgrp(self.master) != self.process.pid:
+                raise ValueError('无法确认终端当前目录')
+            return cwd
+        except (OSError, subprocess.SubprocessError, UnicodeError):
+            raise ValueError('无法只读确认终端当前目录') from None
 
     def write(self, identifier, data):
         if not isinstance(identifier, str): raise ValueError('无效输入编号')
@@ -167,6 +215,7 @@ def remote_main(root, cols, rows):
                 try:
                     if request['action'] == 'input': result = session.write(request['inputId'], request['data'])
                     elif request['action'] == 'resize': result = session.resize(request['cols'], request['rows'])
+                    elif request['action'] == 'complete': result = complete_path(session, request['text'], request['selectionStart'])
                     elif request['action'] == 'stop': session.stop(); result = {'closed': True}
                     else: raise ValueError('无效终端操作')
                     emit({'ack': request['request'], 'result': result})
@@ -178,7 +227,7 @@ def remote_main(root, cols, rows):
         while True:
             event = session.read(cursor); cursor = event['cursor']; emit(event)
             if not event['running']: break
-            session.done.wait(.1)
+            session.read(cursor, 1000)
     finally: session.stop(); session.done.wait(3)
 
 
@@ -186,10 +235,12 @@ class RemoteTerminalSession:
     def __init__(self, alias, root, cols=80, rows=24):
         if not alias or alias.startswith('-') or any(c.isspace() for c in alias): raise ValueError('SSH 别名无效')
         dimensions(cols, rows)
-        self.lock = threading.RLock(); self.write_lock = threading.Lock(); self.pending = {}
+        self.lock = threading.RLock(); self.changed = threading.Event(); self.write_lock = threading.Lock(); self.pending = {}
         self.text = ''; self.end = 0; self.code = None; self.reason = ''; self.shell = ''
         self.root = str(root); self.done = threading.Event(); self.ready = threading.Event()
-        source = Path(__file__).read_text(encoding='utf-8')+'\nremote_main('+repr(str(root))+','+str(cols)+','+str(rows)+')\n'
+        from bridge.resources import source_text
+        source = source_text('features/terminals/completion.py') + '\n' + source_text('platforms/posix/terminal.py')
+        source += '\nremote_main('+repr(str(root))+','+str(cols)+','+str(rows)+')\n'
         self.process = subprocess.Popen(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ClearAllForwardings=yes',
              '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=yes', '-o', 'UpdateHostKeys=no', alias,
              'python3 -u -c '+shlex.quote(source)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -210,7 +261,7 @@ class RemoteTerminalSession:
                         if pending: pending[1].update(event); pending[0].set()
                     continue
                 with self.lock:
-                    if event['reset']: self.text = event['output']; self.end = event['cursor']
+                    if event['reset']: self.text = event['output']; self.end = event['cursor']; self.changed.set()
                     else: self.append(event['output'])
                     self.shell = event['shell']; self.code = event['exitCode']; self.reason = event['message']
                 self.ready.set()
@@ -220,7 +271,7 @@ class RemoteTerminalSession:
             self.reason = self.reason or 'SSH 终端已断开'
             self.process.stdout.close()
             if self.process.poll() is None: self.process.terminate()
-            self.process.wait(); self.done.set(); self.ready.set()
+            self.process.wait(); self.done.set(); self.changed.set(); self.ready.set()
             with self.write_lock: self.process.stdin.close()
             with self.lock:
                 for finished, value in self.pending.values(): value['error'] = self.reason; finished.set()
@@ -239,6 +290,7 @@ class RemoteTerminalSession:
             with self.lock: self.pending.pop(identifier, None)
 
     def write(self, identifier, data): return self.request('input', inputId=identifier, data=data)
+    def complete(self, text, selection_start): return self.request('complete', text=text, selectionStart=selection_start)
     def resize(self, cols, rows): dimensions(cols, rows); return self.request('resize', cols=cols, rows=rows)
     def stop(self, reason='终端已关闭'):
         if self.done.is_set(): return

@@ -1817,24 +1817,32 @@ class Bridge:
 
     def terminal(self, thread_id, owner, action, params):
         uuid.UUID(thread_id)
-        root = self.store.get(thread_id).get('cwd')
         if action == 'info':
+            root = self.store.get(thread_id).get('cwd')
             from bridge.platforms.posix.terminal import default_shell
             return {'cwd': root, 'host': self.host, 'mode': 'pty',
                     'shell': default_shell() if self.host == 'local' else None}
         identifier = params.get('id', '')
         if action == 'open':
+            root = self.store.get(thread_id).get('cwd')
             return self.terminals.open_session(owner, thread_id, identifier, root, params.get('cols'), params.get('rows'),
                                                 self.store.alias if isinstance(self.store, RemoteStore) else None)
-        if action in ('input', 'resize', 'close', 'poll'):
+        if action in ('input', 'resize', 'close', 'poll', 'complete'):
             session = self.terminals.session(owner, thread_id, identifier)
             if action == 'input': return session.write(params.get('inputId'), params.get('data'))
             if action == 'resize': return session.resize(params.get('cols'), params.get('rows'))
             if action == 'close': session.stop(); return {'closed': True}
+            if action == 'complete':
+                from bridge.features.terminals.completion import complete_path
+                return (session.complete(params.get('text'), params.get('selectionStart'))
+                        if hasattr(session, 'complete') else complete_path(session, params.get('text'), params.get('selectionStart')))
             after = params.get('after', 0)
             if type(after) is not int or not 0 <= after <= 10**12: raise ValueError('无效输出游标')
-            return session.read(after)
+            wait_ms = params.get('waitMs', 0)
+            if type(wait_ms) is not int or not 0 <= wait_ms <= 1000: raise ValueError('无效等待时间')
+            return session.read(after, wait_ms)
         if action == 'start':
+            root = self.store.get(thread_id).get('cwd')
             return self.terminals.start(owner, thread_id, identifier, root, params.get('command'),
                                         self.store.alias if isinstance(self.store, RemoteStore) else None)
         job = self.terminals.get(owner, thread_id, identifier)

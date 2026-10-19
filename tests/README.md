@@ -29,6 +29,8 @@ HTTP、中继、IPC、mailbox 等测试使用本机隔离监听和合成数据�
 
 测试名仍保持在 `tests/` 顶层，方便按前缀发现并复用既有夹具。平台测试的模拟结果不能替代对应操作系统的实机结果。
 
+Windows 打包时会校验并携带微软 ConPTY 与配套 OpenConsole，以支持 Windows 10 的终端鼠标/触摸事件；不替换系统组件。源码验收可先运行 `python scripts/bundle-conpty.py`，再运行 `python -B -m unittest discover -s tests -p test_windows_terminal.py -v`。未准备组件的源码环境沿用系统 ConPTY，鼠标专项用例会明确跳过。指定 `CMB_TEST_RUNTIME` 为打包网关 EXE 后，同组测试会加载它旁边 `_internal/conpty` 的组件，验证鼠标模式、点击坐标、VT 输入与中文，以及原有目录、尺寸、Ctrl+C、重连和关闭行为。
+
 ## Node 与浏览器
 
 ```sh

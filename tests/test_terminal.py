@@ -10,7 +10,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from bridge.features.terminals.manager import CommandJob, RemoteCommandJob, TerminalManager, MAX_OUTPUT
+from bridge.features.terminals.manager import CommandJob, RemoteCommandJob, TerminalManager, TerminalSessionMissing, MAX_OUTPUT
 
 
 class TerminalTests(unittest.TestCase):
@@ -19,6 +19,9 @@ class TerminalTests(unittest.TestCase):
     def tearDown(self):
         self.manager.close();self.temp.cleanup()
     def identifier(self):return str(uuid.uuid4())
+    def test_missing_session_has_typed_error(self):
+        with self.assertRaises(TerminalSessionMissing):
+            self.manager.session('owner','thread',self.identifier())
     def python_command(self, source):
         script = self.root / (self.identifier() + '.py')
         script.write_text(source, encoding='utf-8')
@@ -90,6 +93,15 @@ class TerminalHttpTests(unittest.TestCase):
     tearDown = support.HttpTests.tearDown
     request = support.HttpTests.request
     login = support.HttpTests.login
+    def test_missing_terminal_has_distinct_code_from_missing_thread(self):
+        path='/api/sessions/'+support.THREAD+'/terminal?mode=pty&id='+str(uuid.uuid4())
+        auth=self.login()
+        self.server.bridge.terminal=lambda *args: (_ for _ in ()).throw(TerminalSessionMissing('terminal gone'))
+        status,_,body=self.request('GET',path,headers=auth)
+        self.assertEqual(status,404);self.assertEqual(body['code'],'terminal_missing')
+        self.server.bridge.terminal=lambda *args: (_ for _ in ()).throw(KeyError('thread gone'))
+        status,_,body=self.request('GET',path,headers=auth)
+        self.assertEqual(status,404);self.assertNotIn('code',body)
     def test_terminal_auth_csrf_and_method(self):
         path='/api/sessions/'+support.THREAD+'/terminal'
         self.assertEqual(self.request('GET',path)[0],401)
@@ -111,3 +123,9 @@ class TerminalHttpTests(unittest.TestCase):
             self.assertEqual(calls[-1][2],body['action'])
         self.assertEqual(self.request('GET',path+'?mode=pty&id='+str(uuid.uuid4()),headers=auth)[0],200)
         self.assertEqual(calls[-1][2],'poll')
+        self.assertEqual(self.request('GET',path+'?mode=pty&id='+str(uuid.uuid4())+'&waitMs=1000',headers=auth)[0],200)
+        self.assertEqual(calls[-1][3]['waitMs'],1000)
+        body={'action':'complete','id':str(uuid.uuid4()),'text':'ls path','selectionStart':7}
+        self.assertEqual(self.request('POST',path,body,auth)[0],200)
+        self.assertEqual(calls[-1][2],'complete')
+        self.assertEqual(calls[-1][3]['text'],'ls path')

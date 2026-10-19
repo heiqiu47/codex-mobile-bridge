@@ -7,7 +7,7 @@ const path = require('node:path');
 function fixture(kind) {
   const listeners = new Set(), timers = new Map(), requests = [];
   let next = 0, identity = 0;
-  const node = () => ({append(){}, setAttribute(){}, classList:{add(){},toggle(){}}, textContent:''});
+  const node = () => ({append(){}, setAttribute(){}, classList:{add(){},toggle(){}}, textContent:'',dataset:{},style:{}});
   const document = {hidden:false, documentElement:{classList:{contains:()=>false}},
     addEventListener:(type, fn)=>listeners.add(fn), removeEventListener:(type,fn)=>listeners.delete(fn)};
   const context = vm.createContext({document, AbortController, BridgeI18n:{t:x=>x}, uuid:()=> 'terminal-'+ ++identity,
@@ -16,7 +16,9 @@ function fixture(kind) {
   const name = kind === 'pty' ? 'TerminalPanel' : 'CommandTerminalPanel';
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/hosts/environment.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/layouts/viewport.js'),'utf8'),context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/workspace/',kind==='pty'?'terminal-panel.js':'command-terminal-panel.js'),'utf8')+`;globalThis.Panel=${name};`,context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/workspace/command-terminal-panel.js'),'utf8'),context);
+  if(kind==='pty')vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/workspace/terminal-panel.js'),'utf8'),context);
+  vm.runInContext(`globalThis.Panel=${name};`,context);
   context.Panel.prototype.load = () => {};
   const workbench = {paint(){},node,button:node,isVisible:()=>true,endpoint:()=>'/terminal?',
     request(url,body,signal){
@@ -66,7 +68,7 @@ const settle = () => new Promise(resolve=>setImmediate(resolve));
 for (const kind of ['pty','command']) {
   test(`${kind}: background stops timers, aborts read, retains shell and cursor`,async()=>{
     const f=fixture(kind);f.panel.schedule();
-    assert.equal([...f.timers.values()][0].ms,kind==='pty'?150:900);
+    assert.equal([...f.timers.values()][0].ms,kind==='pty'?0:900);
     const pending=f.panel.poll();assert.equal(f.requests.length,1);
     f.visibility(true);await pending;
     assert.equal(f.requests[0].signal.aborted,true);
@@ -75,7 +77,7 @@ for (const kind of ['pty','command']) {
     assert.equal(f.requests.length,1);assert.equal(f.panel.cursor,17);
     assert.equal(f.requests.some(x=>x.body),false);
     f.visibility(false);assert.equal(f.requests.length,2);
-    assert.match(f.requests[1].url,/after=17$/);
+    assert.match(f.requests[1].url,kind==='pty'?/after=17&waitMs=1000$/:/after=17$/);
     f.requests[1].resolve({running:true,cursor:23,output:'catch up',reset:true,truncated:true});
     await settle();assert.equal(f.panel.applied.length,1);assert.equal(f.panel.cursor,23);
     assert.equal(f.panel.applied[0].truncated,true);

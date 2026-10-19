@@ -1,5 +1,8 @@
 """ConPTY integration tests run on Windows in the existing OS test matrix."""
 import os
+from contextlib import contextmanager, ExitStack
+import json
+import subprocess
 from pathlib import Path
 import tempfile
 import sys
@@ -9,6 +12,51 @@ from types import SimpleNamespace
 import unittest
 import uuid
 from unittest.mock import patch
+
+
+@contextmanager
+def terminal_runtime():
+    from bridge.platforms.windows import terminal
+    runtime = os.environ.get('CMB_TEST_RUNTIME')
+    with ExitStack() as stack:
+        if runtime:
+            stack.enter_context(patch.object(sys, 'executable', runtime))
+            stack.enter_context(patch.object(sys, 'frozen', True, create=True))
+            stack.enter_context(patch.object(terminal, 'project_root', return_value=Path(runtime).parent / '_internal'))
+        yield
+
+
+class ConPtyBundleTests(unittest.TestCase):
+    def test_source_without_bundle_keeps_inbox_but_frozen_cannot_fall_back(self):
+        from bridge.platforms.windows import terminal
+        with tempfile.TemporaryDirectory() as folder, patch.object(terminal, 'project_root', return_value=Path(folder)):
+            with patch.object(sys, 'frozen', False, create=True):
+                kernel = SimpleNamespace()
+                terminal._load_conpty(kernel)
+                self.assertFalse(hasattr(kernel, '_conpty_library'))
+            with patch.object(sys, 'frozen', True, create=True), self.assertRaises(OSError):
+                terminal._load_conpty(kernel)
+
+    def test_complete_bundle_uses_matching_create_resize_close_and_retains_library(self):
+        from bridge.platforms.windows import terminal
+        with tempfile.TemporaryDirectory() as folder, patch.object(terminal, 'project_root', return_value=Path(folder)), \
+             patch.object(sys, 'frozen', False, create=True):
+            root = Path(folder) / 'dist/conpty'
+            for name in ('conpty.dll', 'x64/OpenConsole.exe', 'arm64/OpenConsole.exe', 'x86/OpenConsole.exe'):
+                target = root / name; target.parent.mkdir(parents=True, exist_ok=True); target.touch()
+            library = SimpleNamespace(**{'Conpty' + name: object() for name in
+                ('CreatePseudoConsole', 'ResizePseudoConsole', 'ClosePseudoConsole')})
+            kernel = SimpleNamespace()
+            with patch.object(terminal.C, 'WinDLL', return_value=library, create=True) as load:
+                terminal._load_conpty(kernel)
+                load.assert_called_once_with(str(root / 'conpty.dll'), use_last_error=True)
+                self.assertIs(kernel._conpty_library, library)
+                for name in ('CreatePseudoConsole', 'ResizePseudoConsole', 'ClosePseudoConsole'):
+                    self.assertIs(getattr(kernel, name), getattr(library, 'Conpty' + name))
+                (root / 'x64/OpenConsole.exe').unlink()
+                load.reset_mock()
+                with self.assertRaises(OSError): terminal._load_conpty(SimpleNamespace())
+                load.assert_not_called()
 
 
 class TerminalStartupTests(unittest.TestCase):
@@ -102,7 +150,7 @@ class TerminalCompletionTests(unittest.TestCase):
     def session(self):
         from bridge.platforms.windows.terminal import WindowsTerminalSession
         session = WindowsTerminalSession.__new__(WindowsTerminalSession)
-        session.done = threading.Event(); session.output_done = threading.Event()
+        session.done = threading.Event(); session.changed = threading.Event(); session.output_done = threading.Event()
         session.close_lock = threading.Lock(); session.process_handle = 'process'; session.output_read = 'output'
         exited, closed = threading.Event(), threading.Event()
         def wait(handle, timeout):
@@ -165,12 +213,43 @@ class ConPtyTests(unittest.TestCase):
             time.sleep(.05)
         self.fail('Timed out waiting for terminal output: ' + repr(output[-1000:]))
 
+    def test_bundled_mouse_tracking_click_coordinates_and_vt_passthrough(self):
+        from bridge.platforms.windows import terminal
+        root = Path(__file__).resolve().parents[1]
+        if not os.environ.get('CMB_TEST_RUNTIME') and not (root / 'dist/conpty').exists():
+            self.skipTest('Prepare the app-local ConPTY bundle to test mouse support')
+        parent = root / '.tmp'; parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as folder:
+            with terminal_runtime():
+                session = terminal.WindowsTerminalSession(Path(folder), 80, 24)
+            try:
+                self.wait_for_output(session, lambda output: '>' in output)
+                for mode in ('native', 'vt'):
+                    result = Path(folder) / (mode + '.json')
+                    command = subprocess.list2cmdline([sys.executable, str(root / 'tests/fixtures/windows_terminal_mouse.py'), str(result), mode])
+                    cursor = session.read()['cursor']
+                    session.write(str(uuid.uuid4()), command + '\r')
+                    output = self.wait_for_output(session, lambda output: 'MOUSE_READY' in output, cursor)['output']
+                    self.assertIn('\x1b[?1000h', output)
+                    self.assertIn('\x1b[?1006h', output)
+                    click = '\x1b[<0;12;8M\x1b[<0;12;8m'
+                    session.write(str(uuid.uuid4()), click + '中q')
+                    self.wait_for_output(session, lambda output: 'MOUSE_DONE' in output, cursor)
+                    self.assertTrue(result.exists(), repr(session.read(cursor)))
+                    data = json.loads(result.read_text(encoding='utf-8'))
+                    if mode == 'native':
+                        self.assertEqual(data['mouse'], [[11, 7, 1, 0], [11, 7, 0, 0]])
+                        self.assertEqual(data['text'], '中q')
+                    else:
+                        self.assertEqual(data['text'], click + '中q')
+            finally:
+                session.stop(); self.assertTrue(session.done.wait(10))
+
     def test_close_immediately_after_open_reaps_bootstrap(self):
         from bridge.platforms.windows.terminal import WindowsTerminalSession
         directory = Path(__file__).resolve().parents[1] / '.tmp'; directory.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=directory) as folder:
-            runtime = os.environ.get('CMB_TEST_RUNTIME')
-            with patch.object(sys, 'executable', runtime or sys.executable), patch.object(sys, 'frozen', bool(runtime), create=True):
+            with terminal_runtime():
                 session = WindowsTerminalSession(Path(folder), 80, 24)
             try:
                 session.stop()
@@ -186,8 +265,7 @@ class ConPtyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=directory) as folder:
             root = Path(folder); sessions = []
             try:
-                runtime = os.environ.get('CMB_TEST_RUNTIME')
-                with patch.object(sys, 'executable', runtime or sys.executable), patch.object(sys, 'frozen', bool(runtime), create=True):
+                with terminal_runtime():
                     for _ in range(2): sessions.append(WindowsTerminalSession(root, 80, 24))
                 first, second = sessions
                 first.stop(); self.assertTrue(first.done.wait(5))
@@ -205,8 +283,7 @@ class ConPtyTests(unittest.TestCase):
         directory = Path(__file__).resolve().parents[1] / '.tmp'; directory.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=directory) as folder:
             root=Path(folder); (root/'nested folder').mkdir()
-            runtime = os.environ.get('CMB_TEST_RUNTIME')
-            with patch.object(sys, 'executable', runtime or sys.executable), patch.object(sys, 'frozen', bool(runtime), create=True):
+            with terminal_runtime():
                 session=WindowsTerminalSession(root,80,24)
             try:
                 deadline=time.monotonic()+10
@@ -219,6 +296,10 @@ class ConPtyTests(unittest.TestCase):
                 while not (root/'nested folder/result.txt').exists() and time.monotonic()<deadline:time.sleep(.05)
                 self.assertTrue((root/'nested folder/result.txt').exists(),repr(session.read()))
                 self.assertEqual((root/'nested folder/result.txt').read_text().strip(),'retained')
+                self.assertEqual(os.path.normcase(session.current_cwd()), os.path.normcase(str(root/'nested folder')))
+                from bridge.features.terminals.completion import complete_path
+                suggestion = complete_path(session, 'type res', 8)
+                self.assertEqual(suggestion['candidates'][0]['insertText'], 'result.txt')
                 # Use CMD's explicit cross-drive form; a later input must keep
                 # that cwd instead of launching a fresh command from root.
                 session.write(str(uuid.uuid4()), 'cd /d "' + str(root) + '"\r')
@@ -239,8 +320,7 @@ class ConPtyTests(unittest.TestCase):
         parent = Path(__file__).resolve().parents[1] / '.tmp'; parent.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='cmb cwd 中文 space ', dir=parent) as folder:
             root = Path(folder); (root / 'nested').mkdir()
-            runtime = os.environ.get('CMB_TEST_RUNTIME')
-            with patch.object(sys, 'executable', runtime or sys.executable), patch.object(sys, 'frozen', bool(runtime), create=True):
+            with terminal_runtime():
                 session = WindowsTerminalSession('\\\\?\\' + str(root), 80, 24)
             try:
                 self.wait_for_output(session, lambda output: '>' in output)
@@ -263,8 +343,7 @@ class ConPtyTests(unittest.TestCase):
         from bridge.platforms.windows.terminal import WindowsTerminalSession
         directory = Path(__file__).resolve().parents[1] / '.tmp'; directory.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=directory) as folder:
-            runtime = os.environ.get('CMB_TEST_RUNTIME')
-            with patch.object(sys, 'executable', runtime or sys.executable), patch.object(sys, 'frozen', bool(runtime), create=True):
+            with terminal_runtime():
                 session = WindowsTerminalSession(Path(folder), 80, 24)
             try:
                 self.wait_for_output(session, lambda output: '>' in output)
@@ -298,9 +377,8 @@ class ConPtyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=directory) as folder:
             root = Path(folder); (root / 'nested').mkdir()
             manager = TerminalManager(); identifier = str(uuid.uuid4()); session = None
-            runtime = os.environ.get('CMB_TEST_RUNTIME')
             try:
-                with patch.object(sys, 'executable', runtime or sys.executable), patch.object(sys, 'frozen', bool(runtime), create=True):
+                with terminal_runtime():
                     manager.open_session('owner', 'thread', identifier, root, 80, 24)
                 session = manager.session('owner', 'thread', identifier)
                 self.wait_for_output(session, lambda output: '>' in output)

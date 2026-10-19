@@ -6,8 +6,8 @@ const ChatAppearance=(()=>{
     if(!value||typeof value!=='object')value={};
     return {theme:['system','light','dark'].includes(value.theme)?value.theme:defaults.theme,
       accent:/^#[0-9a-f]{6}$/i.test(value.accent)?value.accent:defaults.accent,
-      fontSize:Number.isInteger(value.fontSize)&&value.fontSize>=14&&value.fontSize<=20?value.fontSize:defaults.fontSize,
-      codeSize:Number.isInteger(value.codeSize)&&value.codeSize>=11&&value.codeSize<=17?value.codeSize:defaults.codeSize,
+      fontSize:Number.isInteger(value.fontSize)&&value.fontSize>=10&&value.fontSize<=32?value.fontSize:defaults.fontSize,
+      codeSize:Number.isInteger(value.codeSize)&&value.codeSize>=8&&value.codeSize<=28?value.codeSize:defaults.codeSize,
       density:['compact','standard','relaxed'].includes(value.density)?value.density:defaults.density,
       showReasoning:typeof value.showReasoning==='boolean'?value.showReasoning:defaults.showReasoning,
       showProcess:typeof value.showProcess==='boolean'?value.showProcess:defaults.showProcess,

@@ -1,5 +1,33 @@
 'use strict';
 
+const TerminalFont=(()=>{
+  const key='bridge-terminal-font-size',panels=new Set();
+  const allowed=value=>Number.isInteger(Number(value))&&Number(value)>=6&&Number(value)<=24;
+  const valid=value=>allowed(value)?Number(value):14;
+  let size=14;try{size=valid(localStorage.getItem(key));}catch{}
+  function update(value){size=valid(value);for(const panel of panels)panel.applyFontSize(size);}
+  function paint(control,value){control.value.textContent=value+'px';control.decrease.disabled=value<=6;control.increase.disabled=value>=24;}
+  globalThis.addEventListener?.('storage',event=>{if(event.key===key)update(event.newValue);});
+  return {
+    size:()=>size,
+    register(panel){panels.add(panel);panel.applyFontSize(size);},
+    unregister:panel=>panels.delete(panel),
+    set(value){if(!allowed(value))return;update(value);try{localStorage.setItem(key,String(size));}catch{}},
+    step(delta){if(delta!==-1&&delta!==1)return;this.set(size+delta);},
+    paint,
+    control(workbench){
+      const label=workbench.node('div','wb-terminal-font');
+      label.setAttribute('data-i18n-title','所有终端字号');label.title=BridgeI18n.t('所有终端字号');
+      label.setAttribute('data-i18n-aria-label','所有终端字号');label.setAttribute('aria-label',BridgeI18n.t('所有终端字号'));
+      const decrease=workbench.button('−',()=>TerminalFont.step(-1),'减小所有终端字号');
+      const value=workbench.node('output','wb-terminal-font-value');
+      const increase=workbench.button('+',()=>TerminalFont.step(1),'增大所有终端字号');
+      label.append(decrease,value,increase);
+      const control={label,decrease,value,increase};paint(control,size);return control;
+    },
+  };
+})();
+
 class CommandTerminalPanel {
   constructor(workbench, session, tab) {
     Object.assign(this, {workbench, session, tab}); this.disposed=false; this.cursor=0; this.output='';
@@ -8,9 +36,10 @@ class CommandTerminalPanel {
     this.key='terminal:'+session.key;
     try { this.id=sessionStorage.getItem(this.key); } catch {}
     const n=(...args)=>workbench.node(...args), b=(...args)=>workbench.button(...args);
-    const head=n('div','wb-terminal-head'); head.append(n('strong','',BridgeI18n.t('终端')));
+    const head=n('div','wb-terminal-head wb-terminal-font-head'); head.append(n('strong','',BridgeI18n.t('终端')));
     this.stop=b(BridgeI18n.t('停止'),()=>this.cancel());this.stop.disabled=true;
-    head.append(b(BridgeI18n.t('清屏'),()=>{this.output='';this.screen.textContent='';}),this.stop);
+    const font=TerminalFont.control(workbench);this.fontControl=font;
+    head.append(font.label,b(BridgeI18n.t('清屏'),()=>{this.output='';this.screen.textContent='';}),this.stop);
     this.location=n('p','wb-terminal-location',BridgeI18n.t('正在读取项目…'));
     this.status=n('p','wb-status');this.status.setAttribute('role','status');
     this.screen=n('pre','wb-terminal-output');this.screen.tabIndex=0;this.screen.setAttribute('aria-label',BridgeI18n.t('命令输出'));
@@ -22,8 +51,10 @@ class CommandTerminalPanel {
     this.command.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!BridgeHost.hasNativeLayout()&&!BridgeLayout.isCompactViewport(innerWidth)){e.preventDefault();this.form.requestSubmit();}};
     const help=n('details','wb-terminal-help');help.append(n('summary','',BridgeI18n.t('命令终端 · 使用说明')),n('p','',BridgeI18n.t('每条命令从项目目录运行，沿用当前系统用户权限。Enter 运行，Shift+Enter 换行。支持脚本与构建输出，暂不支持 vim、密码输入等交互式程序。单次最多运行 30 分钟。')));
     tab.body.append(head,this.location,this.screen,this.form,this.status,help);
+    TerminalFont.register(this);
     this.load();
   }
+  applyFontSize(size){TerminalFont.paint(this.fontControl,size);this.screen.style.fontSize=size+'px';this.command.style.fontSize=Math.max(16,size)+'px';this.prompt.style.fontSize=size+'px';}
   url(extra='') {return this.workbench.endpoint(this.session,'terminal')+extra;}
   async load() {
     try {
@@ -76,5 +107,5 @@ class CommandTerminalPanel {
     catch(e){if(!this.disposed){this.status.textContent=e.message;this.stop.disabled=false;}}
     finally{this.canceling=false;if(this.running)this.schedule();}
   }
-  dispose(){this.disposed=true;document.removeEventListener('visibilitychange',this.visibility);this.readController?.abort();clearTimeout(this.timer);}
+  dispose(){this.disposed=true;TerminalFont.unregister(this);document.removeEventListener('visibilitychange',this.visibility);this.readController?.abort();clearTimeout(this.timer);}
 }

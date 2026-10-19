@@ -38,6 +38,7 @@ from bridge.features.sessions.store import StoreUnavailable
 from bridge.clients.codex.remote import RemoteUnavailable
 from bridge.features.sessions.create import CreationError
 from bridge.features.accounts.account import AccountError
+from bridge.features.terminals.manager import TerminalSessionMissing
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
 
 LOG = logging.getLogger(__name__)
@@ -76,10 +77,11 @@ class GatewayServer(ThreadingHTTPServer):
             self.ui_language_path = Path(data_dir) / 'ui-language.json' if data_dir else None
             self.web_dir = Path(web_dir)
             self.slots = threading.BoundedSemaphore(48)
+            self.terminal_sockets = threading.BoundedSemaphore(8)
         else:
             # Listeners serve one gateway: shared sessions, pairing, limits and
             # mutable tunnel origins, with a single notification manager.
-            for name in ('bridge', 'harness', 'desktop_sessions', 'desktop_uploads', 'notifications', 'instance_id', 'auth', 'origins', 'pairing', 'hosts', 'secure_hosts', 'web_dir', 'slots', 'ui_language_path'):
+            for name in ('bridge', 'harness', 'desktop_sessions', 'desktop_uploads', 'notifications', 'instance_id', 'auth', 'origins', 'pairing', 'hosts', 'secure_hosts', 'web_dir', 'slots', 'terminal_sockets', 'ui_language_path'):
                 setattr(self, name, getattr(shared, name))
         try:
             super().__init__(address, Handler)
@@ -142,20 +144,21 @@ class Handler(BaseHTTPRequestHandler):
         # Request bodies, cookies, query strings and conversation IDs are private.
         pass
 
-    def headers_common(self, cache_control="no-store", preview_shell=False):
+    def headers_common(self, cache_control="no-store", preview_shell=False, style_nonce=None):
         self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Frame-Options", "SAMEORIGIN" if preview_shell else "DENY")
-        # KaTeX emits inline layout styles; scripts and stylesheets stay same-origin.
+        # KaTeX uses style attributes; only our terminal gets nonced dynamic styles.
         host = self.headers.get('Host', '')
         origin = ('https://' if host in self.server.secure_hosts else 'http://') + host
         frame_source = origin + SHELL_PATH if host in self.server.hosts else "'none'"
+        style_source = "'self'" + (" 'nonce-" + style_nonce + "'" if style_nonce else "")
         self.send_header("Content-Security-Policy", SHELL_CSP if preview_shell else
-                         "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src " + frame_source + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
+                         "default-src 'self'; script-src 'self'; style-src " + style_source + "; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src " + frame_source + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
-    def output(self, status, data, content_type="application/json; charset=utf-8", cookie=None, content_disposition=None, preview_shell=False):
+    def output(self, status, data, content_type="application/json; charset=utf-8", cookie=None, content_disposition=None, preview_shell=False, style_nonce=None):
         # Keep the browser cookie in step with the renewed server-side deadline,
         # including long-lived pages that do not revisit /api/auth.
         if cookie is None and 200 <= status < 300 and urlsplit(self.path).path.startswith('/api/'):
@@ -172,7 +175,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(candidate) < len(body):
                 body, compressed = candidate, True
         self.send_response(status)
-        self.headers_common(preview_shell=preview_shell)
+        self.headers_common(preview_shell=preview_shell, style_nonce=style_nonce)
         self.send_header("Content-Type", content_type)
         self.send_header('Vary', 'Accept-Encoding')
         if compressed:
@@ -298,7 +301,11 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(urlsplit(self.path).query)
             if not write and path in STATIC:
                 _, content_type = STATIC[path]
-                return self.output(200, asset_bytes(self.server.web_dir, path), content_type)
+                data = asset_bytes(self.server.web_dir, path)
+                nonce = secrets.token_urlsafe(24) if path == '/' else None
+                if nonce:
+                    data = data.replace(b'<head>', ('<head><meta name="bridge-style-nonce" content="' + nonce + '">').encode(), 1)
+                return self.output(200, data, content_type, style_nonce=nonce)
             font = FONT_ROUTE.fullmatch(path)
             if not write and font:
                 file = self.server.web_dir / 'vendor/katex/fonts' / font[1]
@@ -357,6 +364,35 @@ class Handler(BaseHTTPRequestHandler):
             auth = self.authorized(write)
             if not auth:
                 return
+            terminal_socket = re.fullmatch(r'/api/sessions/([0-9a-f-]{36})/terminal', path)
+            desktop_socket = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/terminal', path)
+            if not write and self.headers.get('Upgrade', '').lower() == 'websocket' and (terminal_socket or desktop_socket):
+                if self.server.auth.config.get('mode') == 'none':
+                    raise PermissionError('终端需要启用网关密码保护')
+                # Browser WebSocket cannot set a custom header. The CSRF secret
+                # is sent as a subprotocol, never as a URL or cookie substitute.
+                self.check_request(True)
+                if desktop_socket:
+                    if self.server.desktop_sessions is None:
+                        return self.output(503, {'error': '桌面会话接入不可用'})
+                    sid = query.get('sessionId', [''])[0]
+                    bridge = self.server.desktop_sessions.workspace_bridge(desktop_socket[1], sid)
+                    thread = bridge.identifier
+                    enabled = lambda: self.server.desktop_sessions.require_enabled(desktop_socket[1]) is None
+                else:
+                    bridge = self.server.bridge.for_host(query.get('host', ['local'])[0])
+                    if self.server.desktop_sessions:
+                        self.server.desktop_sessions.require_enabled('codex')
+                    thread = terminal_socket[1]
+                    enabled = lambda: self.server.desktop_sessions is None or self.server.desktop_sessions.require_enabled('codex') is None
+                if len(query.get('id', [])) != 1 or len(query.get('after', [])) != 1:
+                    raise ValueError('终端连接参数无效')
+                identifier = query['id'][0]
+                after = int(query['after'][0])
+                if not 0 <= after <= 10**12:
+                    raise ValueError('无效输出游标')
+                from bridge.api.terminal_ws import serve
+                return serve(self, bridge, thread, self.server.auth.key(self.token()), identifier, after, auth['csrf'], enabled)
             if path == SHELL_PATH:
                 if write or query:
                     return self.output(405, {'error': '请求方式无效'})
@@ -730,12 +766,12 @@ class Handler(BaseHTTPRequestHandler):
                 owner = self.server.auth.key(self.token())
                 if write:
                     body = self.read_json()
-                    if set(body) - {'action', 'id', 'command', 'inputId', 'data', 'cols', 'rows'} or body.get('action') not in ('start', 'stop', 'open', 'input', 'resize', 'close'):
+                    if set(body) - {'action', 'id', 'command', 'inputId', 'data', 'cols', 'rows', 'text', 'selectionStart'} or body.get('action') not in ('start', 'stop', 'open', 'input', 'resize', 'close', 'complete'):
                         raise ValueError('无效终端操作')
                     return self.output(200, bridge.terminal(terminal_match[1], owner, body['action'], body))
                 identifier = query.get('id', [''])[0]
                 return self.output(200, bridge.terminal(terminal_match[1], owner, ('poll' if query.get('mode') == ['pty'] else 'read') if identifier else 'info',
-                                   {'id': identifier, 'after': int(query.get('after', ['0'])[0])}))
+                                   {'id': identifier, 'after': int(query.get('after', ['0'])[0]), 'waitMs': int(query.get('waitMs', ['0'])[0])}))
             workspace_match = re.fullmatch(r"/api/sessions/([0-9a-f-]{36})/workspace(?:/(info|preview|download|upload|git-status|git-diff|git-history|git-commit|git-history-diff|git-branches|git-action))?", path)
             if workspace_match:
                 thread_id, operation = workspace_match.groups()
@@ -915,6 +951,9 @@ class Handler(BaseHTTPRequestHandler):
         except PermissionError as exc:
             self.close_connection = True
             self.output(403, {"error": str(exc)})
+        except TerminalSessionMissing as exc:
+            self.close_connection = True
+            self.output(404, {"error": str(exc.args[0]), "code": "terminal_missing"})
         except KeyError:
             self.close_connection = True
             self.output(404, {"error": "找不到这个会话"})

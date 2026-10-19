@@ -1840,4 +1840,4 @@ class DesktopWorkspace:
         from bridge.app.service import Bridge
         with self.manager.locks[self.provider]:
             self.manager.require_enabled(self.provider)
-            return Bridge.terminal(self, self.identifier, owner, action, params)
+        return Bridge.terminal(self, self.identifier, owner, action, params)

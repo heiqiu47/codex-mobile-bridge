@@ -62,8 +62,16 @@ jobs:
         run: node scripts/smoke-macos.cjs "dist/desktop/${{ matrix.app-dir }}/Codex Mobile Bridge.app"
       - if: runner.os == 'Windows'
         run: npm run build:windows
-      - if: runner.os == 'Windows'
-        run: npm run test:windows-app
+      - name: Install and verify the complete Windows package
+        if: runner.os == 'Windows'
+        run: |
+          $target = Join-Path $env:RUNNER_TEMP 'cmb-release-install'
+          python scripts/verify-windows-install.py --target $target
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/smoke-windows.cjs (Join-Path $target 'Codex Mobile Bridge.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:CMB_TEST_RUNTIME = Join-Path $target 'resources/gateway/codex-mobile-gateway.exe'
+          python -B -m unittest discover -s tests -p test_windows_terminal.py -v
       - name: Verify packaged Bark and ntfy notifications
         run: node scripts/smoke-notifications.cjs
       - name: Verify packaged login and device access

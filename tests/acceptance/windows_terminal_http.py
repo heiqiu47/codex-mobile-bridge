@@ -143,7 +143,8 @@ def main():
                 'Terminal open must require CSRF')
         info = http.checked('GET', path)
         require(info['cwd'] == stored_cwd, 'Synthetic chat cwd was not resolved')
-        with patch.object(sys, 'executable', str(gateway)), patch.object(sys, 'frozen', True, create=True):
+        with patch.object(sys, 'executable', str(gateway)), patch.object(sys, 'frozen', True, create=True), \
+             patch('bridge.platforms.windows.terminal.project_root', return_value=gateway.parent / '_internal'):
             opened = http.checked('POST', path, {'action': 'open', 'id': tab_id, 'cols': 80, 'rows': 24})
         require(opened['running'], 'ConPTY did not start')
         until(lambda: streamed(lambda text: '>' in text), 'Initial cmd prompt')
@@ -152,9 +153,8 @@ def main():
         if args.extended_cwd:
             marker = run / 'startup-cwd.txt'
             input_text('cd > "' + str(marker) + '"\r')
-            until(marker.exists, 'Initial CMD cwd')
-            require(run.name in marker.read_bytes().decode('ascii', 'ignore'),
-                    'CMD did not start in the synthetic chat cwd')
+            until(lambda: marker.exists() and run.name in marker.read_bytes().decode('ascii', 'ignore'),
+                  'Initial CMD cwd in the synthetic chat directory')
             summary['checks']['extendedLocalCwd'] = True
 
         input_text('cd nested\rset CMB_HTTP_STATE=retained\r')
@@ -164,8 +164,8 @@ def main():
                 'Resize failed')
         input_text('echo %CMB_HTTP_STATE%> continuity.txt\r')
         continuity = workspace / 'nested' / 'continuity.txt'
-        until(continuity.exists, 'cd/env persistence')
-        require(continuity.read_text().strip() == 'retained', 'Reopened tab lost cwd or environment')
+        until(lambda: continuity.exists() and continuity.read_text().strip() == 'retained',
+              'Reopened tab cwd and environment persistence')
         summary['checks']['reopenResizeCwdEnv'] = True
 
         cursor = poll()['cursor']; output = ''
@@ -183,8 +183,9 @@ def main():
         until(lambda: streamed(lambda text: '>' in text), 'Prompt after Ctrl+C')
         input_text('echo survived> after-ctrl-c.txt\r')
         after = workspace / 'nested' / 'after-ctrl-c.txt'
-        until(after.exists, 'Shell after Ctrl+C')
-        require(after.read_text().strip() == 'survived', 'Ctrl+C killed shell')
+        # CMD creates the redirected file before writing its contents.
+        until(lambda: after.exists() and after.read_text().strip() == 'survived',
+              'Shell command completion after Ctrl+C')
         summary['checks']['ctrlCShellAlive'] = True
 
         http.checked('POST', path, {'action': 'close', 'id': tab_id})

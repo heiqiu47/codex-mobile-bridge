@@ -2,9 +2,17 @@
 
 手机扫描网关二维码后连接 Codex、Claude Desktop 和 DeepSeek Harness，电脑继续执行任务。手机 App 保存多台电脑，提供原生扫码、剪贴板、文件下载和通知；浏览器入口同时保留。
 
-**[v2.1.1 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.1)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
+**[v2.1.2 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
 
-## v2.1.1：模型缓存、草稿与文件定位
+## v2.1.2：终端输入、触摸滚动与显示
+
+手机与宽屏 Web 默认直接在终端输入，保留可选的“编写后发送模式”。新增 Enter，改善中文输入、Tab 路径补全、OpenCode 类终端 CLI 的触摸滚动及断线恢复。终端字号可独立调节为 6–24px，修复小字号重叠、字符对齐和内容覆盖工具栏。主题与语言移到设置顶部，正文字号为 10–32px、代码字号为 8–28px。
+
+网关与手机版本统一为 **2.1.2**，手机构建号为 **34**。请同时更新网关和手机 App；Android 的小字号修复包含原生 WebView 设置。iOS 沿用正式应用标识，需自行签名，使用相同签名身份和 Bundle ID 覆盖安装。
+
+**English:** v2.1.2/build34 improves direct terminal input, Chinese composition, Enter and Tab, touch scrolling in terminal CLIs such as OpenCode, reconnection and 6–24px rendering. Update both the gateway and mobile app; Android also includes a native WebView font correction. iOS retains its official bundle IDs and requires your own signing for installation.
+
+### v2.1.1：模型缓存、草稿与文件定位
 
 模型目录按电脑、客户端和接入身份缓存，显示更新时间；未发送草稿在切换聊天或电脑后恢复。文件定位自动滚动并高亮，左上角返回直接回聊天列表。新增工具截图显示控制与跳过当前版本提醒；iOS 改善场景恢复与通知跳转。网关与手机版本统一为 2.1.1，手机构建号为 33。
 
@@ -30,11 +38,11 @@
 
 ## 安装与升级
 
-- **Android 8.0 及以上**：从 Release 下载 `Codex-Mobile-Bridge-2.1.1-Android.apk`，按系统提示安装。升级时覆盖安装，不要先卸载，以保留电脑列表和登录。相机权限仅供扫码，拒绝后仍可粘贴地址登录。
+- **Android 8.0 及以上**：从 Release 下载 `Codex-Mobile-Bridge-2.1.2-Android.apk`，按系统提示安装。升级时覆盖安装，不要先卸载，以保留电脑列表和登录。相机权限仅供扫码，拒绝后仍可粘贴地址登录。
 - **iPhone / iPad**：Release 提供未签名 IPA 和 Xcode 源码包，需使用自己的 Apple 账号签名；不能直接点击 IPA 安装，暂无 App Store / TestFlight 分发。免费签名可能需要定期重新安装。
 - 使用 Release 中的 `SHA256SUMS.txt` 校验下载。编译通过不代表已验证所有机型、系统版本和网络环境。
 
-首次从较旧版本升级到 v2.1.1，可先下载 APK 覆盖安装；新版 Android 再次更新时可直接使用以下应用内流程。
+首次从较旧版本升级到 v2.1.2，可先下载 APK 覆盖安装；新版 Android 再次更新时可直接使用以下应用内流程。
 
 在「手机设置 → 应用更新」查看当前版本并检查更新。正式版只检查正式发布，预览版也可检查后续预览；不会在后台自动下载或安装。确认更新后，Android 会在 App 内下载 APK 并打开系统安装器，iOS 打开新版与签名安装指引。访问公开 GitHub Release 的请求不携带网关凭据或 Cookie。
 

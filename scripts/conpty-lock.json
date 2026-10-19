@@ -1,0 +1,6 @@
+{
+  "version": "1.25.260930003",
+  "url": "https://www.nuget.org/api/v2/package/Microsoft.Windows.Console.ConPTY/1.25.260930003",
+  "sha256": "02b07b349af66d801159bdf9e440d4a1ce78bb951f37fc8609731665afdae7ee",
+  "licenseSource": "https://github.com/microsoft/terminal/blob/v1.25.2733.0/LICENSE"
+}
