@@ -730,12 +730,12 @@ class Handler(BaseHTTPRequestHandler):
                 owner = self.server.auth.key(self.token())
                 if write:
                     body = self.read_json()
-                    if set(body) - {'action', 'id', 'command', 'inputId', 'data', 'cols', 'rows'} or body.get('action') not in ('start', 'stop', 'open', 'input', 'resize', 'close'):
+                    if set(body) - {'action', 'id', 'command', 'inputId', 'data', 'cols', 'rows', 'text', 'selectionStart'} or body.get('action') not in ('start', 'stop', 'open', 'input', 'resize', 'close', 'complete'):
                         raise ValueError('无效终端操作')
                     return self.output(200, bridge.terminal(terminal_match[1], owner, body['action'], body))
                 identifier = query.get('id', [''])[0]
                 return self.output(200, bridge.terminal(terminal_match[1], owner, ('poll' if query.get('mode') == ['pty'] else 'read') if identifier else 'info',
-                                   {'id': identifier, 'after': int(query.get('after', ['0'])[0])}))
+                                   {'id': identifier, 'after': int(query.get('after', ['0'])[0]), 'waitMs': int(query.get('waitMs', ['0'])[0])}))
             workspace_match = re.fullmatch(r"/api/sessions/([0-9a-f-]{36})/workspace(?:/(info|preview|download|upload|git-status|git-diff|git-history|git-commit|git-history-diff|git-branches|git-action))?", path)
             if workspace_match:
                 thread_id, operation = workspace_match.groups()

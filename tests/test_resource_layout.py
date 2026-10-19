@@ -43,6 +43,7 @@ SSH_SOURCES = {
     'bridge/features/auth/tls.py': ['client_context'],
     'bridge/features/workspace/workspace.py': ['Workspace', 'operate'],
     'bridge/features/terminals/manager.py': ['CommandJob', 'serve_remote'],
+    'bridge/features/terminals/completion.py': ['complete_path'],
     'bridge/platforms/posix/terminal.py': ['TerminalSession', 'remote_main'],
 }
 PLATFORM_SOURCES = {

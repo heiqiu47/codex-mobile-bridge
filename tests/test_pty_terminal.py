@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from bridge.platforms.posix.terminal import TerminalSession, RemoteTerminalSession, default_shell, dimensions
 from bridge.features.terminals.manager import TerminalManager
+from bridge.features.terminals.completion import complete_path
 
 
 @unittest.skipIf(os.name == 'nt', 'POSIX PTY requires Unix')
@@ -63,6 +64,32 @@ class PtyTests(unittest.TestCase):
         self.send(s,"printf 'READ_%s\\n' ready; read reply; printf 'ANSWER:%s\\n' \"$reply\"\r")
         self.wait_output(s,'READ_ready')
         self.send(s,'hello input\r'); self.wait_output(s,'ANSWER:hello input')
+
+    def test_completion_uses_live_shell_cwd_after_cd(self):
+        s=self.session(); (self.root/'nested').mkdir(); (self.root/'nested'/'目标 文件').write_text('')
+        self.wait_output(s, 'fixture')
+        self.send(s,'cd nested\r'); self.wait_output(s,'cd nested')
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            try:
+                if s.current_cwd()==str(self.root/'nested'): break
+            except ValueError: pass
+            time.sleep(.02)
+        self.assertEqual(s.current_cwd(),str(self.root/'nested'))
+        result=complete_path(s,'ls 目',4)
+        self.assertEqual(result['cwd'],str(self.root/'nested'))
+        self.assertEqual(result['candidates'][0]['insertText'],"'目标 文件'")
+
+    def test_long_poll_wakes_on_output_and_is_bounded(self):
+        s=self.session(); self.wait_output(s,'fixture'); time.sleep(.1)
+        cursor=s.read()['cursor']; started=time.monotonic(); self.assertEqual(s.read(cursor,80)['output'],'')
+        self.assertGreaterEqual(time.monotonic()-started,.06)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending=pool.submit(s.read,cursor,1000)
+            self.send(s,'echo WAKE_MARKER\r')
+            result=pending.result(timeout=2)
+        self.assertTrue(result['output']); self.wait_output(s,'WAKE_MARKER')
     def test_resize_and_ctrl_c_keep_shell_alive(self):
         s=self.session(); s.resize(93,31)
         self.send(s,"stty size\r"); self.wait_output(s,'31 93')

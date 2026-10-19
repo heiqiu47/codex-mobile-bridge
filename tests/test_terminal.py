@@ -111,3 +111,9 @@ class TerminalHttpTests(unittest.TestCase):
             self.assertEqual(calls[-1][2],body['action'])
         self.assertEqual(self.request('GET',path+'?mode=pty&id='+str(uuid.uuid4()),headers=auth)[0],200)
         self.assertEqual(calls[-1][2],'poll')
+        self.assertEqual(self.request('GET',path+'?mode=pty&id='+str(uuid.uuid4())+'&waitMs=1000',headers=auth)[0],200)
+        self.assertEqual(calls[-1][3]['waitMs'],1000)
+        body={'action':'complete','id':str(uuid.uuid4()),'text':'ls path','selectionStart':7}
+        self.assertEqual(self.request('POST',path,body,auth)[0],200)
+        self.assertEqual(calls[-1][2],'complete')
+        self.assertEqual(calls[-1][3]['text'],'ls path')

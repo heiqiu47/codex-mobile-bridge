@@ -6,6 +6,7 @@ from ctypes import wintypes as W
 import hashlib
 import ntpath
 import os
+import struct
 from pathlib import Path
 
 from bridge.resources import project_root
@@ -38,6 +39,93 @@ class STARTUPINFOEX(C.Structure):
 
 class PROCESS_INFORMATION(C.Structure):
     _fields_ = [('hProcess', W.HANDLE), ('hThread', W.HANDLE), ('dwProcessId', W.DWORD), ('dwThreadId', W.DWORD)]
+
+
+class PROCESSENTRY32W(C.Structure):
+    _fields_ = [('dwSize', W.DWORD), ('cntUsage', W.DWORD), ('th32ProcessID', W.DWORD),
+                ('th32DefaultHeapID', C.c_void_p), ('th32ModuleID', W.DWORD),
+                ('cntThreads', W.DWORD), ('th32ParentProcessID', W.DWORD),
+                ('pcPriClassBase', W.LONG), ('dwFlags', W.DWORD), ('szExeFile', W.WCHAR * 260)]
+
+
+def _process_snapshot(kernel):
+    kernel.CreateToolhelp32Snapshot.argtypes = [W.DWORD, W.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = W.HANDLE
+    kernel.Process32FirstW.argtypes = [W.HANDLE, C.POINTER(PROCESSENTRY32W)]
+    kernel.Process32NextW.argtypes = [W.HANDLE, C.POINTER(PROCESSENTRY32W)]
+    snapshot = kernel.CreateToolhelp32Snapshot(2, 0)
+    if not snapshot or snapshot == C.c_void_p(-1).value: raise OSError('无法核验终端进程')
+    try:
+        item = PROCESSENTRY32W(); item.dwSize = C.sizeof(item); result = []
+        if not kernel.Process32FirstW(snapshot, C.byref(item)): raise OSError('无法核验终端进程')
+        while True:
+            result.append((item.th32ProcessID, item.th32ParentProcessID, item.szExeFile))
+            if not kernel.Process32NextW(snapshot, C.byref(item)): break
+        return result
+    finally: kernel.CloseHandle(snapshot)
+
+
+def _shell_pid(kernel, bootstrap_pid, shell):
+    entries = _process_snapshot(kernel)
+    children = [(pid, name) for pid, parent, name in entries if parent == bootstrap_pid]
+    if len(children) != 1 or children[0][1].casefold() != ntpath.basename(shell).casefold():
+        raise ValueError('无法确认终端 shell 进程')
+    pid = children[0][0]
+    if any(parent == pid for _, parent, _ in entries):
+        raise ValueError('前台程序运行时无法确认 shell 当前目录')
+    return pid
+
+
+def _process_cwd(kernel, pid, shell, job):
+    if C.sizeof(C.c_void_p) != 8: raise ValueError('Windows 路径补全需要 64 位网关')
+    kernel.OpenProcess.argtypes = [W.DWORD, W.BOOL, W.DWORD]
+    kernel.OpenProcess.restype = W.HANDLE
+    kernel.ReadProcessMemory.argtypes = [W.HANDLE, C.c_void_p, C.c_void_p, C.c_size_t, C.POINTER(C.c_size_t)]
+    kernel.QueryFullProcessImageNameW.argtypes = [W.HANDLE, W.DWORD, W.LPWSTR, C.POINTER(W.DWORD)]
+    kernel.GetProcessTimes.argtypes = [W.HANDLE, *([C.POINTER(C.c_uint64)] * 4)]
+    kernel.IsProcessInJob.argtypes = [W.HANDLE, W.HANDLE, C.POINTER(W.BOOL)]
+    handle = kernel.OpenProcess(0x0410, False, pid)
+    if not handle: raise ValueError('无法读取终端 shell 进程')
+    try:
+        owned = W.BOOL()
+        if not kernel.IsProcessInJob(handle, job, C.byref(owned)) or not owned.value:
+            raise OSError('终端 shell 不属于此终端')
+        def identity():
+            path = C.create_unicode_buffer(32768); size = W.DWORD(len(path))
+            if not kernel.QueryFullProcessImageNameW(handle, 0, path, C.byref(size)):
+                raise OSError('无法确认终端 shell 路径')
+            expected = ntpath.normcase(ntpath.normpath(shell))
+            actual = ntpath.normcase(ntpath.normpath(path.value))
+            if actual != expected: raise OSError('终端 shell 身份已变化')
+            times = [C.c_uint64() for _ in range(4)]
+            if not kernel.GetProcessTimes(handle, *(C.byref(value) for value in times)):
+                raise OSError('无法确认终端 shell 启动时间')
+            return times[0].value
+        started = identity()
+        ntdll = C.WinDLL('ntdll', use_last_error=True)
+        ntdll.NtQueryInformationProcess.argtypes = [W.HANDLE, W.DWORD, C.c_void_p, W.DWORD, C.POINTER(W.DWORD)]
+        ntdll.NtQueryInformationProcess.restype = C.c_long
+        def read(address, size):
+            if not address or not 0 < size <= 32768: raise OSError('终端当前目录地址无效')
+            buffer = C.create_string_buffer(size); count = C.c_size_t()
+            if not kernel.ReadProcessMemory(handle, C.c_void_p(address), buffer, size, C.byref(count)) or count.value != size:
+                raise OSError('无法读取终端当前目录')
+            return buffer.raw
+        basic = C.create_string_buffer(48)
+        if ntdll.NtQueryInformationProcess(handle, 0, basic, len(basic), None) != 0:
+            raise OSError('无法读取终端 shell 状态')
+        peb = struct.unpack_from('<Q', basic.raw, 8)[0]
+        params = struct.unpack('<Q', read(peb + 0x20, 8))[0]
+        unicode = read(params + 0x38, 16)
+        length = struct.unpack_from('<H', unicode)[0]
+        address = struct.unpack_from('<Q', unicode, 8)[0]
+        if not length or length % 2 or length > 32768: raise OSError('终端当前目录格式无效')
+        cwd = read(address, length).decode('utf-16-le')
+        if identity() != started or not ntpath.isabs(cwd): raise OSError('无法确认终端当前目录')
+        return cwd
+    except (OSError, UnicodeError):
+        raise ValueError('无法只读确认终端当前目录') from None
+    finally: kernel.CloseHandle(handle)
 
 
 class JOB_BASIC_LIMITS(C.Structure):
@@ -112,10 +200,18 @@ def cmd_working_directory(root):
 
 
 class WindowsTerminalSession(TerminalSession):
+    def current_cwd(self):
+        if self.done.is_set() or self.stopping.is_set(): raise ValueError('终端已关闭，请重新打开')
+        pid = _shell_pid(self.kernel, self.bootstrap_pid, self.shell)
+        cwd = _process_cwd(self.kernel, pid, self.shell, self.job)
+        if _shell_pid(self.kernel, self.bootstrap_pid, self.shell) != pid or self.done.is_set():
+            raise ValueError('无法确认终端当前目录')
+        return cwd
+
     def __init__(self, root, cols=80, rows=24):
         dimensions(cols, rows)
         self.kernel = k = api()
-        self.lock = threading.RLock(); self.input_lock = threading.Lock(); self.close_lock = threading.Lock()
+        self.lock = threading.RLock(); self.changed = threading.Event(); self.input_lock = threading.Lock(); self.close_lock = threading.Lock()
         self.text = ''; self.end = 0; self.reason = ''; self.code = None
         self.done = threading.Event(); self.output_done = threading.Event(); self.stopping = threading.Event(); self.touched = time.monotonic()
         self.inputs = collections.OrderedDict(); self.writes = queue.Queue()
@@ -149,6 +245,7 @@ class WindowsTerminalSession(TerminalSession):
             directory = cmd_working_directory(self.root) if ntpath.basename(self.shell).casefold() == 'cmd.exe' else self.root
             checked(k.CreateProcessW(sys.executable, command, None, None, False, 0x00080004, None, directory, C.byref(startup), C.byref(process)))
             self.process_handle = process.hProcess
+            self.bootstrap_pid = process.dwProcessId
             checked(k.AssignProcessToJobObject(self.job, self.process_handle))
             checked(k.ResumeThread(process.hThread) != 0xffffffff)
         except Exception:
@@ -192,7 +289,7 @@ class WindowsTerminalSession(TerminalSession):
         # Pipe EOF can precede process exit. A completed terminal must release
         # its working directory and drain all output before manager cleanup.
         self.output_done.wait()
-        self.done.set()
+        self.done.set(); self.changed.set()
 
     def _close_console(self):
         # ClosePseudoConsole may wait for output to drain; the reader stays alive.

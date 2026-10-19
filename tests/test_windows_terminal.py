@@ -102,7 +102,7 @@ class TerminalCompletionTests(unittest.TestCase):
     def session(self):
         from bridge.platforms.windows.terminal import WindowsTerminalSession
         session = WindowsTerminalSession.__new__(WindowsTerminalSession)
-        session.done = threading.Event(); session.output_done = threading.Event()
+        session.done = threading.Event(); session.changed = threading.Event(); session.output_done = threading.Event()
         session.close_lock = threading.Lock(); session.process_handle = 'process'; session.output_read = 'output'
         exited, closed = threading.Event(), threading.Event()
         def wait(handle, timeout):
@@ -219,6 +219,10 @@ class ConPtyTests(unittest.TestCase):
                 while not (root/'nested folder/result.txt').exists() and time.monotonic()<deadline:time.sleep(.05)
                 self.assertTrue((root/'nested folder/result.txt').exists(),repr(session.read()))
                 self.assertEqual((root/'nested folder/result.txt').read_text().strip(),'retained')
+                self.assertEqual(os.path.normcase(session.current_cwd()), os.path.normcase(str(root/'nested folder')))
+                from bridge.features.terminals.completion import complete_path
+                suggestion = complete_path(session, 'type res', 8)
+                self.assertEqual(suggestion['candidates'][0]['insertText'], 'result.txt')
                 # Use CMD's explicit cross-drive form; a later input must keep
                 # that cwd instead of launching a fresh command from root.
                 session.write(str(uuid.uuid4()), 'cd /d "' + str(root) + '"\r')

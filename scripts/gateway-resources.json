@@ -13,6 +13,7 @@
   "bridge/features/auth/tls.py",
   "bridge/features/workspace/workspace.py",
   "bridge/features/terminals/manager.py",
+  "bridge/features/terminals/completion.py",
   "bridge/platforms/posix/terminal.py",
   "bridge/platforms/windows/claude-helper.cs",
   "bridge/platforms/windows/codex-quit-helper.cs",
