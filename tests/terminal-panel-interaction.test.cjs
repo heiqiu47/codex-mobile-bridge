@@ -230,3 +230,21 @@ test('new desktop terminal starts direct; optional local draft does not replace 
   f.context.navigator.userAgent='iPhone Mobile';assert.equal(panel.mobile(),true);
   panel.toggleInputMode();assert.equal(panel.inputMode,'direct');
 });
+
+test('Enter shortcut sends only one CR in every mode and preserves the unsent draft',()=>{
+  for(const [mobile,mode] of [[true,'draft'],[false,'draft'],[false,'direct']]){
+    const f=fixture();f.context.navigator.userAgent=mobile?'iPhone Mobile':'Desktop';f.panel.inputMode=mode;
+    f.panel.input.value='unsent 中文';f.panel.input.selectionStart=f.panel.input.selectionEnd=2;
+    f.panel.enqueue('/model\r');f.panel.shortcut('Enter','\r');
+    assert.equal(f.panel.operations[0].data,'/model\r\r');
+    assert.equal(f.panel.input.value,'unsent 中文');assert.equal(f.panel.input.selectionStart,2);
+  }
+});
+
+test('Enter shortcut cannot confirm during composition, closed session or unknown write',()=>{
+  for(const state of ['composing','disposed','restarting','inputError','stopped']){
+    const f=fixture();if(state==='stopped')f.panel.running=false;else f.panel[state]=true;
+    f.panel.shortcut('Enter','\r');assert.equal(f.panel.operations.length,0,state);
+  }
+
+});
