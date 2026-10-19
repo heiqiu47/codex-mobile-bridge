@@ -38,6 +38,7 @@ from bridge.features.sessions.store import StoreUnavailable
 from bridge.clients.codex.remote import RemoteUnavailable
 from bridge.features.sessions.create import CreationError
 from bridge.features.accounts.account import AccountError
+from bridge.features.terminals.manager import TerminalSessionMissing
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
 
 LOG = logging.getLogger(__name__)
@@ -950,6 +951,9 @@ class Handler(BaseHTTPRequestHandler):
         except PermissionError as exc:
             self.close_connection = True
             self.output(403, {"error": str(exc)})
+        except TerminalSessionMissing as exc:
+            self.close_connection = True
+            self.output(404, {"error": str(exc.args[0]), "code": "terminal_missing"})
         except KeyError:
             self.close_connection = True
             self.output(404, {"error": "找不到这个会话"})

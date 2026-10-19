@@ -20,7 +20,20 @@ class TerminalPanel {
         this.fallback=new CommandTerminalPanel(this.workbench,this.session,this.tab);return;
       }
       this.render(info);
-      if(this.hadId){this.running=true;await this.poll();this.startDuplex();this.focusOnSelect();return;}
+      if(this.hadId){
+        try{
+          const result=await this.workbench.request(this.url('&id='+this.id+'&after='+this.cursor+'&waitMs=0'));
+          if(this.disposed)return;
+          this.apply(result);this.startDuplex();this.schedule();this.focusOnSelect();return;
+        }catch(e){
+          if(this.disposed)return;
+          if(e.status===404&&e.code==='terminal_missing'){
+            this.hadId=false;this.id=uuid();this.save();
+          }else if(![401,403,404].includes(e.status)){
+            this.running=true;this.status.textContent=BridgeI18n.t(e.message);this.schedule(true);return;
+          }else throw e;
+        }
+      }
       const result=await this.workbench.request(this.url(),{action:'open',id:this.id,cols:this.term.cols,rows:this.term.rows});
       if(this.disposed){if(!this.hadId)this.workbench.request(this.url(),{action:'close',id:this.id}).catch(()=>{});return;}
       this.apply(result);this.startDuplex();this.schedule();this.focusOnSelect();
@@ -359,7 +372,7 @@ class TerminalPanel {
     if(this.disposed||document.hidden||this.polling||!this.running||this.restarting||this.duplexReady||this.duplexConnecting)return;
     this.polling=true;clearTimeout(this.timer);const id=this.id,controller=this.readController=new AbortController();
     let error=false,idle=false;
-    try{const result=await this.workbench.request(this.url('&id='+this.id+'&after='+this.cursor+'&waitMs=1000'),undefined,controller.signal);if(!this.disposed&&!controller.signal.aborted&&this.id===id){idle=!result.output&&result.cursor===this.cursor;this.apply(result);}}
+    try{const result=await this.workbench.request(this.url('&id='+this.id+'&after='+this.cursor+'&waitMs=1000'),undefined,controller.signal);if(!this.disposed&&!controller.signal.aborted&&this.id===id){idle=!result.output&&result.cursor===this.cursor;this.apply(result);if(this.running&&!this.duplex&&!this.duplexUnsupported)this.startDuplex();}}
     catch(e){if(!this.disposed&&!controller.signal.aborted&&this.id===id){error=true;this.status.textContent=BridgeI18n.t(e.message);if([401,403,404].includes(e.status)){this.running=false;this.send.disabled=true;this.reopen.hidden=false;}}}
     finally{
       this.polling=false;this.readController=null;

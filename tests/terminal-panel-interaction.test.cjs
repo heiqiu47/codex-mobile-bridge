@@ -22,6 +22,71 @@ function fixture(){
 }
 async function tick(){await new Promise(resolve=>setImmediate(resolve));}
 
+function cachedTerminal(){
+  const f=fixture(),calls=[];
+  Object.assign(f.panel,{hadId:true,running:false,cursor:0,screen:{},reopen:f.node(),render(){},apply(result){this.running=result.running;calls.push('apply');},
+    startDuplex(){calls.push('duplex');},schedule(){calls.push('schedule');},focusOnSelect(){calls.push('focus');},save(){calls.push('save');}});
+  f.panel.term.cols=80;f.panel.term.rows=24;
+  f.panel.workbench.paint=()=>{};
+  return {f,calls};
+}
+
+test('explicit terminal open restores a live cached PTY without creating another',async()=>{
+  const {f,calls}=cachedTerminal(),requests=[];
+  f.panel.workbench.request=async(url,body)=>{requests.push({url,body});return body?{}:requests.length===1?{mode:'pty'}:{running:true,cursor:3,output:'saved'};};
+  await f.panel.load();
+  assert.equal(f.panel.id,'pty-id');assert.equal(f.panel.running,true);
+  assert.equal(requests.length,2);assert.deepEqual(calls,['apply','duplex','schedule','focus']);
+});
+
+test('explicit open replaces only a typed missing cached PTY',async()=>{
+  const {f,calls}=cachedTerminal(),requests=[];
+  f.panel.workbench.request=async(url,body)=>{
+    requests.push({url,body});
+    if(requests.length===1)return {mode:'pty'};
+    if(requests.length===2)throw Object.assign(Error('PTY gone'),{status:404,code:'terminal_missing'});
+    return {running:true,cursor:0};
+  };
+  await f.panel.load();
+  assert.notEqual(f.panel.id,'pty-id');assert.equal(f.panel.hadId,false);
+  assert.equal(requests.length,3);assert.equal(requests[2].body.action,'open');
+  assert.equal(requests[2].body.id,f.panel.id);assert.ok(calls.includes('save'));
+  assert.equal(f.panel.running,true);
+});
+
+test('cached PTY auth, missing thread and network failures never create a replacement',async()=>{
+  for(const error of [
+    Object.assign(Error('unauthorized'),{status:401}),
+    Object.assign(Error('forbidden'),{status:403}),
+    Object.assign(Error('thread gone'),{status:404}),
+    Error('offline')]){
+    const {f,calls}=cachedTerminal(),requests=[];
+    f.panel.workbench.request=async(url,body)=>{requests.push({url,body});if(requests.length===1)return {mode:'pty'};throw error;};
+    await f.panel.load();
+    assert.equal(requests.length,2);assert.equal(f.panel.id,'pty-id');
+    assert.equal(calls.includes('save'),false);
+    if(!error.status){assert.equal(f.panel.running,true);assert.equal(calls.includes('schedule'),true);}
+    else assert.equal(f.panel.running,false);
+  }
+});
+
+test('cached PTY resumes the same id after a temporary read failure',async()=>{
+  const {f,calls}=cachedTerminal(),requests=[];
+  f.context.AbortController=AbortController;
+  let offline=true;
+  f.panel.workbench.request=async(url,body)=>{
+    requests.push({url,body});
+    if(requests.length===1)return {mode:'pty'};
+    if(offline)throw Error('offline');
+    return {running:true,cursor:4,output:'continued'};
+  };
+  await f.panel.load();assert.equal(f.panel.running,true);
+  offline=false;await f.panel.poll();
+  assert.equal(f.panel.id,'pty-id');assert.equal(f.panel.running,true);
+  assert.equal(requests.length,3);assert.equal(requests.some(request=>request.body?.action==='open'),false);
+  assert.ok(calls.includes('duplex'));
+});
+
 test('short keyboard burst batches in order and retains inputId after uncertain response',async()=>{
   const f=fixture();let calls=0;
   f.panel.workbench.request=async(url,body)=>{f.requests.push({...body});if(++calls===1)throw Error('lost acknowledgement');return {};};

@@ -17,6 +17,10 @@ MAX_OUTPUT = 256 * 1024
 MAX_SECONDS = 1800
 
 
+class TerminalSessionMissing(KeyError):
+    pass
+
+
 class CommandJob:
     def __init__(self, root, command):
         self.lock = threading.RLock()
@@ -214,7 +218,7 @@ class TerminalManager:
     def session(self, owner, thread, identifier):
         with self.lock:
             session = self.sessions.get((owner, thread, identifier))
-            if session is None: raise KeyError('终端已关闭或不属于当前登录，请重新打开')
+            if session is None: raise TerminalSessionMissing('终端已关闭或不属于当前登录，请重新打开')
             return session
 
     def close(self):
