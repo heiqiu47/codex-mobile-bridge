@@ -2547,7 +2547,7 @@ const en={
   "重新打开": "Reopen",
   "清屏": "Clear",
   "编写后发送模式": "Compose & send",
-  "终端直接输入模式": "Direct terminal input",
+  "终端直接输入模式": "Direct input mode",
   "切换为终端直接输入模式": "Switch to direct terminal input",
   "切换为编写后发送模式": "Switch to compose & send",
   "编写后发送模式：Enter 发送，Shift+Enter 换行；密码请用终端直接输入模式": "Compose & send: Enter sends; Shift+Enter adds a line. Use direct terminal input for passwords.",
