@@ -42,9 +42,10 @@ def utf8_terminal_environment(env):
     effective = env.get('LC_ALL') or env.get('LC_CTYPE') or env.get('LANG', 'C')
     if 'UTF8' in effective.upper().replace('-', '').replace('_', ''):
         return env
-    available = subprocess.run(['locale', '-a'], capture_output=True, text=True, check=True).stdout.splitlines()
+    available = subprocess.run(['locale', '-a'], capture_output=True, text=True, check=True, timeout=2).stdout.splitlines()
     locales = {name.upper().replace('-', '').replace('_', ''): name for name in available}
-    selected = locales.get('C.UTF8') or locales.get('ENUS.UTF8')
+    selected = (locales.get('C.UTF8') or locales.get('ENUS.UTF8') or
+                next((name for key, name in locales.items() if key.endswith('.UTF8')), None))
     if not selected:
         raise ValueError('系统没有可用的 UTF-8 locale，无法启动终端')
     env.pop('LC_ALL', None)
