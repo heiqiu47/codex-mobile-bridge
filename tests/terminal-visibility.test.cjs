@@ -7,7 +7,7 @@ const path = require('node:path');
 function fixture(kind) {
   const listeners = new Set(), timers = new Map(), requests = [];
   let next = 0, identity = 0;
-  const node = () => ({append(){}, setAttribute(){}, classList:{add(){},toggle(){}}, textContent:''});
+  const node = () => ({append(){}, setAttribute(){}, classList:{add(){},toggle(){}}, textContent:'',dataset:{},style:{}});
   const document = {hidden:false, documentElement:{classList:{contains:()=>false}},
     addEventListener:(type, fn)=>listeners.add(fn), removeEventListener:(type,fn)=>listeners.delete(fn)};
   const context = vm.createContext({document, AbortController, BridgeI18n:{t:x=>x}, uuid:()=> 'terminal-'+ ++identity,
@@ -16,7 +16,9 @@ function fixture(kind) {
   const name = kind === 'pty' ? 'TerminalPanel' : 'CommandTerminalPanel';
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/hosts/environment.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/layouts/viewport.js'),'utf8'),context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/workspace/',kind==='pty'?'terminal-panel.js':'command-terminal-panel.js'),'utf8')+`;globalThis.Panel=${name};`,context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/workspace/command-terminal-panel.js'),'utf8'),context);
+  if(kind==='pty')vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/workspace/terminal-panel.js'),'utf8'),context);
+  vm.runInContext(`globalThis.Panel=${name};`,context);
   context.Panel.prototype.load = () => {};
   const workbench = {paint(){},node,button:node,isVisible:()=>true,endpoint:()=>'/terminal?',
     request(url,body,signal){

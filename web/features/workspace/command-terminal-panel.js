@@ -1,5 +1,27 @@
 'use strict';
 
+const TerminalFont=(()=>{
+  const key='bridge-terminal-font-size',sizes=[12,14,16,18,20,24],panels=new Set();
+  const valid=value=>sizes.includes(Number(value))?Number(value):14;
+  let size=14;try{size=valid(localStorage.getItem(key));}catch{}
+  function update(value){size=valid(value);for(const panel of panels)panel.applyFontSize(size);}
+  globalThis.addEventListener?.('storage',event=>{if(event.key===key)update(event.newValue);});
+  return {
+    size:()=>size,
+    register(panel){panels.add(panel);panel.applyFontSize(size);},
+    unregister:panel=>panels.delete(panel),
+    set(value){if(!sizes.includes(Number(value)))return;update(value);try{localStorage.setItem(key,String(size));}catch{}},
+    control(workbench){
+      const label=workbench.node('label','wb-terminal-font');
+      const title=workbench.node('span','',BridgeI18n.t('所有终端字号'));title.dataset.i18n='所有终端字号';
+      const select=workbench.node('select');select.setAttribute('data-i18n-aria-label','所有终端字号');select.setAttribute('aria-label',BridgeI18n.t('所有终端字号'));
+      for(const value of sizes){const option=workbench.node('option','',value+'px');option.value=String(value);select.append(option);}
+      select.value=String(size);select.onchange=()=>TerminalFont.set(select.value);label.append(title,select);
+      return {label,select};
+    },
+  };
+})();
+
 class CommandTerminalPanel {
   constructor(workbench, session, tab) {
     Object.assign(this, {workbench, session, tab}); this.disposed=false; this.cursor=0; this.output='';
@@ -8,9 +30,10 @@ class CommandTerminalPanel {
     this.key='terminal:'+session.key;
     try { this.id=sessionStorage.getItem(this.key); } catch {}
     const n=(...args)=>workbench.node(...args), b=(...args)=>workbench.button(...args);
-    const head=n('div','wb-terminal-head'); head.append(n('strong','',BridgeI18n.t('终端')));
+    const head=n('div','wb-terminal-head wb-terminal-font-head'); head.append(n('strong','',BridgeI18n.t('终端')));
     this.stop=b(BridgeI18n.t('停止'),()=>this.cancel());this.stop.disabled=true;
-    head.append(b(BridgeI18n.t('清屏'),()=>{this.output='';this.screen.textContent='';}),this.stop);
+    const font=TerminalFont.control(workbench);this.fontSelect=font.select;
+    head.append(b(BridgeI18n.t('清屏'),()=>{this.output='';this.screen.textContent='';}),font.label,this.stop);
     this.location=n('p','wb-terminal-location',BridgeI18n.t('正在读取项目…'));
     this.status=n('p','wb-status');this.status.setAttribute('role','status');
     this.screen=n('pre','wb-terminal-output');this.screen.tabIndex=0;this.screen.setAttribute('aria-label',BridgeI18n.t('命令输出'));
@@ -22,8 +45,10 @@ class CommandTerminalPanel {
     this.command.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!BridgeHost.hasNativeLayout()&&!BridgeLayout.isCompactViewport(innerWidth)){e.preventDefault();this.form.requestSubmit();}};
     const help=n('details','wb-terminal-help');help.append(n('summary','',BridgeI18n.t('命令终端 · 使用说明')),n('p','',BridgeI18n.t('每条命令从项目目录运行，沿用当前系统用户权限。Enter 运行，Shift+Enter 换行。支持脚本与构建输出，暂不支持 vim、密码输入等交互式程序。单次最多运行 30 分钟。')));
     tab.body.append(head,this.location,this.screen,this.form,this.status,help);
+    TerminalFont.register(this);
     this.load();
   }
+  applyFontSize(size){this.fontSelect.value=String(size);this.screen.style.fontSize=size+'px';this.command.style.fontSize=Math.max(16,size)+'px';this.prompt.style.fontSize=size+'px';}
   url(extra='') {return this.workbench.endpoint(this.session,'terminal')+extra;}
   async load() {
     try {
@@ -76,5 +101,5 @@ class CommandTerminalPanel {
     catch(e){if(!this.disposed){this.status.textContent=e.message;this.stop.disabled=false;}}
     finally{this.canceling=false;if(this.running)this.schedule();}
   }
-  dispose(){this.disposed=true;document.removeEventListener('visibilitychange',this.visibility);this.readController?.abort();clearTimeout(this.timer);}
+  dispose(){this.disposed=true;TerminalFont.unregister(this);document.removeEventListener('visibilitychange',this.visibility);this.readController?.abort();clearTimeout(this.timer);}
 }
