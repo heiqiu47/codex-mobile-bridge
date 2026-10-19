@@ -161,9 +161,11 @@ class Workbench {
   rememberScroll() { const timeline=this.chat.querySelector('.timeline');if (this.current && !this.chat.classList.contains('workbench-active') && timeline.clientHeight) this.current.scroll = timeline.scrollTop; }
   select(id) {
     if (!this.current) return;
+    if(id!=='terminal')this.current.files.find(tab=>tab.id==='terminal')?.terminal?.clearCompletion?.();
     if (id !== 'files') this.cancelLocate();
     if (this.previewFullscreen && this.previewFullscreen.tab.id !== id) this.closePreviewFullscreen();
     this.rememberScroll(); this.current.active = id; if(this.current.splitTab&&id!=='chat')this.current.splitTab=id; this.paint();
+    if(id==='terminal')this.current.files.find(tab=>tab.id==='terminal')?.terminal?.focusOnSelect?.();
     if (id === 'chat') { const session = this.current; requestAnimationFrame(() => { if (session === this.current && session.active === 'chat') this.chat.querySelector('.timeline').scrollTop = session.scroll; }); }
   }
   paint() {

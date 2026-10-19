@@ -66,7 +66,7 @@ const settle = () => new Promise(resolve=>setImmediate(resolve));
 for (const kind of ['pty','command']) {
   test(`${kind}: background stops timers, aborts read, retains shell and cursor`,async()=>{
     const f=fixture(kind);f.panel.schedule();
-    assert.equal([...f.timers.values()][0].ms,kind==='pty'?150:900);
+    assert.equal([...f.timers.values()][0].ms,kind==='pty'?0:900);
     const pending=f.panel.poll();assert.equal(f.requests.length,1);
     f.visibility(true);await pending;
     assert.equal(f.requests[0].signal.aborted,true);
@@ -75,7 +75,7 @@ for (const kind of ['pty','command']) {
     assert.equal(f.requests.length,1);assert.equal(f.panel.cursor,17);
     assert.equal(f.requests.some(x=>x.body),false);
     f.visibility(false);assert.equal(f.requests.length,2);
-    assert.match(f.requests[1].url,/after=17$/);
+    assert.match(f.requests[1].url,kind==='pty'?/after=17&waitMs=1000$/:/after=17$/);
     f.requests[1].resolve({running:true,cursor:23,output:'catch up',reset:true,truncated:true});
     await settle();assert.equal(f.panel.applied.length,1);assert.equal(f.panel.cursor,23);
     assert.equal(f.panel.applied[0].truncated,true);
