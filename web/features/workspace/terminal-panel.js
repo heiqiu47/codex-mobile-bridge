@@ -72,7 +72,9 @@ class TerminalPanel {
   layout(){
     if(this.disposed||!this.screen?.clientHeight||!this.screen.clientWidth)return;
     this.tab.body.classList.toggle('wb-terminal-touch',this.mobile());this.term.options.disableStdin=!this.running||this.mobile()||this.inputError;
-    const size=this.fit.proposeDimensions?.();if(size&&(size.cols!==this.term.cols||size.rows!==this.term.rows))this.fit.fit();
+    const size=this.fit.proposeDimensions?.();if(!size||!Number.isFinite(size.cols)||!Number.isFinite(size.rows))return;
+    const cols=Math.max(2,Math.min(500,Math.floor(size.cols))),rows=Math.max(2,Math.min(300,Math.floor(size.rows)));
+    if(cols!==this.term.cols||rows!==this.term.rows)this.term.resize(cols,rows);
   }
   focusOnSelect(){
     if(this.disposed||!this.running||this.mobile()||!this.workbench.isVisible(this.session,this.tab)||document.hidden||this.composing)return;
