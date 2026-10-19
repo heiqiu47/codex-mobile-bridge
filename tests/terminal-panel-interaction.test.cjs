@@ -282,3 +282,98 @@ test('Enter shortcut cannot confirm during composition, closed session or unknow
   }
 
 });
+
+test('duplex sends ordered resize and several inputs without waiting for each acknowledgement',()=>{
+  const f=fixture(),sockets=[];
+  class FakeSocket{
+    static CONNECTING=0;static OPEN=1;
+    constructor(url,protocols){this.url=url;this.protocols=protocols;this.readyState=0;this.bufferedAmount=0;this.sent=[];sockets.push(this);}
+    send(value){this.sent.push(JSON.parse(value));}
+    close(){this.readyState=3;this.onclose?.();}
+  }
+  f.context.WebSocket=FakeSocket;f.context.URL=URL;f.context.location={href:'http://local.example/'};
+  f.panel.workbench.csrf=()=> 'csrf-secret';f.panel.layout=()=>{};
+  f.panel.startDuplex();const socket=sockets[0];socket.readyState=1;socket.onopen();
+  f.panel.queueChunk('你');f.panel.queueChunk('😀');f.panel.pendingResize={cols:100,rows:30};
+  f.panel.flushDuplex();
+  assert.deepEqual(socket.sent.map(item=>item.action),['resize','input']);
+  assert.equal(socket.sent[1].data,'你😀');
+  assert.equal(f.panel.operations.length,1);
+  socket.onmessage({data:JSON.stringify({type:'ack',action:'input',id:f.panel.operations[0].id})});
+  assert.equal(f.panel.operations.length,0);
+});
+
+test('lost duplex acknowledgement pauses input and explicit retry reuses its inputId over HTTP',async()=>{
+  const f=fixture();
+  class FakeSocket{
+    static CONNECTING=0;static OPEN=1;
+    constructor(){this.readyState=0;this.bufferedAmount=0;}
+    send(){}
+    close(){this.readyState=3;this.onclose?.();}
+  }
+  f.context.WebSocket=FakeSocket;f.context.URL=URL;f.context.location={href:'http://local.example/'};
+  f.panel.workbench.csrf=()=> 'csrf-secret';f.panel.layout=()=>{};
+  f.panel.startDuplex();const socket=f.panel.duplex;socket.readyState=1;socket.onopen();
+  f.panel.queueChunk('danger\r');f.panel.flushDuplex();const inputId=f.panel.operations[0].id;
+  socket.close();assert.equal(f.panel.inputError,true);assert.equal(f.panel.operations[0].id,inputId);
+  f.panel.inputError=false;await f.panel.flush();
+  assert.equal(f.requests[0].inputId,inputId);assert.equal(f.panel.operations.length,0);
+});
+
+test('opening duplex waits for an in-flight HTTP input before taking queued operations',async()=>{
+  const f=fixture();let finishHttp;
+  class FakeSocket{
+    static CONNECTING=0;static OPEN=1;
+    constructor(){this.readyState=0;this.bufferedAmount=0;this.sent=[];}
+    send(value){this.sent.push(JSON.parse(value));}
+    close(){this.readyState=3;this.onclose?.();}
+  }
+  f.context.WebSocket=FakeSocket;f.context.URL=URL;f.context.location={href:'http://local.example/'};
+  f.panel.workbench.csrf=()=> 'csrf-secret';f.panel.layout=()=>{};
+  f.panel.workbench.request=async(url,body)=>new Promise(resolve=>{finishHttp=resolve;f.requests.push(body);});
+  f.panel.queueChunk('first');const flushing=f.panel.flush();await tick();
+  f.panel.startDuplex();const socket=f.panel.duplex;socket.readyState=1;socket.onopen();
+  assert.deepEqual(socket.sent,[]);
+  finishHttp({});await flushing;
+  assert.deepEqual(socket.sent,[]);assert.equal(f.panel.operations.length,0);
+  f.panel.queueChunk('second');f.panel.flushDuplex();
+  assert.equal(socket.sent[0].data,'second');
+});
+
+test('equal-cursor WebSocket state after an HTTP poll is acknowledged without duplicate rendering',()=>{
+  const f=fixture(),applied=[];
+  class FakeSocket{
+    static CONNECTING=0;static OPEN=1;
+    constructor(){this.readyState=0;this.bufferedAmount=0;this.sent=[];}
+    send(value){this.sent.push(JSON.parse(value));}
+    close(){this.readyState=3;this.onclose?.();}
+  }
+  f.context.WebSocket=FakeSocket;f.context.URL=URL;f.context.location={href:'http://local.example/'};
+  f.panel.workbench.csrf=()=> 'csrf-secret';f.panel.layout=()=>{};
+  f.panel.apply=(result,rendered)=>{applied.push(result);rendered?.();};
+  f.panel.cursor=5;f.panel.startDuplex();const socket=f.panel.duplex;socket.readyState=1;socket.onopen();
+  socket.onmessage({data:JSON.stringify({type:'state',seq:1,value:{output:'already shown',cursor:5,reset:false,running:false}})});
+  assert.equal(applied[0].output,'');assert.equal(applied[0].running,false);
+  assert.deepEqual(socket.sent,[{action:'rendered',seq:1}]);
+});
+
+test('failed upgrade falls back to HTTP and established socket reconnects after clean loss',async()=>{
+  const f=fixture(),sockets=[];
+  class FakeSocket{
+    static CONNECTING=0;static OPEN=1;
+    constructor(){this.readyState=0;this.bufferedAmount=0;this.sent=[];sockets.push(this);}
+    send(value){this.sent.push(JSON.parse(value));}
+    close(){this.readyState=3;this.onclose?.();}
+  }
+  f.context.WebSocket=FakeSocket;f.context.URL=URL;f.context.location={href:'http://local.example/'};
+  f.panel.workbench.csrf=()=> 'csrf-secret';f.panel.layout=()=>{};
+  f.panel.startDuplex();sockets[0].close();
+  assert.equal(f.panel.duplexUnsupported,true);
+  f.panel.queueChunk('fallback');await f.panel.flush();
+  assert.equal(f.requests[0].data,'fallback');
+
+  f.panel.duplexUnsupported=false;f.panel.startDuplex();sockets[1].readyState=1;sockets[1].onopen();
+  sockets[1].close();assert.ok(f.panel.reconnectTimer);
+  f.timers.get(f.panel.reconnectTimer).fn();
+  assert.equal(sockets.length,3);
+});

@@ -76,10 +76,11 @@ class GatewayServer(ThreadingHTTPServer):
             self.ui_language_path = Path(data_dir) / 'ui-language.json' if data_dir else None
             self.web_dir = Path(web_dir)
             self.slots = threading.BoundedSemaphore(48)
+            self.terminal_sockets = threading.BoundedSemaphore(8)
         else:
             # Listeners serve one gateway: shared sessions, pairing, limits and
             # mutable tunnel origins, with a single notification manager.
-            for name in ('bridge', 'harness', 'desktop_sessions', 'desktop_uploads', 'notifications', 'instance_id', 'auth', 'origins', 'pairing', 'hosts', 'secure_hosts', 'web_dir', 'slots', 'ui_language_path'):
+            for name in ('bridge', 'harness', 'desktop_sessions', 'desktop_uploads', 'notifications', 'instance_id', 'auth', 'origins', 'pairing', 'hosts', 'secure_hosts', 'web_dir', 'slots', 'terminal_sockets', 'ui_language_path'):
                 setattr(self, name, getattr(shared, name))
         try:
             super().__init__(address, Handler)
@@ -362,6 +363,35 @@ class Handler(BaseHTTPRequestHandler):
             auth = self.authorized(write)
             if not auth:
                 return
+            terminal_socket = re.fullmatch(r'/api/sessions/([0-9a-f-]{36})/terminal', path)
+            desktop_socket = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/terminal', path)
+            if not write and self.headers.get('Upgrade', '').lower() == 'websocket' and (terminal_socket or desktop_socket):
+                if self.server.auth.config.get('mode') == 'none':
+                    raise PermissionError('终端需要启用网关密码保护')
+                # Browser WebSocket cannot set a custom header. The CSRF secret
+                # is sent as a subprotocol, never as a URL or cookie substitute.
+                self.check_request(True)
+                if desktop_socket:
+                    if self.server.desktop_sessions is None:
+                        return self.output(503, {'error': '桌面会话接入不可用'})
+                    sid = query.get('sessionId', [''])[0]
+                    bridge = self.server.desktop_sessions.workspace_bridge(desktop_socket[1], sid)
+                    thread = bridge.identifier
+                    enabled = lambda: self.server.desktop_sessions.require_enabled(desktop_socket[1]) is None
+                else:
+                    bridge = self.server.bridge.for_host(query.get('host', ['local'])[0])
+                    if self.server.desktop_sessions:
+                        self.server.desktop_sessions.require_enabled('codex')
+                    thread = terminal_socket[1]
+                    enabled = lambda: self.server.desktop_sessions is None or self.server.desktop_sessions.require_enabled('codex') is None
+                if len(query.get('id', [])) != 1 or len(query.get('after', [])) != 1:
+                    raise ValueError('终端连接参数无效')
+                identifier = query['id'][0]
+                after = int(query['after'][0])
+                if not 0 <= after <= 10**12:
+                    raise ValueError('无效输出游标')
+                from bridge.api.terminal_ws import serve
+                return serve(self, bridge, thread, self.server.auth.key(self.token()), identifier, after, auth['csrf'], enabled)
             if path == SHELL_PATH:
                 if write or query:
                     return self.output(405, {'error': '请求方式无效'})

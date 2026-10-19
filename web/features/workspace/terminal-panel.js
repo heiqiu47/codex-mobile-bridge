@@ -20,10 +20,10 @@ class TerminalPanel {
         this.fallback=new CommandTerminalPanel(this.workbench,this.session,this.tab);return;
       }
       this.render(info);
-      if(this.hadId){this.running=true;await this.poll();this.focusOnSelect();return;}
+      if(this.hadId){this.running=true;await this.poll();this.startDuplex();this.focusOnSelect();return;}
       const result=await this.workbench.request(this.url(),{action:'open',id:this.id,cols:this.term.cols,rows:this.term.rows});
       if(this.disposed){if(!this.hadId)this.workbench.request(this.url(),{action:'close',id:this.id}).catch(()=>{});return;}
-      this.apply(result);this.schedule();this.focusOnSelect();
+      this.apply(result);this.startDuplex();this.schedule();this.focusOnSelect();
     }catch(e){if(!this.disposed){if(!this.status)this.render({});this.status.textContent=BridgeI18n.t(e.message);this.reopen.hidden=false;this.tab.name=BridgeI18n.t('终端 · 未连接');this.workbench.paint();}}
   }
   render(info){
@@ -173,17 +173,24 @@ class TerminalPanel {
   async submit(){
     if(!this.running||this.send.disabled||this.composing)return;
     const text=this.input.value;
+    if(this.inputBytes(text)+1+this.operations.reduce((size,entry)=>size+this.inputBytes(entry.data),0)>262144){
+      this.status.textContent=BridgeI18n.t('终端输入过长或队列已满；草稿仍在，请稍后重试');return;
+    }
     // xterm honours bracketed-paste mode set by the active shell/application.
     if(text){this.term.options.disableStdin=false;this.submitting=true;try{this.term.paste(text);}finally{this.submitting=false;this.layout();}}
     this.enqueue('\r');this.input.value='';this.clearCompletion();this.input.focus();
   }
   enqueue(data){
     if(!this.running||this.disposed)return;
+    if(this.inputBytes(data)+this.operations.reduce((size,entry)=>size+this.inputBytes(entry.data),0)>262144){
+      this.queueFull=true;this.status.textContent=BridgeI18n.t('终端输入队列已满；这部分输入未发送');return;
+    }
     // Keep each Unicode character intact while staying below the server input cap.
     let chunk='';for(const char of data){if(chunk.length+char.length>3000){this.queueChunk(chunk);chunk='';}chunk+=char;}
     if(chunk)this.queueChunk(chunk);
     if(!this.flushTimer)this.flushTimer=setTimeout(()=>{this.flushTimer=null;this.flush();},12);
   }
+  inputBytes(data){return typeof TextEncoder==='function'?new TextEncoder().encode(data).length:data.length*4;}
   queueChunk(data){
     const tail=this.operations[this.operations.length-1];
     if(tail&&!tail.sent&&tail.data.length+data.length<=3000)tail.data+=data;
@@ -192,7 +199,7 @@ class TerminalPanel {
   queueResize(cols,rows){
     if(!this.running||this.disposed||this.restarting)return;
     this.pendingResize={cols,rows};clearTimeout(this.resizeTimer);
-    this.resizeTimer=setTimeout(()=>{this.resizeTimer=null;this.flushResize().catch(e=>{if(!this.disposed)this.status.textContent=BridgeI18n.t(e.message);});},120);
+    this.resizeTimer=setTimeout(()=>{this.resizeTimer=null;if(this.duplexReady)this.flushDuplex();else if(!this.duplexConnecting)this.flushResize().catch(e=>{if(!this.disposed)this.status.textContent=BridgeI18n.t(e.message);});},120);
   }
   async flushResize(){
     clearTimeout(this.resizeTimer);this.resizeTimer=null;
@@ -209,9 +216,11 @@ class TerminalPanel {
   async flush(){
     if(this.flushing||this.inputError||this.disposed||this.restarting)return;
     clearTimeout(this.flushTimer);this.flushTimer=null;
+    if(this.duplexReady){this.layout();this.flushDuplex();return;}
+    if(this.duplexConnecting)return;
     this.flushing=true;const id=this.id;
     try{
-      while(this.operations.length&&!this.disposed&&!this.restarting&&this.id===id){
+      while(this.operations.length&&!this.disposed&&!this.restarting&&!this.duplexReady&&this.id===id){
         this.layout();
         await this.flushResize();
         if(this.disposed||this.restarting||this.id!==id)break;
@@ -219,22 +228,108 @@ class TerminalPanel {
         await this.workbench.request(this.url(),{action:'input',id:this.id,inputId:entry.id,data:entry.data});
         if(this.disposed||this.restarting||this.id!==id)break;
         this.operations.shift();
+        this.clearQueueNotice();
       }
     }catch(e){if(!this.disposed&&!this.restarting&&this.id===id){this.inputError=true;this.status.textContent=BridgeI18n.t(e.message)+BridgeI18n.t(this.operations[0]?.sent?' · 输入结果未确认；重试不会重复输入。':' · 终端尺寸未同步；输入尚未发送。');this.retry.hidden=false;this.send.disabled=true;this.term.options.disableStdin=true;}}
-    finally{this.flushing=false;if(!this.disposed&&!this.inputError){this.send.disabled=!this.running;this.layout();}}
+    finally{this.flushing=false;if(!this.disposed&&!this.inputError){this.send.disabled=!this.running;this.layout();this.flushDuplex();if(this.hadDuplex&&!this.duplex&&!this.duplexUnsupported&&!this.reconnectTimer)this.startDuplex();}}
   }
-  apply(result){
+  startDuplex(){
+    if(this.disposed||!this.running||this.duplexUnsupported||this.duplex||typeof WebSocket!=='function'||!this.workbench.csrf?.())return;
+    let socket;
+    try{
+      const address=new URL(this.url('&id='+encodeURIComponent(this.id)+'&after='+this.cursor),location.href);
+      address.protocol=address.protocol==='https:'?'wss:':'ws:';
+      socket=new WebSocket(address.href,['terminal.v1',this.workbench.csrf()]);
+    }catch{return;}
+    this.duplex=socket;this.duplexConnecting=true;
+    const id=this.id;
+    const timeout=setTimeout(()=>{if(socket.readyState===WebSocket.CONNECTING)socket.close();},5000);
+    socket.onopen=()=>{
+      clearTimeout(timeout);
+      if(this.disposed||this.restarting||this.duplex!==socket||id!==this.id){socket.close();return;}
+      this.duplexConnecting=false;this.duplexReady=true;
+      this.hadDuplex=true;
+      this.readController?.abort();clearTimeout(this.timer);
+      if(!this.flushing)this.flushDuplex();
+    };
+    socket.onmessage=event=>{
+      if(this.disposed||this.duplex!==socket||id!==this.id)return;
+      let message;try{message=JSON.parse(event.data);}catch{socket.close();return;}
+      if(message.type==='state'&&message.value){
+        const acknowledged=()=>{if(this.duplex===socket&&socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({action:'rendered',seq:message.seq}));};
+        if(message.value.cursor>this.cursor||(message.value.reset&&message.value.cursor!==this.cursor))this.apply(message.value,acknowledged);
+        else if(message.value.cursor===this.cursor)this.apply({...message.value,output:'',reset:false},acknowledged);
+        else acknowledged();
+      }else if(message.type==='ack'){
+        if(message.action==='input'){
+          const entry=this.operations[0];
+          if(!entry||!entry.sent||entry.id!==message.id){socket.close();return;}
+          this.operations.shift();this.flushDuplex();
+          this.clearQueueNotice();
+        }
+      }else if(message.type==='error'){
+        this.status.textContent=BridgeI18n.t(message.message||'终端连接失败');socket.close();
+      }
+    };
+    socket.onclose=()=>{
+      clearTimeout(timeout);
+      if(this.duplex!==socket)return;
+      const wasReady=this.duplexReady;
+      this.duplex=null;this.duplexReady=false;this.duplexConnecting=false;
+      if(!wasReady)this.duplexUnsupported=true;
+      if(this.disposed||id!==this.id||this.restarting)return;
+      if(this.lastDuplexResize&&!this.pendingResize)this.pendingResize=this.lastDuplexResize;
+      const uncertain=this.operations.some(entry=>entry.sent);
+      if(wasReady&&!uncertain&&this.running&&(this.duplexReconnects||0)<3){
+        this.duplexReconnects=(this.duplexReconnects||0)+1;
+        this.reconnectTimer=setTimeout(()=>{this.reconnectTimer=null;this.startDuplex();},1000*this.duplexReconnects);
+      }
+      if(uncertain){
+        this.inputError=true;this.status.textContent=BridgeI18n.t('终端连接中断 · 输入结果未确认；重试不会重复输入。');
+        this.retry.hidden=false;this.send.disabled=true;this.term.options.disableStdin=true;
+      }else this.flush();
+      this.schedule(true);
+    };
+    socket.onerror=()=>{};
+  }
+  flushDuplex(){
+    const socket=this.duplex;
+    if(!this.duplexReady||!socket||this.disposed||this.restarting||this.inputError||this.flushing)return;
+    if(socket.bufferedAmount>131072){clearTimeout(this.flushTimer);this.flushTimer=setTimeout(()=>{this.flushTimer=null;this.flushDuplex();},50);return;}
+    if(this.pendingResize){
+      const size=this.pendingResize;this.pendingResize=null;this.lastDuplexResize=size;
+      socket.send(JSON.stringify({action:'resize',requestId:uuid(),...size}));
+    }
+    let inFlight=this.operations.filter(entry=>entry.sent).length;
+    for(const entry of this.operations){
+      if(entry.sent)continue;
+      if(socket.bufferedAmount>131072||inFlight>=32)break;
+      entry.sent=true;
+      socket.send(JSON.stringify({action:'input',inputId:entry.id,data:entry.data}));
+      inFlight++;
+    }
+    if(inFlight<32&&this.operations.some(entry=>!entry.sent)){
+      clearTimeout(this.flushTimer);this.flushTimer=setTimeout(()=>{this.flushTimer=null;this.flushDuplex();},50);
+    }
+  }
+  clearQueueNotice(){
+    if(this.queueFull&&this.operations.reduce((size,entry)=>size+this.inputBytes(entry.data),0)<131072){
+      this.queueFull=false;
+      if(!this.inputError)this.status.textContent=BridgeI18n.t('连续会话 · 关闭标签将结束终端');
+    }
+  }
+  apply(result,rendered){
     if(result.reset)this.term.reset();
-    if(result.output)this.term.write(result.output);
+    if(result.output)this.term.write(result.output,rendered);else rendered?.();
     this.cursor=result.cursor;this.running=result.running;
     const label=BridgeI18n.t(result.running?'终端 · 已连接':'终端 · 已退出');if(this.tab.name!==label){this.tab.name=label;this.workbench.paint();}
     this.location.textContent=result.shell||BridgeI18n.t('终端');this.location.title=result.cwd||'';
-    if(!this.inputError)this.status.textContent=result.running?BridgeI18n.t('连续会话 · 关闭标签将结束终端'):result.message||BridgeI18n.t('终端已退出');
+    if(!this.inputError&&!this.queueFull)this.status.textContent=result.running?BridgeI18n.t('连续会话 · 关闭标签将结束终端'):result.message||BridgeI18n.t('终端已退出');
     this.send.disabled=!this.running||this.inputError;this.reopen.hidden=this.running;this.layout();
   }
-  schedule(error=false,idle=false){clearTimeout(this.timer);if(!this.disposed&&this.running&&!document.hidden&&!this.restarting)this.timer=setTimeout(()=>this.poll(),error?750:(!this.workbench.isVisible(this.session,this.tab)?500:idle?35:0));}
+  schedule(error=false,idle=false){clearTimeout(this.timer);if(!this.disposed&&this.running&&!document.hidden&&!this.restarting&&!this.duplexReady&&!this.duplexConnecting)this.timer=setTimeout(()=>this.poll(),error?750:(!this.workbench.isVisible(this.session,this.tab)?500:idle?35:0));}
   async poll(){
-    if(this.disposed||document.hidden||this.polling||!this.running||this.restarting)return;
+    if(this.disposed||document.hidden||this.polling||!this.running||this.restarting||this.duplexReady||this.duplexConnecting)return;
     this.polling=true;clearTimeout(this.timer);const id=this.id,controller=this.readController=new AbortController();
     let error=false,idle=false;
     try{const result=await this.workbench.request(this.url('&id='+this.id+'&after='+this.cursor+'&waitMs=1000'),undefined,controller.signal);if(!this.disposed&&!controller.signal.aborted&&this.id===id){idle=!result.output&&result.cursor===this.cursor;this.apply(result);}}
@@ -246,17 +341,17 @@ class TerminalPanel {
     }
   }
   async restart(){
-    if(this.restarting)return;this.restarting=true;this.readController?.abort();clearTimeout(this.timer);clearTimeout(this.resizeTimer);this.pendingResize=null;
+    if(this.restarting)return;this.restarting=true;clearTimeout(this.reconnectTimer);this.reconnectTimer=null;this.duplex?.close();this.duplex=null;this.duplexReady=false;this.duplexConnecting=false;this.duplexUnsupported=false;this.duplexReconnects=0;this.readController?.abort();clearTimeout(this.timer);clearTimeout(this.resizeTimer);this.pendingResize=null;
     try{
       // Close the previous id even after a lost open response; never orphan a shell.
       try{await this.workbench.request(this.url(),{action:'close',id:this.id});}catch(e){if(e.status!==404)throw e;}
       this.id=uuid();this.save();this.cursor=0;this.operations=[];this.inputError=false;this.retry.hidden=true;this.clearCompletion();this.term.reset();
-      const result=await this.workbench.request(this.url(),{action:'open',id:this.id,cols:this.term.cols,rows:this.term.rows});if(!this.disposed){this.apply(result);this.schedule();}
+      const result=await this.workbench.request(this.url(),{action:'open',id:this.id,cols:this.term.cols,rows:this.term.rows});if(!this.disposed){this.apply(result);this.startDuplex();this.schedule();}
     }catch(e){if(!this.disposed)this.status.textContent=BridgeI18n.t(e.message);}
     finally{this.restarting=false;this.schedule();}
   }
   dispose(){
-    this.disposed=true;TerminalFont.unregister(this);document.removeEventListener('visibilitychange',this.visibility);this.readController?.abort();clearTimeout(this.timer);clearTimeout(this.flushTimer);clearTimeout(this.resizeTimer);this.pendingResize=null;this.observer?.disconnect();this.term?.dispose();this.fallback?.dispose();
+    this.disposed=true;clearTimeout(this.reconnectTimer);this.duplex?.close();TerminalFont.unregister(this);document.removeEventListener('visibilitychange',this.visibility);this.readController?.abort();clearTimeout(this.timer);clearTimeout(this.flushTimer);clearTimeout(this.resizeTimer);this.pendingResize=null;this.observer?.disconnect();this.term?.dispose();this.fallback?.dispose();
     if(!this.fallback)this.workbench.request(this.url(),{action:'close',id:this.id}).catch(()=>{});
     try{sessionStorage.removeItem(this.key);}catch{}
   }
