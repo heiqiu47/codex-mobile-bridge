@@ -2,9 +2,17 @@
 
 手机扫描网关二维码后连接 Codex、Claude Desktop 和 DeepSeek Harness，电脑继续执行任务。手机 App 保存多台电脑，提供原生扫码、剪贴板、文件下载和通知；浏览器入口同时保留。
 
-**[v2.1.1 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.1)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
+**[v2.1.2 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
 
-## v2.1.1：模型缓存、草稿与文件定位
+## v2.1.2：终端输入、触摸滚动与显示
+
+手机与宽屏 Web 默认直接在终端输入，保留可选的“编写后发送模式”。新增 Enter，改善中文输入、Tab 路径补全、OpenCode 类终端 CLI 的触摸滚动及断线恢复。终端字号可独立调节为 6–24px，修复小字号重叠、字符对齐和内容覆盖工具栏。主题与语言移到设置顶部，正文字号为 10–32px、代码字号为 8–28px。
+
+网关与手机版本统一为 **2.1.2**，手机构建号为 **34**。请同时更新网关和手机 App；Android 的小字号修复包含原生 WebView 设置。iOS 沿用正式应用标识，需自行签名，使用相同签名身份和 Bundle ID 覆盖安装。
+
+**English:** v2.1.2/build34 improves direct terminal input, Chinese composition, Enter and Tab, touch scrolling in terminal CLIs such as OpenCode, reconnection and 6–24px rendering. Update both the gateway and mobile app; Android also includes a native WebView font correction. iOS retains its official bundle IDs and requires your own signing for installation.
+
+### v2.1.1：模型缓存、草稿与文件定位
 
 模型目录按电脑、客户端和接入身份缓存，显示更新时间；未发送草稿在切换聊天或电脑后恢复。文件定位自动滚动并高亮，左上角返回直接回聊天列表。新增工具截图显示控制与跳过当前版本提醒；iOS 改善场景恢复与通知跳转。网关与手机版本统一为 2.1.1，手机构建号为 33。
 

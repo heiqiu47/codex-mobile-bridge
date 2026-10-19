@@ -5,11 +5,11 @@
 
 # Codex Mobile Bridge · 多客户端远程工作台
 
-> **v2.1.1 正式版**：[发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.1) · [完整更新说明](RELEASE_NOTES.md) · [手机安装说明](mobile/README.md)。统一账号与模型界面，完善模型缓存、草稿保存、文件定位及手机导航体验。
+> **v2.1.2 正式版**：[发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2) · [完整更新说明](RELEASE_NOTES.md) · [手机安装说明](mobile/README.md)。改善终端直接输入、OpenCode 类终端 CLI 的触摸滚动、断线恢复与跨平台显示，补齐 Windows 终端组件。
 
 [简体中文](README.md) · [English](README_EN.md)
 
-**[双语介绍与使用演示 ↗](https://try2love.github.io/codex-mobile-bridge/?lang=zh)** · **[下载桌面与手机 App](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.1)**
+**[双语介绍与使用演示 ↗](https://try2love.github.io/codex-mobile-bridge/?lang=zh)** · **[下载桌面与手机 App](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2)**
 
 [![桌面网关：客户端与接入（演示数据）](site/assets/v2-clients.png)](https://try2love.github.io/codex-mobile-bridge/?lang=zh)
 
@@ -17,7 +17,14 @@
 
 任务继续在原电脑执行，Codex 的 SSH 任务继续在原服务器执行。网关复用原客户端的会话、认证和执行环境，不让手机重新运行一套 Agent。手机无需登录相同的模型账号，使用网关登录或可撤销的扫码配对即可接入。
 
-## v2.1.1 更新
+## v2.1.2 更新
+
+- **终端直接输入**：手机与宽屏 Web 默认直接输入，改善中文输入、光标与焦点恢复，新增 Enter；保留可选的“编写后发送模式”和分阶段 Tab 路径补全。
+- **交互与连接**：改善 OpenCode 类终端 CLI 的触摸滚动、鼠标选择与退出后的布局；减少网络往返造成的额外等待，临时断线后自动恢复仍有效的终端。
+- **显示与兼容性**：终端字号独立调节为 6–24px，修复小字号、中文混排与背景边界；Windows 完整携带 ConPTY 组件，修复鼠标事件丢失和安装器漏装组件。
+- **阅读设置**：主题与语言移到设置顶部，正文字号扩为 10–32px，代码字号扩为 8–28px。
+
+### v2.1.1 更新
 
 - **账号与模型**：三个客户端统一账号卡片与模型选择；模型目录缓存优先，按电脑、账号与接入隔离，显示更新时间，支持手动及 12 小时更新。
 - **草稿与文件**：跨聊天和电脑保留未发送草稿；定位文件平滑滚动并高亮，左上角直接返回聊天列表；支持工具截图预览。
@@ -88,18 +95,18 @@ Codex 与 Claude CLI 接入分别在各自账号管理中配置；本机 CLI 同
 
 ## 下载与快速开始（推荐）
 
-日常使用直接下载桌面 App，**无需 Agent 帮忙部署，也无需安装 Python、Node.js 或打开终端**。下列链接对应 **v2.1.1 正式版**。
+日常使用直接下载桌面 App，**无需 Agent 帮忙部署，也无需安装 Python、Node.js 或打开终端**。下列链接对应 **v2.1.2 正式版**。
 
 | 系统 | 下载 | 打开方式 |
 | --- | --- | --- |
-| Windows x64（推荐安装包） | [下载 Setup.exe](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.1/Codex-Mobile-Bridge-2.1.1-Windows-x64-Setup.exe) | 运行安装包，从快捷方式打开 |
-| Windows x64（免安装） | [下载完整 ZIP](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.1/Codex-Mobile-Bridge-2.1.1-Windows-x64.zip) | 完整解压后运行 `Codex Mobile Bridge.exe`，不要单独移动 exe |
-| macOS Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.1/Codex-Mobile-Bridge-2.1.1-macOS-arm64.dmg) | 打开 DMG，将 App 拖入“应用程序” |
-| macOS Intel（英特尔） | [下载 x64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.1/Codex-Mobile-Bridge-2.1.1-macOS-x64.dmg) | 打开 DMG，将 App 拖入“应用程序” |
-| Ubuntu x64（实验性） | [下载 .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.1/Codex-Mobile-Bridge-2.1.1-Linux-amd64.deb) | Ubuntu 22.04；安装后以普通用户启动 |
-| Ubuntu ARM64（实验性） | [下载 .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.1/Codex-Mobile-Bridge-2.1.1-Linux-arm64.deb) | Ubuntu 22.04 ARM64；不含 32 位 ARM |
+| Windows x64（推荐安装包） | [下载 Setup.exe](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Windows-x64-Setup.exe) | 运行安装包，从快捷方式打开 |
+| Windows x64（免安装） | [下载完整 ZIP](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Windows-x64.zip) | 完整解压后运行 `Codex Mobile Bridge.exe`，不要单独移动 exe |
+| macOS Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-macOS-arm64.dmg) | 打开 DMG，将 App 拖入“应用程序” |
+| macOS Intel（英特尔） | [下载 x64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-macOS-x64.dmg) | 打开 DMG，将 App 拖入“应用程序” |
+| Ubuntu x64（实验性） | [下载 .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Linux-amd64.deb) | Ubuntu 22.04；安装后以普通用户启动 |
+| Ubuntu ARM64（实验性） | [下载 .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Linux-arm64.deb) | Ubuntu 22.04 ARM64；不含 32 位 ARM |
 
-[查看所有版本与更新说明](https://github.com/try2love/codex-mobile-bridge/releases) · [下载 SHA256 校验文件](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.1/SHA256SUMS.txt)。两种 Mac 同时提供 ZIP，供应用内更新或手动替换使用。Windows ARM 暂无专用安装包。Mac 版采用本地完整性签名但未公证，首次打开可能需要手动允许；Windows 版未做证书签名。详见下方 macOS 首次打开说明。
+[查看所有版本与更新说明](https://github.com/try2love/codex-mobile-bridge/releases) · [下载 SHA256 校验文件](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/SHA256SUMS.txt)。两种 Mac 同时提供 ZIP，供应用内更新或手动替换使用。Windows ARM 暂无专用安装包。Mac 版采用本地完整性签名但未公证，首次打开可能需要手动允许；Windows 版未做证书签名。详见下方 macOS 首次打开说明。
 
 1. 安装并登录要使用的桌面客户端，打开 **Codex Mobile Bridge**。在 **客户端与接入** 检查扫描结果，完成需要的授权，并启用配置就绪的客户端。
 2. 在 **网络访问** 保留局域网访问或添加 HTTPS 入口，保存后从概览或客户端页点击 **启动网关**。已有配置时沿用原端口。
@@ -108,7 +115,7 @@ Codex 与 Claude CLI 接入分别在各自账号管理中配置；本机 CLI 同
 
 需要外网访问时，可选 [Tailscale 固定 HTTPS](docs/tailscale.md)、内置 Cloudflare 临时 HTTPS、[固定 Cloudflare Tunnel](docs/fixed-domain.md)、[自有服务器 + SSH](docs/server-ssh.md) 或 NAS 反代。详细要求见[连接方式说明](#connections)。固定地址不保证国内直连速度，首次配置请用实际蜂窝网络测试。
 
-Android APK、iOS 未签名 IPA 与 Xcode 源码包见同一 [v2.1.1 Release](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.1)。Android 覆盖安装以保留数据；iOS 需自行签名，暂无 App Store/TestFlight 分发。源码运行与自定义部署见后面的[部署 Agent 执行说明](#agent-deployment)。
+Android APK、iOS 未签名 IPA 与 Xcode 源码包见同一 [v2.1.2 Release](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2)。Android 覆盖安装以保留数据；iOS 需自行签名，暂无 App Store/TestFlight 分发。源码运行与自定义部署见后面的[部署 Agent 执行说明](#agent-deployment)。
 
 <a id="macos-first-launch"></a>
 
@@ -118,7 +125,7 @@ Android APK、iOS 未签名 IPA 与 Xcode 源码包见同一 [v2.1.1 Release](ht
 
 从 `v0.2.0-beta.5` 起，可在桌面 App 的「应用更新」中检查新版、查看说明并点击「更新并重启」。下载与校验完成后短暂重启网关，保留登录、网络、通知和关注聊天配置；失败时尝试恢复原版本。此前版本需要先手动安装一次支持更新的版本。使用临时 HTTPS 时，重启后请打开最新地址。发布与恢复说明见 [桌面更新文档](docs/desktop-updates.md)。
 
-**Windows beta.7 / 1.0.0 用户：**旧更新器可能因目录占用报 `WinError 32` 并回退。请先在托盘选择“停止网关并退出”，再用 **2.1.1 Setup.exe** 安装到原位置；无需卸载或删除数据。1.1.0 修复后续更新的目录占用问题。
+**Windows beta.7 / 1.0.0 用户：**旧更新器可能因目录占用报 `WinError 32` 并回退。请先在托盘选择“停止网关并退出”，再用 **2.1.2 Setup.exe** 安装到原位置；无需卸载或删除数据。1.1.0 修复后续更新的目录占用问题。
 
 Android v2.0.3 起支持应用内 APK 更新，并可选择手机下载或电脑下载；旧版首次升级可手动覆盖安装。电脑协助方式需要配套网关，下载失败可重选方式，已完成的包可继续安装或保存。iOS 仍按签名安装指引升级，详见[手机说明](mobile/README.md#安装与升级)。
 
@@ -169,7 +176,7 @@ v2.0.0 在线查询订阅周期日期，显示剩余时间和具体日期；接�
 1. 从本仓库的 Release 下载对应芯片的 DMG 或 ZIP，以及 `SHA256SUMS.txt`。计算下载文件的 SHA-256，与校验文件中同名文件的一行比较；不一致时重新下载，不要放行。以下以 2.1.0 的 M 系列 Mac DMG 为例，其他文件请替换文件名：
 
    ```sh
-   shasum -a 256 "$HOME/Downloads/Codex-Mobile-Bridge-2.1.1-macOS-arm64.dmg"
+   shasum -a 256 "$HOME/Downloads/Codex-Mobile-Bridge-2.1.2-macOS-arm64.dmg"
    ```
 
 2. 打开 DMG，将 `Codex Mobile Bridge.app` 拖入“应用程序”，再推出磁盘映像；ZIP 则先解压并移动 App。尝试从“应用程序”打开后，前往 **系统设置 → 隐私与安全性 → 仍要打开**，按系统提示确认。

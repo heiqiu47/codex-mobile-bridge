@@ -4,7 +4,7 @@
 
 从 v0.2.0-beta.5 起，桌面 App 启动后及每 6 小时检查一次 GitHub Release。
 在「应用更新」中检查新版、阅读说明，点击「更新并重启」。Beta 用户可接收后续 Beta、RC 和正式版；正式版只接收正式版。
-旧版首次升级需要手动安装支持更新的版本。v2.1.1 提供 Mac Apple Silicon（arm64）、Mac Intel（x64）和 Windows x64 安装包。Windows ARM 暂无发布包。Ubuntu x64/ARM64 提供实验性 `.deb` / AppImage，暂不支持应用内更新；升级前停止网关并退出 App，保留数据目录后手动安装。
+旧版首次升级需要手动安装支持更新的版本。v2.1.2 提供 Mac Apple Silicon（arm64）、Mac Intel（x64）和 Windows x64 安装包。Windows ARM 暂无发布包。Ubuntu x64/ARM64 提供实验性 `.deb` / AppImage，暂不支持应用内更新；升级前停止网关并退出 App，保留数据目录后手动安装。
 
 可选择“跳过此版本”以停止该版本的自动提醒；按发布通道分别记忆，后续新版本不受影响。手动检查仍可查看并安装被跳过的版本。手机 App 使用相同规则。
 
