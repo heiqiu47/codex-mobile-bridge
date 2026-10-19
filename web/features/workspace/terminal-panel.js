@@ -85,11 +85,30 @@ class TerminalPanel {
     if(e.key==='Enter'&&!this.mobile()&&!e.shiftKey){e.preventDefault();if(!e.repeat)this.submit();return;}
     this.clearCompletion();
   }
+  moveDraftCursor(label){
+    const text=this.input.value,start=this.input.selectionStart,end=this.input.selectionEnd;
+    let position=start;
+    if(label==='←')position=start===end?Array.from(text.slice(0,start)).slice(0,-1).join('').length:start;
+    if(label==='→')position=start===end?end+(Array.from(text.slice(end))[0]?.length||0):end;
+    if(label==='↑'||label==='↓'){
+      const lineStart=text.lastIndexOf('\n',start-1)+1,column=Array.from(text.slice(lineStart,start)).length;
+      if(label==='↑'){
+        const previousEnd=lineStart-1,previousStart=previousEnd<0?0:text.lastIndexOf('\n',previousEnd-1)+1;
+        position=previousEnd<0?start:previousStart+Array.from(text.slice(previousStart,previousEnd)).slice(0,column).join('').length;
+      }else{
+        const nextStart=text.indexOf('\n',start)+1;
+        if(nextStart>0){const nextEnd=text.indexOf('\n',nextStart);position=nextStart+Array.from(text.slice(nextStart,nextEnd<0?text.length:nextEnd)).slice(0,column).join('').length;}
+        else position=start;
+      }
+    }
+    this.input.setSelectionRange(position,position);this.clearCompletion();
+  }
   shortcut(label,value){
     if(this.mobile()||this.inputMode==='draft'){
       if(label==='Tab')this.complete();
       else if(label==='Ctrl+C')this.enqueue(value);
       else if(label==='Esc'&&this.inputMode==='draft'){this.input.value='';this.clearCompletion();}
+      else if(this.inputMode==='draft')this.moveDraftCursor(label);
       else if(this.mobile())this.enqueue(value);
       this.focusOnSelect();return;
     }

@@ -5,19 +5,20 @@ const vm=require('node:vm');
 const path=require('node:path');
 
 function fixture(){
-  const timers=new Map();let next=0,uid=0;
+  const timers=new Map(),storage=[];let next=0,uid=0;
   const context=vm.createContext({BridgeI18n:{t:s=>s},BridgeHost:{hasNativeLayout:()=>false},BridgeLayout:{prefersTouchInput:()=>true,isCompactViewport:()=>true},navigator:{userAgent:'iPhone Mobile'},
     uuid:()=>String(++uid),document:{hidden:false,body:{},querySelector:()=>null,activeElement:null},window:{getSelection:()=>({toString:()=>''})},
+    sessionStorage:{setItem:(...args)=>storage.push(args),getItem:()=>null,removeItem:(...args)=>storage.push(args)},
     setTimeout:(fn,ms)=>{timers.set(++next,{fn,ms});return next;},clearTimeout:id=>timers.delete(id)});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/workspace/terminal-panel.js'),'utf8')+';globalThis.Panel=TerminalPanel;',context);
   const requests=[];
   const node=(tag,cl,text)=>({tag,cl,textContent:text||'',hidden:false,children:[],append(...values){this.children.push(...values);},replaceChildren(){this.children=[];}});
-  const input={value:'',selectionStart:0,selectionEnd:0,focus(){this.focused=true;},setRangeText(value,start,end){this.value=this.value.slice(0,start)+value+this.value.slice(end);this.selectionStart=this.selectionEnd=start+value.length;this.onselect?.();}};
+  const input={value:'',selectionStart:0,selectionEnd:0,focus(){this.focused=true;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;},setRangeText(value,start,end){this.value=this.value.slice(0,start)+value+this.value.slice(end);this.selectionStart=this.selectionEnd=start+value.length;this.onselect?.();}};
   const panel=Object.create(context.Panel.prototype);
   Object.assign(panel,{id:'pty-id',running:true,disposed:false,operations:[],completionVersion:0,composing:false,inputMode:'draft',input,
     completions:node(),status:node(),retry:node(),send:node(),term:{options:{},focus(){this.focused=true;}},tab:{body:{contains:()=>false,classList:{toggle(){}}}},session:{},
     workbench:{node,button:(label,click)=>Object.assign(node('button','',label),{click}),isVisible:()=>true,request:(url,body)=>{requests.push(body);return Promise.resolve({});}},url:()=>'/terminal?mode=pty'});
-  return {panel,requests,timers,context,node};
+  return {panel,requests,timers,storage,context,node};
 }
 async function tick(){await new Promise(resolve=>setImmediate(resolve));}
 
@@ -187,10 +188,24 @@ test('desktop local draft responds immediately and Enter sends once without remo
   f.panel.handleInputKeydown({key:'Enter',shiftKey:true,preventDefault(){throw Error('Shift+Enter should insert newline');}});
 });
 
-test('local draft never sends arrow shortcuts; direct mode restores remote keys',()=>{
+test('local draft shortcut arrows edit its caret; direct mode restores remote keys',()=>{
   const f=fixture();f.context.navigator.userAgent='Windows NT';f.panel.layout=()=>{};
-  f.panel.shortcut('↑','\x1b[A');assert.equal(f.panel.operations.length,0);
+  f.panel.input.value='a😀b\ncd';f.panel.input.selectionStart=f.panel.input.selectionEnd=3;
+  f.panel.shortcut('←','\x1b[D');assert.equal(f.panel.input.selectionStart,1,'emoji remains intact');
+  f.panel.shortcut('→','\x1b[C');assert.equal(f.panel.input.selectionStart,3);
+  f.panel.shortcut('↓','\x1b[B');assert.equal(f.panel.input.selectionStart,7);
+  f.panel.shortcut('↑','\x1b[A');assert.equal(f.panel.input.selectionStart,3);
+  assert.equal(f.panel.operations.length,0);
   f.panel.shortcut('Ctrl+C','\x03');assert.equal(f.panel.operations[0].data,'\x03');
   f.panel.toggleInputMode();assert.equal(f.panel.inputMode,'direct');
   f.panel.shortcut('↑','\x1b[A');assert.equal(f.panel.operations[0].data,'\x03\x1b[A');
+});
+
+test('unsent desktop draft stays local and is never written to session storage',()=>{
+  const f=fixture();f.context.navigator.userAgent='Windows NT';f.panel.layout=()=>{};
+  f.panel.input.value='private command';
+  f.panel.toggleInputMode();f.panel.toggleInputMode();
+  assert.equal(f.panel.input.value,'private command');
+  assert.equal(f.panel.operations.length,0);
+  assert.deepEqual(f.storage,[]);
 });
