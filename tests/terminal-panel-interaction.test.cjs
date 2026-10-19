@@ -106,6 +106,33 @@ test('single completion changes only the mobile draft and never sends input',asy
   assert.equal(f.panel.operations.length,0);
 });
 
+test('first Tab expands a shared path prefix and second Tab shows choices',async()=>{
+  const f=fixture();f.panel.input.value='cd al';f.panel.input.selectionStart=f.panel.input.selectionEnd=5;
+  f.panel.workbench.request=async(url,body)=>{
+    f.requests.push(body);
+    return {replaceStart:3,replaceEnd:body.text.length,candidates:[{label:'alpha/',insertText:'alpha/'},{label:'alpine/',insertText:'alpine/'}],
+      commonPrefixInsertText:body.text==='cd al'?'alp':null,truncated:false};
+  };
+  await f.panel.complete();assert.equal(f.panel.input.value,'cd alp');assert.equal(f.panel.completions.hidden,true);
+  await f.panel.complete();assert.equal(f.panel.input.value,'cd alp');assert.equal(f.panel.completions.hidden,false);
+  assert.equal(f.requests.length,2);f.panel.completions.children[1].click();
+  assert.equal(f.panel.input.value,'cd alpha/');assert.equal(f.panel.operations.length,0);
+});
+
+test('empty mobile and local drafts send native Tab without a completion lookup',async()=>{
+  for(const mobile of [true,false]){
+    const f=fixture();if(!mobile)f.context.navigator.userAgent='Windows NT';
+    await f.panel.complete();
+    assert.equal(f.panel.operations[0].data,'\t');assert.equal(f.requests.length,0);
+  }
+});
+
+test('truncated candidates cannot expand a purported common prefix',async()=>{
+  const f=fixture();f.panel.input.value='cd al';f.panel.input.selectionStart=f.panel.input.selectionEnd=5;
+  f.panel.workbench.request=async()=>({replaceStart:3,replaceEnd:5,candidates:[{label:'alpha/',insertText:'alpha/'},{label:'alpine/',insertText:'alpine/'}],commonPrefixInsertText:'alp',truncated:true});
+  await f.panel.complete();assert.equal(f.panel.input.value,'cd al');assert.equal(f.panel.completions.hidden,false);
+});
+
 test('multiple, empty and stale completions preserve draft until a current choice',async()=>{
   const f=fixture();f.panel.input.value='cd ab';f.panel.input.selectionStart=f.panel.input.selectionEnd=5;
   f.panel.workbench.request=async()=>({replaceStart:3,replaceEnd:5,candidates:[{label:'abc/',insertText:'abc/'},{label:'abd/',insertText:'abd/'}],truncated:true});

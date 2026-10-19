@@ -24,6 +24,17 @@ def _units(text):
     return len(text.encode('utf-16-le')) // 2
 
 
+def _common_prefix(names, windows):
+    first = names[0]
+    for name in names[1:]:
+        index = 0
+        while index < min(len(first), len(name)) and (
+                first[index].casefold() == name[index].casefold() if windows else first[index] == name[index]):
+            index += 1
+        first = first[:index]
+    return first
+
+
 def _word(text, cursor, windows):
     # Scan the entire draft so a later operator or unfinished quote cannot
     # turn a suggestion into part of an ambiguous shell expression.
@@ -93,7 +104,7 @@ def complete_path(session, text, selection_start):
         directory = os.path.expanduser(head) if expand_tilde and head.startswith('~') else head
         directory = path.join(cwd, directory) if not path.isabs(directory) else directory
     if len(directory) > 4096: raise ValueError('路径过长')
-    candidates = []; scanned = 0; truncated = False
+    candidates = []; names = []; scanned = 0; truncated = False
     try:
         with os.scandir(directory) as entries:
             for entry in entries:
@@ -109,8 +120,18 @@ def complete_path(session, text, selection_start):
                     inserted = shlex.quote(os.path.expanduser(raw) if expand_tilde else raw)
                 candidates.append({'label': entry.name + (separator if is_dir else ''), 'insertText': inserted,
                                    'isDirectory': is_dir})
+                names.append(entry.name)
                 if len(candidates) > MAX_CANDIDATES: truncated = True; candidates.pop(); break
     except (OSError, ValueError): raise ValueError('无法读取当前路径，请检查目录是否仍可访问') from None
     candidates.sort(key=lambda item: (not item['isDirectory'], item['label'].casefold()))
+    common_insert = None
+    if not truncated and len(candidates) > 1:
+        common = _common_prefix(names, windows)
+        if len(common) > len(prefix):
+            raw = path.join(head, common)
+            if windows:
+                common_insert = raw if re.fullmatch(r'[A-Za-z0-9_./\\:\-]+', raw) else '"' + raw + '"'
+            else:
+                common_insert = shlex.quote(os.path.expanduser(raw) if expand_tilde else raw)
     return {'cwd': cwd, 'replaceStart': _units(text[:start]), 'replaceEnd': _units(text[:end]),
-            'candidates': candidates, 'truncated': truncated}
+            'candidates': candidates, 'truncated': truncated, 'commonPrefixInsertText': common_insert}

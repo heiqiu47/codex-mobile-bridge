@@ -63,6 +63,22 @@ class CompletionTests(unittest.TestCase):
         result = self.complete('ls x')
         self.assertEqual(len(result['candidates']), 80)
         self.assertTrue(result['truncated'])
+        self.assertIsNone(result['commonPrefixInsertText'])
+
+    def test_exhaustive_common_prefix_preserves_quoting_and_utf16_range(self):
+        (self.cwd / 'alpha one').write_text('')
+        (self.cwd / 'alpha two').write_text('')
+        result = self.complete('😀 ls al')
+        self.assertEqual((result['replaceStart'], result['replaceEnd']), (6, 8))
+        self.assertEqual(result['commonPrefixInsertText'], "'alpha '")
+        self.assertIsNone(self.complete("ls 'alpha '")['commonPrefixInsertText'])
+
+    def test_windows_common_prefix_ignores_case(self):
+        (self.cwd / 'FolderOne').write_text('')
+        (self.cwd / 'folderTwo').write_text('')
+        self.session.shell = 'C:\\Windows\\System32\\cmd.exe'
+        result = self.complete('dir FOL')
+        self.assertEqual(result['commonPrefixInsertText'].casefold(), 'folder')
 
 
 if __name__ == '__main__': unittest.main()
