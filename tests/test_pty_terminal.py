@@ -11,7 +11,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from bridge.platforms.posix.terminal import TerminalSession, RemoteTerminalSession, default_shell, dimensions
+from bridge.platforms.posix.terminal import TerminalSession, RemoteTerminalSession, default_shell, dimensions, utf8_terminal_environment
 from bridge.features.terminals.manager import TerminalManager
 from bridge.features.terminals.completion import complete_path
 
@@ -123,6 +123,14 @@ class PtyTests(unittest.TestCase):
             s = self.session()
         self.send(s,"printf 'LOCALE:%s:%s:%s\\n' \"$LANG\" \"$LC_ALL\" \"$LC_CTYPE\"\r")
         self.wait_output(s, 'LOCALE:zh_CN.UTF-8:zh_CN.UTF-8:zh_CN.UTF-8')
+
+    def test_terminal_uses_any_installed_utf8_locale_as_fallback(self):
+        env = {'LANG':'C', 'LC_ALL':'C'}
+        with patch('bridge.platforms.posix.terminal.subprocess.run') as run:
+            run.return_value.stdout = 'C\nPOSIX\nzh_CN.UTF-8\n'
+            self.assertIs(utf8_terminal_environment(env), env)
+        run.assert_called_once_with(['locale', '-a'], capture_output=True, text=True, check=True, timeout=2)
+        self.assertEqual(env, {'LANG':'C', 'LC_CTYPE':'zh_CN.UTF-8'})
 
     def test_long_poll_wakes_on_output_and_is_bounded(self):
         s=self.session(); self.wait_output(s,'fixture'); time.sleep(.1)
