@@ -184,8 +184,9 @@ def main():
         until(lambda: streamed(lambda text: '>' in text), 'Prompt after Ctrl+C')
         input_text('echo survived> after-ctrl-c.txt\r')
         after = workspace / 'nested' / 'after-ctrl-c.txt'
-        until(after.exists, 'Shell after Ctrl+C')
-        require(after.read_text().strip() == 'survived', 'Ctrl+C killed shell')
+        # CMD creates the redirected file before writing its contents.
+        until(lambda: after.exists() and after.read_text().strip() == 'survived',
+              'Shell command completion after Ctrl+C')
         summary['checks']['ctrlCShellAlive'] = True
 
         http.checked('POST', path, {'action': 'close', 'id': tab_id})
