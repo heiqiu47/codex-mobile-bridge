@@ -133,6 +133,13 @@ test('truncated candidates cannot expand a purported common prefix',async()=>{
   await f.panel.complete();assert.equal(f.panel.input.value,'cd al');assert.equal(f.panel.completions.hidden,false);
 });
 
+test('a truncated single candidate is offered without changing the draft',async()=>{
+  const f=fixture();f.panel.input.value='cd al';f.panel.input.selectionStart=f.panel.input.selectionEnd=5;
+  f.panel.workbench.request=async()=>({replaceStart:3,replaceEnd:5,candidates:[{label:'alpha/',insertText:'alpha/'}],truncated:true});
+  await f.panel.complete();assert.equal(f.panel.input.value,'cd al');assert.equal(f.panel.completions.hidden,false);
+  f.panel.completions.children[1].click();assert.equal(f.panel.input.value,'cd alpha/');
+});
+
 test('multiple, empty and stale completions preserve draft until a current choice',async()=>{
   const f=fixture();f.panel.input.value='cd ab';f.panel.input.selectionStart=f.panel.input.selectionEnd=5;
   f.panel.workbench.request=async()=>({replaceStart:3,replaceEnd:5,candidates:[{label:'abc/',insertText:'abc/'},{label:'abd/',insertText:'abd/'}],truncated:true});
