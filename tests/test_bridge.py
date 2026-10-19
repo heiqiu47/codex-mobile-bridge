@@ -2,6 +2,7 @@ import copy
 import http.client
 import json
 import os
+import re
 import socket
 import sqlite3
 import struct
@@ -931,7 +932,11 @@ class HttpTests(unittest.TestCase):
                 response = conn.getresponse()
                 self.assertEqual(response.status, 200)
                 self.assertTrue(response.getheader('Content-Type').startswith('text/html'))
-                self.assertEqual(response.read(), (ROOT / 'web' / 'index.html').read_bytes())
+                body = response.read()
+                match = re.search(rb'<meta name="bridge-style-nonce" content="([A-Za-z0-9_-]{32})">', body)
+                self.assertIsNotNone(match)
+                self.assertIn("'nonce-" + match[1].decode() + "'", response.getheader('Content-Security-Policy'))
+                self.assertEqual(body.replace(match[0], b'', 1), (ROOT / 'web' / 'index.html').read_bytes())
 
     def test_cross_site_navigation_keeps_api_embedding_origin_and_host_guards(self):
         navigation = {'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate',
