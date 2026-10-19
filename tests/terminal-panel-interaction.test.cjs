@@ -9,7 +9,7 @@ function fixture(){
   const context=vm.createContext({BridgeI18n:{t:s=>s},BridgeHost:{hasNativeLayout:()=>false},BridgeLayout:{prefersTouchInput:()=>true,isCompactViewport:()=>true},navigator:{userAgent:'iPhone Mobile'},
     uuid:()=>String(++uid),document:{hidden:false,body:{},querySelector:()=>null,activeElement:null},window:{getSelection:()=>({toString:()=>''})},
     sessionStorage:{setItem:(...args)=>storage.push(args),getItem:()=>null,removeItem:(...args)=>storage.push(args)},
-    setTimeout:(fn,ms)=>{timers.set(++next,{fn,ms});return next;},clearTimeout:id=>timers.delete(id)});
+    setTimeout:(fn,ms)=>{timers.set(++next,{fn,ms});return next;},clearTimeout:id=>timers.delete(id),queueMicrotask});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/workspace/terminal-panel.js'),'utf8')+';globalThis.Panel=TerminalPanel;',context);
   const requests=[];
   const node=(tag,cl,text)=>({tag,cl,textContent:text||'',hidden:false,children:[],append(...values){this.children.push(...values);},replaceChildren(){this.children=[];}});
@@ -295,6 +295,26 @@ test('touch bridge leaves tap, selection, multi-touch and ended gestures alone',
   f.panel.touchMove(event([touch(1,60)]));assert.equal(wheels.length,0);
   f.panel.touchStart(event([touch(3,100)]));f.panel.touchEnd(event([], [touch(3,100)]));
   f.panel.touchMove(event([touch(3,50)]));assert.equal(wheels.length,0);
+});
+
+test('draft mode forwards tracked wheel data without enabling keyboard or untracked arrow data',async()=>{
+  const f=fixture(),panel=f.panel;
+  panel.inputMode='draft';panel.term.options.disableStdin=true;
+  panel.term.modes={mouseTrackingMode:'vt200'};
+  panel.terminalData('keyboard');assert.equal(panel.operations.length,0);
+  const wheel={};panel.beginWheelInput(wheel);
+  assert.equal(panel.term.options.disableStdin,false);
+  panel.terminalData('\x1b[<64;2;3M');
+  panel.endWheelInput(wheel);
+  assert.equal(panel.term.options.disableStdin,true);
+  assert.equal(panel.operations[0].data,'\x1b[<64;2;3M');
+  panel.terminalData('keyboard');assert.equal(panel.operations[0].data,'\x1b[<64;2;3M');
+  panel.term.modes.mouseTrackingMode='none';
+  panel.beginWheelInput({});
+  assert.equal(panel.term.options.disableStdin,true);
+  panel.terminalData('\x1b[A');
+  assert.equal(panel.operations[0].data,'\x1b[<64;2;3M');
+  await tick();assert.equal(panel.term.options.disableStdin,true);
 });
 
 test('desktop focus is purposeful and never steals selection, dialog, editor or IME',()=>{

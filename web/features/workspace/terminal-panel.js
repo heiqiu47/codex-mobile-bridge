@@ -72,11 +72,13 @@ class TerminalPanel {
     this.term.parser.registerOscHandler(52,()=>true);
     this.fit=new FitAddon.FitAddon();this.term.loadAddon(this.fit);this.term.open(this.screen);
     this.term.onWriteParsed(()=>this.syncTouchMode());
+    this.term.element.addEventListener('wheel',e=>this.beginWheelInput(e),true);
+    this.term.element.addEventListener('wheel',e=>this.endWheelInput(e));
     this.screen.addEventListener('touchstart',e=>this.touchStart(e),{capture:true,passive:true});
     this.screen.addEventListener('touchmove',e=>this.touchMove(e),{capture:true,passive:false});
     this.screen.addEventListener('touchend',e=>this.touchEnd(e),{capture:true,passive:true});
     this.screen.addEventListener('touchcancel',e=>this.touchEnd(e),{capture:true,passive:true});
-    this.term.onData(data=>{if(this.submitting||this.inputMode==='direct')this.enqueue(data);});
+    this.term.onData(data=>this.terminalData(data));
     this.term.onResize(({cols,rows})=>this.queueResize(cols,rows));
     this.observer=new ResizeObserver(()=>this.layout());this.observer.observe(this.screen);this.layout();
     TerminalFont.register(this);
@@ -86,6 +88,19 @@ class TerminalPanel {
     this.term.options.fontSize=size;this.layout();
   }
   mobile(){return BridgeHost.hasNativeLayout()||!!(navigator.userAgentData?.mobile||/\b(?:iPhone|iPad|iPod|Android|Mobile)\b/i.test(navigator.userAgent||'')||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1));}
+  terminalData(data){
+    if(this.submitting||this.inputMode==='direct'||(this.wheelInput&&this.term.modes.mouseTrackingMode!=='none'))this.enqueue(data);
+  }
+  beginWheelInput(e){
+    if(this.inputMode!=='draft'||!this.running||this.inputError||this.term.modes.mouseTrackingMode==='none')return;
+    this.wheelEvent=e;this.wheelInput=true;this.wheelRestore=this.term.options.disableStdin;this.term.options.disableStdin=false;
+    // xterm normally stops propagation, not same-element listeners; keep a fallback if that changes.
+    queueMicrotask(()=>this.endWheelInput(e));
+  }
+  endWheelInput(e){
+    if(this.wheelEvent!==e)return;
+    this.term.options.disableStdin=this.wheelRestore;this.wheelInput=false;this.wheelEvent=null;
+  }
   syncTouchMode(){
     if(this.term?.element)this.term.element.style.touchAction=this.term.modes.mouseTrackingMode==='none'?'':'none';
   }
