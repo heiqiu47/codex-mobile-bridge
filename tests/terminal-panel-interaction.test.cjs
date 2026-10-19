@@ -55,6 +55,25 @@ test('input waits for the latest pending resize before reaching the PTY',async()
   assert.equal(f.requests[1].data,'DIRECT_ok');
 });
 
+test('flush checks the current layout before sending its first input',async()=>{
+  const f=fixture();f.panel.layout=()=>f.panel.queueResize(132,39);
+  f.panel.workbench.request=async(url,body)=>{f.requests.push({...body});return {};};
+  f.panel.enqueue('DIRECT_ok');await f.panel.flush();
+  assert.deepEqual(f.requests.map(item=>item.action),['resize','input']);
+  assert.deepEqual([f.requests[0].cols,f.requests[0].rows],[132,39]);
+});
+
+test('a closed or restarted tab cannot send after waiting for resize',async()=>{
+  for(const change of ['disposed','restarting','new-id']){
+    const f=fixture();let finishResize;
+    f.panel.workbench.request=async(url,body)=>{f.requests.push({...body});if(body.action==='resize')return new Promise(resolve=>finishResize=resolve);return {};};
+    f.panel.queueResize(90,25);f.panel.enqueue('old input');const pending=f.panel.flush();await tick();
+    if(change==='new-id')f.panel.id='replacement';else f.panel[change]=true;
+    finishResize({});await pending;
+    assert.deepEqual(f.requests.map(item=>item.action),['resize'],change);
+  }
+});
+
 test('failed resize keeps input unsent and retry uses the same pending input',async()=>{
   const f=fixture();let fail=true;
   f.panel.workbench.request=async(url,body)=>{f.requests.push({...body});if(body.action==='resize'&&fail){fail=false;throw Error('resize failed');}return {};};

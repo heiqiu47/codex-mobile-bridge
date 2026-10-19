@@ -144,17 +144,20 @@ class TerminalPanel {
     }
   }
   async flush(){
-    if(this.flushing||this.inputError||this.disposed)return;
+    if(this.flushing||this.inputError||this.disposed||this.restarting)return;
     clearTimeout(this.flushTimer);this.flushTimer=null;
-    this.flushing=true;
+    this.flushing=true;const id=this.id;
     try{
-      while(this.operations.length&&!this.disposed){
+      while(this.operations.length&&!this.disposed&&!this.restarting&&this.id===id){
+        this.layout();
         await this.flushResize();
+        if(this.disposed||this.restarting||this.id!==id)break;
         const entry=this.operations[0];entry.sent=true;
         await this.workbench.request(this.url(),{action:'input',id:this.id,inputId:entry.id,data:entry.data});
+        if(this.disposed||this.restarting||this.id!==id)break;
         this.operations.shift();
       }
-    }catch(e){if(!this.disposed){this.inputError=true;this.status.textContent=BridgeI18n.t(e.message)+BridgeI18n.t(this.operations[0]?.sent?' · 输入结果未确认；重试不会重复输入。':' · 终端尺寸未同步；输入尚未发送。');this.retry.hidden=false;this.send.disabled=true;this.term.options.disableStdin=true;}}
+    }catch(e){if(!this.disposed&&!this.restarting&&this.id===id){this.inputError=true;this.status.textContent=BridgeI18n.t(e.message)+BridgeI18n.t(this.operations[0]?.sent?' · 输入结果未确认；重试不会重复输入。':' · 终端尺寸未同步；输入尚未发送。');this.retry.hidden=false;this.send.disabled=true;this.term.options.disableStdin=true;}}
     finally{this.flushing=false;if(!this.disposed&&!this.inputError){this.send.disabled=!this.running;this.layout();}}
   }
   apply(result){
