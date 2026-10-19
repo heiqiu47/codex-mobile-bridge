@@ -156,7 +156,7 @@ class TerminalPanel {
         if(version!==this.completionVersion||text!==this.input.value||selectionStart!==this.input.selectionStart||selectionEnd!==this.input.selectionEnd||id!==this.id||!this.workbench.isVisible(this.session,this.tab))return;
         this.input.setRangeText(candidate.insertText,result.replaceStart,result.replaceEnd,'end');this.clearCompletion();this.input.focus();
       };
-      if(candidates.length===1){apply(candidates[0]);return;}
+      if(candidates.length===1&&!result.truncated){apply(candidates[0]);return;}
       if(!candidates.length){this.completions.append(this.workbench.node('span','',BridgeI18n.t('没有匹配的路径')));this.completions.hidden=false;return;}
       if(!result.truncated&&result.commonPrefixInsertText){apply({insertText:result.commonPrefixInsertText});return;}
       this.completions.append(this.workbench.node('span','',BridgeI18n.t('选择路径补全')));
