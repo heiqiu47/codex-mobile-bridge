@@ -58,6 +58,11 @@ class TerminalPanel {
     // Terminal output must never write to or read the system clipboard (OSC 52).
     this.term.parser.registerOscHandler(52,()=>true);
     this.fit=new FitAddon.FitAddon();this.term.loadAddon(this.fit);this.term.open(this.screen);
+    this.term.onWriteParsed(()=>this.syncTouchMode());
+    this.screen.addEventListener('touchstart',e=>this.touchStart(e),{capture:true,passive:true});
+    this.screen.addEventListener('touchmove',e=>this.touchMove(e),{capture:true,passive:false});
+    this.screen.addEventListener('touchend',e=>this.touchEnd(e),{capture:true,passive:true});
+    this.screen.addEventListener('touchcancel',e=>this.touchEnd(e),{capture:true,passive:true});
     this.term.onData(data=>{if(this.submitting||this.inputMode==='direct')this.enqueue(data);});
     this.term.onResize(({cols,rows})=>this.queueResize(cols,rows));
     this.observer=new ResizeObserver(()=>this.layout());this.observer.observe(this.screen);this.layout();
@@ -68,6 +73,27 @@ class TerminalPanel {
     this.term.options.fontSize=size;this.layout();
   }
   mobile(){return BridgeHost.hasNativeLayout()||!!(navigator.userAgentData?.mobile||/\b(?:iPhone|iPad|iPod|Android|Mobile)\b/i.test(navigator.userAgent||'')||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1));}
+  syncTouchMode(){
+    if(this.term?.element)this.term.element.style.touchAction=this.term.modes.mouseTrackingMode==='none'?'':'none';
+  }
+  touchStart(e){
+    this.syncTouchMode();
+    this.touchPoint=e.touches.length===1?{id:e.touches[0].identifier,y:e.touches[0].pageY}:null;
+  }
+  touchMove(e){
+    const point=this.touchPoint;
+    if(!point||e.touches.length!==1){this.touchPoint=null;return;}
+    const touch=e.touches[0];
+    if(touch.identifier!==point.id){this.touchPoint=null;return;}
+    const deltaY=point.y-touch.pageY;point.y=touch.pageY;
+    if(!deltaY||this.term.modes.mouseTrackingMode==='none'||this.term.hasSelection()||window.getSelection?.()?.toString())return;
+    // Let xterm encode wheel input using the application's active mouse protocol.
+    this.term.element.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY,deltaMode:WheelEvent.DOM_DELTA_PIXEL,clientX:touch.clientX,clientY:touch.clientY}));
+    e.preventDefault();e.stopPropagation();
+  }
+  touchEnd(e){
+    if(e.touches.length!==1||Array.from(e.changedTouches).some(touch=>touch.identifier===this.touchPoint?.id))this.touchPoint=null;
+  }
   updateInputMode(){
     if(this.modeButton){this.modeButton.textContent=BridgeI18n.t(this.inputMode==='draft'?'编写后发送模式':'终端直接输入模式');this.modeButton.title=BridgeI18n.t(this.inputMode==='draft'?'切换为终端直接输入模式':'切换为编写后发送模式');}
     if(this.input){this.input.placeholder=BridgeI18n.t(this.mobile()?'输入命令或回复，换行键可换行':'编写后发送模式：Enter 发送，Shift+Enter 换行；密码请用终端直接输入模式');}

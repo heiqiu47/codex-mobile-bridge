@@ -187,6 +187,51 @@ test('mobile landscape and iPad keep composer while narrow touch laptop stays di
   f.context.navigator={userAgent:'Windows NT',platform:'Win32',maxTouchPoints:10};assert.equal(f.panel.mobile(),false);
 });
 
+test('touch drag delegates only tracked mouse scroll to xterm wheel handling',()=>{
+  const f=fixture(),wheels=[];
+  f.context.WheelEvent=class WheelEvent {static DOM_DELTA_PIXEL=0;constructor(type,options){Object.assign(this,{type},options);}};
+  f.panel.term.modes={mouseTrackingMode:'none'};
+  f.panel.term.element={style:{},dispatchEvent:event=>wheels.push(event)};
+  f.panel.term.hasSelection=()=>false;
+  const touch=(id,y)=>({identifier:id,pageY:y,clientX:12,clientY:y});
+  const event=(touches,changedTouches=touches)=>({touches,changedTouches,preventDefault(){this.prevented=true;},stopPropagation(){this.stopped=true;}});
+  f.panel.touchStart(event([touch(1,100)]));
+  const plain=event([touch(1,70)]);f.panel.touchMove(plain);
+  assert.equal(wheels.length,0,'normal scrollback stays with native xterm touch handling');
+  assert.equal(plain.prevented,undefined);
+  f.panel.term.modes.mouseTrackingMode='vt200';f.panel.syncTouchMode();
+  assert.equal(f.panel.term.element.style.touchAction,'none');
+  f.panel.touchStart(event([touch(1,100)]));
+  const tracked=event([touch(1,70)]);f.panel.touchMove(tracked);
+  assert.equal(wheels.length,1);assert.equal(wheels[0].deltaY,30);
+  assert.equal(wheels[0].deltaMode,0);assert.equal(wheels[0].clientX,12);
+  assert.equal(tracked.prevented,true);assert.equal(tracked.stopped,true);
+  assert.equal(f.panel.operations.length,0,'drag does not directly enqueue arrow keys');
+  f.panel.term.modes.mouseTrackingMode='none';f.panel.syncTouchMode();
+  assert.equal(f.panel.term.element.style.touchAction,'');
+  const untracked=event([touch(1,40)]);f.panel.touchMove(untracked);
+  assert.equal(wheels.length,1,'alternate screen without mouse tracking cannot synthesize arrow keys');
+});
+
+test('touch bridge leaves tap, selection, multi-touch and ended gestures alone',()=>{
+  const f=fixture(),wheels=[];
+  f.context.WheelEvent=class WheelEvent {static DOM_DELTA_PIXEL=0;constructor(type,options){Object.assign(this,{type},options);}};
+  f.panel.term.modes={mouseTrackingMode:'drag'};
+  f.panel.term.element={style:{},dispatchEvent:event=>wheels.push(event)};
+  f.panel.term.hasSelection=()=>true;
+  const touch=(id,y)=>({identifier:id,pageY:y,clientX:12,clientY:y});
+  const event=(touches,changedTouches=touches)=>({touches,changedTouches,preventDefault(){this.prevented=true;},stopPropagation(){this.stopped=true;}});
+  const start=event([touch(1,100)]);f.panel.touchStart(start);
+  assert.equal(start.prevented,undefined);
+  f.panel.touchMove(event([touch(1,80)]));assert.equal(wheels.length,0);
+  f.panel.term.hasSelection=()=>false;
+  f.panel.touchMove(event([touch(1,80)]));assert.equal(wheels.length,0,'stationary touch does not scroll');
+  f.panel.touchMove(event([touch(1,80),touch(2,80)]));assert.equal(f.panel.touchPoint,null);
+  f.panel.touchMove(event([touch(1,60)]));assert.equal(wheels.length,0);
+  f.panel.touchStart(event([touch(3,100)]));f.panel.touchEnd(event([], [touch(3,100)]));
+  f.panel.touchMove(event([touch(3,50)]));assert.equal(wheels.length,0);
+});
+
 test('desktop focus is purposeful and never steals selection, dialog, editor or IME',()=>{
   const f=fixture();f.context.navigator.userAgent='Desktop';
   assert.equal(f.panel.mobile(),false,'narrow touch-capable desktop uses local input');
