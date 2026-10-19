@@ -145,6 +145,7 @@ class TerminalPanel {
   clearCompletion(){this.completionVersion++;this.completionSnapshot=null;if(this.completions){this.completions.hidden=true;this.completions.replaceChildren();}}
   async complete(){
     if(!this.running||this.disposed||(!this.mobile()&&this.inputMode!=='draft')||this.composing||this.inputError)return;
+    if(!this.input.value){this.clearCompletion();this.enqueue('\t');return;}
     if(this.completing&&this.completing.version===this.completionVersion&&this.completing.id===this.id&&this.completing.text===this.input.value&&this.completing.start===this.input.selectionStart&&this.completing.end===this.input.selectionEnd)return;
     this.clearCompletion();const version=this.completionVersion,id=this.id,text=this.input.value,selectionStart=this.input.selectionStart,selectionEnd=this.input.selectionEnd;
     if(selectionStart!==selectionEnd)return;
@@ -161,6 +162,7 @@ class TerminalPanel {
       };
       if(candidates.length===1){apply(candidates[0]);return;}
       if(!candidates.length){this.completions.append(this.workbench.node('span','',BridgeI18n.t('没有匹配的路径')));this.completions.hidden=false;return;}
+      if(!result.truncated&&result.commonPrefixInsertText){apply({insertText:result.commonPrefixInsertText});return;}
       this.completions.append(this.workbench.node('span','',BridgeI18n.t('选择路径补全')));
       for(const candidate of candidates){const button=this.workbench.button(candidate.label,()=>apply(candidate));button.type='button';this.completions.append(button);}
       if(result.truncated)this.completions.append(this.workbench.node('small','',BridgeI18n.t('仅显示部分匹配项')));
