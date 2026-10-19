@@ -2551,6 +2551,7 @@ const en={
   "终端输入": "Terminal input",
   "发送到终端": "Send to terminal",
   "所有终端字号": "All terminals · font size",
+  "字号": "Font size",
   "重试未确认输入": "Retry unconfirmed input",
   "没有匹配的路径": "No matching path",
   "选择路径补全": "Choose a path completion",

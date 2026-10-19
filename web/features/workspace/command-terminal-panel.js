@@ -13,7 +13,8 @@ const TerminalFont=(()=>{
     set(value){if(!sizes.includes(Number(value)))return;update(value);try{localStorage.setItem(key,String(size));}catch{}},
     control(workbench){
       const label=workbench.node('label','wb-terminal-font');
-      const title=workbench.node('span','',BridgeI18n.t('所有终端字号'));title.dataset.i18n='所有终端字号';
+      const title=workbench.node('span','','字号');
+      label.setAttribute('data-i18n-title','所有终端字号');label.title=BridgeI18n.t('所有终端字号');
       const select=workbench.node('select');select.setAttribute('data-i18n-aria-label','所有终端字号');select.setAttribute('aria-label',BridgeI18n.t('所有终端字号'));
       for(const value of sizes){const option=workbench.node('option','',value+'px');option.value=String(value);select.append(option);}
       select.value=String(size);select.onchange=()=>TerminalFont.set(select.value);label.append(title,select);
