@@ -1,3 +1,29 @@
+<a id="v212-platform-status"></a>
+
+# v2.1.2 正式发布验收（2026-10-20）
+
+桌面与手机版本统一为 `2.1.2`，Android/iOS 构建号为 `34`。本轮以终端交互为主，改善 OpenCode 类终端 CLI 的触摸滚动。桌面 appId、数据目录、更新公钥、手机包名与绑定存储方式保持不变；Android 沿用原发布证书，iOS 沿用正式应用标识及扩展标识，不采用临时 Test 标识。
+
+| 范围 | 本轮证据 |
+| --- | --- |
+| 产品实测 | 用户已实测 Mac、Windows、Ubuntu、Android 和独立 iPhone Test；覆盖终端直接输入、中文输入法、Enter/Tab、触摸滚动、OpenCode 交互、字号及退出布局。Windows 10 的鼠标信号使用包内 ConPTY 验证；Test 安装目录逐文件与打包目录核对 |
+| 本地完整检查 | Python 源码检查 1,997 项中 1,918 通过、79 条件跳过；前端 800 通过、1 条件跳过；更新器 32 通过、1 条件跳过；移动共享资源 29 通过、iOS 资源/源码包边界 6 通过。不同分组存在重叠，不累加为独立总数 |
+| 跨平台 CI | [完整 CI](https://github.com/try2love/codex-mobile-bridge/actions/runs/39307261300)全部通过：Windows / Ubuntu 的 Python 3.9、3.13，macOS Python 3.13，以及前端、更新器和移动端更新检查 |
+| macOS arm64 / Intel x64 | [原生打包工作流](https://github.com/try2love/codex-mobile-bridge/actions/runs/39307265826)通过 DMG/ZIP、嵌套签名、已打包 App 启动、鉴权、通知、HTTPS、配对及更新控制器检查；更新成功与失败回滚均保持配置和原可信手机会话 |
+| Windows x64 | [同一原生构建](https://github.com/try2love/codex-mobile-bridge/actions/runs/39307265826)完成 NSIS/ZIP；实际安装器安装后 741 个载荷文件逐项 SHA-256 核对，安装后 GUI、二维码与冻结终端检查通过。另验证登录、HTTPS、配对、通知和更新成功/失败恢复，保留配置及原可信手机会话 |
+| Linux x64 / ARM64 | [原生构建](https://github.com/try2love/codex-mobile-bridge/actions/runs/39307265826)完成两种架构的 deb/AppImage；deb 安装、AppImage 解包启动及网关检查通过。Linux 保持实验性支持，使用安装包手动升级 |
+| 真实旧版桌面覆盖升级 | 官方 v2.1.1 macOS arm64 App 与本轮原生 CI 的 2.1.2 ZIP 在隔离目录完成实际替换；另注入替换失败并恢复旧 App。两轮均逐字节保留网关、桌面、通知和订阅配置，原扫码可信手机 Cookie 仍通过认证。没有替换日常正式 App 或数据 |
+| Android 覆盖安装 | 已发布 v2.1.1/build33 APK 在隔离 Android 35 模拟器中直接覆盖为 2.1.2/build34。签名证书和首次安装时间不变，保存的电脑与设置保留，重开后仍使用同一可信持久会话；最近访问时间及绑定密文正常刷新 |
+| iOS 构建与覆盖安装 | [原生 iOS 构建](https://github.com/try2love/codex-mobile-bridge/actions/runs/39306057821)通过未签名 IPA 与源码包检查。在 iOS 18.2 模拟器中，正式标识的 v2.1.1/build33 覆盖为 2.1.2/build34 后，电脑列表、当前电脑、Cookie 命名空间和原可信持久会话保留，重开无需登录 |
+
+本轮发布检查修正了测试夹具误用 CI 登录 Shell 配置、Windows 路径分隔符写死的假设，保留原行为断言。Windows 发布流水线新增实际 NSIS 安装后的全文件 SHA-256 对比，并从安装目录运行 GUI 和冻结终端检查；用于验证 ConPTY DLL、三种 OpenConsole 宿主及其他资源全部安装，无需手动补文件。
+
+覆盖升级使用隔离配置与合成网关登录，不替换日常正式版、账号或手机绑定。手机覆盖测试验证登录和保存状态，不运行真实模型聊天。iPhone Test 实机验收与正式标识的模拟器覆盖升级分别记录；发布 IPA 仍需自行签名，并以相同 Bundle ID 和签名身份覆盖安装。候选后的纯文档修改不改变构建输入；正式标签重新运行完整测试与全平台构建，发布前核验完整资产集、更新清单签名、包大小/哈希及上传后下载结果。
+
+**English:** v2.1.2/build34 retains desktop/mobile application identities, data locations, Android signing identity and trusted-device storage. Acceptance separates real-device terminal testing, native release-package checks, and isolated overwrite upgrades. Windows installer validation compares every installed file with the built payload, including bundled ConPTY, then runs GUI and terminal checks from the installed directory. Android and official-ID iOS simulator upgrades retain saved computers and the same trusted sessions. iOS distribution remains unsigned and requires the user's signing identity; Linux remains experimental with manual package upgrades.
+
+---
+
 <a id="v211-platform-status"></a>
 
 # v2.1.1 正式发布验收（2026-10-18）
