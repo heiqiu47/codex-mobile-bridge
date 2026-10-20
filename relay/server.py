@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from aiohttp import web, WSMsgType
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
-from bridge.api.mermaid_render import SHELL_PATH as MERMAID_SHELL_PATH, SHELL_FILE as MERMAID_SHELL_FILE, shell_csp as mermaid_shell_csp
+from bridge.api.mermaid_render import SHELL_PATH as MERMAID_SHELL_PATH, shell_csp as mermaid_shell_csp, shell_bytes as mermaid_shell_bytes
 from .protocol import MAX_BODY, MAX_FRAME, origin, validate, decode, content_type, download_headers
 from .registry import Registry, token, PHONE_LIFETIME
 from .stream import WINDOW, unpack
@@ -388,7 +388,7 @@ class Relay:
             if request.query_string:
                 raise web.HTTPNotFound()
             self.phone_auth(request)
-            return web.Response(body=(ROOT/'web'/MERMAID_SHELL_FILE).read_bytes(), content_type='text/html',
+            return web.Response(body=mermaid_shell_bytes(ROOT/'web'), content_type='text/html',
                                 headers={'Content-Security-Policy': mermaid_shell_csp(self.origin), 'X-Frame-Options': 'SAMEORIGIN'})
         if path == '/relay/admin':
             raise web.HTTPFound('/relay/admin/')
