@@ -35,6 +35,13 @@
       return anchor;
     }
     let codeIndex=0;
+    const lines=String(text || '').split(/\r?\n/);
+    function completeFence(token) {
+      if (!token.map || !token.markup) return false;
+      const last=(lines[token.map[1]-1] || '').replace(/^[ \t]*(?:>[ \t]*)+/, '');
+      const marker=token.markup[0], count=token.markup.length;
+      return new RegExp('^[ \\t]*'+(marker==='`'?'`':'~')+'{'+count+',}[ \\t]*$').test(last);
+    }
     function appendTokens(tokens, root) {
       const parents = [root];
       for (const token of tokens) {
@@ -73,18 +80,23 @@
           code.textContent = token.content;
           if (token.type === 'code_inline') parent.append(code);
           else {
-            const pre = document.createElement('pre');
-            pre.append(code);
-            const wrapper=document.createElement('div');wrapper.className='code-block';
-            const button=document.createElement('button');button.className='plain code-copy';button.type='button';button.textContent=typeof BridgeI18n==='undefined'?'复制代码':BridgeI18n.t('复制代码');
             const index=codeIndex++;
-            button.onclick=()=>window.BridgeClipboard?.copy(async()=>{
+            const getSource=async()=>{
               if(!options.fullText)return token.content;
               const complete=await options.fullText();
               const blocks=parse(complete).filter(t=>t.type==='fence'||t.type==='code_block');
               if(!blocks[index])throw Error('读取完整正文失败，请重试');
               return blocks[index].content;
-            },button);
+            };
+            if(token.type==='fence' && /^mermaid(?:\s|$)/i.test(token.info.trim()) && completeFence(token) && window.BridgeMermaidCards){
+              parent.append(window.BridgeMermaidCards.create(token.content,{owner:node,index,getSource}));
+              continue;
+            }
+            const pre = document.createElement('pre');
+            pre.append(code);
+            const wrapper=document.createElement('div');wrapper.className='code-block';
+            const button=document.createElement('button');button.className='plain code-copy';button.type='button';button.textContent=typeof BridgeI18n==='undefined'?'复制代码':BridgeI18n.t('复制代码');
+            button.onclick=()=>window.BridgeClipboard?.copy(getSource,button);
             wrapper.append(button,pre);parent.append(wrapper);
           }
         } else if (token.type === 'image') {

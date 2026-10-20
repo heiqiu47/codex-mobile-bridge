@@ -17,6 +17,19 @@ Continue **Codex, Claude Code / Cowork and DeepSeek Harness** sessions from a ph
 
 Tasks run on the original computer, or the original SSH host for Codex remote sessions. Bridge reuses the desktop session, authentication and execution environment. Your phone does not need the same model-service account: use gateway login or revocable QR pairing.
 
+<a id="mermaid-preview"></a>
+
+## Unreleased: Mermaid diagram reading
+
+The development version includes the following changes; the published v2.1.2 packages do not yet contain them:
+
+- Render complete fenced `mermaid` blocks in chat bodies and `.md` documents opened from Files, with Chinese labels and light/dark themes.
+- Select source to read the original code or copy source to copy Mermaid text. Tap the diagram or the fullscreen action for a larger view.
+- Pinch, drag when zoomed and double-tap on touch devices; use the wheel, dragging or zoom buttons on desktop. Fit to screen restores the complete diagram, and source remains available fullscreen.
+- Incomplete streamed code stays readable as source. Later text updates reuse unchanged diagrams without interrupting fullscreen or zoom. Failed previews retain source viewing and copying.
+
+Update the gateway and reload the page. iOS also needs the matching App update to allow the diagram preview subframe. See the [unreleased notes](RELEASE_NOTES.md#unreleased-mermaid).
+
 ## What's new in v2.1.2
 
 - **Direct terminal input:** enabled by default on mobile and wide-screen Web, with improved Chinese input, cursor/focus recovery and a dedicated Enter key. Optional Compose & send mode retains staged Tab path completion.
@@ -51,6 +64,7 @@ Tasks run on the original computer, or the original SSH host for Codex remote se
 - **Source reading:** view common languages with syntax highlighting and line numbers. Select **Wrap lines** to fit long lines to the screen, or restore **Original line width**. Copy preserves the source without line numbers; previews never edit the file. Unknown languages and larger text use plain text.
 - **PDF reading:** scroll and pinch on touch devices; use page and zoom buttons on desktop browsers. Select text when available; scanned pages do not gain OCR. Fit each page to the available width, including mixed page sizes. During rapid zoom, keep the completed image visible until its replacement is ready to reduce flashes.
 - **HTML reading:** switch between **Preview** and **Source code**. Self-contained inline interactions and animations work; external resources, CDN/API requests, popups and form submission are unsupported. Preview content is isolated from gateway sign-in data, the parent page and native mobile interfaces.
+- **Mermaid diagrams (unreleased):** Markdown files and chat bodies share diagram, source and fullscreen controls. See [diagram reading](#mermaid-preview).
 - **Compact actions and fullscreen:** actions sit beside file details, with fullscreen next to Download. Entering or leaving fullscreen preserves PDF position and HTML state. Switching file tabs preserves PDF position but reloads HTML on return.
 
 PDF previews are capped at **20 MiB** and the configured ordinary-download limit, whichever is lower. HTML and source previews accept **UTF-8 text up to 512 KiB**. Download larger or unsupported files to open elsewhere. Update both the gateway and mobile app for the complete feature set; browser users reload after updating the gateway.

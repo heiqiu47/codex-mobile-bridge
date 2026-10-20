@@ -1,3 +1,49 @@
+<a id="unreleased-mermaid"></a>
+
+## 未发布 · Mermaid 图表预览
+
+聊天回复和文件列表中打开的 Markdown 文档，现在可以直接预览 `mermaid` 代码块中的图表，并在手机与宽屏 Web 中查看源码、复制和全屏缩放。本节为待发布内容，尚未包含在已发布的 v2.1.2 安装包中。
+
+### 新增与优化
+
+- **图表预览**：Codex、Claude 和 DeepSeek Harness 的聊天正文，以及 `.md` 文件预览共用图表卡片；支持中文标签、浅色与深色主题，图表适应可用宽度。
+- **源码切换与复制**：使用“图表 / 源码”切换视图，“复制源码”保留原始 Mermaid 文本；全屏中也可查看和复制源码。
+- **全屏缩放**：点击图表或“全屏查看”打开阅读器。手机支持双指缩放、放大后拖动和双击缩放；电脑支持滚轮缩放、拖动及加减按钮，“适应屏幕”恢复完整视图。
+- **流式输出与缓存复用**：尚未闭合的代码块先显示源码，完整后再生成图表；同一阅读范围内复用未变化图表的渲染结果，合并重复渲染请求。后续文字更新保留源码视图，不打断已打开的全屏阅读或重置缩放。
+- **按需加载**：首次需要图表时才加载随网关提供的渲染引擎，无需从外部 CDN 下载。语法错误、超出预览限制或不支持的内容保留源码查看与复制入口。
+
+### Bug 修复
+
+- 修复 iOS App 拦截图表预览子页面，导致始终提示“图表无法显示，请查看源码”的问题。
+- 修复图表转换后的文字、箭头和连线显示，以及窄屏全屏查看源码时工具栏挤占内容的问题。
+
+### 使用与兼容性
+
+Web 用户更新网关后刷新页面；iOS 用户需要同时更新配套 App，单独刷新网页不能修复旧 App 的导航限制。共享中继部署需同步更新服务。图表预览为只读，不修改原文件；图表中的交互链接、外部资源及自定义初始化配置不作为可执行内容加载。
+
+### English
+
+**Unreleased — Mermaid previews.** Preview fenced `mermaid` blocks in chat replies and Markdown files, switch to source, copy the original code and inspect diagrams fullscreen on mobile and wide-screen Web. These changes are not included in the published v2.1.2 packages.
+
+#### Features and improvements
+
+- **Diagram previews:** shared cards in Codex, Claude and DeepSeek Harness chat bodies and `.md` file previews, with Chinese labels, light/dark themes and width-aware sizing.
+- **Source and copying:** switch between diagram and source, and copy the original Mermaid text. Source viewing and copying are also available fullscreen.
+- **Fullscreen zoom:** open a diagram by tapping it or selecting fullscreen. Use pinch, drag when zoomed and double-tap on touch devices; use the wheel, dragging or zoom buttons on desktop. Fit to screen restores the complete view.
+- **Streaming and reuse:** incomplete fences remain readable source until closed. Reuse unchanged diagrams and coalesce duplicate rendering within the current reading scope. Subsequent text updates preserve source selection and do not close fullscreen or reset its zoom.
+- **On-demand loading:** load the bundled renderer only when a diagram is needed, without an external CDN. Invalid, oversized or unsupported diagrams retain source viewing and copying.
+
+#### Fixes
+
+- Fix the iOS App blocking the diagram preview subframe and repeatedly reporting that the diagram could not be displayed.
+- Correct diagram text, arrow and edge rendering, and keep fullscreen source controls from crowding content on narrow screens.
+
+#### Usage and compatibility
+
+Reload Web pages after updating the gateway. iOS also requires the matching App update; reloading alone cannot fix the old native navigation restriction. Update shared-relay deployments as well. Previews are read-only and do not modify files; diagram links, external resources and custom initialization configuration are not loaded as executable content.
+
+---
+
 ## v2.1.2 · 终端交互与跨平台兼容性
 
 v2.1.2 重点改善手机与 Web 终端体验，让直接输入、中文输入、触摸滚动、字号调整和断线恢复更顺畅，并补齐 Windows 终端组件的安装与鼠标交互支持。

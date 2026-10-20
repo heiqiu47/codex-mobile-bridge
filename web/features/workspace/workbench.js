@@ -5,6 +5,7 @@ class Workbench {
     Object.assign(this, {chat, request, csrf, notify, onUnauthorized, openChat});
     window.BridgeFileActions?.register(chat,this);
     this.sessions = new Map();
+    this.mermaidScope=window.BridgeMermaidCards?.createScope();
     this.scrollPositions = new WeakMap();
     this.strip = this.node('nav', 'workbench-tabs'); this.strip.dataset.i18nAriaLabel='工作台标签';this.strip.setAttribute("data-i18n-aria-label",'工作台标签');this.strip.setAttribute('aria-label', BridgeI18n.t('工作台标签'));
     this.tabs = this.node('div', 'wb-tabs'); this.tabs.setAttribute('role', 'tablist');
@@ -143,6 +144,8 @@ class Workbench {
     this.current = this.sessions.get(key); this.paint();
   }
   reset(provider=null) {
+    if(provider)window.BridgeMermaidCards?.resetScope(this.mermaidScope);
+    else{window.BridgeMermaidCards?.clearScope(this.mermaidScope);this.mermaidScope=window.BridgeMermaidCards?.createScope();}
     if (!provider || this.locateState?.session.provider === provider) this.cancelLocate();
     if (this.previewFullscreen && (!provider || this.previewFullscreen.session.provider === provider)) this.closePreviewFullscreen();
     const visible=!provider||this.current?.provider===provider;
@@ -454,7 +457,7 @@ class Workbench {
         content.classList.add('wb-pdf-content'); content.append(tab.pdf.element);
       } else if (result.kind === 'image') { const image = this.node('img'); image.src = 'data:' + result.mime + ';base64,' + result.data; image.alt = result.name; window.BridgeImageViewer?.registerWorkspaceImage(image, result); content.append(image); }
       else if (result.kind === 'text') {
-        if (/\.md$/i.test(result.name)) renderMarkdown(content, result.text);
+        if (/\.md$/i.test(result.name)) {content.__mermaidScope=this.mermaidScope;content.__mermaidIdentity=session.key+'|'+id;renderMarkdown(content, result.text);}
         else if (/\.html?$/i.test(result.name)) {
           modes = this.node('div', 'wb-preview-modes');
           const preview = this.button('预览', () => show('preview'));

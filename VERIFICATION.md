@@ -1,3 +1,31 @@
+<a id="mermaid-preview-acceptance"></a>
+
+# Mermaid 预览本地验收（2026-10-21，未发布）
+
+本轮候选为 `31cc463434a01c83f51abcf805cfee2350d6e1f4`，开发分支为 `integration/mermaid-preview-test`。范围为聊天与 Markdown 文件中的图表预览、源码切换及复制、全屏缩放、流式与缓存复用，以及 iOS 子页面导航修复。用户已反馈测试通过；本节记录本地 Test 验收结果，版本号仍为 `2.1.2`、手机构建号 `34`。后续仅合并源码与文档，不构建 App 或创建新 Release。
+
+| 范围 | 本轮证据 |
+| --- | --- |
+| macOS arm64 / Web | 实际打包网关加载生产资源，通过 19 项浏览器检查；包含中文 SVG 实际解码、源码、全屏缩放、流式状态、缓存复用、无效内容回退及 CSP。用户已确认宽屏 Web 图表正常 |
+| Windows x64 | 独立 Test 安装后 705 个文件与候选载荷一致；GUI、二维码及网关启动通过。已安装网关配合 Chrome 通过相同的 19 项实际图表检查，JS 错误及 CSP 违规均为 0，中文截图已核对 |
+| Ubuntu x64 | DEB/AppImage 构建通过；DEB 覆盖安装后 715 个文件与包内一致，Test 安装与自启动身份独立，GUI 与网关启动通过。已安装网关配合可见 Electron 窗口通过 19 项实际图表检查，JS 错误及 CSP 违规均为 0，中文截图已核对 |
+| Android | 独立 Test 已提供给用户；用户确认 App 能正常加载图表。共享渲染功能与 Web 使用同一实现 |
+| iOS | 完整 App 在 iOS 18.2 模拟器中复现原导航拦截；仅加入精确 Mermaid 子页面许可后，19 项真实图像、源码、全屏、流式与缓存检查通过。独立 iPhone Test 已覆盖安装并启动，用户确认图表与全屏缩放正常 |
+| 原生导航与移动资源 | 真实 Swift URL 判断检查通过，覆盖直连/中继路径、外域及额外路径/query/fragment 拒绝；移动源码测试 30/30 通过。保留预览壳主框架导航拒绝 |
+| 配置与绑定 | Windows、Ubuntu 覆盖安装及启动前后，正式版与 Test 的配置、可信绑定、自启动隔离检查通过；iPhone Test 的 10 项保存设置逐项一致。独立 Test 未替换正式 App |
+
+19 项浏览器检查分别验证每个平台，不累加为不同功能的测试总数。覆盖流程图、时序图、状态图、类图、饼图和 ER 图；确认图表图片实际解码，而非仅存在 SVG 字符串。检查还包括引擎按需加载、未变化内容复用缓存、源码原文保留、后续流式文字不关闭全屏或重置缩放、未闭合代码块保留源码，以及图表不撑宽页面。
+
+iOS 根因为完整 App 的导航代理只允许 HTML 预览壳，取消了 Mermaid 子页面导航；简化 WKWebView 检查未包含该限制。本轮只增加当前网关下精确子页面地址的许可，未放宽外部导航、主页面导航、认证或 CSP。Web 更新不能替代这项原生 App 修复。
+
+以上为本地 Test 构建、安装和实测记录，不借用 v2.1.2 的历史 CI 结果作为本轮证据。macOS Intel、Linux ARM64 及正式标识 iOS 的新发行构建不在本轮记录范围内；尚未执行新的全平台发布 CI。原始日志、截图、包哈希和清理清单保留在本地 `.tmp/mermaid-platform-20261021/`，不提交配置、账号或聊天数据。
+
+新版 Test 验收后已清理旧测试 App、安装包和重复构建产物：Mac 约 2.23 GiB、Windows 约 2.41 GiB、Ubuntu 约 3.82 GiB。当前 Test、必要记录和复用缓存保留，清理后复核正式版、配置、绑定及 Test 网关正常。
+
+**English:** the local Mermaid candidate passed real packaged rendering checks on macOS arm64, installed Windows x64 and Ubuntu x64 gateways, plus full-App iOS simulator checks. Each 19-check run covers actual image decoding, source, fullscreen, streaming, cache reuse and CSP; these are not additive counts of distinct features. Users confirmed Android/Web rendering and iPhone diagram/fullscreen behavior, then accepted the round. Independent Test upgrades retained configuration and trusted bindings. The iOS fix narrowly permits the expected diagram subframe; it does not weaken top-level navigation or authentication. This is local acceptance, not a new release or cross-platform release CI result.
+
+---
+
 <a id="v212-platform-status"></a>
 
 # v2.1.2 正式发布验收（2026-10-20）
