@@ -3,7 +3,7 @@ async function runMermaidViewerTests() {
   const checks = [], check = (value, label) => { if (!value) throw Error(label); checks.push(label); };
   const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   const wait = async fn => { for (let i = 0; i < 100; i++) { if (fn()) return; await new Promise(r => setTimeout(r, 20)); } throw Error('Mermaid viewer did not settle'); };
-  const source = 'flowchart TD\n  A["<script>中文</script>"] --> B';
+  const source = 'flowchart TD\n  A["<script>中文</script>"] --> B\n' + '  B --> A\n'.repeat(120);
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="white"/><text x="30" y="80">Mermaid fixture</text></svg>';
   const url = 'data:image/svg+xml;base64,' + btoa(svg);
   const opener = document.createElement('button'); opener.textContent = 'Open diagram'; document.body.append(opener);
@@ -45,9 +45,14 @@ async function runMermaidViewerTests() {
     button('source').click(); await wait(() => !dialog.querySelector('.mermaid-preview-source').hidden);
     const pre = dialog.querySelector('.mermaid-preview-source');
     check(pre.textContent === source && !pre.querySelector('script') && sourceReads === 1, 'Source view uses exact async text without HTML insertion');
+    pre.scrollTop = 220; const sourceScroll = pre.scrollTop;
+    check(sourceScroll > 0, 'Long source has independent scrolling');
     button('copy').click(); await wait(() => copied === source); check(copied === source, 'Copy uses exact async source');
     check(canvas.hidden, 'Source view hides diagram interaction');
     button('source').click(); await settle(); check(!canvas.hidden && scale() > 1, 'Returning to diagram preserves zoom');
+    button('source').click(); await wait(() => !pre.hidden);
+    check(pre.scrollTop === sourceScroll && sourceReads === 1, 'Reopening source preserves scroll and cached exact text');
+    button('source').click(); await settle(); check(scale() > 1, 'Returning again preserves diagram zoom');
     opener.remove(); await settle(); check(dialog.open, 'Chat rerender does not close viewer');
     dialog.close(); await settle(); check(!dialog.open, 'Viewer closes normally after opener removal');
     document.body.append(opener); opener.focus(); await open();

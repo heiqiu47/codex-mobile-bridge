@@ -94,12 +94,14 @@
   }
   async function exactSource() {
     if (!entry) throw Error(t('读取源码失败，请重试。'));
+    if (typeof entry.exactSource === 'string') return entry.exactSource;
     if (entry.getSource) {
-      const value = await entry.getSource();
-      if (typeof value !== 'string') throw Error(t('读取源码失败，请重试。'));
+      const current = entry, value = await current.getSource();
+      if (current !== entry || typeof value !== 'string') throw Error(t('读取源码失败，请重试。'));
+      current.exactSource = value;
       return value;
     }
-    if (typeof entry.source === 'string') return entry.source;
+    if (typeof entry.source === 'string') return entry.exactSource = entry.source;
     throw Error(t('读取源码失败，请重试。'));
   }
   async function showSource() {
@@ -112,22 +114,26 @@
     try {
       const value = await exactSource();
       if (current !== generation || !dialog.open) return;
-      sourcePanel.textContent = value; sourcePanel.hidden = false; canvas.hidden = true; controls.hidden = true;
-      clearPointers(); sourceButton.setAttribute('aria-pressed', 'true'); sourceButton.textContent = t('查看图示');
+      if (sourcePanel.textContent !== value) sourcePanel.textContent = value;
+      sourcePanel.hidden = false; canvas.hidden = true; controls.hidden = true;
+      clearPointers(); sourceButton.setAttribute('aria-pressed', 'true'); sourceButton.textContent = t('查看图表');
       status.textContent = '';
     } catch (error) { if (current === generation) status.textContent = error.message || t('读取源码失败，请重试。'); }
     finally { if (current === generation) sourceButton.disabled = false; }
   }
   function relabel() {
-    closeButton.textContent = '× ' + t('关闭'); closeButton.setAttribute('aria-label', t('关闭图示预览'));
-    sourceButton.textContent = sourcePanel.hidden ? t('源码') : t('查看图示');
-    copyButton.textContent = t('复制代码');
-    zoomOut.setAttribute('aria-label', t('缩小图片')); zoomIn.setAttribute('aria-label', t('放大图片'));
-    fitButton.textContent = t('适应屏幕'); percentage.setAttribute('aria-label', t('图示缩放比例'));
+    dialog.setAttribute('aria-label', t('图表'));
+    if (image) image.alt = t('图表');
+    closeButton.textContent = '× ' + t('关闭'); closeButton.setAttribute('aria-label', t('关闭图表预览'));
+    sourceButton.textContent = sourcePanel.hidden ? t('源码') : t('查看图表');
+    copyButton.textContent = t('复制源码');
+    zoomOut.textContent = '−'; zoomIn.textContent = '+';
+    zoomOut.setAttribute('aria-label', t('缩小图表')); zoomIn.setAttribute('aria-label', t('放大图表'));
+    fitButton.textContent = t('适应屏幕'); percentage.setAttribute('aria-label', t('图表缩放比例'));
   }
   function create() {
     dialog = document.createElement('dialog'); dialog.id = 'mermaid-preview-dialog'; dialog.className = 'mermaid-preview';
-    dialog.setAttribute('aria-label', t('图示'));
+    dialog.setAttribute('aria-label', t('图表'));
     const toolbar = document.createElement('div'); toolbar.className = 'mermaid-preview-toolbar';
     const button = (id, action) => { const node = document.createElement('button'); node.id = 'mermaid-preview-' + id;
       node.type = 'button'; node.onclick = action; return node; };
@@ -190,10 +196,10 @@
       sourcePanel.textContent = ''; sourcePanel.hidden = true; canvas.hidden = false; controls.hidden = false;
       sourceButton.disabled = false; sourceButton.setAttribute('aria-pressed', 'false');
       percentage.textContent = '100%'; zoomOut.disabled = zoomIn.disabled = fitButton.disabled = true;
-      canvas.classList.remove('is-zoomed'); status.textContent = t('正在加载图示…'); relabel();
-      const current = image = document.createElement('img'); current.alt = t('图示'); current.draggable = false;
+      canvas.classList.remove('is-zoomed'); status.textContent = t('正在加载图表…'); relabel();
+      const current = image = document.createElement('img'); current.alt = t('图表'); current.draggable = false;
       current.onload = () => { if (image === current && dialog.open) { status.textContent = ''; measure(); } };
-      current.onerror = () => { if (image === current && dialog.open) { current.hidden = true; status.textContent = t('图示加载失败，请关闭后重试。'); } };
+      current.onerror = () => { if (image === current && dialog.open) { current.hidden = true; status.textContent = t('图表加载失败，请关闭后重试。'); } };
       canvas.replaceChildren(current);
       if (!dialog.open) dialog.showModal();
       observer.observe(canvas); current.src = value.image.url;
