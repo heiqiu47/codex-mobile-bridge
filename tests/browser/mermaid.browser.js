@@ -52,6 +52,14 @@
     await tick();fixture.append(detached);
     check('nested quoted list fence renders after detached construction',!!detached.querySelector('.mermaid-card img'));
     BridgeMermaidCards.clearScope(nested);
+    const budget=BridgeMermaidCards.createScope();
+    for(let index=0;index<25;index++){
+      const owner=document.createElement('div');owner.__mermaidScope=budget;owner.__mermaidIdentity='file:'+index;
+      renderMarkdown(owner,'```mermaid\ngraph TD\n A'+index+'-->B\n```');fixture.append(owner);
+    }
+    await tick();await tick();
+    check('shared scope bounds diagrams across files',budget.cache.size<=24&&budget.bytes<=6*1024*1024);
+    BridgeMermaidCards.clearScope(budget);
     return {passed:checks.length,checks};
   } finally {fixture.remove();window.BridgeMermaidRenderer=originalRenderer;window.BridgeClipboard=originalClipboard;}
 })();

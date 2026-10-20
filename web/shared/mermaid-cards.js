@@ -3,8 +3,9 @@
   const MAX_SOURCE = 30000, MAX_ENTRIES = 24, MAX_DATA = 6 * 1024 * 1024;
   const t = value => typeof BridgeI18n === 'undefined' ? value : BridgeI18n.t(value);
   const theme = () => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
-  function createScope() { return {cache:new Map(), pending:new Map(), bytes:0, views:new Map(), disposed:false}; }
-  function clearScope(scope) { if (!scope) return; scope.cache.clear(); scope.pending.clear(); scope.views.clear(); scope.bytes=0; scope.disposed=true; }
+  function createScope() { return {cache:new Map(), pending:new Map(), bytes:0, views:new Map(), revision:0, disposed:false}; }
+  function resetScope(scope) { if (!scope) return; scope.cache.clear(); scope.pending.clear(); scope.views.clear(); scope.bytes=0; scope.revision++; }
+  function clearScope(scope) { if (!scope) return; resetScope(scope); scope.disposed=true; }
   function remember(scope,key,image) {
     if (!scope || scope.disposed || image.url.length > MAX_DATA) return;
     const prior=scope.cache.get(key);
@@ -55,12 +56,13 @@
       if(cached){scope.cache.delete(key);scope.cache.set(key,cached);display(cached);return;}
       rendering=true;status.textContent=t('正在生成图表…');
       const ticket=++generation;
+      const revision=scope?.revision;
       let task=scope?.pending.get(key);
       if(!task){
         task=Promise.resolve().then(()=>renderer.render(source,{theme:theme()}));
         if(scope && !scope.disposed){
           scope.pending.set(key,task);
-          task.then(result=>{if(!scope.disposed && result?.url)remember(scope,key,result);}).catch(()=>{}).finally(()=>{if(scope.pending.get(key)===task)scope.pending.delete(key);});
+          task.then(result=>{if(!scope.disposed && scope.revision===revision && result?.url)remember(scope,key,result);}).catch(()=>{}).finally(()=>{if(scope.pending.get(key)===task)scope.pending.delete(key);});
         }
       }
       task.then(result=>{
@@ -95,5 +97,5 @@
       document.querySelectorAll('.mermaid-card').forEach(card=>card.__refreshMermaid?.());
   }).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
   document.addEventListener('bridge-language',()=>document.querySelectorAll('.mermaid-card').forEach(card=>card.__relabelMermaid?.()));
-  window.BridgeMermaidCards={create,createScope,clearScope};
+  window.BridgeMermaidCards={create,createScope,resetScope,clearScope};
 })();
