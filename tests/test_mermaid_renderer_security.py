@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 import test_bridge as support
-from bridge.api.mermaid_render import SHELL_FILE, shell_csp
+from bridge.api.mermaid_render import shell_bytes, shell_csp
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,7 +30,9 @@ class GatewayMermaidTests(unittest.TestCase):
         login = self.login()
         status, headers, body = self.raw('/mermaid-render-shell', login)
         self.assertEqual(status, 200)
-        self.assertEqual(body, (ROOT / 'web' / SHELL_FILE).read_bytes())
+        self.assertEqual(body, shell_bytes(ROOT / 'web'))
+        self.assertIn(b'vendor/mermaid/mermaid.min.js?v=', body)
+        self.assertIn(b'mermaid-render-frame.js?v=', body)
         self.assertEqual(headers['Content-Security-Policy'], shell_csp(self.origin))
         self.assertIn('sandbox allow-scripts', headers['Content-Security-Policy'])
         self.assertIn("connect-src 'none'", headers['Content-Security-Policy'])
@@ -76,7 +78,7 @@ class RelayMermaidTests(unittest.IsolatedAsyncioTestCase):
         for prefix in ('', '/d/' + 'a' * 32):
             response = await self.client.get(prefix + '/mermaid-render-shell')
             self.assertEqual(response.status, 200)
-            self.assertEqual(await response.read(), (ROOT / 'web' / SHELL_FILE).read_bytes())
+            self.assertEqual(await response.read(), shell_bytes(ROOT / 'web'))
             self.assertEqual(response.headers['Content-Security-Policy'], shell_csp(self.origin))
             self.assertEqual((await self.client.get(prefix + '/mermaid-render-shell?source=x')).status, 404)
             page = await self.client.get(prefix + '/')

@@ -97,6 +97,7 @@
     const promise = new Promise((resolve, reject) => {
       ready = {resolve, reject, timer:setTimeout(() => reset(Error('Diagram renderer failed to load')), 15000)};
     });
+    ready.promise = promise;
     frame.src = (window.BridgeRelayBase || '') + '/mermaid-render-shell';
     (document.body || document.documentElement).append(frame);
     return promise;

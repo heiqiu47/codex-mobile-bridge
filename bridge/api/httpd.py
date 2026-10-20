@@ -41,7 +41,7 @@ from bridge.features.sessions.create import CreationError
 from bridge.features.accounts.account import AccountError
 from bridge.features.terminals.manager import TerminalSessionMissing
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
-from bridge.api.mermaid_render import SHELL_PATH as MERMAID_SHELL_PATH, SHELL_FILE as MERMAID_SHELL_FILE, shell_csp as mermaid_shell_csp
+from bridge.api.mermaid_render import SHELL_PATH as MERMAID_SHELL_PATH, shell_csp as mermaid_shell_csp, shell_bytes as mermaid_shell_bytes
 
 LOG = logging.getLogger(__name__)
 from bridge.api.assets import STATIC, FONT_ROUTE, PDF_CMAP_ROUTE, PDF_FONT_ROUTE, VERSION_KEY, served_asset_bytes
@@ -442,7 +442,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == MERMAID_SHELL_PATH:
                 if write or query:
                     return self.output(405, {'error': '请求方式无效'})
-                return self.output(200, (self.server.web_dir / MERMAID_SHELL_FILE).read_bytes(),
+                return self.output(200, mermaid_shell_bytes(self.server.web_dir),
                                    'text/html; charset=utf-8', mermaid_shell=True)
             mobile_update = re.fullmatch(r'/api/mobile/update(?:/(prepare|status/([a-f0-9]{64})|packages/([a-f0-9]{64})))?', path)
             if mobile_update:
