@@ -5,6 +5,7 @@
 .mermaid-preview button{min-width:44px;min-height:44px;margin:0;padding:8px 12px;border:1px solid #ffffff30;border-radius:10px;background:#ffffff12;color:#fff;font:inherit;font-size:14px;cursor:pointer}
 .mermaid-preview button:disabled{opacity:.4;cursor:default}
 .mermaid-preview-toolbar #mermaid-preview-close{margin-right:auto}
+.mermaid-preview-toolbar #mermaid-preview-copy{position:static}
 .mermaid-preview-canvas{position:relative;flex:1;min-width:0;min-height:0;overflow:hidden;touch-action:none;user-select:none;overscroll-behavior:contain}
 .mermaid-preview-canvas img{position:absolute;left:50%;top:50%;display:block;max-width:none;max-height:none;object-fit:contain;transform:translate(-50%,-50%);pointer-events:none}
 .mermaid-preview-canvas img[hidden],.mermaid-preview-canvas[hidden]{display:none}
