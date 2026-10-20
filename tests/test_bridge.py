@@ -18,7 +18,7 @@ from unittest.mock import patch
 from bridge.features.auth.auth import Auth, password_record
 from bridge.features.workspace.files import artifact_paths
 from bridge.api.httpd import GatewayServer
-from bridge.api.assets import asset_bytes
+from bridge.api.assets import asset_bytes, served_asset_bytes
 from bridge.clients.codex.ipc import DesktopIPC, IPCError
 from bridge.features.sessions.model import apply_patches, normalize_state, normalize_request
 from bridge.app.service import Bridge, LiveSession, validate_form
@@ -936,11 +936,8 @@ class HttpTests(unittest.TestCase):
                 match = re.search(rb'<meta name="bridge-style-nonce" content="([A-Za-z0-9_-]{32})">', body)
                 self.assertIsNotNone(match)
                 self.assertIn("'nonce-" + match[1].decode() + "'", response.getheader('Content-Security-Policy'))
-                # Static references are served with a content-hash query string, so
-                # compare the document with version tags normalised on both sides.
-                served = re.sub(rb'\?v=[^"\']*', b'', body.replace(match[0], b'', 1))
-                expected = re.sub(rb'\?v=[^"\']*', b'', (ROOT / 'web' / 'index.html').read_bytes())
-                self.assertEqual(served, expected)
+                self.assertEqual(response.getheader('Cache-Control'), 'no-store')
+                self.assertEqual(body.replace(match[0], b'', 1), served_asset_bytes(ROOT / 'web', '/'))
 
     def test_cross_site_navigation_keeps_api_embedding_origin_and_host_guards(self):
         navigation = {'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate',

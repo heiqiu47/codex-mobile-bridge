@@ -12,6 +12,7 @@ import socket
 import platform
 import threading
 import time
+from functools import lru_cache
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,7 +23,7 @@ from bridge.features.workspace.preferences import transfer_settings
 from bridge.features.workspace.files import workspace_relative_path
 from bridge.features.notifications.channels import settings as notification_settings, save_settings as save_notification_settings, publish, publish_bark, publish_pushplus
 from socketserver import TCPServer
-from urllib.parse import parse_qs, urlsplit, quote
+from urllib.parse import parse_qs, parse_qsl, urlsplit, quote
 
 from bridge.clients.manager import DesktopSessions, READS, WRITES
 from bridge.clients.uploads import DesktopUploads
@@ -42,8 +43,19 @@ from bridge.features.terminals.manager import TerminalSessionMissing
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
 
 LOG = logging.getLogger(__name__)
-from bridge.api.assets import (STATIC, FONT_ROUTE, PDF_CMAP_ROUTE, PDF_FONT_ROUTE,
-                               asset_digest, versioned_text)
+from bridge.api.assets import STATIC, FONT_ROUTE, PDF_CMAP_ROUTE, PDF_FONT_ROUTE, VERSION_KEY, served_asset_bytes
+
+
+@lru_cache(maxsize=32)
+def _prepared_static(data, content_type, use_gzip):
+    digest = hashlib.sha256(data).hexdigest()
+    compressed = False
+    if use_gzip and content_type.startswith(('text/', 'application/manifest+json')) and len(data) >= 1024:
+        candidate = gzip.compress(data, compresslevel=5, mtime=0)
+        if len(candidate) < len(data):
+            data, compressed = candidate, True
+    etag = '"sha256-' + hashlib.sha256(data).hexdigest() + '"'
+    return digest, data, compressed, etag
 
 THREAD_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})(?:/(events|send|stop|history|respond|reconnect|queue|catalog|settings|permissions|poll|timeline|changes|detail|notifications|uploads|message-action|rename))?$")
 UPLOAD_PREVIEW_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/uploads/([0-9a-f-]{36})/preview$")
@@ -159,7 +171,7 @@ class Handler(BaseHTTPRequestHandler):
                          "default-src 'self'; script-src 'self'; style-src " + style_source + "; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src " + frame_source + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
-    def output(self, status, data, content_type="application/json; charset=utf-8", cookie=None, content_disposition=None, preview_shell=False, style_nonce=None, cache_control="no-store", etag=None):
+    def output(self, status, data, content_type="application/json; charset=utf-8", cookie=None, content_disposition=None, preview_shell=False, style_nonce=None):
         # Keep the browser cookie in step with the renewed server-side deadline,
         # including long-lived pages that do not revisit /api/auth.
         if cookie is None and 200 <= status < 300 and urlsplit(self.path).path.startswith('/api/'):
@@ -176,11 +188,9 @@ class Handler(BaseHTTPRequestHandler):
             if len(candidate) < len(body):
                 body, compressed = candidate, True
         self.send_response(status)
-        self.headers_common(cache_control=cache_control, preview_shell=preview_shell, style_nonce=style_nonce)
+        self.headers_common(preview_shell=preview_shell, style_nonce=style_nonce)
         self.send_header("Content-Type", content_type)
         self.send_header('Vary', 'Accept-Encoding')
-        if etag:
-            self.send_header('ETag', etag)
         if compressed:
             self.send_header('Content-Encoding', 'gzip')
         self.send_header("Content-Length", str(len(body)))
@@ -193,12 +203,36 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def not_modified(self, etag):
-        self.send_response(304)
-        self.headers_common(cache_control="no-cache")
-        self.send_header('ETag', etag)
+    def static_output(self, path, content_type):
+        data = served_asset_bytes(self.server.web_dir, path)
+        if path in ('/', '/index.html'):
+            nonce = secrets.token_urlsafe(24)
+            data = data.replace(b'<head>', ('<head><meta name="bridge-style-nonce" content="' + nonce + '">').encode(), 1)
+            return self.output(200, data, content_type, style_nonce=nonce)
+        accepts_gzip = re.search(r'(?:^|,)\s*gzip\s*(?:;\s*q=([01](?:\.\d+)?))?\s*(?:,|$)',
+                                 self.headers.get('Accept-Encoding', ''), re.IGNORECASE)
+        use_gzip = bool(accepts_gzip and float(accepts_gzip[1] or '1') > 0)
+        digest, data, compressed, etag = _prepared_static(data, content_type, use_gzip)
+        version = parse_qsl(urlsplit(self.path).query, keep_blank_values=True)
+        immutable = version == [(VERSION_KEY, digest)]
+        cache_control = 'public, max-age=31536000, immutable' if immutable else 'no-cache'
+        validators = self.headers.get('If-None-Match', '')
+        matches = any(tag.strip() == '*' or tag.strip().removeprefix('W/') == etag
+                      for tag in validators.split(','))
+        self.send_response(304 if matches else 200)
+        self.headers_common(cache_control=cache_control)
+        self.send_header('Content-Type', content_type)
         self.send_header('Vary', 'Accept-Encoding')
+        self.send_header('ETag', etag)
+        if compressed:
+            self.send_header('Content-Encoding', 'gzip')
+        if not matches:
+            self.send_header('Content-Length', str(len(data)))
+        if self.close_connection:
+            self.send_header('Connection', 'close')
         self.end_headers()
+        if not matches:
+            self.wfile.write(data)
 
     def cookie(self, token, clear=False):
         secure = "; Secure" if self.headers.get("Host") in self.server.secure_hosts else ""
@@ -311,38 +345,22 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(urlsplit(self.path).query)
             if not write and path in STATIC:
                 _, content_type = STATIC[path]
-                digest = asset_digest(self.server.web_dir, path)
-                etag = '"' + digest + '"'
-                immutable = query.get('v', [''])[0] == digest
-                # The shell embeds a per-document CSP nonce, so it must never be reused
-                # from a cache; only immutable sub-resources may skip revalidation.
-                shell = path == '/'
-                if not shell and not immutable and etag in self.headers.get('If-None-Match', ''):
-                    return self.not_modified(etag)
-                data = versioned_text(self.server.web_dir, path)
-                nonce = secrets.token_urlsafe(24) if path == '/' else None
-                if nonce:
-                    data = data.replace(b'<head>', ('<head><meta name="bridge-style-nonce" content="' + nonce + '">').encode(), 1)
-                if shell:
-                    return self.output(200, data, content_type, style_nonce=nonce)
-                return self.output(200, data, content_type, style_nonce=nonce,
-                                   cache_control=('public, max-age=31536000, immutable' if immutable else 'no-cache'),
-                                   etag=etag)
+                return self.static_output(path, content_type)
             font = FONT_ROUTE.fullmatch(path)
             if not write and font:
                 file = self.server.web_dir / 'vendor/katex/fonts' / font[1]
                 if file.is_file():
-                    return self.output(200, file.read_bytes(), 'font/'+font[2])
+                    return self.static_output(path, 'font/'+font[2])
             cmap = PDF_CMAP_ROUTE.fullmatch(path)
             if not write and cmap:
                 file = self.server.web_dir / 'vendor/pdfjs/cmaps' / cmap[1]
                 if file.is_file():
-                    return self.output(200, file.read_bytes(), 'application/octet-stream')
+                    return self.static_output(path, 'application/octet-stream')
             pdf_font = PDF_FONT_ROUTE.fullmatch(path)
             if not write and pdf_font:
                 file = self.server.web_dir / 'vendor/pdfjs/standard_fonts' / pdf_font[1]
                 if file.is_file():
-                    return self.output(200, file.read_bytes(), 'font/ttf' if file.suffix == '.ttf' else 'application/octet-stream')
+                    return self.static_output(path, 'font/ttf' if file.suffix == '.ttf' else 'application/octet-stream')
             if not write and path == "/api/auth":
                 session = self.login_session()
                 discovery = getattr(self.server, 'connection_discovery', None)

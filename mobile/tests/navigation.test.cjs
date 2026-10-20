@@ -50,3 +50,20 @@ test('native app-bar menu reads the shared toggle without creating one for old o
   assert.equal(vm.runInNewContext(script,{document:{getElementById:id=>id==='app'?app:button}}),expected);
  }
 });
+
+test('iOS replaces tunnel error pages with a native way back to the computer list',()=>{
+ const swift=fs.readFileSync(path.join(root,'mobile/ios/BridgePreview/App.swift'),'utf8');
+ const policy=swift.slice(swift.indexOf('decidePolicyFor response: WKNavigationResponse'),swift.indexOf('decidePolicyFor action: WKNavigationAction'));
+ assert.match(policy,/ConnectionDiscovery\.retryableStatus\(status\)/);
+ assert.match(policy,/decisionHandler\(recover \? \.cancel : \.allow\)/);
+ assert.match(policy,/showConnectionError\(status: status\); recoverConnection\(\)/);
+ const failed=swift.slice(swift.indexOf('didFailProvisionalNavigation'),swift.indexOf('private func showConnectionError'));
+ assert.match(failed,/guard failure\.domain != NSURLErrorDomain \|\| failure\.code != NSURLErrorCancelled else \{ return \}/);
+ assert.match(failed,/showConnectionError\(status: nil\)/);
+ const view=swift.slice(swift.indexOf('private func showConnectionError'),swift.indexOf('didFail navigation: WKNavigation!'));
+ assert.match(view,/MobileStrings\.text\("返回电脑列表"\)[^\n]*self\?\.home\(\)/);
+ assert.match(view,/self\.connect\(route, address: address\)/);
+ assert.match(swift,/private func clear\(\) \{[^\n]*connectionError = nil/);
+ const finished=swift.slice(swift.indexOf('didFinish navigation: WKNavigation!'),swift.indexOf('didFailProvisionalNavigation'));
+ assert.match(finished,/webView === web, connectionError == nil/);
+});

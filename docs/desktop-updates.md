@@ -22,6 +22,8 @@ macOS 更新签名与 Apple Developer ID、公证是不同机制；该功能不�
 
 ## 发布流程
 
+向 `main` 合并或推送源码会运行测试 CI，但不会自动构建桌面或手机 App，也不会发布更新。需要打包时，手动运行 **Desktop builds** / **iOS unsigned build**，或在准备发布后按下面的版本标签流程执行。仅合并源码时无需修改版本号或创建 tag。
+
 1. 同步 `package.json` / `package-lock.json`、Android/iOS 版本与递增的构建号，更新 `RELEASE_NOTES.md`。保留已有 Android 签名和移动端应用身份，不能临时生成新密钥替代覆盖升级。
 2. 仓库 Actions Secret `UPDATE_SIGNING_KEY` 必须对应 `desktop/features/updates/update-public-key.pem` 中的 Ed25519 公钥。私钥不提交、不放入构建产物；不要重新生成公钥覆盖现有更新身份。
 3. 运行源码测试及五个原生 Desktop builds 目标：macOS arm64、macOS x64、Windows x64、Ubuntu x64、Ubuntu ARM64。Mac 网关与 Electron 在对应架构 runner 构建；核验安装、架构、签名、启动、更新交接、失败恢复与配置保留；使用升级前签发的可信手机绑定，在安装替换及回滚后重新验证认证。iOS 可复用构建生成未签名 IPA 与源码 ZIP；Android 用原签名在本地生成 APK。

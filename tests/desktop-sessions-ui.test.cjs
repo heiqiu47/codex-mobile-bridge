@@ -49,6 +49,22 @@ test('legacy session snapshots remain readable and migrate to durable storage on
  ui.view.bindListCache(identity,'gateway.test');assert.equal(ui.view.providerViews.get('claude').rows[0].id,'legacy');
  ui.view.previewCachedList('claude');assert.equal(JSON.parse(ui.storage.get(key)).rows[0].id,'legacy');
 });
+
+test('switching computers preserves each authorized provider snapshot while a same-computer account change clears the old one',()=>{
+ const storage=new Map(),a='a'.repeat(64),b='b'.repeat(64),c='c'.repeat(64);
+ const keyA=`desktop-list-v1:${a}:computer-a.test:claude`,keyB=`desktop-list-v1:${b}:computer-b.test:claude`;
+ storage.set(keyA,JSON.stringify({rows:[{id:'chat-a',title:'Computer A'}]}));
+ storage.set(keyB,JSON.stringify({rows:[{id:'chat-b',title:'Computer B'}]}));
+ const ui=fixture({storage});ui.view.bindListCache(a,'computer-a.test');
+ assert.equal(ui.view.providerViews.get('claude').rows[0].id,'chat-a');
+ ui.view.bindListCache(b,'computer-b.test');
+ assert.equal(storage.has(keyA),true,'switching to B retains A for a later authorized return');
+ assert.equal(ui.view.providerViews.get('claude').rows[0].id,'chat-b');
+ ui.view.bindListCache(a,'computer-a.test');
+ assert.equal(ui.view.providerViews.get('claude').rows[0].id,'chat-a');
+ ui.view.bindListCache(c,'computer-a.test');
+ assert.equal(storage.has(keyA),false,'a new account on the same computer clears its old snapshot');
+});
 test('DeepSeek stores only complete list reads and restores its own provider rows',async()=>{
  const storage=new Map(),view=fixture({storage});view.view.bindListCache('a'.repeat(64),'gateway.test');
  view.setHandler(async()=>({sessions:[{id:'partial',title:'Partial'}],complete:false}));await view.view.choose('deepseek');

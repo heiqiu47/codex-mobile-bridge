@@ -460,18 +460,94 @@ test('refresh keeps a dismissed SSH fault dismissed while that host is pending',
 });
 
 test('list snapshot is restored only after matching authenticated gateway and session',async()=>{
-  const sessionStore=new Map(),first=await fixture({sessionStore,skipStartup:true});first.nodes.get('app').hidden=false;
+  const sessionStore=new Map(),localStore=new Map(),first=await fixture({sessionStore,localStore,skipStartup:true});first.nodes.get('app').hidden=false;
   first.run("listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'"+'a'.repeat(64)+"'})");
   first.setList(()=>first.response({sessions:[{id:'saved',host:'local',title:'Saved',projectKey:'p',projectName:'P',recency:1}],remoteHosts:[],availableSources:['desktop'],unavailableHosts:[],complete:true}));
-  await first.run('loadList(true)');assert.equal(sessionStore.size,1);
-  const second=await fixture({sessionStore,skipStartup:true});assert.equal(second.run('restoreListSnapshot()'),false);
+  await first.run('loadList(true)');assert.equal(localStore.size,1);assert.equal(sessionStore.size,0);
+  const second=await fixture({sessionStore,localStore,skipStartup:true});assert.equal(second.run('restoreListSnapshot()'),false);
   second.run("listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'"+'b'.repeat(64)+"'})");
   assert.equal(second.run('restoreListSnapshot()'),false);
   second.run("listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'"+'a'.repeat(64)+"'})");
   assert.equal(second.run('listIdentity'),first.run('listIdentity'));
   assert.equal(second.run('currentListFilter()'),first.run('currentListFilter()'));
   assert.equal(second.run('restoreListSnapshot()'),true);assert.equal(second.nodes.get('sessions').children[0].dataset.id,'saved');
-  second.run('clearListSnapshot()');assert.equal(sessionStore.size,0);
+  second.run('clearListSnapshot()');assert.equal(sessionStore.size,0);assert.equal([...localStore.keys()].some(key=>key.startsWith('codex-list-v1:')),false);
+});
+
+test('Codex list snapshot survives a new storage session and remains scoped to its authenticated computer',async()=>{
+  const localStore=new Map(),a='a'.repeat(64),b='b'.repeat(64);
+  const first=await fixture({localStore,skipStartup:true});first.nodes.get('app').hidden=false;
+  first.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${a}'})`);
+  first.setList(()=>first.response({sessions:[{id:'saved-a',host:'ssh:a',title:'Computer A',projectKey:'p',projectName:'P',recency:1}],remoteHosts:[],availableSources:['desktop'],unavailableHosts:[],complete:true}));
+  await first.run('loadList(true)');
+  const second=await fixture({localStore,skipStartup:true});
+  assert.equal(second.run('restoreListSnapshot()'),false,'unknown identity cannot paint private rows');
+  second.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${b}'})`);
+  assert.equal(second.run('restoreListSnapshot()'),false,'computer B cannot paint A rows');
+  second.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${a}'})`);
+  assert.equal(second.run('restoreListSnapshot()'),true,'returning to A restores before a network read');
+  assert.equal(second.nodes.get('sessions').children[0].dataset.id,'saved-a');
+  assert.equal(second.listRequests.length,0);
+});
+
+test('legacy Codex tab snapshot migrates after authenticated reentry',async()=>{
+  const identity='a'.repeat(64),key=`codex-list-v1:${identity}:["",false,"all"]`;
+  const sessionStore=new Map([[key,JSON.stringify({rows:[{id:'legacy',host:'local',title:'Legacy',projectKey:'p',projectName:'P',recency:1}],sources:['desktop'],hosts:[],offset:1,hasMore:false})]]),localStore=new Map();
+  const ui=await fixture({sessionStore,localStore,skipStartup:true});
+  assert.equal(ui.run('restoreListSnapshot()'),false);
+  ui.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${identity}'})`);
+  assert.equal(ui.run('restoreListSnapshot()'),true);
+  assert.equal(ui.nodes.get('sessions').children[0].dataset.id,'legacy');
+  assert.equal(localStore.has(key),true);assert.equal(sessionStore.has(key),false);
+});
+
+test('oversized or malformed Codex snapshots cannot block authenticated list startup',async()=>{
+  const identity='a'.repeat(64),key=`codex-list-v1:${identity}:["",false,"all"]`;
+  const valid={rows:[{id:'saved',host:'local',title:'Saved',projectKey:'p',projectName:'P',recency:1}],sources:['desktop'],hosts:[],offset:1,hasMore:false};
+  const localStore=new Map([[key,JSON.stringify({...valid,rows:[{...valid.rows[0],title:'X'.repeat(600*1024)}]})]]);
+  const sessionStore=new Map(),ui=await fixture({localStore,sessionStore,skipStartup:true});
+  ui.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${identity}'})`);
+  assert.equal(ui.run('restoreListSnapshot()'),false);
+  localStore.set(key,JSON.stringify({...valid,rows:Array.from({length:201},(_,i)=>({...valid.rows[0],id:String(i)}))}));
+  assert.equal(ui.run('restoreListSnapshot()'),false);
+  localStore.set(key,'{broken');sessionStore.set(key,JSON.stringify(valid));
+  assert.equal(ui.run('restoreListSnapshot()'),true);
+  assert.equal(ui.nodes.get('sessions').children[0].dataset.id,'saved');
+  assert.equal(sessionStore.has(key),false);
+});
+
+test('failed and incomplete Codex refreshes retain the last complete durable snapshot',async()=>{
+  const localStore=new Map(),ui=await fixture({localStore,skipStartup:true});ui.nodes.get('app').hidden=false;
+  ui.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${'a'.repeat(64)}'})`);
+  ui.setList(()=>ui.response({sessions:[{id:'saved',host:'local',title:'Saved',projectKey:'p',projectName:'P',recency:1}],remoteHosts:[],availableSources:['desktop'],unavailableHosts:[],complete:true}));
+  await ui.run('loadList(true)');const saved=[...localStore.values()][0];
+  ui.setList(()=>ui.response({error:'offline'},503));await assert.rejects(ui.run('loadList(true)'),/offline/);
+  assert.equal([...localStore.values()][0],saved);
+  ui.setList(()=>ui.response({sessions:[],remoteHosts:[],availableSources:[],unavailableHosts:[{host:'local',error:'partial'}],complete:false}));
+  await assert.rejects(ui.run('loadList(true)'),/partial/);assert.equal([...localStore.values()][0],saved);
+});
+
+test('HTTP 401 clears durable Codex snapshots while transient list failure does not',async()=>{
+  const localStore=new Map(),ui=await fixture({localStore,skipStartup:true});ui.nodes.get('app').hidden=false;
+  ui.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${'a'.repeat(64)}'})`);
+  ui.setList(()=>ui.response({sessions:[{id:'saved',host:'local',title:'Saved',projectKey:'p',projectName:'P',recency:1}],remoteHosts:[],availableSources:['desktop'],unavailableHosts:[],complete:true}));
+  await ui.run('loadList(true)');assert.equal([...localStore.keys()].some(key=>key.startsWith('codex-list-v1:')),true);
+  ui.setList(()=>ui.response({error:'temporary'},503));await assert.rejects(ui.run('loadList(true)'),/temporary/);
+  assert.equal([...localStore.keys()].some(key=>key.startsWith('codex-list-v1:')),true);
+  ui.setList(()=>ui.response({error:'login required'},401));await ui.run('loadList(true)');
+  assert.equal([...localStore.keys()].some(key=>key.startsWith('codex-list-v1:')),false);
+});
+
+test('durable Codex list snapshots stay bounded across filters and oversized rows',async()=>{
+  const localStore=new Map(),ui=await fixture({localStore,skipStartup:true});
+  ui.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${'a'.repeat(64)}'})`);
+  ui.run("listRows=[{id:'saved',host:'local',title:'Saved',recency:1}];availableSources=['desktop'];listHostIds=[];listOffset=1;listHasMore=false");
+  for(let i=0;i<9;i++)ui.run(`saveListSnapshot('filter-${i}')`);
+  const keys=[...localStore.keys()].filter(key=>key.startsWith('codex-list-v1:'));
+  assert.equal(keys.length,8);assert.equal(keys.some(key=>key.endsWith('filter-0')),false);
+  ui.run("listRows=[{id:'huge',host:'local',title:'X'.repeat(600*1024),recency:1}]");
+  ui.run("saveListSnapshot('oversized')");
+  assert.equal([...localStore.keys()].some(key=>key.endsWith('oversized')),false);
 });
 
 test('LAN HTTP list snapshots use the server identity without Web Crypto',async()=>{
@@ -483,7 +559,7 @@ test('LAN HTTP list snapshots use the server identity without Web Crypto',async(
 
 test('logout cache cleanup removes desktop provider snapshots with Codex snapshots',async()=>{
   const sessionStore=new Map([['desktop-list-v1:secret:gateway:claude','private'],['codex-list-v1:secret:all','private'],['unrelated','keep']]);
-  const localStore=new Map([['desktop-list-v1:secret:gateway:claude','private'],['desktop-list-v1:secret:gateway:deepseek','private'],['unrelated','keep']]);
+  const localStore=new Map([['desktop-list-v1:secret:gateway:claude','private'],['desktop-list-v1:secret:gateway:deepseek','private'],['codex-list-v1:secret:all','private'],['unrelated','keep']]);
   const ui=await fixture({sessionStore,localStore,skipStartup:true});ui.run('clearListSnapshot()');
   assert.deepEqual([...sessionStore], [['unrelated','keep']]);
   assert.deepEqual([...localStore], [['unrelated','keep']]);

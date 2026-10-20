@@ -3,15 +3,16 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 function fixture(desktop=false){
   function node(tag){return {tag,textContent:'',value:'',hidden:false,disabled:false,scrollTop:0,children:[],attributes:{},classList:{add(){}},
     append(...children){for(const child of children){child.remove();child.parent=this;child.parentNode=this;this.children.push(child);}},insertBefore(child,before){child.remove();const index=before?this.children.indexOf(before):-1;child.parent=this;child.parentNode=this;this.children.splice(index<0?this.children.length:index,0,child);},replaceChildren(...children){for(const child of [...this.children])child.remove();this.append(...children);if(this.className==='accounts-models')this.scrollTop=0;},setAttribute(k,v){this.attributes[k]=v;},closest(){return null;},reset(){},get isConnected(){for(let parent=this;parent;parent=parent.parent)if(parent===root)return true;return false;},focus(){context.document.activeElement=this;},showModal(){this.open=true;},close(){this.open=false;this.onclose?.();},remove(){if(this.parent){this.parent.children=this.parent.children.filter(n=>n!==this);this.parent=null;this.parentNode=null;}}};}
-  const root=node('div'),requests=[],prompts=[];let confirmed=true,value={accounts:[{id:'a',name:'API <script>',kind:'api',baseUrl:'https://example.test/v1',model:'model'}],activeId:null,switch:{phase:'idle'},canSwitch:true};
+  const root=node('div'),requests=[],prompts=[],listeners=new Map();let confirmed=true,value={accounts:[{id:'a',name:'API <script>',kind:'api',baseUrl:'https://example.test/v1',model:'model'}],activeId:null,switch:{phase:'idle'},canSwitch:true},configHidden=false,ancestorHidden=false;
+  root.closest=selector=>selector==='[hidden],.client-config-hidden'&&(configHidden||ancestorHidden)?root:null;
   let request=async()=>structuredClone(value),read=async()=>structuredClone(value),readCalls=0,timers=[],now=Date.now();
   class Clock extends Date{static now(){return now;}}
-  const context=vm.createContext({document:{createElement:node,body:node('body'),hidden:false,activeElement:null},root,Date:Clock,crypto:{randomUUID:()=> '11111111-1111-4111-8111-111111111111'},
+  const context=vm.createContext({document:{createElement:node,body:node('body'),hidden:false,activeElement:null,addEventListener:(name,fn)=>listeners.set(name,[...(listeners.get(name)||[]),fn])},root,Date:Clock,crypto:{randomUUID:()=> '11111111-1111-4111-8111-111111111111'},
     setTimeout:(fn,ms)=>{timers.push({fn,ms});return timers.length;},clearTimeout:id=>{if(timers[id-1])timers[id-1].cancelled=true;},localStorage:{getItem(){return null;},setItem(){}},window:{confirm:message=>{prompts.push(message);return confirmed;},prompt:()=>null}});
   for(const f of ['web/shared/i18n.js','web/features/accounts/account.js','web/features/accounts/accounts.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',f),'utf8'),context);
   const Class=vm.runInContext('AccountsPanel',context),panel=new Class({root,desktop,read:()=>{readCalls++;return read();},request:v=>{requests.push(v);return request(v);}});
   const all=(n=root)=>[n,...n.children.flatMap(all)];
-  return {panel,root,requests,prompts,all,timers,readCalls:()=>readCalls,focus:node=>context.document.activeElement=node,blur:()=>context.document.activeElement=context.document.body,active:()=>context.document.activeElement,now:()=>now,advance:ms=>now+=ms,hidden:value=>context.document.hidden=value,noRandomUUID:()=>{context.crypto={getRandomValues:bytes=>require("node:crypto").randomFillSync(bytes)};},text:()=>all().map(n=>n.textContent).join('\n'),setValue:v=>value=v,value:()=>value,setRequest:v=>request=v,setRead:v=>read=v,confirm:v=>confirmed=v,
+  return {panel,root,requests,prompts,all,timers,readCalls:()=>readCalls,focus:node=>context.document.activeElement=node,blur:()=>context.document.activeElement=context.document.body,active:()=>context.document.activeElement,now:()=>now,advance:ms=>now+=ms,hidden:value=>{context.document.hidden=value;for(const fn of listeners.get('visibilitychange')||[])fn();},configHidden:value=>{configHidden=value;for(const fn of listeners.get('bridge-client-config')||[])fn();},ancestorHidden:value=>{ancestorHidden=value;},fireTimer:async ms=>{const timer=timers.find(row=>!row.cancelled&&row.ms===ms);assert.ok(timer,`expected ${ms}ms timer`);timer.cancelled=true;await timer.fn();},noRandomUUID:()=>{context.crypto={getRandomValues:bytes=>require("node:crypto").randomFillSync(bytes)};},text:()=>all().map(n=>n.textContent).join('\n'),setValue:v=>value=v,value:()=>value,setRequest:v=>request=v,setRead:v=>read=v,confirm:v=>confirmed=v,
     language:()=>{vm.runInContext("BridgeI18n.setLanguage('en')",context);panel.render();}};
 }
 test('native login card survives an empty saved list without enrollment or switching actions',async()=>{
@@ -141,9 +142,9 @@ for(const desktop of [false,true])test(`${desktop?'desktop':'web'} automatically
  const ui=fixture(desktop),official={id:'official',kind:'chatgpt',name:'Official'};
  ui.setValue({...ui.value(),activeId:'official',accounts:[...ui.value().accounts,official]});
  ui.setRequest(async()=>{official.details={usage:{status:'ready',checkedAt:ui.now()/1000,limits:[]}};return structuredClone(ui.value());});
- ui.root.closest=selector=>selector==='[hidden]'?{}:null;
+ ui.ancestorHidden(true);
  await ui.panel.refresh();assert.equal(ui.requests.length,0);
- ui.root.closest=()=>null;await ui.panel.refresh();assert.equal(ui.requests.length,1);
+ ui.ancestorHidden(false);await ui.panel.refresh();assert.equal(ui.requests.length,1);
  assert.equal(ui.requests[0].section,'usage');assert.equal(ui.requests[0].id,'official');
  assert.equal(ui.all(ui.panel.rows.children[0]).find(n=>n.tag==='h3').textContent,'Official');
  assert.equal(ui.all(ui.panel.rows.children[0]).find(n=>n.textContent==='当前接入').disabled,true);
@@ -188,11 +189,69 @@ test('viewed quotas refresh at five minutes only while the account page is visib
  ui.setValue({...ui.value(),accounts:[official]});await ui.panel.refresh();assert.equal(ui.requests.length,0);
  official.details.usage.checkedAt=Date.now()/1000-301;
  ui.root.closest=selector=>selector==='dialog'?{open:false}:null;await ui.panel.refresh();assert.equal(ui.requests.length,0);
- ui.root.closest=selector=>selector==='[hidden]'?{}:null;await ui.panel.refresh();assert.equal(ui.requests.length,0);
+ ui.root.closest=selector=>selector==='[hidden],.client-config-hidden'?{}:null;await ui.panel.refresh();assert.equal(ui.requests.length,0);
  ui.root.closest=()=>null;
  ui.setRequest(async()=>{official.details.usage.checkedAt=Date.now()/1000;return structuredClone(ui.value());});
  await ui.panel.refresh();assert.equal(ui.requests.length,1);assert.equal(ui.requests[0].section,'usage');assert.equal(ui.requests[0].refresh,undefined);
  await ui.all().find(n=>n.attributes['aria-label']==='查看剩余额度').onclick();assert.equal(ui.requests.length,2);assert.equal(ui.requests[1].refresh,true);
+});
+
+test('desktop Codex configuration stops polling while hidden and resumes on return',async()=>{
+ const ui=fixture(true);await ui.panel.refresh();assert.ok(ui.timers.some(row=>row.ms===300000&&!row.cancelled));
+ ui.configHidden(true);assert.equal(ui.panel.visible(),false);assert.equal(ui.timers.some(row=>!row.cancelled),false);
+ const before=ui.readCalls();ui.configHidden(false);await new Promise(setImmediate);
+ assert.equal(ui.readCalls(),before+1);assert.ok(ui.timers.some(row=>row.ms===300000&&!row.cancelled));
+});
+
+test('leaving during a quota batch drops its response and skips later accounts',async()=>{
+ const ui=fixture(true),rows=['first','second'].map(id=>({id,kind:'chatgpt',name:id}));
+ ui.setValue({...ui.value(),accounts:rows});let finish;
+ ui.setRequest(()=>new Promise(resolve=>{finish=resolve;}));
+ const pending=ui.panel.refresh();await new Promise(setImmediate);assert.equal(ui.requests.length,1);
+ ui.configHidden(true);finish({...ui.value(),accounts:rows.map(row=>({...row,details:{usage:{status:'ready',checkedAt:ui.now()/1000,limits:[]}}}))});
+ await pending;assert.equal(ui.requests.length,1);assert.equal(ui.panel.value.accounts[0].details,undefined);
+ assert.equal(ui.timers.some(row=>!row.cancelled),false);
+});
+
+test('an old quota response is ignored across hide and return, then a new visit reloads',async()=>{
+ const ui=fixture(true),row={id:'one',kind:'chatgpt',name:'one'};ui.setValue({...ui.value(),accounts:[row]});let finish;
+ ui.setRequest(()=>new Promise(resolve=>{finish=resolve;}));
+ const pending=ui.panel.refresh();await new Promise(setImmediate);ui.configHidden(true);ui.configHidden(false);
+ ui.setRequest(async()=>({...ui.value(),accounts:[{...row,details:{usage:{status:'ready',checkedAt:ui.now()/1000,limits:[]}}}]}));
+ finish({...ui.value(),accounts:[{...row,name:'stale'}]});await pending;await new Promise(setImmediate);
+ assert.equal(ui.requests.length,2);assert.equal(ui.panel.value.accounts[0].name,'one');
+});
+
+test('a list read from a previous visit cannot replace the reopened account snapshot',async()=>{
+ const ui=fixture(true);await ui.panel.refresh();let finish,changes=0;ui.panel.onChanged=()=>changes++;
+ ui.setRead(()=>new Promise(resolve=>{finish=resolve;}));const old=ui.panel.refresh();
+ ui.configHidden(true);ui.configHidden(false);
+ ui.setRead(async()=>({...ui.value(),activeId:'fresh'}));
+ finish({...ui.value(),activeId:'stale'});await old;await new Promise(setImmediate);
+ assert.equal(ui.panel.value.activeId,'fresh');assert.equal(changes,1);
+});
+
+test('a hidden passive account read can update identity without querying quota',async()=>{
+ const ui=fixture(true),official={id:'official',kind:'chatgpt',name:'Official'};
+ ui.configHidden(true);ui.setValue({...ui.value(),activeId:'official',accounts:[official]});
+ await ui.panel.refresh();assert.equal(ui.panel.value.activeId,'official');
+ assert.equal(ui.requests.length,0);assert.equal(ui.timers.some(row=>!row.cancelled),false);
+});
+
+test('returning during an account write refreshes the panel after the write settles',async()=>{
+ const ui=fixture(true);await ui.panel.refresh();let finish;
+ ui.setRequest(()=>new Promise(resolve=>{finish=resolve;}));const pending=ui.panel.perform({action:'rename',id:'a',name:'new'});
+ ui.configHidden(true);ui.configHidden(false);const before=ui.readCalls();
+ const updated={...ui.value(),accounts:[{...ui.value().accounts[0],name:'new'}]};ui.setValue(updated);finish(updated);await pending;await new Promise(setImmediate);
+ assert.equal(ui.readCalls(),before+1);assert.equal(ui.panel.value.accounts[0].name,'new');
+});
+
+test('first account read failure stays visible and retries after ten seconds',async()=>{
+ const ui=fixture();ui.setRead(async()=>{throw Error('offline');});await ui.panel.refresh();
+ assert.match(ui.panel.error.textContent,/offline/);assert.equal(ui.panel.value,null);
+ assert.ok(ui.timers.some(row=>row.ms===10000&&!row.cancelled));
+ ui.setRead(async()=>structuredClone(ui.value()));await ui.fireTimer(10000);
+ assert.equal(ui.readCalls(),2);assert.ok(ui.panel.value);assert.equal(ui.panel.error.textContent,'');
 });
 
 

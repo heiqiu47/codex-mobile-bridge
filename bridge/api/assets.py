@@ -1,9 +1,10 @@
 """Fixed public web URLs, independent of physical feature directories."""
-import hashlib
 import json
 import re
+import hashlib
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from bridge.resources import project_root
 
@@ -44,6 +45,10 @@ STATIC = {"/file-actions.js": ("file-actions.js", "text/javascript; charset=utf-
           "/image-viewer.js": ("image-viewer.js", "text/javascript; charset=utf-8"),
           "/workbench.css": ("workbench.css", "text/css; charset=utf-8"),
           "/": ("index.html", "text/html; charset=utf-8"),
+          "/icon-ui.png": ("icon-ui.png", "image/png"),
+          "/icon-favicon.png": ("icon-favicon.png", "image/png"),
+          "/icon-touch.png": ("icon-touch.png", "image/png"),
+          "/icon-192.png": ("icon-192.png", "image/png"),
           "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
           "/bootstrap.js": ("bootstrap.js", "text/javascript; charset=utf-8"),
@@ -96,47 +101,79 @@ def asset_bytes(web_dir, public_path):
     if isinstance(sources, str):
         return (Path(web_dir) / sources).read_bytes()
     paths = tuple(str((Path(web_dir) / relative).resolve()) for relative in sources)
-    signatures = tuple((stat.st_mtime_ns, stat.st_size) for stat in (Path(path).stat() for path in paths))
+    signatures = tuple((stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size) for stat in (Path(path).stat() for path in paths))
     return _assembled(paths, signatures)
 
 
-@lru_cache(maxsize=32)
-def _digest(paths, signatures):
-    # Content hash, not mtime: identical bytes keep the same URL across rebuilds.
-    digest = hashlib.sha256()
-    for path in paths:
-        digest.update(Path(path).read_bytes())
-    return digest.hexdigest()[:12]
+VERSION_KEY = 'v'
+_HTML_URL = re.compile(rb'(?P<prefix>\b(?:src|href|data-bridge-src|data-bridge-href)\s*=\s*["\'])(?P<url>/[^"\']+)(?P<suffix>["\'])')
+_MANIFEST_URL = re.compile(rb'(?P<prefix>"(?:src|href)"\s*:\s*")(?P<url>/[^" ]+)(?P<suffix>")')
+_JS_URL = re.compile(rb'(?P<prefix>["\'])(?P<url>/[^"\'\s]+\.(?:js|mjs|css|png|webmanifest)(?:\?[^"\']*)?)(?P<suffix>["\'])')
+_CSS_URL = re.compile(rb'url\((?P<quote>["\']?)(?P<url>[^)"\']+)(?P=quote)\)')
 
 
-def asset_digest(web_dir, public_path):
-    sources, _ = STATIC[public_path]
-    relatives = (sources,) if isinstance(sources, str) else sources
-    paths = tuple(str((Path(web_dir) / relative).resolve()) for relative in relatives)
-    signatures = tuple((stat.st_mtime_ns, stat.st_size) for stat in (Path(path).stat() for path in paths))
-    return _digest(paths, signatures)
+def _public_file(web_dir, public_path):
+    if public_path in STATIC and public_path != '/':
+        return asset_bytes(web_dir, public_path)
+    for route, directory in ((FONT_ROUTE, 'vendor/katex/fonts'),
+                             (PDF_CMAP_ROUTE, 'vendor/pdfjs/cmaps'),
+                             (PDF_FONT_ROUTE, 'vendor/pdfjs/standard_fonts')):
+        match = route.fullmatch(public_path)
+        if match:
+            file = Path(web_dir) / directory / match[1]
+            return file.read_bytes() if file.is_file() else None
+    return None
 
 
-@lru_cache(maxsize=32)
-def versioned_text(web_dir, public_path):
-    """Rewrite quoted references to static URLs so they carry ?v=<content hash>."""
-    data = asset_bytes(web_dir, public_path)
-    if not public_path.endswith(('.js', '.css')) and public_path != '/':
-        return data
-    text = data.decode('utf-8', 'ignore')
-    for url in sorted(STATIC, key=len, reverse=True):
-        if url == '/':
-            continue
-        # Replace both bare references and the project's hand-written ?v=<build tag>,
-        # so every static request carries the current content hash.
-        pattern = re.compile(r'(["\'])' + re.escape(url) + r'(\?v=[^"\']*)?\1')
-        if not pattern.search(text):
-            continue
-        try:
-            replacement = url + '?v=' + asset_digest(web_dir, url)
-        except OSError:
-            # A missing source is reported by the asset route itself; versioning
-            # must not turn an unrelated page into a 500.
-            continue
-        text = pattern.sub(lambda match: match.group(1) + replacement + match.group(1), text)
-    return text.encode('utf-8')
+def _versioned_url(web_dir, url, parent, seen):
+    try:
+        value = url.decode('ascii')
+    except UnicodeDecodeError:
+        return url
+    parsed = urlsplit(value)
+    path = parsed.path
+    if not path.startswith('/'):
+        if parent != '/vendor/katex/katex.min.css' or not path.startswith('fonts/'):
+            return url
+        path = '/vendor/katex/' + path
+    if path in seen or path == '/':
+        return url
+    if _public_file(web_dir, path) is None:
+        return url
+    digest = hashlib.sha256(served_asset_bytes(web_dir, path, seen)).hexdigest()
+    query = [(key, val) for key, values in parse_qs(parsed.query, keep_blank_values=True).items()
+             for val in values if key != VERSION_KEY]
+    query.append((VERSION_KEY, digest))
+    # Keep relative font URLs relative to the stylesheet URL.
+    location = parsed.path if not parsed.path.startswith('/') else path
+    return (location + '?' + urlencode(query) + (('#' + parsed.fragment) if parsed.fragment else '')).encode('ascii')
+
+
+def served_asset_bytes(web_dir, public_path, seen=frozenset()):
+    """Return the actual public representation, with only known asset references versioned."""
+    source = asset_bytes(web_dir, public_path) if public_path in STATIC else _public_file(web_dir, public_path)
+    if source is None:
+        raise KeyError(public_path)
+    if public_path in seen:
+        return source
+    seen = seen | {public_path}
+    if public_path == '/':
+        pattern = _HTML_URL
+    elif public_path == '/manifest.webmanifest':
+        pattern = _MANIFEST_URL
+    elif public_path.endswith('.css'):
+        pattern = _CSS_URL
+    elif public_path.endswith(('.js', '.mjs')) and not public_path.startswith('/vendor/'):
+        pattern = _JS_URL
+    else:
+        return source
+    def replace(match):
+        updated = _versioned_url(web_dir, match['url'], public_path, seen)
+        if pattern is _CSS_URL:
+            return b'url(' + match['quote'] + updated + match['quote'] + b')'
+        return match['prefix'] + updated + match['suffix']
+    return pattern.sub(replace, source)
+
+
+def current_version(web_dir, public_path):
+    return hashlib.sha256(served_asset_bytes(web_dir, public_path)).hexdigest()

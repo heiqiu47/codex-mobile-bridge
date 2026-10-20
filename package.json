@@ -72,6 +72,12 @@
       "artifactName": "Codex-Mobile-Bridge-${version}-macOS-${arch}.${ext}"
     },
     "win": {
+      "electronLanguages": [
+        "en-GB",
+        "en-US",
+        "zh-CN",
+        "zh-TW"
+      ],
       "icon": "desktop/assets/icon.ico",
       "target": [
         "nsis",

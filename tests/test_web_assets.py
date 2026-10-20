@@ -21,43 +21,6 @@ class WebAssetTests(unittest.TestCase):
         self.web = Path(folder.name)
         assets._assembled.cache_clear()
         self.addCleanup(assets._assembled.cache_clear)
-        assets._digest.cache_clear()
-        assets.versioned_text.cache_clear()
-        self.addCleanup(assets._digest.cache_clear)
-        self.addCleanup(assets.versioned_text.cache_clear)
-
-    def test_digest_is_content_addressed(self):
-        source = self.web / 'app.js'
-        source.write_bytes(b'console.log("one")\n')
-        route = {'/app.js': ('app.js', 'text/javascript; charset=utf-8')}
-        with patch.dict(assets.STATIC, route):
-            first = assets.asset_digest(self.web, '/app.js')
-            self.assertRegex(first, r'^[0-9a-f]{12}$')
-            self.assertEqual(first, assets.asset_digest(self.web, '/app.js'))
-            source.write_bytes(b'console.log("two")\n')
-            self.assertNotEqual(first, assets.asset_digest(self.web, '/app.js'))
-
-    def test_versioned_text_rewrites_bare_and_tagged_references(self):
-        (self.web / 'app.js').write_bytes(b'console.log(1)\n')
-        (self.web / 'shell.css').write_bytes(b'.chat{color:red}\n')
-        (self.web / 'index.html').write_bytes(
-            b'<script src="/app.js?v=20260101"></script><link href="/shell.css">')
-        routes = {
-            '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
-            '/shell.css': ('shell.css', 'text/css; charset=utf-8'),
-            '/': ('index.html', 'text/html; charset=utf-8'),
-        }
-        with patch.dict(assets.STATIC, routes):
-            html = assets.versioned_text(self.web, '/').decode()
-            self.assertIn('/app.js?v=' + assets.asset_digest(self.web, '/app.js'), html)
-            self.assertIn('/shell.css?v=' + assets.asset_digest(self.web, '/shell.css'), html)
-            self.assertNotIn('20260101', html)
-
-    def test_binary_assets_are_not_rewritten(self):
-        payload = b'\x89PNG\r\n\x1a\n/image.png"\x00'
-        (self.web / 'icon.png').write_bytes(payload)
-        with patch.dict(assets.STATIC, {'/icon.png': ('icon.png', 'image/png')}):
-            self.assertEqual(assets.versioned_text(self.web, '/icon.png'), payload)
 
     def test_css_bundle_preserves_declared_order_and_exact_bytes(self):
         first = b'.chat { color: blue; }\n'
