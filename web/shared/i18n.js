@@ -2,6 +2,17 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"图示":"Diagram",
+"源码":"Source",
+"查看图示":"View diagram",
+"全屏查看":"Full screen",
+"正在生成图示…":"Rendering diagram…",
+"图示无法显示，请查看源码":"Could not render diagram. View the source.",
+"图示过大，请查看源码":"Diagram is too large. View the source.",
+"关闭图示预览":"Close diagram preview",
+"图示缩放比例":"Diagram zoom level",
+"图示加载失败，请关闭后重试。":"Diagram failed to load. Close and try again.",
+"读取源码失败，请重试。":"Could not load source. Try again.",
 "全部会话":"All chats",
 "当前聊天模型不在可用列表中，请选择模型后应用。":"The current chat model is unavailable. Select an offered model to apply.",
 "会话类型":"Chat type",
