@@ -5,6 +5,7 @@ from bridge.api.assets import current_version
 
 SHELL_PATH = '/mermaid-render-shell'
 SHELL_FILE = 'shared/mermaid-render-shell.html'
+SCRIPT_PATHS = frozenset(('/vendor/mermaid/mermaid.min.js', '/mermaid-render-frame.js'))
 SHELL_CSP = (
     "sandbox allow-scripts; default-src 'none'; "
     "script-src {origin}; style-src 'unsafe-inline'; style-src-attr 'unsafe-inline'; "
@@ -17,6 +18,11 @@ SHELL_CSP = (
 def shell_csp(origin):
     """Use the gateway's validated origin: sandboxed frames have an opaque origin."""
     return SHELL_CSP.format(origin=origin)
+
+
+def is_public_renderer_script(path, method, destination):
+    """Only inert, fixed JS assets may load from the opaque renderer origin."""
+    return method == 'GET' and destination == 'script' and path in SCRIPT_PATHS
 
 
 def shell_bytes(web_dir):

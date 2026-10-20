@@ -46,6 +46,18 @@ class GatewayMermaidTests(unittest.TestCase):
         self.assertIn(self.origin + '/mermaid-render-shell;', headers['Content-Security-Policy'])
         self.assertNotIn("script-src 'unsafe-inline'", headers['Content-Security-Policy'])
 
+    def test_opaque_frame_can_fetch_only_fixed_public_scripts(self):
+        script_headers = {'Sec-Fetch-Site':'cross-site', 'Sec-Fetch-Dest':'script',
+                          'Sec-Fetch-Mode':'no-cors'}
+        for path in ('/vendor/mermaid/mermaid.min.js', '/mermaid-render-frame.js'):
+            status, _, body = self.raw(path, script_headers)
+            self.assertEqual(status, 200, path)
+            self.assertTrue(body)
+        for path in ('/app.js', '/api/auth', '/mermaid-render-shell'):
+            self.assertEqual(self.raw(path, script_headers)[0], 403, path)
+        image_headers = dict(script_headers, **{'Sec-Fetch-Dest':'image'})
+        self.assertEqual(self.raw('/mermaid-render-frame.js', image_headers)[0], 403)
+
 
 class RelayMermaidTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -83,3 +95,17 @@ class RelayMermaidTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.client.get(prefix + '/mermaid-render-shell?source=x')).status, 404)
             page = await self.client.get(prefix + '/')
             self.assertIn(self.origin + prefix + '/mermaid-render-shell;', page.headers['Content-Security-Policy'])
+
+    async def test_opaque_frame_script_exception_is_scoped_and_read_only(self):
+        headers = {'Sec-Fetch-Site':'cross-site', 'Sec-Fetch-Dest':'script',
+                   'Sec-Fetch-Mode':'no-cors'}
+        for prefix in ('', '/d/' + 'a' * 32):
+            for path in ('/vendor/mermaid/mermaid.min.js', '/mermaid-render-frame.js'):
+                response = await self.client.get(prefix + path, headers=headers)
+                self.assertEqual(response.status, 200, prefix + path)
+            for path in ('/app.js', '/api/auth', '/mermaid-render-shell'):
+                response = await self.client.get(prefix + path, headers=headers)
+                self.assertEqual(response.status, 401, prefix + path)
+            response = await self.client.get(prefix + '/mermaid-render-frame.js',
+                                             headers=dict(headers, **{'Sec-Fetch-Dest':'image'}))
+            self.assertEqual(response.status, 401)
