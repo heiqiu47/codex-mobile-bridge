@@ -42,7 +42,8 @@ from bridge.features.terminals.manager import TerminalSessionMissing
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
 
 LOG = logging.getLogger(__name__)
-from bridge.api.assets import STATIC, FONT_ROUTE, PDF_CMAP_ROUTE, PDF_FONT_ROUTE, asset_bytes
+from bridge.api.assets import (STATIC, FONT_ROUTE, PDF_CMAP_ROUTE, PDF_FONT_ROUTE,
+                               asset_digest, versioned_text)
 
 THREAD_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})(?:/(events|send|stop|history|respond|reconnect|queue|catalog|settings|permissions|poll|timeline|changes|detail|notifications|uploads|message-action|rename))?$")
 UPLOAD_PREVIEW_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/uploads/([0-9a-f-]{36})/preview$")
@@ -158,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
                          "default-src 'self'; script-src 'self'; style-src " + style_source + "; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src " + frame_source + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
-    def output(self, status, data, content_type="application/json; charset=utf-8", cookie=None, content_disposition=None, preview_shell=False, style_nonce=None):
+    def output(self, status, data, content_type="application/json; charset=utf-8", cookie=None, content_disposition=None, preview_shell=False, style_nonce=None, cache_control="no-store", etag=None):
         # Keep the browser cookie in step with the renewed server-side deadline,
         # including long-lived pages that do not revisit /api/auth.
         if cookie is None and 200 <= status < 300 and urlsplit(self.path).path.startswith('/api/'):
@@ -175,9 +176,11 @@ class Handler(BaseHTTPRequestHandler):
             if len(candidate) < len(body):
                 body, compressed = candidate, True
         self.send_response(status)
-        self.headers_common(preview_shell=preview_shell, style_nonce=style_nonce)
+        self.headers_common(cache_control=cache_control, preview_shell=preview_shell, style_nonce=style_nonce)
         self.send_header("Content-Type", content_type)
         self.send_header('Vary', 'Accept-Encoding')
+        if etag:
+            self.send_header('ETag', etag)
         if compressed:
             self.send_header('Content-Encoding', 'gzip')
         self.send_header("Content-Length", str(len(body)))
@@ -189,6 +192,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(body)
+
+    def not_modified(self, etag):
+        self.send_response(304)
+        self.headers_common(cache_control="no-cache")
+        self.send_header('ETag', etag)
+        self.send_header('Vary', 'Accept-Encoding')
+        self.end_headers()
 
     def cookie(self, token, clear=False):
         secure = "; Secure" if self.headers.get("Host") in self.server.secure_hosts else ""
@@ -301,11 +311,23 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(urlsplit(self.path).query)
             if not write and path in STATIC:
                 _, content_type = STATIC[path]
-                data = asset_bytes(self.server.web_dir, path)
+                digest = asset_digest(self.server.web_dir, path)
+                etag = '"' + digest + '"'
+                immutable = query.get('v', [''])[0] == digest
+                # The shell embeds a per-document CSP nonce, so it must never be reused
+                # from a cache; only immutable sub-resources may skip revalidation.
+                shell = path == '/'
+                if not shell and not immutable and etag in self.headers.get('If-None-Match', ''):
+                    return self.not_modified(etag)
+                data = versioned_text(self.server.web_dir, path)
                 nonce = secrets.token_urlsafe(24) if path == '/' else None
                 if nonce:
                     data = data.replace(b'<head>', ('<head><meta name="bridge-style-nonce" content="' + nonce + '">').encode(), 1)
-                return self.output(200, data, content_type, style_nonce=nonce)
+                if shell:
+                    return self.output(200, data, content_type, style_nonce=nonce)
+                return self.output(200, data, content_type, style_nonce=nonce,
+                                   cache_control=('public, max-age=31536000, immutable' if immutable else 'no-cache'),
+                                   etag=etag)
             font = FONT_ROUTE.fullmatch(path)
             if not write and font:
                 file = self.server.web_dir / 'vendor/katex/fonts' / font[1]

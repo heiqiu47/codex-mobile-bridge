@@ -936,7 +936,11 @@ class HttpTests(unittest.TestCase):
                 match = re.search(rb'<meta name="bridge-style-nonce" content="([A-Za-z0-9_-]{32})">', body)
                 self.assertIsNotNone(match)
                 self.assertIn("'nonce-" + match[1].decode() + "'", response.getheader('Content-Security-Policy'))
-                self.assertEqual(body.replace(match[0], b'', 1), (ROOT / 'web' / 'index.html').read_bytes())
+                # Static references are served with a content-hash query string, so
+                # compare the document with version tags normalised on both sides.
+                served = re.sub(rb'\?v=[^"\']*', b'', body.replace(match[0], b'', 1))
+                expected = re.sub(rb'\?v=[^"\']*', b'', (ROOT / 'web' / 'index.html').read_bytes())
+                self.assertEqual(served, expected)
 
     def test_cross_site_navigation_keeps_api_embedding_origin_and_host_guards(self):
         navigation = {'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate',

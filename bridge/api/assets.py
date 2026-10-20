@@ -1,4 +1,5 @@
 """Fixed public web URLs, independent of physical feature directories."""
+import hashlib
 import json
 import re
 from functools import lru_cache
@@ -97,3 +98,45 @@ def asset_bytes(web_dir, public_path):
     paths = tuple(str((Path(web_dir) / relative).resolve()) for relative in sources)
     signatures = tuple((stat.st_mtime_ns, stat.st_size) for stat in (Path(path).stat() for path in paths))
     return _assembled(paths, signatures)
+
+
+@lru_cache(maxsize=32)
+def _digest(paths, signatures):
+    # Content hash, not mtime: identical bytes keep the same URL across rebuilds.
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(Path(path).read_bytes())
+    return digest.hexdigest()[:12]
+
+
+def asset_digest(web_dir, public_path):
+    sources, _ = STATIC[public_path]
+    relatives = (sources,) if isinstance(sources, str) else sources
+    paths = tuple(str((Path(web_dir) / relative).resolve()) for relative in relatives)
+    signatures = tuple((stat.st_mtime_ns, stat.st_size) for stat in (Path(path).stat() for path in paths))
+    return _digest(paths, signatures)
+
+
+@lru_cache(maxsize=32)
+def versioned_text(web_dir, public_path):
+    """Rewrite quoted references to static URLs so they carry ?v=<content hash>."""
+    data = asset_bytes(web_dir, public_path)
+    if not public_path.endswith(('.js', '.css')) and public_path != '/':
+        return data
+    text = data.decode('utf-8', 'ignore')
+    for url in sorted(STATIC, key=len, reverse=True):
+        if url == '/':
+            continue
+        # Replace both bare references and the project's hand-written ?v=<build tag>,
+        # so every static request carries the current content hash.
+        pattern = re.compile(r'(["\'])' + re.escape(url) + r'(\?v=[^"\']*)?\1')
+        if not pattern.search(text):
+            continue
+        try:
+            replacement = url + '?v=' + asset_digest(web_dir, url)
+        except OSError:
+            # A missing source is reported by the asset route itself; versioning
+            # must not turn an unrelated page into a 500.
+            continue
+        text = pattern.sub(lambda match: match.group(1) + replacement + match.group(1), text)
+    return text.encode('utf-8')
