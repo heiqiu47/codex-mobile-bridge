@@ -672,11 +672,14 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
             let a = UIAlertController(title: MobileStrings.text("在浏览器打开外部链接？"), message: url.host, preferredStyle: .alert); a.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel)); a.addAction(UIAlertAction(title: MobileStrings.text("打开"), style: .default) { _ in UIApplication.shared.open(url) }); present(a, animated: true)
         }
     }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { if nativeMainNavigation?.web === webView { nativeMainNavigation = nil }; guard webView === web, let url = webView.url, GatewayURL.same(url, origin) else { return }; subtitle.isHidden = true; registerNativePush(); rememberConnection()
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { if nativeMainNavigation?.web === webView { nativeMainNavigation = nil }; guard webView === web, connectionError == nil, let url = webView.url, GatewayURL.same(url, origin) else { return }; subtitle.isHidden = true; registerNativePush(); rememberConnection()
         if let snapshot = pendingStorage { pendingStorage = nil; webView.evaluateJavaScript("(()=>{const data=" + snapshot + ";for(const [k,v] of Object.entries(data))if(typeof v==='string')localStorage.setItem(k,v);location.reload();})()", completionHandler: nil) }
     }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { if nativeMainNavigation?.web === webView { nativeMainNavigation = nil }; guard webView === web, connectionError == nil else { return }; subtitle.isHidden = false; subtitle.text = MobileStrings.text("连接失败，请检查电脑和地址后刷新")
-        if (error as NSError).code != NSURLErrorCancelled || (error as NSError).domain != NSURLErrorDomain { showConnectionError(status: nil) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { if nativeMainNavigation?.web === webView { nativeMainNavigation = nil }; guard webView === web, connectionError == nil else { return }
+        let failure = error as NSError
+        guard failure.domain != NSURLErrorDomain || failure.code != NSURLErrorCancelled else { return }
+        subtitle.isHidden = false; subtitle.text = MobileStrings.text("连接失败，请检查电脑和地址后刷新")
+        showConnectionError(status: nil)
         recoverConnection()
     }
     private func showConnectionError(status: Int?) {
@@ -686,7 +689,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
         let container = UIView(); page.addArrangedSubview(container); connectionError = container; let content = scrollContent(in: container)
         let visual = UIImageView(image: UIImage(systemName: "wifi.exclamationmark")); visual.tintColor = .secondaryLabel; visual.contentMode = .scaleAspectFit; visual.heightAnchor.constraint(equalToConstant: 48).isActive = true
         let heading = label(MobileStrings.text("暂时无法连接电脑"), size: 22, weight: .semibold); heading.textAlignment = .center
-        let hint = label(MobileStrings.text("电脑可能已锁屏、睡眠或断网，网关暂时无法访问。请稍后重试，或返回电脑列表。"), secondary: true); hint.textAlignment = .center
+        let hint = label(MobileStrings.text("网关暂时无法访问。请检查电脑和网络后重试，或返回电脑列表。"), secondary: true); hint.textAlignment = .center
         let detail = label(computerName(address) + (status.map { " · HTTP \($0)" } ?? ""), size: 13, secondary: true); detail.textAlignment = .center
         let hero = column(spacing: 12); [visual, heading, hint, detail].forEach(hero.addArrangedSubview); hero.setCustomSpacing(20, after: visual)
         content.addArrangedSubview(hero)
@@ -1381,7 +1384,7 @@ enum MobileStrings {
 
         "返回电脑列表": "Back to computers",
         "暂时无法连接电脑": "Can’t reach the computer",
-        "电脑可能已锁屏、睡眠或断网，网关暂时无法访问。请稍后重试，或返回电脑列表。": "The computer may be locked, asleep or offline, so the gateway is unreachable. Try again later or go back to your computers.",
+        "网关暂时无法访问。请检查电脑和网络后重试，或返回电脑列表。": "The gateway is temporarily unreachable. Check your computer and network, then retry or go back to your computers.",
         "重试": "Try again",
         "外观与显示": "Appearance",
         "隐藏底部 APP 图标": "Hide bottom app icons",
