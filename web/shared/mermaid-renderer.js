@@ -22,7 +22,19 @@
   function imageFromSvg(raw) {
     if (typeof raw !== 'string' || raw.length > maxSvgLength || /<!DOCTYPE|<!ENTITY/i.test(raw))
       throw Error('Invalid diagram output');
-    const document = new DOMParser().parseFromString(raw, 'image/svg+xml');
+    const nonce = window.document.querySelector('meta[name="bridge-style-nonce"]')?.content;
+    if (nonce && !/^[A-Za-z0-9_-]{32}$/.test(nonce)) throw Error('Invalid style nonce');
+    // DOMParser applies CSP to SVG <style> while parsing, before we can walk
+    // the tree. Mermaid emits plain style tags; replace only their opening tags
+    // with fixed nonced ones and reject any other style-tag spelling.
+    const styleTags = (raw.match(/<(?:[A-Za-z_][\w.-]*:)?style\b/gi) || []).length;
+    let prepared = 0;
+    const safeRaw = nonce ? raw.replace(/<style(?:\s[^<>]*)?>/gi, () => {
+      prepared++;
+      return '<style nonce="' + nonce + '">';
+    }) : raw;
+    if (nonce && styleTags !== prepared) throw Error('Unsupported diagram style');
+    const document = new DOMParser().parseFromString(safeRaw, 'image/svg+xml');
     const root = document.documentElement;
     if (root.namespaceURI !== svgNamespace || root.localName !== 'svg' ||
         document.getElementsByTagName('parsererror').length) throw Error('Invalid diagram SVG');
@@ -43,7 +55,6 @@
       }
       if (element.localName === 'style') {
         element.textContent = safeCss(element.textContent);
-        const nonce = window.document.querySelector('meta[name="bridge-style-nonce"]')?.content;
         if (nonce) element.setAttribute('nonce', nonce);
       }
     }
