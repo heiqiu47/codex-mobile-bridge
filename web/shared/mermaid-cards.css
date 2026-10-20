@@ -1,0 +1,11 @@
+.mermaid-card{max-width:100%;min-width:0;margin:0 0 14px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface,#fff)}
+.mermaid-card-toolbar{display:flex;align-items:center;gap:3px;flex-wrap:wrap;padding:5px 7px;border-bottom:1px solid var(--line)}
+.mermaid-card-toolbar button{font:inherit;font-size:12px;min-height:32px;padding:4px 8px;white-space:nowrap}
+.mermaid-card-toolbar button[aria-pressed=true]{color:var(--accent);font-weight:650}
+.mermaid-card-toolbar button:nth-child(3){margin-left:auto}
+.mermaid-card-stage{max-width:100%;overflow:auto;text-align:center;padding:12px;box-sizing:border-box}
+.mermaid-card-stage img{display:block;max-width:100%;height:auto;margin:auto;cursor:zoom-in}
+.mermaid-card-status{margin:0;padding:12px;color:var(--muted);font-size:12px}
+.mermaid-card-status:empty{display:none}
+.markdown-body .mermaid-card-source{margin:0;max-width:100%;max-height:55dvh;overflow:auto;padding:12px;background:transparent}
+.mermaid-card [hidden]{display:none!important}
