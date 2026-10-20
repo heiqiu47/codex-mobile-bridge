@@ -41,7 +41,11 @@
         else if (name === 'style') element.setAttribute(attr.name, safeCss(attr.value));
         else if (/url\s*\(/i.test(attr.value)) element.setAttribute(attr.name, safeCss(attr.value));
       }
-      if (element.localName === 'style') element.textContent = safeCss(element.textContent);
+      if (element.localName === 'style') {
+        element.textContent = safeCss(element.textContent);
+        const nonce = window.document.querySelector('meta[name="bridge-style-nonce"]')?.content;
+        if (nonce) element.setAttribute('nonce', nonce);
+      }
     }
     clean(root);
     const viewBox = (root.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
