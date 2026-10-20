@@ -61,8 +61,9 @@ function showError(error){
 function moduleName(name){return ({account:'accounts','desktop-sessions':'accounts',harness:'accounts',updates:'advanced',logs:'advanced'})[name]||name;}
 function tab(name){const requested=name;name=moduleName(name);activeTab=name;
   if(name!=='accounts'&&typeof codexCliAccessPanel!=='undefined'){codexCliAccessPanel?.clear();claudeCliAccessPanel?.clear();}
-  if(name==='accounts'){desktopConnections?.refresh();desktopConnections?.refreshClients();harnessPanel?.refresh();accountsPanel?.refresh();}
+  if(name==='accounts'){desktopConnections?.refresh();desktopConnections?.refreshClients();harnessPanel?.refresh();}
   document.querySelectorAll('[data-panel]').forEach(node=>node.hidden=moduleName(node.dataset.panel)!==name);
+  if(name==='accounts')accountsPanel?.refresh();else accountsPanel?.resume();
   document.querySelectorAll('[data-tab]').forEach(node=>node.classList.toggle('active',node.dataset.tab===name));
   window.GatewayLayout?.tab(name);$('page-title').textContent=t(titles[name]);if(snapshot)updateDirty();if(name==='advanced')loadLogs();if(name==='devices')loadDevices();if(snapshot)renderUpdate();
   if(['desktop-sessions','harness'].includes(requested))document.querySelectorAll('[data-panel="'+requested+'"] > details').forEach(node=>node.open=true);

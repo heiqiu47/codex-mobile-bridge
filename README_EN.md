@@ -561,6 +561,12 @@ Thanks to [@heiqiu47](https://github.com/heiqiu47) for file compatibility, mobil
 
 Thanks to [@SevenPwZ (des1re)](https://github.com/SevenPwZ) for Android in-app updates in [PR #32](https://github.com/try2love/codex-mobile-bridge/pull/32). v2.0.3 builds on that work with gateway-assisted downloads, explicit download choices and installation recovery improvements.
 
+Thanks to [@wangzheuser](https://github.com/wangzheuser) for submitting [PR #51](https://github.com/try2love/codex-mobile-bridge/pull/51), which fixes recognition of wrapped DSH connection settings. Original commit author [@w154594742](https://github.com/w154594742) retains credit.
+
+Thanks to [@RigerWu](https://github.com/RigerWu) for the native iOS retry and back-to-computers controls when a gateway is unreachable in [PR #52](https://github.com/try2love/codex-mobile-bridge/pull/52).
+
+Thanks to [@heiqiu47](https://github.com/heiqiu47) for account and model UI improvements and query optimizations in [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40). This integration adds the scoped query lifecycle improvements; reset predictions and moving settings entries are not included.
+
 ## License and references
 
 [MIT License](LICENSE).

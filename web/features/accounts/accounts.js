@@ -1,8 +1,12 @@
 /* Shared account selector; enrollment controls exist only in the desktop host. */
 class AccountsPanel {
   constructor({root,read,request,desktop=false,toolbar=null,onChanged=()=>{},onUpdate=()=>{}}){
-    Object.assign(this,{root,read,request,desktop,toolbar,onChanged,onUpdate});this.value=null;this.busy=false;this.timer=null;this.generation=0;this.operationError=false;this.expandedModels=new Set();this.modelBoxes=new Map();this.syncLocalCliIds=new Set();this.expandedSubscriptions=new Set();
+    Object.assign(this,{root,read,request,desktop,toolbar,onChanged,onUpdate});this.value=null;this.busy=false;this.timer=null;this.generation=0;this.visit=0;this.readFailed=false;this.resumePending=false;this.operationError=false;this.expandedModels=new Set();this.modelBoxes=new Map();this.syncLocalCliIds=new Set();this.expandedSubscriptions=new Set();
     this.build();
+    this.lastVisible=this.visible();
+    document.addEventListener('visibilitychange',()=>this.resume());
+    if(this.desktop)document.addEventListener('bridge-client-config',()=>this.resume());
+    this.root.closest('dialog')?.addEventListener('close',()=>this.resume());
   }
   text(value){return typeof BridgeI18n==='undefined'?value:BridgeI18n.t(value);}
   node(tag,text,className){const n=document.createElement(tag);if(text!==undefined){n.textContent=this.text(text);if(typeof BridgeI18n!=='undefined'&&Object.hasOwn(BridgeI18n.dictionary,text))n.setAttribute('data-i18n',text);}if(className)n.className=className;return n;}
@@ -80,31 +84,41 @@ class AccountsPanel {
     if(this.busy)return false;const focused=[...this.modelBoxes.values()].find(box=>box.refresh===document.activeElement);clearTimeout(this.timer);this.generation++;this.loading=false;this.busy=true;this.operationError=false;this.error.textContent='';this.render();const generation=this.generation;
     try{const value=await this.request(payload);if(generation===this.generation){this.accept(value);return true;}return false;}
     catch(error){if(generation===this.generation){this.operationError=true;this.error.textContent=this.text(String(error.message).replace(/^Error invoking remote method '[^']+': (?:Error: )?/,''));}return false;}
-    finally{if(generation===this.generation){this.busy=false;this.render();this.schedule();if(focused?.refresh.isConnected&&(document.activeElement===document.body||document.activeElement===focused.refresh)&&!focused.touching)focused.refresh.focus({preventScroll:true});}}
+    finally{if(generation===this.generation){this.busy=false;this.render();if(this.resumePending&&this.visible()){this.resumePending=false;this.refresh();}else this.schedule();if(focused?.refresh.isConnected&&(document.activeElement===document.body||document.activeElement===focused.refresh)&&!focused.touching)focused.refresh.focus({preventScroll:true});}}
   }
   async refresh(){
-    clearTimeout(this.timer);if(this.loading||this.busy)return;this.loading=true;const generation=this.generation;
-    try{const value=await this.read();if(generation===this.generation){if(!this.operationError)this.error.textContent='';this.accept(value);await this.loadUsage(generation);}}
-    catch(error){if(generation===this.generation)this.error.textContent=this.text(String(error.message).replace(/^Error invoking remote method '[^']+': (?:Error: )?/,''));}
-    finally{if(generation===this.generation){this.loading=false;this.render();this.schedule();}}
+    if(this.visible()!==this.lastVisible)return this.resume();
+    clearTimeout(this.timer);if(this.loading||this.busy)return;this.loading=true;const generation=this.generation,visit=this.visit;
+    try{const value=await this.read();if(generation===this.generation&&visit===this.visit){this.readFailed=false;if(!this.operationError)this.error.textContent='';this.accept(value);await this.loadUsage(generation);}}
+    catch(error){if(generation===this.generation&&visit===this.visit){this.readFailed=true;this.error.textContent=this.text(String(error.message).replace(/^Error invoking remote method '[^']+': (?:Error: )?/,''));}}
+    finally{if(generation===this.generation){this.loading=false;this.render();if(this.resumePending&&this.visible()){this.resumePending=false;this.refresh();}else this.schedule();}}
   }
   schedule(){
-    clearTimeout(this.timer);const value=this.value;if(!value)return;
-    const phase=value.switch?.phase||'idle',enrollment=value.enrollment?.phase,update=value.desktopUpdate?.state;
-    const pending=!['idle','complete','restored','failed','interrupted'].includes(phase)||['starting','waiting'].includes(enrollment)||['checking','requesting','needsDesktop'].includes(update)||value.current?.status==='checking'||this.accountRows().some(row=>row.details?.usage?.status==='loading'||row.details?.models?.status==='loading');
-    this.timer=setTimeout(()=>{if(this.visible())return this.refresh();},pending?2000:300000);
+    clearTimeout(this.timer);this.timer=null;if(!this.visible())return;
+    const value=this.value;if(!value&&!this.readFailed)return;
+    const phase=value?.switch?.phase||'idle',enrollment=value?.enrollment?.phase,update=value?.desktopUpdate?.state;
+    const pending=!['idle','complete','restored','failed','interrupted'].includes(phase)||['starting','waiting'].includes(enrollment)||['checking','requesting','needsDesktop'].includes(update)||value?.current?.status==='checking'||this.accountRows().some(row=>row.details?.usage?.status==='loading'||row.details?.models?.status==='loading');
+    this.timer=setTimeout(()=>{if(this.visible())return this.refresh();},this.readFailed?10000:pending?2000:300000);
   }
-  visible(){const dialog=this.root.closest('dialog');return !this.root.closest('[hidden]')&&!document.hidden&&(!dialog||dialog.open);}
+  visible(){const dialog=this.root.closest('dialog');return !this.root.closest('[hidden],.client-config-hidden')&&!document.hidden&&(!dialog||dialog.open);}
+  resume(){
+    const visible=this.visible();if(visible===this.lastVisible)return;
+    this.lastVisible=visible;this.visit++;clearTimeout(this.timer);this.timer=null;
+    if(!visible)this.resumePending=false;
+    if(visible){if(this.loading||this.busy)this.resumePending=true;else return this.refresh();}
+  }
   accountRows(){const login=this.value?.loginAccount,rows=this.value?.accounts||[];return login?[login,...rows.filter(row=>row.id!==login.id)]:rows;}
   async loadUsage(generation){
     if(!this.visible())return;
     if(!['idle','complete','restored','failed'].includes(this.value?.switch?.phase||'idle'))return;
+    const visit=this.visit,current=()=>generation===this.generation&&!this.busy&&visit===this.visit&&this.visible();
     for(const row of this.accountRows()){
+      if(!current())return;
       const usage=row.details?.usage;
       if(row.kind!=='chatgpt'||usage?.status==='loading'||(usage&&Date.now()/1000-(usage.checkedAt||0)<300))continue;
-      if(generation!==this.generation||this.busy)return;
       const value=await this.request({action:'details',id:row.id,section:'usage'});
-      if(generation===this.generation&&!this.busy)this.accept(value);
+      if(!current())return;
+      this.accept(value);
     }
   }
   relative(minutes){const days=Math.floor(minutes/1440),hours=Math.floor(minutes%1440/60),rest=minutes%60;return [days?days+this.text(' 天'):'',hours?hours+this.text(' 小时'):'',rest?rest+this.text(' 分钟'):''].filter(Boolean).join(' ');}
@@ -204,7 +218,7 @@ class AccountsPanel {
     controls.append(refresh);return controls;
   }
   accept(value){const old=this.value;if(!this.desktop&&old?.canSwitch===false&&value.canSwitch===undefined)value={...value,canSwitch:false};this.value=value;if(old&&(old.activeId!==value.activeId||old.current?.kind!==value.current?.kind||old.current?.name!==value.current?.name||old.switch?.phase!==value.switch?.phase))this.onChanged(value);this.onUpdate(value);this.render();}
-  clear(){this.resetDialog?.close();clearTimeout(this.timer);this.generation++;this.value=null;this.loading=false;this.busy=false;this.operationError=false;this.modelBoxes.clear();this.error.textContent='';this.rows.replaceChildren();}
+  clear(){this.resetDialog?.close();clearTimeout(this.timer);this.generation++;this.value=null;this.loading=false;this.busy=false;this.readFailed=false;this.resumePending=false;this.operationError=false;this.modelBoxes.clear();this.error.textContent='';this.rows.replaceChildren();}
   requestId(){
     if(typeof crypto.randomUUID==='function')return crypto.randomUUID();
     const bytes=crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;

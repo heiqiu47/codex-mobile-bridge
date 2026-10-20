@@ -55,6 +55,16 @@ def insertion(text):
             if continuation:
                 index += continuation.end()
                 continue
+        if quoted and not escaped and char in '\r\n':
+            folded = re.match(r'(?:\r?\n[ \t]*)+', text[index:])
+            if folded:
+                while chars[-1] in ' \t':
+                    chars.pop()
+                # YAML folds one break to a space; empty lines retain line feeds.
+                breaks = folded[0].count('\n')
+                chars.append(' ' if breaks == 1 else '\\n'*(breaks-1))
+                index += folded.end()
+                continue
         chars.append(char)
         if quoted:
             if escaped:

@@ -11,6 +11,56 @@ from bridge.clients.errors import BridgeUnavailable
 from bridge.clients.deepseek.setup import insertion, legacy_account_configured
 
 
+class DeepSeekInsertionTests(unittest.TestCase):
+    def test_flow_folding_preserves_scalar_values(self):
+        """Match Harness's quoted YAML folding without loading user YAML."""
+        cases = [
+            ('Application\n    Support', 'Application Support'),
+            ('Application \t\n \tSupport', 'Application Support'),
+            ('Application\n \t\n    Support', 'Application\nSupport'),
+            ('Application\n\n\n    Support', 'Application\n\nSupport'),
+            ('Application\\\n    Support', 'ApplicationSupport'),
+            ('Application  \\\n    Support', 'Application  Support'),
+            (r'Application\nSupport', 'Application\nSupport'),
+            ('Application'+'\\'*2+'\n    Support', 'Application\\ Support'),
+            (r'应用 \"quoted\" \\path'+'\n    Support', '应用 "quoted" \\path Support'),
+        ]
+        for newline in ('\n', '\r\n'):
+            for raw, expected in cases:
+                with self.subTest(newline=newline, raw=raw):
+                    text = MARKER+newline+'- {"value": "'+raw.replace('\n', newline)+'"}'+newline
+                    self.assertEqual(insertion(text)[0], {'value': expected})
+
+    def test_folded_paths_preserve_original_block_offsets(self):
+        """Keep path characters and unrelated patch bytes across both line endings."""
+        paths = ['/Users/example/Library/Application Support/bridge/connection.json',
+                 r'C:\Users\example\Application Support\bridge\connection.json',
+                 '/Users/示例/Application Support/引号"与反斜线\\/connection.json']
+        for newline in ('\n', '\r\n'):
+            for path in paths:
+                with self.subTest(newline=newline, path=path):
+                    expected = {'insert': [{'id': 'codex-mobile-desktop',
+                                           'name': 'file:///tmp/mobile-host.mjs',
+                                           'config': {'configPath': path}}]}
+                    scalar = json.dumps(path, ensure_ascii=False)
+                    flow = json.dumps(expected, ensure_ascii=False).replace(
+                        scalar, scalar.replace(' ', newline+'    ', 1))
+                    prefix = '- id: user-setting'+newline+'  config: !!js "never execute"'+newline
+                    suffix = '- id: later-user-setting'+newline+'  config: true'+newline
+                    text = prefix+MARKER+newline+'- '+flow+newline+suffix
+                    entry, start, end = insertion(text)
+                    self.assertEqual(entry, expected)
+                    self.assertEqual(text[:start]+text[end:], prefix+suffix)
+
+    def test_folded_duplicate_keys_and_unknown_forms_are_rejected(self):
+        """Preserve duplicate-key checks and the accepted flow subset."""
+        for flow in ['{"config Path": 1, "config\n    Path": 2}',
+                     "{'insert': []}", '{"insert": *alias}', '{"insert": []']:
+            with self.subTest(flow=flow):
+                with self.assertRaises(ValueError):
+                    insertion(MARKER+'\n- '+flow+'\n')
+
+
 class DeepSeekMigrationTests(unittest.TestCase):
     def setUp(self):
         root = Path(__file__).resolve().parents[1]/'.tmp'
@@ -22,7 +72,7 @@ class DeepSeekMigrationTests(unittest.TestCase):
         self.profile = self.home/'profiles/desktop/cordis.patch.yml'
         self.profile.parent.mkdir(parents=True)
         self.profile.write_text('- id: user-setting\n  config: !!js "do not evaluate"\n')
-        self.old = DeepSeek(self.root/'desktop-lab/desktop-sessions/deepseek', self.home)
+        self.old = DeepSeek(self.root/'Application Support/desktop-lab/desktop-sessions/deepseek', self.home)
         self.old.ensure_installed()
         self.new_path = self.root/'new-preview/desktop-sessions/deepseek'
         self.new = DeepSeek(self.new_path, self.home)
@@ -57,6 +107,25 @@ class DeepSeekMigrationTests(unittest.TestCase):
         self.assertTrue(self.old.installation_status()['installed'])
         self.assertFalse(self.old.ensure_installed()['changed'])
         self.assertEqual(self.profile.read_text(), before)
+        self.old.uninstall()
+        after = self.profile.read_text()
+        self.assertNotIn(MARKER, after)
+        self.assertIn('config: !!js "do not evaluate"', after)
+        self.assertIn('- id: later-user-setting\n  config: true', after)
+
+    def test_folded_config_path_reuses_connector_without_rewriting(self):
+        """A Harness save must not invalidate or replace the owned connector."""
+        self.normalize()
+        self.profile.write_text(self.profile.read_text().replace(
+            'Application Support', 'Application\n              Support'))
+        paths = [*self.old.directory.iterdir(), self.profile]
+        before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths}
+        self.assertTrue(self.old.installation_status()['installed'])
+        self.assertFalse(self.old.ensure_installed()['changed'])
+        self.assertTrue(self.new.discover_existing()['reused'])
+        self.assertEqual(self.new.directory, self.old.directory)
+        self.assertFalse(self.new_path.exists())
+        self.assertEqual(before, {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths})
         self.old.uninstall()
         after = self.profile.read_text()
         self.assertNotIn(MARKER, after)
