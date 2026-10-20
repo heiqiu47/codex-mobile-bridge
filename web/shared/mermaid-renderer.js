@@ -116,7 +116,7 @@
     frame.tabIndex = -1;
     frame.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;border:0';
     const promise = new Promise((resolve, reject) => {
-      ready = {resolve, reject, timer:setTimeout(() => reset(Error('Diagram renderer failed to load')), 15000)};
+      ready = {resolve, reject, timer:setTimeout(() => reset(Error('Diagram renderer failed to load')), 60000)};
     });
     ready.promise = promise;
     frame.src = (window.BridgeRelayBase || '') + '/mermaid-render-shell';
