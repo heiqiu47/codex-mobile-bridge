@@ -854,6 +854,12 @@ python3 -B -m unittest discover -s tests -v
 
 感谢 [@SevenPwZ（des1re）](https://github.com/SevenPwZ) 在 [PR #32](https://github.com/try2love/codex-mobile-bridge/pull/32) 中贡献 Android 应用内更新；v2.0.3 在此基础上整合电脑协助下载、下载方式选择与安装恢复优化。
 
+感谢 [@wangzheuser](https://github.com/wangzheuser) 提交 [PR #51](https://github.com/try2love/codex-mobile-bridge/pull/51)，修复 DSH 接入配置折行后的识别问题；保留原提交作者 [@w154594742](https://github.com/w154594742) 的署名。
+
+感谢 [@RigerWu](https://github.com/RigerWu) 在 [PR #52](https://github.com/try2love/codex-mobile-bridge/pull/52) 中贡献 iOS 网关不可达时的原生重试与返回电脑列表入口。
+
+感谢 [@heiqiu47](https://github.com/heiqiu47) 在 [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40) 中贡献账号与模型界面及查询优化。本次继续采纳查询收敛部分，未纳入重置预测或入口迁移。
+
 ## 许可证与参考
 
 项目源码使用 [MIT License](LICENSE)。Codex App 为独立软件，不随本项目分发。桌面构建内置 cloudflared 并附带其许可证；二进制不提交到源码仓库，遵循其自身许可。
