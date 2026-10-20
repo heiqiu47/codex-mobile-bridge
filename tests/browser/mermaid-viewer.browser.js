@@ -58,6 +58,12 @@ async function runMermaidViewerTests() {
     document.body.append(opener); opener.focus(); await open();
     check(scale() === 1, 'Reopening starts fitted');
     button('close').click(); await settle(); check(document.activeElement === opener, 'Close restores focus to connected opener');
+    const scope={};
+    BridgeMermaidViewer.open({image:{url,width:600,height:400},source,scope,opener});
+    BridgeMermaidViewer.closeScope({});
+    check(dialog.open,'Invalidating another scope does not close the viewer');
+    BridgeMermaidViewer.closeScope(scope);await settle();
+    check(!dialog.open && !canvas.querySelector('img'),'Invalidating the owning scope clears the fullscreen image');
   } finally { window.BridgeClipboard = clipboard; opener.remove(); }
   return checks;
 }

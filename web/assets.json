@@ -68,7 +68,12 @@
   "/vendor/prism/source-view.min.js": "vendor/prism/source-view.min.js",
   "/presentation.js": "features/settings/presentation.js",
   "/i18n.js": "shared/i18n.js",
-  "/markdown.js": "shared/markdown.js",
+  "/markdown.js": [
+    "shared/mermaid-renderer.js",
+    "shared/mermaid-viewer.js",
+    "shared/mermaid-cards.js",
+    "shared/markdown.js"
+  ],
   "/image-viewer.js": "shared/image-viewer.js",
   "/mermaid-renderer.js": "shared/mermaid-renderer.js",
   "/mermaid-render-frame.js": "shared/mermaid-render-frame.js",
@@ -78,6 +83,8 @@
   "/mermaid-cards.js": "shared/mermaid-cards.js",
   "/mermaid-cards.css": "shared/mermaid-cards.css",
   "/presentation.css": [
+    "shared/mermaid-viewer.css",
+    "shared/mermaid-cards.css",
     "shared/presentation.css",
     "hosts/mobile-header.css",
     "shared/presentation-content.css",

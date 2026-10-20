@@ -4,7 +4,7 @@
   const t = value => typeof BridgeI18n === 'undefined' ? value : BridgeI18n.t(value);
   const theme = () => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
   function createScope() { return {cache:new Map(), pending:new Map(), bytes:0, views:new Map(), revision:0, disposed:false}; }
-  function resetScope(scope) { if (!scope) return; scope.cache.clear(); scope.pending.clear(); scope.views.clear(); scope.bytes=0; scope.revision++; }
+  function resetScope(scope) { if (!scope) return; window.BridgeMermaidViewer?.closeScope(scope); scope.cache.clear(); scope.pending.clear(); scope.views.clear(); scope.bytes=0; scope.revision++; }
   function clearScope(scope) { if (!scope) return; resetScope(scope); scope.disposed=true; }
   function remember(scope,key,image) {
     if (!scope || scope.disposed || image.url.length > MAX_DATA) return;
@@ -32,7 +32,7 @@
     const sourceButton=make('源码',()=>show('source'));
     const copyButton=make('复制源码',()=>window.BridgeClipboard?.copy(getSource,copyButton));
     const fullButton=make('全屏查看',()=>{
-      if(image) window.BridgeMermaidViewer?.open({image,source,getSource,opener:fullButton});
+      if(image) window.BridgeMermaidViewer?.open({image,source,getSource,scope,opener:fullButton});
     });
     toolbar.append(diagramButton,sourceButton,copyButton,fullButton);
     card.append(toolbar,stage,status,pre);
@@ -66,17 +66,17 @@
         }
       }
       task.then(result=>{
-        if(ticket!==generation || scope?.disposed)return;
+        if(ticket!==generation || scope?.disposed || (scope && scope.revision!==revision))return;
         if(!result?.url || !Number.isFinite(result.width) || !Number.isFinite(result.height))throw Error('invalid diagram');
         display(result);
       }).catch(()=>{
-        if(ticket===generation && !scope?.disposed)status.textContent=t('图表无法显示，请查看源码');
+        if(ticket===generation && !scope?.disposed && (!scope || scope.revision===revision))status.textContent=t('图表无法显示，请查看源码');
       }).finally(()=>{if(ticket===generation)rendering=false;});
     }
     function display(result) {
       image=result;
       const img=document.createElement('img');img.alt=t('图表');img.src=result.url;img.width=result.width;img.height=result.height;
-      img.loading='lazy';img.decoding='async';img.onclick=()=>window.BridgeMermaidViewer?.open({image,source,getSource,opener:img});
+      img.loading='lazy';img.decoding='async';img.onclick=()=>window.BridgeMermaidViewer?.open({image,source,getSource,scope,opener:img});
       img.tabIndex=0;img.setAttribute('role','button');img.setAttribute('aria-label',t('查看图表'));
       img.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();img.click();}};
       stage.replaceChildren(img);status.textContent='';fullButton.hidden=view!=='diagram';

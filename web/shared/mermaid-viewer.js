@@ -185,12 +185,13 @@
     document.addEventListener('bridge-language', () => { if (dialog.open) relabel(); });
   }
   window.BridgeMermaidViewer = {
+    closeScope(scope) { if (scope && entry?.scope === scope && dialog?.open) dialog.close(); },
     open(value) {
       if (!value?.image || typeof value.image.url !== 'string' ||
           !/^(?:blob:|data:image\/svg\+xml[,;])/.test(value.image.url) ||
           !(Number(value.image.width) > 0 && Number(value.image.height) > 0)) return false;
       if (!dialog) create();
-      cleanup(); entry = {source:value.source, getSource:value.getSource};
+      cleanup(); entry = {source:value.source, getSource:value.getSource, scope:value.scope};
       activeImage = {width:Number(value.image.width),height:Number(value.image.height)};
       opener = value.opener || document.activeElement;
       sourcePanel.textContent = ''; sourcePanel.hidden = true; canvas.hidden = false; controls.hidden = false;
