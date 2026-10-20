@@ -14,7 +14,7 @@
   let queue = Promise.resolve();
 
   function safeCss(value) {
-    if (/@import\b|@namespace\b/i.test(value)) return '';
+    if (/@import\b|@namespace\b|\\/i.test(value)) return '';
     return value.replace(/url\s*\([^)]*\)/gi, match =>
       /^url\s*\(\s*['"]?#[A-Za-z0-9_.:-]+['"]?\s*\)$/i.test(match) ? match : 'none');
   }
@@ -24,16 +24,17 @@
       throw Error('Invalid diagram output');
     const nonce = window.document.querySelector('meta[name="bridge-style-nonce"]')?.content;
     if (nonce && !/^[A-Za-z0-9_-]{32}$/.test(nonce)) throw Error('Invalid style nonce');
-    // DOMParser applies CSP to SVG <style> while parsing, before we can walk
-    // the tree. Mermaid emits plain style tags; replace only their opening tags
-    // with fixed nonced ones and reject any other style-tag spelling.
+    // DOMParser applies CSP to SVG <style> while parsing. Remove complete
+    // Mermaid style blocks first, then restore only sanitized CSS after parsing.
     const styleTags = (raw.match(/<(?:[A-Za-z_][\w.-]*:)?style\b/gi) || []).length;
-    let prepared = 0;
-    const safeRaw = nonce ? raw.replace(/<style(?:\s[^<>]*)?>/gi, () => {
-      prepared++;
-      return '<style nonce="' + nonce + '">';
-    }) : raw;
-    if (nonce && styleTags !== prepared) throw Error('Unsupported diagram style');
+    const styleToken = 'bridge-mermaid-style-' + Array.from(crypto.getRandomValues(new Uint8Array(12)),
+      byte => byte.toString(16).padStart(2, '0')).join('');
+    const styles = [];
+    const safeRaw = raw.replace(/<style(?:\s[^<>]*)?>([\s\S]*?)<\/style\s*>/gi, (_whole, css) => {
+      const index = styles.push(safeCss(css)) - 1;
+      return '<g id="' + styleToken + '-' + index + '"/>';
+    });
+    if (styleTags !== styles.length) throw Error('Unsupported diagram style');
     const document = new DOMParser().parseFromString(safeRaw, 'image/svg+xml');
     const root = document.documentElement;
     if (root.namespaceURI !== svgNamespace || root.localName !== 'svg' ||
@@ -53,12 +54,17 @@
         else if (name === 'style') element.setAttribute(attr.name, safeCss(attr.value));
         else if (/url\s*\(/i.test(attr.value)) element.setAttribute(attr.name, safeCss(attr.value));
       }
-      if (element.localName === 'style') {
-        element.textContent = safeCss(element.textContent);
-        if (nonce) element.setAttribute('nonce', nonce);
-      }
     }
     clean(root);
+    for (let index = 0; index < styles.length; index++) {
+      const placeholder = Array.from(root.getElementsByTagNameNS(svgNamespace, 'g'))
+        .find(element => element.getAttribute('id') === styleToken + '-' + index);
+      if (!placeholder) throw Error('Missing diagram style placeholder');
+      const style = document.createElementNS(svgNamespace, 'style');
+      if (nonce) style.setAttribute('nonce', nonce);
+      style.textContent = styles[index];
+      placeholder.replaceWith(style);
+    }
     const viewBox = (root.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
     let width = viewBox.length === 4 ? viewBox[2] : Number.parseFloat(root.getAttribute('width'));
     let height = viewBox.length === 4 ? viewBox[3] : Number.parseFloat(root.getAttribute('height'));
