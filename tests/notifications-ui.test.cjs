@@ -501,6 +501,21 @@ test('legacy Codex tab snapshot migrates after authenticated reentry',async()=>{
   assert.equal(localStore.has(key),true);assert.equal(sessionStore.has(key),false);
 });
 
+test('oversized or malformed Codex snapshots cannot block authenticated list startup',async()=>{
+  const identity='a'.repeat(64),key=`codex-list-v1:${identity}:["",false,"all"]`;
+  const valid={rows:[{id:'saved',host:'local',title:'Saved',projectKey:'p',projectName:'P',recency:1}],sources:['desktop'],hosts:[],offset:1,hasMore:false};
+  const localStore=new Map([[key,JSON.stringify({...valid,rows:[{...valid.rows[0],title:'X'.repeat(600*1024)}]})]]);
+  const sessionStore=new Map(),ui=await fixture({localStore,sessionStore,skipStartup:true});
+  ui.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${identity}'})`);
+  assert.equal(ui.run('restoreListSnapshot()'),false);
+  localStore.set(key,JSON.stringify({...valid,rows:Array.from({length:201},(_,i)=>({...valid.rows[0],id:String(i)}))}));
+  assert.equal(ui.run('restoreListSnapshot()'),false);
+  localStore.set(key,'{broken');sessionStore.set(key,JSON.stringify(valid));
+  assert.equal(ui.run('restoreListSnapshot()'),true);
+  assert.equal(ui.nodes.get('sessions').children[0].dataset.id,'saved');
+  assert.equal(sessionStore.has(key),false);
+});
+
 test('failed and incomplete Codex refreshes retain the last complete durable snapshot',async()=>{
   const localStore=new Map(),ui=await fixture({localStore,skipStartup:true});ui.nodes.get('app').hidden=false;
   ui.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${'a'.repeat(64)}'})`);

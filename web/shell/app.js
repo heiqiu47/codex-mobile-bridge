@@ -160,10 +160,20 @@ function listSnapshotKey(filter){return listIdentity?'codex-list-v1:'+listIdenti
 function currentListFilter(){return JSON.stringify([$('search').value,$('archived').checked,listSource]);}
 function restoreListSnapshot(filter=currentListFilter()){
   const key=listSnapshotKey(filter);if(!key)return false;
-  let saved,legacy=false;try{const persisted=localStorage.getItem(key),previous=sessionStorage.getItem(key);legacy=!persisted&&!!previous;saved=JSON.parse(persisted||previous||'null');}catch{return false;}
-  if(!saved||!Array.isArray(saved.rows)||!Array.isArray(saved.sources)||!Array.isArray(saved.hosts))return false;
+  let saved,legacy=false;
+  for(const storage of [localStorage,sessionStorage]){
+    try{
+      const snapshot=storage.getItem(key);if(!snapshot||snapshot.length>512*1024)continue;
+      const value=JSON.parse(snapshot);
+      if(!value||!Array.isArray(value.rows)||value.rows.length>200||!value.rows.every(row=>row&&typeof row.id==='string'&&typeof row.host==='string')||
+          !Array.isArray(value.sources)||!value.sources.every(source=>typeof source==='string')||
+          !Array.isArray(value.hosts)||!value.hosts.every(host=>typeof host==='string'))continue;
+      saved=value;legacy=storage===sessionStorage;break;
+    }catch{}
+  }
+  if(!saved)return false;
   listFilterKey=filter;listRows=saved.rows;availableSources=saved.sources;listHostIds=saved.hosts;
-  listOffset=saved.offset;listHasMore=saved.hasMore===true;listComplete=false;listReadFinished=false;
+  listOffset=saved.rows.length;listHasMore=saved.hasMore===true;listComplete=false;listReadFinished=false;
   listQuery=$('search').value;listArchived=$('archived').checked;renderSourceFilter();renderList();if(legacy)saveListSnapshot(filter);return true;
 }
 function saveListSnapshot(filter){
