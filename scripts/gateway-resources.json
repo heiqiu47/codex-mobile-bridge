@@ -27,7 +27,6 @@
   "web/features/workspace/pdf-preview.js",
   "web/features/workspace/html-preview.js",
   "web/features/workspace/html-preview-shell.html",
-  "bridge/api/mermaid_render.py",
   "web/shared/mermaid-render-shell.html",
   "web/shared/mermaid-render-frame.js",
   "web/shared/mermaid-renderer.js",

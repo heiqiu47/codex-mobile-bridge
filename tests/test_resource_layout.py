@@ -28,6 +28,8 @@ PUBLIC_URLS = set('''
 /modes.js /attachments.js /activity.js /fast-mode.js /accounts.js /account.js
 /account.css /presentation.js /presentation.css /markdown.js /message-actions.js
 /timeline.js /vendor/markdown-it.min.js /vendor/texmath.js
+/mermaid-renderer.js /mermaid-render-frame.js /vendor/mermaid/mermaid.min.js
+/mermaid-viewer.js /mermaid-viewer.css /mermaid-cards.js /mermaid-cards.css
 /vendor/katex/katex.min.js /vendor/katex/katex.min.css /style.css
 /manifest.webmanifest /icon.png /icon-ui.png /icon-favicon.png /icon-touch.png /icon-192.png
 '''.split())
