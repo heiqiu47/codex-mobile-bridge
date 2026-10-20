@@ -48,7 +48,7 @@ class DesktopSessionsView {
   bindListCache(identity,host){
     if(this.listCacheIdentity!==identity||this.listCacheHost!==host)this.providerViews.clear();
     this.listCacheIdentity=identity;this.listCacheHost=host;
-    if(identity)for(const storage of [localStorage,sessionStorage])for(let i=storage.length-1;i>=0;i--){const key=storage.key(i);if(key?.startsWith('desktop-list-v1:')&&!key.startsWith('desktop-list-v1:'+identity+':'))storage.removeItem(key);}
+    if(identity&&host)for(const storage of [localStorage,sessionStorage])for(let i=storage.length-1;i>=0;i--){const key=storage.key(i);if(key?.startsWith('desktop-list-v1:')&&!key.startsWith('desktop-list-v1:'+identity+':')&&['claude','deepseek'].some(provider=>key.endsWith(':'+encodeURIComponent(host)+':'+provider)))storage.removeItem(key);}
     for(const provider of ['claude','deepseek']){
       const key=this.listSnapshotKey(provider);if(!key)continue;
       let saved;try{const snapshot=localStorage.getItem(key)||sessionStorage.getItem(key);if(snapshot?.length>512*1024)continue;saved=JSON.parse(snapshot||'null');}catch{continue;}
