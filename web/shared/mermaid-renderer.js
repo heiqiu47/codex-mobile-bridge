@@ -19,7 +19,7 @@
       /^url\s*\(\s*['"]?#[A-Za-z0-9_.:-]+['"]?\s*\)$/i.test(match) ? match : 'none');
   }
 
-  function imageFromSvg(raw) {
+  function imageFromSvg(raw, theme) {
     if (typeof raw !== 'string' || raw.length > maxSvgLength || /<!DOCTYPE|<!ENTITY/i.test(raw))
       throw Error('Invalid diagram output');
     const nonce = window.document.querySelector('meta[name="bridge-style-nonce"]')?.content;
@@ -74,6 +74,7 @@
     height = Math.ceil(height);
     root.setAttribute('width', String(width));
     root.setAttribute('height', String(height));
+    root.style.backgroundColor = theme === 'dark' ? '#1f2020' : '#ffffff';
     const svg = new XMLSerializer().serializeToString(root);
     return {url:'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg), width, height};
   }
@@ -101,7 +102,7 @@
       pending = null;
       try {
         if (data.error) throw Error(String(data.error));
-        task.resolve(imageFromSvg(data.svg));
+        task.resolve(imageFromSvg(data.svg, task.theme));
       } catch (error) { task.reject(error); }
     }
   });
@@ -128,7 +129,7 @@
     if (typeof source !== 'string' || source.length > 65536) return Promise.reject(Error('Diagram source is too large'));
     return ensureFrame().then(() => new Promise((resolve, reject) => {
       const requestId = ++sequence;
-      pending = {requestId, resolve, reject, timer:setTimeout(() => reset(Error('Diagram render timed out')), 12000)};
+      pending = {requestId, resolve, reject, theme:options?.theme, timer:setTimeout(() => reset(Error('Diagram render timed out')), 12000)};
       frame.contentWindow.postMessage({type:'bridge-mermaid-render', instance, requestId,
         source, theme:options?.theme === 'dark' ? 'dark' : 'default'}, '*');
     }));
