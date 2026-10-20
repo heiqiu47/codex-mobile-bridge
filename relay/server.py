@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from aiohttp import web, WSMsgType
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
-from bridge.api.mermaid_render import SHELL_PATH as MERMAID_SHELL_PATH, shell_csp as mermaid_shell_csp, shell_bytes as mermaid_shell_bytes
+from bridge.api.mermaid_render import SHELL_PATH as MERMAID_SHELL_PATH, shell_csp as mermaid_shell_csp, shell_bytes as mermaid_shell_bytes, is_public_renderer_script
 from .protocol import MAX_BODY, MAX_FRAME, origin, validate, decode, content_type, download_headers
 from .registry import Registry, token, PHONE_LIFETIME
 from .stream import WINDOW, unpack
@@ -455,7 +455,10 @@ def create_app(directory, public_origin, test_http=False, timeout=90):
             supplied = request.headers.get('Origin')
             if supplied and supplied != state.origin:
                 raise PermissionError('Unrecognized origin')
-            if request.headers.get('Sec-Fetch-Site') == 'cross-site':
+            scoped_path = request.path[len(state.scope(request)):]
+            renderer_script = is_public_renderer_script(scoped_path, request.method,
+                                                        request.headers.get('Sec-Fetch-Dest'))
+            if request.headers.get('Sec-Fetch-Site') == 'cross-site' and not renderer_script:
                 raise PermissionError('Cross-site access denied')
             if any(value.strip().lower() != 'identity' for value in request.headers.getall('Content-Encoding', [])):
                 raise web.HTTPUnsupportedMediaType(reason='Compressed request bodies are not supported')

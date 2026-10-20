@@ -41,7 +41,7 @@ from bridge.features.sessions.create import CreationError
 from bridge.features.accounts.account import AccountError
 from bridge.features.terminals.manager import TerminalSessionMissing
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
-from bridge.api.mermaid_render import SHELL_PATH as MERMAID_SHELL_PATH, shell_csp as mermaid_shell_csp, shell_bytes as mermaid_shell_bytes
+from bridge.api.mermaid_render import SHELL_PATH as MERMAID_SHELL_PATH, shell_csp as mermaid_shell_csp, shell_bytes as mermaid_shell_bytes, is_public_renderer_script
 
 LOG = logging.getLogger(__name__)
 from bridge.api.assets import STATIC, FONT_ROUTE, PDF_CMAP_ROUTE, PDF_FONT_ROUTE, VERSION_KEY, served_asset_bytes
@@ -277,7 +277,9 @@ class Handler(BaseHTTPRequestHandler):
         homepage_navigation = (not write and self.command == 'GET' and urlsplit(self.path).path in ('/', '/harness', '/harness/')
                                and self.headers.get('Sec-Fetch-Mode') == 'navigate'
                                and self.headers.get('Sec-Fetch-Dest') == 'document')
-        if self.headers.get("Sec-Fetch-Site") == "cross-site" and not homepage_navigation:
+        renderer_script = is_public_renderer_script(urlsplit(self.path).path, self.command,
+                                                    self.headers.get('Sec-Fetch-Dest'))
+        if self.headers.get("Sec-Fetch-Site") == "cross-site" and not (homepage_navigation or renderer_script):
             raise PermissionError("不允许跨站请求")
 
     def authorized(self, write=False):
