@@ -4,6 +4,14 @@
 
 **[v2.1.2 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
 
+## 待发布：Mermaid 图表预览
+
+聊天与 Markdown 文件中的完整 `mermaid` 代码块可直接预览。点击图表或“全屏查看”后，可双指缩放、放大后拖动、双击缩放，或用“适应屏幕”还原；卡片和全屏中均保留源码查看与复制入口。后续回复文字更新复用未变化图表，保留当前源码视图和全屏缩放。
+
+iOS 本轮修复了预览子页面被原生导航策略拦截的问题。使用此功能需更新网关及配套 iOS App，单独刷新旧 App 不能消除该限制。独立 iPhone Test 已覆盖安装并通过图表、全屏缩放实测，原电脑列表和绑定保留；Android App 与宽屏 Web 的图表预览也已通过用户实测。本节为开发版说明，尚未包含在上方 v2.1.2 Release 中，详见[待发布说明](../RELEASE_NOTES.md#unreleased-mermaid)。
+
+**English:** unreleased Mermaid previews add diagram/source switching, original-source copying and fullscreen pinch, drag, double-tap and fit-to-screen controls. Streaming text updates reuse unchanged diagrams and retain the reading state. iOS requires both the gateway and App update to fix its native subframe navigation restriction. The independent iPhone Test update retained saved computers and bindings and passed diagram/fullscreen checks; Android and wide-screen Web previews also passed user testing. These changes are not yet in the linked v2.1.2 release.
+
 ## v2.1.2：终端输入、触摸滚动与显示
 
 手机与宽屏 Web 默认直接在终端输入，保留可选的“编写后发送模式”。新增 Enter，改善中文输入、Tab 路径补全、OpenCode 类终端 CLI 的触摸滚动及断线恢复。终端字号可独立调节为 6–24px，修复小字号重叠、字符对齐和内容覆盖工具栏。主题与语言移到设置顶部，正文字号为 10–32px、代码字号为 8–28px。

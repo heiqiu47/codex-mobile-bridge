@@ -42,6 +42,19 @@ Codex 的 MCP、动态工具及保存历史中的工具输出，共用 `bridge/f
 
 Claude 账号面板的定时刷新只读已保存额度；只有显式 `details(refresh=True)` 查询。成功快照的日期时间与面板刷新时间分开，失败不能覆盖原成功值。见[手动额度约定](../.agents/notes/implemented/bug-fix/2026-10-12-keychain-access-and-manual-quota.md)。
 
+<a id="mermaid-preview"></a>
+
+## Mermaid 图表阅读
+
+- `shared/markdown.js` 仅把已闭合的 `mermaid` 围栏交给 `mermaid-cards.js`；未完成的流式内容和普通代码块仍按源码显示。Codex 时间线、Claude/DSH 聊天和工作台 `.md` 文件预览共用该入口。图表为只读，源码复制沿用原始内容读取入口。
+- `mermaid-cards.js` 管理图表/源码选择、并发渲染合并及有界内存缓存。键包含引擎版本、主题与源码，作用域由时间线、客户端会话或工作台管理；重置、切换身份或销毁时由调用者清理。每个作用域最多 24 项、data URL 字符数合计不超过 `6 * 1024 * 1024`；这不是跨设备或跨页面重启的持久缓存。卡片源码超过 30,000 字符时保留源码入口。
+- `mermaid-renderer.js` 按需创建 `/mermaid-render-shell` 隔离子页面，通过核验来源、实例和请求编号的消息传递交给本地 Mermaid 10.9.8 渲染；返回 SVG 经白名单过滤后以图片显示，不向主页面插入可执行图表内容。自定义初始化配置、外部资源、交互链接及不安全输出不参与预览，失败保留源码。
+- `mermaid-viewer.js` 提供全屏、双指/滚轮缩放、放大后拖动、双击和适应屏幕，缩放范围为适应尺寸的 1–8 倍；源码面板独立滚动。无关流式更新不会关闭已打开的全屏；源码与图表切换保留缩放。作用域被清理时关闭对应全屏。
+- `bridge/api/mermaid_render.py` 固定渲染壳与 CSP；渲染壳仍要求登录，主页面 CSP 不放宽。opaque-origin 子页面仅允许加载两个固定脚本资源，禁止网络请求、表单和嵌套页面。网关与中继均按内容版本提供引擎资源；图表源码不写入资源 URL，不依赖外部 CDN。
+- iOS 原生导航仅放行当前网关下精确的 HTML/Mermaid 预览子页面 URL，两者作为主页面导航仍拒绝。iOS 验收必须包含完整 App 的导航代理，不能只用不带代理的 WKWebView 替代。
+
+用户操作见[图表阅读说明](../README.md#mermaid-preview)，定向检查见[浏览器检查](../tests/browser/README.md#mermaid-checks)，本轮跨平台结果见[验收记录](../VERIFICATION.md#mermaid-preview-acceptance)。
+
 ## CLI 能力展示
 
 列表与会话快照的 `access` 字段控制 CLI 历史阅读、显式连接和允许的操作。界面不自动接入 CLI；服务端独立校验相同能力，隐藏按钮不能替代权限检查。连接失败保留原因，连接成功后清除；诊断下载使用既有登录会话。无 `access` 的旧网关维持原桌面行为。
