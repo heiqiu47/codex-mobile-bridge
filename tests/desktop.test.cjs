@@ -72,7 +72,7 @@ test('development launch keeps script as its own argument',()=>{
 
 // Exercise the real renderer's start and polling handlers with a controlled
 // backend and clock. DOM layout and input editing are outside these checks.
-async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,loginStartup}={}){
+async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,loginStartup,AccountsPanel}={}){
   const fs=require('node:fs'),vm=require('node:vm');
   const nodes=new Map();
   function node(){return {parentNode:{insertBefore(){}},getAnimations(){return [];},animate(){},closest(){return null;},value:'',checked:false,hidden:false,textContent:'',dataset:{},
@@ -88,13 +88,26 @@ async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,lo
   const calls=[];
   const api={account:async()=>({visible:false}),language:async()=>initialLanguage,setLanguage:async value=>value,snapshot:async()=>{calls.push('snapshot');return structuredClone(value);},start:async()=>{calls.push('start');return {started:true,message:'正在启动网关'};},
     save:async payload=>{value.preferences={...value.preferences,...payload.preferences};return structuredClone(value);},logs:async()=>({text:''})};
-  const context=vm.createContext({window:{bridgeDesktop:api},
+  const context=vm.createContext({window:{bridgeDesktop:api},AccountsPanel,
     localStorage:{getItem(){return null;},setItem(){}},document:{hidden,addEventListener(name,fn){this[name]=fn;},documentElement:{},getElementById:id=>nodes.get(id),createElement:node,querySelectorAll:()=>[]},
     URL,Date:class extends Date{static now(){return now;}},setTimeout(){},clearTimeout(){},clearInterval(){},setInterval:(callback,ms)=>{if(callback.name==='refresh')poll=callback;}});
   for(const name of ['web/shared/i18n.js','desktop/shared/secret-fields.js','desktop/features/connections/connections.js','desktop/features/connections/pairing.js','web/features/accounts/account.js','desktop/features/notifications/watches.js','desktop/shell/renderer.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',name),'utf8'),context);
   await new Promise(setImmediate);
   return {nodes,value,context,api,calls,run:code=>vm.runInContext(code,context),poll:()=>poll(),advance:ms=>{now+=ms;},start:()=>nodes.get('start').onclick()};
 }
+
+test('desktop tab transitions update visibility before Codex account polling resumes',async()=>{
+  const events=[],accounts={dataset:{panel:'accounts'},hidden:true},overview={dataset:{panel:'overview'},hidden:false};
+  const ui=await renderer('zh-CN',{AccountsPanel:class{
+    refresh(){events.push(['refresh',accounts.hidden]);}
+    resume(){events.push(['resume',accounts.hidden]);}
+    render(){}
+  }});
+  ui.context.document.querySelectorAll=selector=>selector==='[data-panel]'?[accounts,overview]:[];
+  events.length=0;
+  ui.run("tab('accounts')");ui.run("tab('overview')");ui.run("tab('accounts')");
+  assert.deepEqual(events,[['refresh',false],['resume',true],['refresh',false]]);
+});
 
 for(const transferFirst of [false,true])test(`independent transfer settings ${transferFirst?'before':'after'} snapshot do not block gateway startup or hide real drafts`,async()=>{
   const ui=await renderer(),fs=require('node:fs'),vm=require('node:vm');
