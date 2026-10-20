@@ -7,9 +7,9 @@
   const fixture=document.createElement('div');document.body.append(fixture);
   const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   const scope=BridgeMermaidCards.createScope();
-  let calls=0, copied='';
+  let calls=0, copied='', copyDone;
   window.BridgeMermaidRenderer={version:'test',render:async()=>{calls++;return {url:'data:image/svg+xml,%3Csvg%3E%3C/svg%3E',width:120,height:80};}};
-  window.BridgeClipboard={copy:async getSource=>{copied=await getSource();}};
+  window.BridgeClipboard={copy:getSource=>copyDone=getSource().then(value=>{copied=value;})};
   const render=(value,options={})=>{
     const owner=document.createElement('div');owner.__mermaidScope=scope;owner.__mermaidIdentity='row-1';
     renderMarkdown(owner,value,[],()=>'',options);fixture.append(owner);return owner;
@@ -27,7 +27,7 @@
     check('complete Mermaid fence renders image once',card?.querySelector('img')&&calls===1);
     card.querySelectorAll('button')[1].click();
     check('source switch reveals exact parsed code',!card.querySelector('pre').hidden&&card.querySelector('pre code').textContent===source);
-    await card.querySelectorAll('button')[2].click();
+    card.querySelectorAll('button')[2].click();await copyDone;
     check('copy follows original code-block index',copied===source);
     complete.remove();
     const replacement=render('```js\nfirst\n```\n\n```mermaid\n'+source+'```');
