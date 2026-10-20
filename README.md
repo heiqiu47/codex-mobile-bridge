@@ -860,6 +860,8 @@ python3 -B -m unittest discover -s tests -v
 
 感谢 [@heiqiu47](https://github.com/heiqiu47) 在 [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40) 中贡献账号与模型界面及查询优化。本次继续采纳查询收敛部分，未纳入重置预测或入口迁移。
 
+感谢 [@tiancai123123](https://github.com/tiancai123123) 通过 [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54) 定位并复现弱网下静态资源重复下载问题，并在 [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56) 中贡献内容哈希、浏览器缓存及条件请求的实现与测试。整合保留其原始提交，并与项目已有的缓存失效和资源版本处理统一。
+
 ## 许可证与参考
 
 项目源码使用 [MIT License](LICENSE)。Codex App 为独立软件，不随本项目分发。桌面构建内置 cloudflared 并附带其许可证；二进制不提交到源码仓库，遵循其自身许可。
