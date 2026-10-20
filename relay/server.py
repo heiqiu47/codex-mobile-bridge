@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from aiohttp import web, WSMsgType
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
+from bridge.api.mermaid_render import SHELL_PATH as MERMAID_SHELL_PATH, SHELL_FILE as MERMAID_SHELL_FILE, shell_csp as mermaid_shell_csp
 from .protocol import MAX_BODY, MAX_FRAME, origin, validate, decode, content_type, download_headers
 from .registry import Registry, token, PHONE_LIFETIME
 from .stream import WINDOW, unpack
@@ -24,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def security_headers(origin, scope=''):
     return {'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
             'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY',
-            'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src " + origin + scope + SHELL_PATH + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"}
+            'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src " + origin + scope + SHELL_PATH + ' ' + origin + scope + MERMAID_SHELL_PATH + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"}
 
 
 class Relay:
@@ -383,6 +384,12 @@ class Relay:
             self.phone_auth(request)
             return web.Response(body=(ROOT/'web'/SHELL_FILE).read_bytes(), content_type='text/html',
                                 headers={'Content-Security-Policy': SHELL_CSP, 'X-Frame-Options': 'SAMEORIGIN'})
+        if path == MERMAID_SHELL_PATH:
+            if request.query_string:
+                raise web.HTTPNotFound()
+            self.phone_auth(request)
+            return web.Response(body=(ROOT/'web'/MERMAID_SHELL_FILE).read_bytes(), content_type='text/html',
+                                headers={'Content-Security-Policy': mermaid_shell_csp(self.origin), 'X-Frame-Options': 'SAMEORIGIN'})
         if path == '/relay/admin':
             raise web.HTTPFound('/relay/admin/')
         if path in ('/relay/', '/relay/pair.js', '/relay/mode.js'):

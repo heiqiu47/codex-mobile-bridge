@@ -41,6 +41,7 @@ from bridge.features.sessions.create import CreationError
 from bridge.features.accounts.account import AccountError
 from bridge.features.terminals.manager import TerminalSessionMissing
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
+from bridge.api.mermaid_render import SHELL_PATH as MERMAID_SHELL_PATH, SHELL_FILE as MERMAID_SHELL_FILE, shell_csp as mermaid_shell_csp
 
 LOG = logging.getLogger(__name__)
 from bridge.api.assets import STATIC, FONT_ROUTE, PDF_CMAP_ROUTE, PDF_FONT_ROUTE, VERSION_KEY, served_asset_bytes
@@ -157,21 +158,21 @@ class Handler(BaseHTTPRequestHandler):
         # Request bodies, cookies, query strings and conversation IDs are private.
         pass
 
-    def headers_common(self, cache_control="no-store", preview_shell=False, style_nonce=None):
+    def headers_common(self, cache_control="no-store", preview_shell=False, style_nonce=None, mermaid_shell=False):
         self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("X-Frame-Options", "SAMEORIGIN" if preview_shell else "DENY")
+        self.send_header("X-Frame-Options", "SAMEORIGIN" if preview_shell or mermaid_shell else "DENY")
         # KaTeX uses style attributes; only our terminal gets nonced dynamic styles.
         host = self.headers.get('Host', '')
         origin = ('https://' if host in self.server.secure_hosts else 'http://') + host
-        frame_source = origin + SHELL_PATH if host in self.server.hosts else "'none'"
+        frame_source = origin + SHELL_PATH + ' ' + origin + MERMAID_SHELL_PATH if host in self.server.hosts else "'none'"
         style_source = "'self'" + (" 'nonce-" + style_nonce + "'" if style_nonce else "")
-        self.send_header("Content-Security-Policy", SHELL_CSP if preview_shell else
+        self.send_header("Content-Security-Policy", SHELL_CSP if preview_shell else mermaid_shell_csp(origin if host in self.server.hosts else "'none'") if mermaid_shell else
                          "default-src 'self'; script-src 'self'; style-src " + style_source + "; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src " + frame_source + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
-    def output(self, status, data, content_type="application/json; charset=utf-8", cookie=None, content_disposition=None, preview_shell=False, style_nonce=None):
+    def output(self, status, data, content_type="application/json; charset=utf-8", cookie=None, content_disposition=None, preview_shell=False, style_nonce=None, mermaid_shell=False):
         # Keep the browser cookie in step with the renewed server-side deadline,
         # including long-lived pages that do not revisit /api/auth.
         if cookie is None and 200 <= status < 300 and urlsplit(self.path).path.startswith('/api/'):
@@ -188,7 +189,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(candidate) < len(body):
                 body, compressed = candidate, True
         self.send_response(status)
-        self.headers_common(preview_shell=preview_shell, style_nonce=style_nonce)
+        self.headers_common(preview_shell=preview_shell, style_nonce=style_nonce, mermaid_shell=mermaid_shell)
         self.send_header("Content-Type", content_type)
         self.send_header('Vary', 'Accept-Encoding')
         if compressed:
@@ -438,6 +439,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self.output(405, {'error': '请求方式无效'})
                 return self.output(200, (self.server.web_dir / SHELL_FILE).read_bytes(),
                                    'text/html; charset=utf-8', preview_shell=True)
+            if path == MERMAID_SHELL_PATH:
+                if write or query:
+                    return self.output(405, {'error': '请求方式无效'})
+                return self.output(200, (self.server.web_dir / MERMAID_SHELL_FILE).read_bytes(),
+                                   'text/html; charset=utf-8', mermaid_shell=True)
             mobile_update = re.fullmatch(r'/api/mobile/update(?:/(prepare|status/([a-f0-9]{64})|packages/([a-f0-9]{64})))?', path)
             if mobile_update:
                 if self.server.auth.config.get('mode') == 'none':
