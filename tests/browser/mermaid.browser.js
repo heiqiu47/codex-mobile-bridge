@@ -45,6 +45,13 @@
     await tick();BridgeMermaidCards.clearScope(pending);old.remove();
     finish({url:'data:image/svg+xml,%3Csvg%3E%3C/svg%3E',width:120,height:80});await tick();
     check('disposed async result cannot populate cache or detached row',pending.cache.size===0&&!old.querySelector('.mermaid-card img'));
+    const nested=BridgeMermaidCards.createScope();
+    window.BridgeMermaidRenderer={version:'nested',render:async()=>({url:'data:image/svg+xml,%3Csvg%3E%3C/svg%3E',width:120,height:80})};
+    const detached=document.createElement('div');detached.__mermaidScope=nested;
+    renderMarkdown(detached,'> - item\n>   ```mermaid\n>   graph TD\n>   A-->B\n>   ```');
+    await tick();fixture.append(detached);
+    check('nested quoted list fence renders after detached construction',!!detached.querySelector('.mermaid-card img'));
+    BridgeMermaidCards.clearScope(nested);
     return {passed:checks.length,checks};
   } finally {fixture.remove();window.BridgeMermaidRenderer=originalRenderer;window.BridgeClipboard=originalClipboard;}
 })();
