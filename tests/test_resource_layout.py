@@ -29,7 +29,7 @@ PUBLIC_URLS = set('''
 /account.css /presentation.js /presentation.css /markdown.js /message-actions.js
 /timeline.js /vendor/markdown-it.min.js /vendor/texmath.js
 /vendor/katex/katex.min.js /vendor/katex/katex.min.css /style.css
-/manifest.webmanifest /icon.png
+/manifest.webmanifest /icon.png /icon-ui.png /icon-favicon.png /icon-touch.png /icon-192.png
 '''.split())
 
 SSH_SOURCES = {

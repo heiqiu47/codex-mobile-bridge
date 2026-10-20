@@ -63,7 +63,7 @@ function renderHostErrors(hosts){
 }
 function clearListSnapshot(){
   for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(key?.startsWith('codex-list-v1:')||key?.startsWith('desktop-list-v1:'))sessionStorage.removeItem(key);}
-  for(let i=localStorage.length-1;i>=0;i--){const key=localStorage.key(i);if(key?.startsWith('desktop-list-v1:'))localStorage.removeItem(key);}
+  for(let i=localStorage.length-1;i>=0;i--){const key=localStorage.key(i);if(key?.startsWith('codex-list-v1:')||key?.startsWith('desktop-list-v1:'))localStorage.removeItem(key);}
   listIdentity='';listFilterKey='';listHostIds=[];listRows=[];listOffset=0;listHasMore=false;listComplete=false;listReadFinished=false;availableSources=[];listRenderStamp='';listGeneration++;
 }
 function authLost(){clearListSnapshot();if(!$('app').hidden)document.dispatchEvent(new Event('bridge-auth-lost'));showLogin();}
@@ -160,15 +160,31 @@ function listSnapshotKey(filter){return listIdentity?'codex-list-v1:'+listIdenti
 function currentListFilter(){return JSON.stringify([$('search').value,$('archived').checked,listSource]);}
 function restoreListSnapshot(filter=currentListFilter()){
   const key=listSnapshotKey(filter);if(!key)return false;
-  let saved;try{saved=JSON.parse(sessionStorage.getItem(key)||'null');}catch{return false;}
-  if(!saved||!Array.isArray(saved.rows)||!Array.isArray(saved.sources)||!Array.isArray(saved.hosts))return false;
+  let saved,legacy=false;
+  for(const storage of [localStorage,sessionStorage]){
+    try{
+      const snapshot=storage.getItem(key);if(!snapshot||snapshot.length>512*1024)continue;
+      const value=JSON.parse(snapshot);
+      if(!value||!Array.isArray(value.rows)||value.rows.length>200||!value.rows.every(row=>row&&typeof row.id==='string'&&typeof row.host==='string')||
+          !Array.isArray(value.sources)||!value.sources.every(source=>typeof source==='string')||
+          !Array.isArray(value.hosts)||!value.hosts.every(host=>typeof host==='string'))continue;
+      saved=value;legacy=storage===sessionStorage;break;
+    }catch{}
+  }
+  if(!saved)return false;
   listFilterKey=filter;listRows=saved.rows;availableSources=saved.sources;listHostIds=saved.hosts;
-  listOffset=saved.offset;listHasMore=saved.hasMore===true;listComplete=false;listReadFinished=false;
-  listQuery=$('search').value;listArchived=$('archived').checked;renderSourceFilter();renderList();return true;
+  listOffset=saved.rows.length;listHasMore=saved.hasMore===true;listComplete=false;listReadFinished=false;
+  listQuery=$('search').value;listArchived=$('archived').checked;renderSourceFilter();renderList();if(legacy)saveListSnapshot(filter);return true;
 }
 function saveListSnapshot(filter){
   const key=listSnapshotKey(filter);if(!key)return;
-  try{sessionStorage.setItem(key,JSON.stringify({rows:listRows,sources:availableSources,hosts:listHostIds,offset:listOffset,hasMore:listHasMore}));}catch{}
+  const rows=listRows.slice(0,200),snapshot=JSON.stringify({rows,sources:availableSources,hosts:listHostIds,offset:rows.length,hasMore:listHasMore||listRows.length>rows.length});
+  if(snapshot.length>512*1024)return;
+  try{
+    localStorage.setItem(key,snapshot);sessionStorage.removeItem(key);
+    const keys=[];for(let i=0;i<localStorage.length;i++){const item=localStorage.key(i);if(item?.startsWith('codex-list-v1:')&&item!==key)keys.push(item);}
+    for(const old of keys.slice(0,-7))localStorage.removeItem(old);
+  }catch{try{sessionStorage.setItem(key,snapshot);}catch{}}
 }
 $('list-mode').value=localStorage.getItem('list-mode')||'recent';
 $('list-mode').onchange=()=>{localStorage.setItem('list-mode',$('list-mode').value);renderList();};
