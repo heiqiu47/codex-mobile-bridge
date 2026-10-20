@@ -20,6 +20,11 @@ async function runMermaidViewerTests() {
     const dialog = document.querySelector('#mermaid-preview-dialog'), canvas = dialog.querySelector('.mermaid-preview-canvas');
     const button = id => dialog.querySelector('#mermaid-preview-' + id);
     const scale = () => Number(dialog.querySelector('#mermaid-preview-scale').textContent.replace('%','')) / 100;
+    const toolbar = dialog.querySelector('.mermaid-preview-toolbar').getBoundingClientRect();
+    const closeBox = button('close').getBoundingClientRect(), sourceBox = button('source').getBoundingClientRect(), copyBox = button('copy').getBoundingClientRect();
+    check(closeBox.right <= sourceBox.left && sourceBox.right <= copyBox.left && copyBox.right <= toolbar.right,
+      'Toolbar controls stay separate inside ' + innerWidth + 'px viewport');
+    check(getComputedStyle(button('copy')).position === 'static', 'Copy source stays in toolbar flex layout');
     check(scale() === 1 && canvas.querySelector('img').tagName === 'IMG', 'Diagram opens as an image fitted to its viewport');
     button('zoom-in').click(); await settle(); check(scale() > 1, 'Zoom button enlarges diagram');
     button('fit').click(); await settle(); check(scale() === 1, 'Fit restores baseline');
