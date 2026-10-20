@@ -646,7 +646,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
         if action.targetFrame?.isMainFrame == false {
-            decisionHandler(isHtmlPreviewShell(url) ? .allow : .cancel); return
+            decisionHandler(isIsolatedShell(url) ? .allow : .cancel); return
         }
         if action.targetFrame?.isMainFrame == true, nativeMainNavigation?.web === webView {
             let expected = nativeMainNavigation
@@ -656,7 +656,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
                       expected?.url == url.absoluteString, GatewayURL.same(url, origin) else { decisionHandler(.cancel); return }
             }
         } else if !action.sourceFrame.isMainFrame { decisionHandler(.cancel); return }
-        if isHtmlPreviewShell(url) { decisionHandler(.cancel); return }
+        if isIsolatedShell(url) { decisionHandler(.cancel); return }
         if url.absoluteString == "codexbridge://home", action.sourceFrame.isMainFrame, action.navigationType == .linkActivated, let source = webView.url, GatewayURL.same(source, origin) { decisionHandler(.cancel); home(); return }
         if action.navigationType == .linkActivated, action.sourceFrame.isMainFrame,
            let source = webView.url, GatewayURL.same(source, origin), isArtifact(url) {
@@ -770,8 +770,8 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     private func isArtifact(_ url: URL) -> Bool {
         DownloadManager.allows(url, origin: origin)
     }
-    private func isHtmlPreviewShell(_ url: URL) -> Bool {
-        url.absoluteString == origin + "/html-preview-shell"
+    private func isIsolatedShell(_ url: URL) -> Bool {
+        url.absoluteString == origin + "/html-preview-shell" || url.absoluteString == origin + "/mermaid-render-shell"
     }
     private func downloadArtifact(_ request: URLRequest) {
         guard !downloadState.busy else { downloadPanel.expand(); info(MobileStrings.text("已有下载进行中，请稍候")); return }
