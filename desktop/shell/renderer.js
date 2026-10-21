@@ -3,6 +3,11 @@ const $=id=>document.getElementById(id),api=window.bridgeDesktop,t=BridgeI18n.t;
 let connectionDraft=[],savedConnections='[]',lanDraft=[],savedLan='[]';
 let snapshot,dirty=false,loading=false,startingUntil=0,activeTab='overview',savedFields={},feedbackKind='',lastFeedback;
 const defaultWebhookBodyTemplate=JSON.stringify({event:'{{event}}',title:'{{title}}',body:'{{body}}',session_name:'{{session_name}}',url:'{{url}}'},null,2);
+const feishuWebhookBodyTemplate=JSON.stringify({msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}},null,2);
+function webhookProviderHint(config){
+  const provider=$('webhook-provider').value;
+  return t(provider==='auto'?(config.webhookResolvedProvider==='feishu'?'已识别为飞书机器人；默认模板自动使用飞书文本格式。':'自动识别飞书机器人地址；其他地址使用通用 Webhook。'):provider==='feishu'?'飞书机器人使用文本消息；签名校验需填写密钥。':'使用通用 JSON Webhook 格式。');
+}
 function webhookHeaders(){
   const raw=$('webhook-headers').value.trim();if(!raw)return {};
   let value;try{value=JSON.parse(raw);}catch{throw Object.assign(Error(t('请求头必须是有效的 JSON 对象。')),{validation:{field:'webhook-headers'}});}
@@ -160,6 +165,7 @@ function render(value,watchRevision=watchPanel.revision){
     $('bark-enabled').checked=!!n.barkEnabled;input('bark-server',n.barkServer||'https://api.day.app');
     $('pushplus-enabled').checked=!!n.pushplusEnabled;
     $('webhook-enabled').checked=!!n.webhookEnabled;
+    input('webhook-provider',n.webhookProvider||'auto');$('webhook-sign-enabled').checked=!!n.webhookSignEnabled;
     input('webhook-body-template',n.webhookBodyTemplate||defaultWebhookBodyTemplate);
     $('security-enabled').checked=n.securityEnabled!==false;$('address-enabled').checked=!!n.addressEnabled;input('address-name',n.addressName||'');
     savedFields=fieldValues();
@@ -169,6 +175,8 @@ function render(value,watchRevision=watchPanel.revision){
   $('pushplus-token').placeholder=value.notifications.hasPushplusToken?t('已保存，留空保留'):t('填写 PushPlus Token');
   $('webhook-url-saved').textContent=value.notifications.hasWebhookUrl?t('已保存地址：')+(value.notifications.webhookUrlDisplay||t('已配置')):t('尚未保存地址');
   $('webhook-headers-saved').textContent=t(value.notifications.hasWebhookHeaders?'已保存请求头；留空保留':'尚未保存请求头');
+  $('webhook-sign-saved').textContent=t(value.notifications.hasWebhookSignSecret?'已保存签名密钥；留空保留':'尚未保存签名密钥');
+  $('webhook-provider-hint').textContent=webhookProviderHint(value.notifications);
   updateDirty();
   $('network-lock').hidden=!running;
   for(const id of ['lan','local-access','port','connection-kind','add-connection','origins','cloudflared','codex-home','ipc-path','codex-bin'])$(id).disabled=running;
@@ -186,15 +194,15 @@ function render(value,watchRevision=watchPanel.revision){
 }
 let renderedSnapshot='',renderedDirty=false,renderedRevision=-1;
 async function refresh(force=false){if(loading||(document.hidden&&force!==true))return;loading=true;try{const revision=watchPanel.revision,value=await api.snapshot(),signature=JSON.stringify(value);if(signature!==renderedSnapshot||renderedDirty!==dirty||renderedRevision!==revision||startingUntil){render(value,revision);renderedSnapshot=signature;renderedDirty=dirty;renderedRevision=revision;}}catch(e){feedback(e.message,true);}finally{loading=false;}}
-function collect(){return {...(snapshot?.loginStartup?.supported?{loginStartup:$('login-startup').checked}:{}),preferences:{autoStart:$('auto-start').checked,port:Number($('port').value),lan:$('lan').checked,lanAddresses:$('lan-scope').value==='all'?null:[...lanDraft],localAccess:$('local-access').checked,connections:connectionDraft.map(row=>row.accessMode==='external'||row.accessMode==='nas'?{...row,publicUrl:normalizeExternalUrl(row.publicUrl||'')}:row),cloudflared:$('cloudflared').value.trim(),codexHome:$('codex-home').value.trim(),ipcPath:$('ipc-path').value.trim(),codexBin:$('codex-bin').value.trim()},auth:{sessionHours:Number($('session-hours').value),mode:$('auth-mode').value,username:$('username').value.trim(),password:submittedSecret('password'),revokeBoundDevices:$('revoke-bound-devices').checked},origins:$('origins').value.split('\n').map(s=>s.trim()).filter(Boolean),notifications:{mobileEnabled:$('mobile-enabled').checked,mobileAppLinks:$('mobile-app-links').checked,securityEnabled:$('security-enabled').checked,addressEnabled:$('address-enabled').checked,addressName:$('address-name').value.trim(),pushplusEnabled:$('pushplus-enabled').checked,pushplusToken:submittedSecret('pushplus-token'),clearPushplusToken:$('clear-pushplus-token').checked,webhookEnabled:$('webhook-enabled').checked,webhookUrl:$('webhook-url').value.trim(),webhookHeaders:webhookHeaders(),webhookBodyTemplate:$('webhook-body-template').value,clearWebhookUrl:$('clear-webhook-url').checked,clearWebhookHeaders:$('clear-webhook-headers').checked,enabled:$('ntfy-enabled').checked,server:$('ntfy-server').value.trim(),topic:$('ntfy-topic').value.trim(),token:submittedSecret('ntfy-token'),clearToken:$('clear-token').checked,barkEnabled:$('bark-enabled').checked,barkServer:$('bark-server').value.trim(),barkKey:submittedSecret('bark-key'),clearBarkKey:$('clear-bark-key').checked,clickBase:$('click-base').value.trim(),includeTitle:$('include-title').checked}};}
+function collect(){return {...(snapshot?.loginStartup?.supported?{loginStartup:$('login-startup').checked}:{}),preferences:{autoStart:$('auto-start').checked,port:Number($('port').value),lan:$('lan').checked,lanAddresses:$('lan-scope').value==='all'?null:[...lanDraft],localAccess:$('local-access').checked,connections:connectionDraft.map(row=>row.accessMode==='external'||row.accessMode==='nas'?{...row,publicUrl:normalizeExternalUrl(row.publicUrl||'')}:row),cloudflared:$('cloudflared').value.trim(),codexHome:$('codex-home').value.trim(),ipcPath:$('ipc-path').value.trim(),codexBin:$('codex-bin').value.trim()},auth:{sessionHours:Number($('session-hours').value),mode:$('auth-mode').value,username:$('username').value.trim(),password:submittedSecret('password'),revokeBoundDevices:$('revoke-bound-devices').checked},origins:$('origins').value.split('\n').map(s=>s.trim()).filter(Boolean),notifications:{mobileEnabled:$('mobile-enabled').checked,mobileAppLinks:$('mobile-app-links').checked,securityEnabled:$('security-enabled').checked,addressEnabled:$('address-enabled').checked,addressName:$('address-name').value.trim(),pushplusEnabled:$('pushplus-enabled').checked,pushplusToken:submittedSecret('pushplus-token'),clearPushplusToken:$('clear-pushplus-token').checked,webhookEnabled:$('webhook-enabled').checked,webhookProvider:$('webhook-provider').value,webhookSignEnabled:$('webhook-sign-enabled').checked,webhookSignSecret:$('webhook-sign-secret').value,clearWebhookSignSecret:$('clear-webhook-sign-secret').checked,webhookUrl:$('webhook-url').value.trim(),webhookHeaders:webhookHeaders(),webhookBodyTemplate:$('webhook-body-template').value,clearWebhookUrl:$('clear-webhook-url').checked,clearWebhookHeaders:$('clear-webhook-headers').checked,enabled:$('ntfy-enabled').checked,server:$('ntfy-server').value.trim(),topic:$('ntfy-topic').value.trim(),token:submittedSecret('ntfy-token'),clearToken:$('clear-token').checked,barkEnabled:$('bark-enabled').checked,barkServer:$('bark-server').value.trim(),barkKey:submittedSecret('bark-key'),clearBarkKey:$('clear-bark-key').checked,clickBase:$('click-base').value.trim(),includeTitle:$('include-title').checked}};}
 $('settings').onsubmit=async event=>{
   event.preventDefault();if(saving||busyActions.size)return;const invalid=[...$('settings').querySelectorAll('input,textarea,select')].find(node=>!node.closest('#file-transfer-settings')&&!node.disabled&&!node.validity.valid&&(!node.closest('.connection-card')||connectionDraft.find(row=>row.id===node.closest('.connection-card').dataset.connectionId)?.enabled));if(invalid){focusField(invalid);feedback(invalid.validationMessage,true);return;}try{webhookHeaders();}catch(error){showError(error);return;}saving=true;$('save').disabled=true;const submitted=fieldValues(),submittedConnections=JSON.stringify(connectionDraft),submittedLan=JSON.stringify(lanDraft);
   try{
     const value=unwrapValidation(await api.save(collect()));savedFields={...submitted};savedConnections=submittedConnections;savedLan=submittedLan;
     // Edits made while saving must remain visibly unsaved.
     for(const id of ['password','ntfy-token','bark-key','pushplus-token'])savedSecretValues.set(id,submitted[id]);
-    for(const id of ['webhook-url','webhook-headers']){if($(id).value===submitted[id]){$(id).value='';savedFields[id]='';}}
-    for(const id of ['clear-token','clear-bark-key','clear-pushplus-token','clear-webhook-url','clear-webhook-headers']){if($(id).checked===submitted[id])$(id).checked=false;savedFields[id]=false;}
+    for(const id of ['webhook-url','webhook-headers','webhook-sign-secret']){if($(id).value===submitted[id]){$(id).value='';savedFields[id]='';}}
+    for(const id of ['clear-token','clear-bark-key','clear-pushplus-token','clear-webhook-url','clear-webhook-headers','clear-webhook-sign-secret']){if($(id).checked===submitted[id])$(id).checked=false;savedFields[id]=false;}
     await saveAllConnectionCredentials();
     updateDirty();render(value);await loadSavedSecrets(true);
     feedback(dirty?t('已保存提交的配置，仍有新修改待保存。'):t('配置已保存。通知设置由新版网关自动读取，登录设置在下次启动生效。'));
@@ -205,6 +213,8 @@ async function stopGateway(){if(startPending||stopPending||!snapshot?.runtime.ru
 for(const id of ['start','clients-start'])if($(id))$(id).onclick=startGateway;
 for(const id of ['stop','clients-stop'])if($(id))$(id).onclick=stopGateway;
 for(const [id,channel] of [['test-notification','ntfy'],['test-bark','bark'],['test-pushplus','pushplus'],['test-webhook','webhook'],['test-address','address']])$(id).onclick=async()=>{if(dirty){feedback(t('请先保存通知配置，再发送测试通知。'),true);return;}$(id).disabled=true;try{feedback((await api.testNotification({channel})).message);}catch(e){feedback(e.message,true);}finally{$(id).disabled=false;}};
+$('webhook-provider').addEventListener('change',()=>{$('webhook-provider-hint').textContent=webhookProviderHint(snapshot?.notifications||{});});
+$('webhook-use-feishu-template').onclick=()=>{input('webhook-body-template',feishuWebhookBodyTemplate);updateDirty();};
 $('ntfy-help').onclick=()=>api.open('ntfy-help').catch(e=>feedback(e.message,true));
 $('bark-help').onclick=()=>api.open('bark-help').catch(e=>feedback(e.message,true));
 for(const id of ['project-home'])$(id).onclick=()=>api.open(id).catch(e=>feedback(e.message,true));

@@ -978,13 +978,22 @@ $('rename-form').onsubmit=async event=>{
 };
 let notificationChannelBusy=false,selectedNotificationChannel='',notificationListRequest=0,notificationCommonLoaded=false;
 const defaultWebhookBodyTemplate=JSON.stringify({event:'{{event}}',title:'{{title}}',body:'{{body}}',session_name:'{{session_name}}',url:'{{url}}'},null,2);
+const feishuWebhookBodyTemplate=JSON.stringify({msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}},null,2);
+let savedWebhookFields=null;
+function webhookFields(){return {webhookEnabled:$('webhook-enabled').checked,webhookProvider:$('webhook-provider').value,webhookSignEnabled:$('webhook-sign-enabled').checked,webhookBodyTemplate:$('webhook-body-template').value,clearWebhookUrl:$('webhook-clear-url').checked,clearWebhookHeaders:$('webhook-clear-headers').checked,clearWebhookSignSecret:$('webhook-clear-sign-secret').checked};}
+function webhookDirty(){return !savedWebhookFields||JSON.stringify(webhookFields())!==JSON.stringify(savedWebhookFields)||!!($('webhook-url').value||$('webhook-headers').value||$('webhook-sign-secret').value);}
+function webhookProviderHint(config){const provider=$('webhook-provider').value;return t(provider==='auto'?(config.webhookResolvedProvider==='feishu'?'已识别为飞书机器人；默认模板自动使用飞书文本格式。':'自动识别飞书机器人地址；其他地址使用通用 Webhook。'):provider==='feishu'?'飞书机器人使用文本消息；签名校验需填写密钥。':'使用通用 JSON Webhook 格式。');}
 function renderWebhookChannel(config){
   $('webhook-enabled').checked=!!config.webhookEnabled;
-  $('webhook-url').value='';$('webhook-headers').value='';
-  $('webhook-clear-url').checked=false;$('webhook-clear-headers').checked=false;
+  $('webhook-provider').value=config.webhookProvider||'auto';$('webhook-sign-enabled').checked=!!config.webhookSignEnabled;
+  $('webhook-url').value='';$('webhook-headers').value='';$('webhook-sign-secret').value='';
+  $('webhook-clear-url').checked=false;$('webhook-clear-headers').checked=false;$('webhook-clear-sign-secret').checked=false;
   $('webhook-body-template').value=config.webhookBodyTemplate||defaultWebhookBodyTemplate;
   $('webhook-url-saved').textContent=config.hasWebhookUrl?t('已保存地址：')+(config.webhookUrlDisplay||t('已配置')):t('尚未保存地址');
   $('webhook-headers-saved').textContent=t(config.hasWebhookHeaders?'已保存请求头；留空保留':'尚未保存请求头');
+  $('webhook-sign-saved').textContent=t(config.hasWebhookSignSecret?'已保存签名密钥；留空保留':'尚未保存签名密钥');
+  $('webhook-provider-hint').textContent=webhookProviderHint(config);
+  savedWebhookFields=webhookFields();
 }
 function webhookHeaders(){
   const raw=$('webhook-headers').value.trim();if(!raw)return {};
@@ -994,20 +1003,28 @@ function webhookHeaders(){
 }
 async function webhookAction(test){
   if(notificationChannelBusy)return;
+  if(test&&webhookDirty()){$('webhook-error').textContent=t('请先保存通知配置，再发送测试通知。');return;}
   if(!test){try{webhookHeaders();}catch(error){$('webhook-error').textContent=error.message;return;}}
   notificationChannelBusy=true;for(const id of ['webhook-save','webhook-test'])$(id).disabled=true;$('webhook-error').textContent='';
   try{
     const url='/api/notifications/channels/webhook';
-    if(test){await api(url+'/test',{});toast('Webhook 已接受测试请求，请检查接收服务');}
+    if(test){const result=await api(url+'/test',{});toast(result.message||'Webhook 已接受测试请求，请检查接收服务');}
     else{
-      const body={webhookEnabled:$('webhook-enabled').checked,webhookUrl:$('webhook-url').value.trim(),webhookHeaders:webhookHeaders(),webhookBodyTemplate:$('webhook-body-template').value,clearWebhookUrl:$('webhook-clear-url').checked,clearWebhookHeaders:$('webhook-clear-headers').checked};
-      renderWebhookChannel(await api(url,body));toast('Webhook 配置已保存');if(currentId)await loadNotificationState(currentId,currentHost);
+      const submittedFields=webhookFields(),submittedUrl=$('webhook-url').value,submittedHeaders=$('webhook-headers').value,submittedSecret=$('webhook-sign-secret').value;
+      const body={...submittedFields,webhookUrl:submittedUrl.trim(),webhookHeaders:webhookHeaders(),webhookSignSecret:submittedSecret};
+      const saved=await api(url,body);
+      const unchanged=JSON.stringify(webhookFields())===JSON.stringify(submittedFields)&&$('webhook-url').value===submittedUrl&&$('webhook-headers').value===submittedHeaders&&$('webhook-sign-secret').value===submittedSecret;
+      savedWebhookFields=submittedFields;
+      if(unchanged)renderWebhookChannel(saved);
+      toast('Webhook 配置已保存');if(currentId)await loadNotificationState(currentId,currentHost);
     }
   }catch(error){$('webhook-error').textContent=t(error.message);}
   finally{notificationChannelBusy=false;for(const id of ['webhook-save','webhook-test'])$(id).disabled=false;}
 }
 $('webhook-form').onsubmit=event=>{event.preventDefault();return webhookAction(false);};
 $('webhook-test').onclick=()=>webhookAction(true);
+$('webhook-provider').onchange=()=>{$('webhook-provider-hint').textContent=webhookProviderHint({});};
+$('webhook-use-feishu-template').onclick=()=>{$('webhook-body-template').value=feishuWebhookBodyTemplate;};
 $('webhook-back').onclick=()=>{$('webhook-dialog').close();$('pushplus-settings').onclick();};
 const notificationChannelDetails={
   bark:{name:'Bark',enabled:'barkEnabled',server:'barkServer',secret:'barkKey',hasSecret:'hasBarkKey',clear:'clearBarkKey',secretLabel:'Device Key',help:'在 iPhone 的 Bark 中获取 Device Key，并填写服务地址。'},

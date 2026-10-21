@@ -43,7 +43,7 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
           if(url.includes('/rename?'))return response({title:body.title});
           if(url.endsWith('/test'))return response({ok:true});
           if(url.endsWith('/common'))saved.set(url,body);
-          else if(url.endsWith('/webhook'))saved.set(url,{webhookEnabled:body.webhookEnabled,hasWebhookUrl:!!body.webhookUrl||!body.clearWebhookUrl&&!!saved.get(url)?.hasWebhookUrl,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:!!Object.keys(body.webhookHeaders).length||!body.clearWebhookHeaders&&!!saved.get(url)?.hasWebhookHeaders,webhookBodyTemplate:body.webhookBodyTemplate});
+          else if(url.endsWith('/webhook'))saved.set(url,{webhookEnabled:body.webhookEnabled,webhookProvider:body.webhookProvider,webhookSignEnabled:body.webhookSignEnabled,hasWebhookSignSecret:!!body.webhookSignSecret||!body.clearWebhookSignSecret&&!!saved.get(url)?.hasWebhookSignSecret,hasWebhookUrl:!!body.webhookUrl||!body.clearWebhookUrl&&!!saved.get(url)?.hasWebhookUrl,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:!!Object.keys(body.webhookHeaders).length||!body.clearWebhookHeaders&&!!saved.get(url)?.hasWebhookHeaders,webhookBodyTemplate:body.webhookBodyTemplate});
           else {
             const secret=url.endsWith('/bark')?'barkKey':url.endsWith('/ntfy')?'token':'pushplusToken';
             const marker=url.endsWith('/bark')?'hasBarkKey':url.endsWith('/ntfy')?'hasToken':'hasPushplusToken';
@@ -199,6 +199,31 @@ test('Webhook save failure retains unsaved endpoint and headers',async()=>{
   assert.equal(ui.nodes.get('webhook-url').value,'https://example.test/hook');
   assert.equal(ui.nodes.get('webhook-headers').value,'{"X-Key":"secret"}');
   assert.equal(ui.nodes.get('webhook-error').textContent,'Save failed');
+});
+
+test('Feishu preset and signing secret require save before a Webhook test',async()=>{
+  const ui=await fixture();await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  ui.nodes.get('webhook-provider').value='feishu';ui.nodes.get('webhook-sign-enabled').checked=true;
+  ui.nodes.get('webhook-sign-secret').value='sample-secret';
+  ui.nodes.get('webhook-use-feishu-template').onclick();
+  await ui.nodes.get('webhook-test').onclick();
+  assert.equal(ui.writes.length,0);assert.match(ui.nodes.get('webhook-error').textContent,/保存/);
+  ui.setPost(()=>ui.response({error:'Save failed'},400));
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.nodes.get('webhook-sign-secret').value,'sample-secret');
+  assert.equal(ui.nodes.get('webhook-sign-enabled').checked,true);
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes[1].body.webhookProvider,'feishu');
+  assert.equal(ui.writes[1].body.webhookSignEnabled,true);
+  assert.equal(ui.writes[1].body.webhookSignSecret,'sample-secret');
+  assert.deepEqual(JSON.parse(ui.writes[1].body.webhookBodyTemplate),{msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}});
+  assert.equal(ui.nodes.get('webhook-sign-secret').value,'');
+  assert.equal(ui.nodes.get('webhook-sign-saved').textContent.includes('sample-secret'),false);
+  ui.nodes.get('webhook-clear-sign-secret').checked=true;
+  await ui.nodes.get('webhook-test').onclick();assert.equal(ui.writes.length,2);
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes[2].body.clearWebhookSignSecret,true);
+  assert.equal(ui.nodes.get('webhook-clear-sign-secret').checked,false);
 });
 
 test('Webhook form has English labels and narrow-screen scroll styling',async()=>{

@@ -381,6 +381,29 @@ test('desktop Webhook keeps drafts through refresh, validates headers and clears
   await ui.nodes.get('test-webhook').onclick();assert.equal(channel,'webhook');
 });
 
+test('desktop Feishu signing and template edits remain drafts until successful save',async()=>{
+  const ui=await renderer(),ids=['webhook-provider','webhook-sign-enabled','webhook-sign-secret','clear-webhook-sign-secret','webhook-body-template'];
+  for(const id of ids){ui.nodes.get(id).id=id;ui.nodes.get(id).closest=()=>({dataset:{panel:'notifications'}});}
+  for(const id of ['webhook-sign-enabled','clear-webhook-sign-secret'])ui.nodes.get(id).type='checkbox';
+  ui.run("fields=()=>['webhook-provider','webhook-sign-enabled','webhook-sign-secret','clear-webhook-sign-secret','webhook-body-template'].map($);savedFields=fieldValues()");
+  ui.nodes.get('webhook-provider').value='feishu';ui.nodes.get('webhook-sign-enabled').checked=true;
+  ui.nodes.get('webhook-sign-secret').value='sample-secret';ui.nodes.get('webhook-use-feishu-template').onclick();
+  await ui.poll();assert.equal(ui.nodes.get('webhook-sign-secret').value,'sample-secret');
+  let tests=0;ui.api.testNotification=async()=>{tests++;return {message:'accepted'};};
+  await ui.nodes.get('test-webhook').onclick();assert.equal(tests,0);
+  ui.api.save=async()=>{throw Error('Save failed');};
+  await ui.nodes.get('settings').onsubmit({preventDefault(){}});
+  assert.equal(ui.nodes.get('webhook-sign-secret').value,'sample-secret');
+  let payload;ui.api.save=async value=>{payload=value;return structuredClone(ui.value);};
+  await ui.nodes.get('settings').onsubmit({preventDefault(){}});
+  assert.equal(payload.notifications.webhookProvider,'feishu');
+  assert.equal(payload.notifications.webhookSignEnabled,true);
+  assert.equal(payload.notifications.webhookSignSecret,'sample-secret');
+  assert.deepEqual(JSON.parse(payload.notifications.webhookBodyTemplate),{msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}});
+  assert.equal(ui.nodes.get('webhook-sign-secret').value,'');
+  await ui.nodes.get('test-webhook').onclick();assert.equal(tests,1);
+});
+
 test('watch panel recognizes Webhook and PushPlus as enabled notification channels',async()=>{
   const ui=await renderer();
   ui.value.runtime.running=true;
