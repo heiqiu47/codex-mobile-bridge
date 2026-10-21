@@ -6,10 +6,16 @@
 - 电脑网关、Web 与手机端共用配置，支持中英文界面；已保存地址与请求头凭据不会回传页面，未保存输入保留。
 - 任务完成、待确认操作、网关启动与入口变化、安全及已启用的账号提醒复用现有通知策略、去重和重试；不启动会话，不补发已完成历史。
 - 模板支持通知类型、标题、正文、会话名称、跳转链接与事件标识等字段；会话名称继续遵循原有隐私开关。
+- 新增飞书机器人格式识别、文本模板与可选签名校验，修复飞书返回 HTTP 200 但业务拒绝时误报发送成功的问题；支持显示签名、关键词和 IP 白名单等错误提示。
+- 提供通用自定义、飞书、钉钉、Discord、Telegram 可编辑正文预设与字段说明；钉钉支持可选加签，各服务按自身协议核验发送结果。已保存接收地址支持隐藏和主动查看。
 
 使用方式见 [Webhook 配置说明](docs/webhook-notifications.md)。此节仅描述本地候选功能，尚未发布；现有版本号和手机绑定格式保持不变。
 
 **English — Unreleased Webhook notifications:** add an optional HTTPS POST/JSON channel with custom headers, body templates and saved-configuration tests. Configure it through the desktop gateway or shared Web/mobile settings. Reuse existing notification preferences, deduplication and retries for chat, gateway, security and enabled account alerts. Saved endpoint/header credentials are masked, and chat names retain their existing opt-in. No chat activation or completed-history replay. See [setup](docs/webhook-notifications.md#english); application versions and binding formats are unchanged.
+
+Feishu custom bots support automatic protocol detection, a text template and optional signature verification. Validate Feishu business responses instead of treating every HTTP 200 as success, with actionable signature, keyword and IP-whitelist errors.
+
+Editable presets cover Custom Webhook, Feishu, DingTalk, Discord and Telegram, with a placeholder reference, optional DingTalk signing and service-specific response checks. Saved endpoint URLs can be hidden or explicitly revealed.
 
 ---
 
