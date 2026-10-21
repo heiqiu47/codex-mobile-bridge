@@ -196,7 +196,7 @@ function render(value,watchRevision=watchPanel.revision){
   $('ntfy-token').placeholder=value.notifications.hasToken?t('已保存；留空保留，服务地址变化时清除'):t('如服务需要认证，在这里填写');
   $('bark-key').placeholder=value.notifications.hasBarkKey?t('已保存；留空保留，服务地址变化时清除'):t('填写 Bark App 中的 Device Key');
   $('pushplus-token').placeholder=value.notifications.hasPushplusToken?t('已保存，留空保留'):t('填写 PushPlus Token');
-  if(!webhookCreating){if(!webhookRows().some(row=>row.webhookId===webhookSelectedId))webhookSelectedId=webhookRows()[0]?.webhookId||'legacy';const row=webhookRow();if(!webhookSavedFields||(JSON.stringify(row)!==webhookRenderedRowSignature&&!webhookDirty()))renderWebhookEditor(row);}
+  if(!webhookCreating){if(!webhookRows().some(row=>row.webhookId===webhookSelectedId)&&(!webhookSavedFields||!webhookDirty()))webhookSelectedId=webhookRows()[0]?.webhookId||'legacy';const row=webhookRow();if(!webhookSavedFields||(JSON.stringify(row)!==webhookRenderedRowSignature&&!webhookDirty()))renderWebhookEditor(row);}
   renderWebhookList();
   updateDirty();
   $('network-lock').hidden=!running;

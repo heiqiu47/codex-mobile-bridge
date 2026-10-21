@@ -316,10 +316,12 @@ test('provider list reports configured and enabled states',async()=>{
   const ui=await fixture();
   ui.saved.set('/api/notifications/channels/bark',{barkEnabled:true,hasBarkKey:true});
   ui.saved.set('/api/notifications/channels/ntfy',{enabled:false,topic:'saved-topic'});
+  ui.saved.set('/api/notifications/channels/webhook',{webhookEndpoints:[{webhookId:'named-1',webhookName:'Ops',hasWebhookUrl:true,webhookEnabled:true}]});
   await ui.nodes.get('pushplus-settings').onclick();
   assert.equal(ui.nodes.get('notification-status-bark').textContent,'已开启');
   assert.equal(ui.nodes.get('notification-status-ntfy').textContent,'已关闭');
   assert.equal(ui.nodes.get('notification-status-pushplus').textContent,'未配置');
+  assert.equal(ui.nodes.get('notification-status-webhook').textContent,'已开启');
 });
 
 test('common settings wait for a valid read and ignore late responses after close',async()=>{

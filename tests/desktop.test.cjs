@@ -429,6 +429,16 @@ test('unrelated desktop snapshot does not hide a revealed Webhook URL',async()=>
   assert.equal(url.type,'text');assert.equal(url.value,'https://example.test/hook?token=private');assert.equal(ui.run('webhookDirty()'),false);
 });
 
+test('remote deletion keeps a desktop Webhook draft tied to its original ID',async()=>{
+  const ui=await renderer(),templates=ui.value.notifications.webhookTemplates;
+  ui.value.notifications.webhookEndpoints=[{webhookId:'named-1',webhookName:'First',webhookBodyTemplate:templates.generic,webhookTemplates:templates},{webhookId:'named-2',webhookName:'Second',webhookBodyTemplate:templates.generic,webhookTemplates:templates}];
+  await ui.poll();ui.run("selectWebhook('named-2')");ui.nodes.get('webhook-name').value='Unsaved second';
+  ui.value.notifications.webhookEndpoints=ui.value.notifications.webhookEndpoints.slice(0,1);await ui.poll();
+  assert.equal(ui.run('webhookSelectedId'),'named-2');assert.equal(ui.nodes.get('webhook-name').value,'Unsaved second');
+  let requested;ui.api.webhookEndpoint=async value=>{requested=value;throw Error('Webhook 不存在，请刷新列表');};
+  await ui.nodes.get('webhook-save').onclick();assert.equal(requested.webhookId,'named-2');assert.equal(ui.nodes.get('webhook-name').value,'Unsaved second');
+});
+
 test('watch panel recognizes Webhook and PushPlus as enabled notification channels',async()=>{
   const ui=await renderer();
   ui.value.runtime.running=true;

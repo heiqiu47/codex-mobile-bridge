@@ -1110,8 +1110,10 @@ async function loadNotificationChannelStatuses(request){
   if(request!==notificationListRequest||!$('notification-channels-dialog').open)return;
   for(const [index,name] of names.entries()){
     const result=responses[index],channel=notificationChannelDetails[name];
-    const configured=result.status==='fulfilled'&&(name==='webhook'?!!result.value.hasWebhookUrl:name==='ntfy'?!!result.value.topic:!!result.value[channel.hasSecret]);
-    const status=result.status==='rejected'?'读取失败':configured?(result.value[name==='webhook'?'webhookEnabled':channel.enabled]?'已开启':'已关闭'):'未配置';
+    const rows=name==='webhook'?(result.value?.webhookEndpoints||[result.value]):[];
+    const configured=result.status==='fulfilled'&&(name==='webhook'?rows.some(row=>row?.hasWebhookUrl):name==='ntfy'?!!result.value.topic:!!result.value[channel.hasSecret]);
+    const enabled=name==='webhook'?rows.some(row=>row?.webhookEnabled):result.value?.[channel.enabled];
+    const status=result.status==='rejected'?'读取失败':configured?(enabled?'已开启':'已关闭'):'未配置';
     $('notification-status-'+name).textContent=t(status);
   }
 }
