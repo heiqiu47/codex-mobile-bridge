@@ -1,6 +1,6 @@
-# Webhook 通知（待发布）
+# Webhook 通知
 
-Webhook 将现有通知以 HTTP POST JSON 发到你配置的服务。无需安装额外插件；Mac、Windows、Linux 网关使用相同配置，Web、Android 与 iOS 可通过直连网关的“第三方通知 → Webhook”管理。电脑网关中的入口是“消息通知 → Webhook”。此功能尚未包含在已发布的 v2.1.2 安装包中。
+Webhook 将现有通知以 HTTP POST JSON 发到你配置的服务。无需安装额外插件；Mac、Windows、Linux 网关使用相同配置，Web、Android 与 iOS 可通过直连网关的“第三方通知 → Webhook”管理。电脑网关中的入口是“消息通知 → Webhook”。此功能从 v2.1.3 起提供。
 
 ## 配置与测试
 
@@ -76,7 +76,7 @@ Webhook 将现有通知以 HTTP POST JSON 发到你配置的服务。无需安�
 
 ## English
 
-**Unreleased:** configure **Push alerts → Webhook** on Web/mobile, or **Notifications → Webhook** in the desktop gateway. Settings are shared across macOS, Windows and Linux; Android/iOS use the gateway's Web interface. Shared-relay configuration permissions are unchanged.
+**Available since v2.1.3:** configure **Push alerts → Webhook** on Web/mobile, or **Notifications → Webhook** in the desktop gateway. Settings are shared across macOS, Windows and Linux; Android/iOS use the gateway's Web interface. Shared-relay configuration permissions are unchanged.
 
 Create and name each destination, then set its HTTPS endpoint, optional JSON string-to-string headers and JSON body template. You can add multiple bots of the same service; an existing single Webhook remains available as the default destination. Save before testing: a test uses saved settings only, and saving does not send anything. Enable each destination after confirming receipt; you can edit, test, disable or delete it independently. Existing global/per-chat, gateway-entry, security and account notification preferences remain in control.
 

@@ -1,71 +1,43 @@
+<a id="v213"></a>
 <a id="unreleased-webhook"></a>
-
-## 未发布 · 通用 Webhook 通知
-
-- 支持多个自定义 HTTPS Webhook 接收目标，每个目标可分别命名、启停、编辑、测试和删除，并配置独立的接收地址、请求头及 JSON 正文模板。旧版单目标配置保留。
-- 电脑网关、Web 与手机端共用配置，支持中英文界面；普通配置读取隐藏已保存地址与请求头凭据，仅在主动查看地址时返回该地址，未保存输入保留。
-- 任务完成、待确认操作、网关启动与入口变化、安全及已启用的账号提醒可投递到每个已启用目标；各目标独立去重和重试，不启动会话，不补发已完成历史。
-- 模板支持通知类型、标题、正文、会话名称、跳转链接与事件标识等字段；会话名称继续遵循原有隐私开关。
-- 新增飞书机器人格式识别、文本模板与可选签名校验，修复飞书返回 HTTP 200 但业务拒绝时误报发送成功的问题；支持显示签名、关键词和 IP 白名单等错误提示。
-- 提供通用自定义、飞书、钉钉、Discord、Telegram 可编辑正文预设与字段说明；钉钉支持可选加签，各服务按自身协议核验发送结果。已保存接收地址支持隐藏和主动查看。
-- 推送通道和网络访问入口显示已保存的启用状态；Webhook 的配置选择、添加、地址查看和底部操作采用紧凑布局，避免按钮单独占行。
-- 手机 App 打开弹窗时隐藏顶部“更多”入口，避免菜单按钮遮挡或越过弹窗响应点击。
-
-使用方式见 [Webhook 配置说明](docs/webhook-notifications.md)。此节仅描述本地候选功能，尚未发布；现有版本号和手机绑定格式保持不变。
-
-**English — Unreleased Webhook notifications:** configure multiple named HTTPS POST/JSON destinations, each with independent enablement, editing, testing, deletion, headers and body template. Existing single-Webhook settings remain available. Configure destinations through the desktop gateway or shared Web/mobile settings. Chat, gateway, security and enabled account alerts fan out to enabled destinations, each with separate deduplication and retries. Saved endpoint/header credentials are masked, and chat names retain their existing opt-in. No chat activation or completed-history replay. See [setup](docs/webhook-notifications.md#english); application versions and binding formats are unchanged.
-
-Feishu custom bots support automatic protocol detection, a text template and optional signature verification. Validate Feishu business responses instead of treating every HTTP 200 as success, with actionable signature, keyword and IP-whitelist errors.
-
-Editable presets cover Custom Webhook, Feishu, DingTalk, Discord and Telegram, with a placeholder reference, optional DingTalk signing and service-specific response checks. Saved endpoint URLs can be hidden or explicitly revealed.
-
-Notification channels and network entries show their saved enablement state. Compact Webhook controls group selection, adding, URL visibility and form actions. The mobile app hides its native More menu while a dialog is open, preventing it from overlapping the dialog or accepting taps above it.
-
----
-
 <a id="unreleased-mermaid"></a>
 
-## 未发布 · Mermaid 图表预览
+## v2.1.3 · 多目标通知、图表阅读与连接恢复
 
-聊天回复和文件列表中打开的 Markdown 文档，现在可以直接预览 `mermaid` 代码块中的图表，并在手机与宽屏 Web 中查看源码、复制和全屏缩放。本节为待发布内容，尚未包含在已发布的 v2.1.2 安装包中。
+本版新增多个独立 Webhook 目标和 Mermaid 图表阅读，并改善弱网加载、iOS 连接恢复及手机输入交互。桌面与手机 App 版本为 **2.1.3**，Android/iOS 构建号为 **35**。各平台验收范围以[验证记录](VERIFICATION.md)为准。
 
-### 新增与优化
+### 新增与改进
 
-- **图表预览**：Codex、Claude 和 DeepSeek Harness 的聊天正文，以及 `.md` 文件预览共用图表卡片；支持中文标签、浅色与深色主题，图表适应可用宽度。
-- **源码切换与复制**：使用“图表 / 源码”切换视图，“复制源码”保留原始 Mermaid 文本；全屏中也可查看和复制源码。
-- **全屏缩放**：点击图表或“全屏查看”打开阅读器。手机支持双指缩放、放大后拖动和双击缩放；电脑支持滚轮缩放、拖动及加减按钮，“适应屏幕”恢复完整视图。
-- **流式输出与缓存复用**：尚未闭合的代码块先显示源码，完整后再生成图表；同一阅读范围内复用未变化图表的渲染结果，合并重复渲染请求。后续文字更新保留源码视图，不打断已打开的全屏阅读或重置缩放。
-- **按需加载**：首次需要图表时才加载随网关提供的渲染引擎，无需从外部 CDN 下载。语法错误、超出预览限制或不支持的内容保留源码查看与复制入口。
+- **多个 Webhook 接收目标**：每条配置可单独命名、启停、编辑、测试和删除；旧单目标配置仍可见。支持自动识别、通用自定义、飞书、钉钉、Discord 和 Telegram 的可编辑 JSON 模板，飞书与钉钉支持可选签名。测试只使用已保存配置；保存不会发送通知。普通配置读取隐藏已保存地址、请求头和签名密钥，地址仅在主动查看时返回。每个已启用目标独立投递、去重与重试，不启动会话，也不补发历史通知。详见 [Webhook 配置说明](docs/webhook-notifications.md)。
+- **Mermaid 图表阅读**：在 Codex、Claude、DeepSeek Harness 聊天与 Markdown 文件中预览完整 Mermaid 代码块，切换源码、复制原文和全屏缩放。流式未完成内容保留源码；后续文字更新复用未变化图表。iOS App 同步修复图表预览子页面被导航策略拦截的问题，需同时更新网关与 App。
+- **弱网加载与 Windows 包体**：静态资源按内容生成版本地址，重复访问可使用浏览器缓存与条件请求；带页面专属安全随机数的 HTML 仍不缓存。Windows 包仅保留支持的 Electron 语言资源，以缩减包体。
+- **接入与恢复**：修复 DeepSeek Harness 自动折行的 YAML 接入配置无法识别的问题；iOS 网关不可达或遇到隧道错误时提供原生重试、返回电脑列表入口。账号查询在桌面标签可见性变化后恢复，收敛不必要的请求；未加入重置预测或设置入口迁移。
+- **手机交互**：弹窗打开时隐藏原生“更多”入口；调整手机列表、弹窗与常规输入框的焦点外观，并让需要补充回答的卡片输入框在键盘遮挡后保持可见。
 
-### Bug 修复
+### 升级
 
-- 修复 iOS App 拦截图表预览子页面，导致始终提示“图表无法显示，请查看源码”的问题。
-- 修复图表转换后的文字、箭头和连线显示，以及窄屏全屏查看源码时工具栏挤占内容的问题。
+覆盖安装以保留原电脑列表、配对和网关数据，不要先卸载或清除配置。Android 沿用原签名；iOS 保留正式应用标识，仍需使用自己的签名身份安装。Web 页面在网关更新后刷新；iOS 的原生连接恢复和 Mermaid 子页面修复需要配套 App 更新。共享中继部署需同步更新服务。
 
-### 使用与兼容性
+### 贡献者
 
-Web 用户更新网关后刷新页面；iOS 用户需要同时更新配套 App，单独刷新网页不能修复旧 App 的导航限制。共享中继部署需同步更新服务。图表预览为只读，不修改原文件；图表中的交互链接、外部资源及自定义初始化配置不作为可执行内容加载。
+- [@wangzheuser](https://github.com/wangzheuser) 提交 [PR #51](https://github.com/try2love/codex-mobile-bridge/pull/51)，修复 Harness 折行配置解析；原提交作者 [@w154594742](https://github.com/w154594742) 的署名保留。
+- [@RigerWu](https://github.com/RigerWu) 在 [PR #52](https://github.com/try2love/codex-mobile-bridge/pull/52) 中贡献 iOS 原生连接恢复入口。
+- [@heiqiu47](https://github.com/heiqiu47) 在 [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40) 中提出账号查询改进；本版纳入范围仅为查询生命周期收敛。
+- [@tiancai123123](https://github.com/tiancai123123) 在 [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54) 中定位静态资源重复下载，并在 [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56) 中贡献内容哈希缓存与条件请求。
 
 ### English
 
-**Unreleased — Mermaid previews.** Preview fenced `mermaid` blocks in chat replies and Markdown files, switch to source, copy the original code and inspect diagrams fullscreen on mobile and wide-screen Web. These changes are not included in the published v2.1.2 packages.
+**v2.1.3 brings multiple Webhook destinations, Mermaid reading, faster repeat loads on slow links, iOS connection recovery and mobile interaction refinements.** Desktop and mobile apps use version **2.1.3**; Android/iOS build number **35**. See the [verification record](VERIFICATION.md) for platform-specific coverage.
 
-#### Features and improvements
+- **Webhook destinations:** create multiple named endpoints and enable, edit, test or delete each independently. Editable JSON presets cover automatic detection, Custom Webhook, Feishu, DingTalk, Discord and Telegram; Feishu and DingTalk offer optional signing. Tests use saved settings only, and saving does not send a notification. Ordinary settings reads mask saved URLs, headers and signing secrets; a saved URL is returned only on explicit reveal. Enabled endpoints deliver, deduplicate and retry independently, without activating chats or replaying past notifications. See the [setup guide](docs/webhook-notifications.md#english).
+- **Mermaid reading:** preview complete Mermaid fences in Codex, Claude and DeepSeek Harness chats and Markdown files, switch to source, copy it and zoom fullscreen. Incomplete streamed diagrams remain source; unchanged diagrams are reused as text continues. iOS also fixes navigation of the diagram preview subframe, so update both the gateway and iOS app.
+- **Slow-link loading and Windows size:** content-versioned static assets use browser caching and conditional requests on repeat visits. The HTML shell still avoids caching because it contains a per-page security nonce. Windows packages retain supported Electron locales only.
+- **Connections:** parse DeepSeek Harness YAML settings folded across lines; show native Retry and Back to computers actions when the iOS gateway or tunnel is unreachable. Account queries resume when the desktop tab becomes visible, with narrower request scope. Reset predictions and settings-entry relocation are not included.
+- **Mobile controls:** hide the native More menu over open dialogs, refine list and dialog focus appearance, and keep answer-card input visible when the keyboard covers it.
 
-- **Diagram previews:** shared cards in Codex, Claude and DeepSeek Harness chat bodies and `.md` file previews, with Chinese labels, light/dark themes and width-aware sizing.
-- **Source and copying:** switch between diagram and source, and copy the original Mermaid text. Source viewing and copying are also available fullscreen.
-- **Fullscreen zoom:** open a diagram by tapping it or selecting fullscreen. Use pinch, drag when zoomed and double-tap on touch devices; use the wheel, dragging or zoom buttons on desktop. Fit to screen restores the complete view.
-- **Streaming and reuse:** incomplete fences remain readable source until closed. Reuse unchanged diagrams and coalesce duplicate rendering within the current reading scope. Subsequent text updates preserve source selection and do not close fullscreen or reset its zoom.
-- **On-demand loading:** load the bundled renderer only when a diagram is needed, without an external CDN. Invalid, oversized or unsupported diagrams retain source viewing and copying.
+Install over the existing app to retain saved computers, pairings and gateway data. Android keeps its signing identity; iOS keeps its official bundle IDs and requires your own signing. Refresh Web pages after the gateway update. iOS recovery and Mermaid subframe changes require the matching app; shared-relay deployments should update the relay.
 
-#### Fixes
-
-- Fix the iOS App blocking the diagram preview subframe and repeatedly reporting that the diagram could not be displayed.
-- Correct diagram text, arrow and edge rendering, and keep fullscreen source controls from crowding content on narrow screens.
-
-#### Usage and compatibility
-
-Reload Web pages after updating the gateway. iOS also requires the matching App update; reloading alone cannot fix the old native navigation restriction. Update shared-relay deployments as well. Previews are read-only and do not modify files; diagram links, external resources and custom initialization configuration are not loaded as executable content.
+**Contributors:** [@wangzheuser](https://github.com/wangzheuser) submitted [PR #51](https://github.com/try2love/codex-mobile-bridge/pull/51), retaining original commit credit for [@w154594742](https://github.com/w154594742); [@RigerWu](https://github.com/RigerWu) contributed iOS recovery in [PR #52](https://github.com/try2love/codex-mobile-bridge/pull/52); the integrated part of [@heiqiu47](https://github.com/heiqiu47)'s [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40) is limited to account-query lifecycle improvements; and [@tiancai123123](https://github.com/tiancai123123) reported the static-download issue in [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54) and contributed caching in [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56).
 
 ---
 

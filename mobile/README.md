@@ -2,15 +2,15 @@
 
 手机扫描网关二维码后连接 Codex、Claude Desktop 和 DeepSeek Harness，电脑继续执行任务。手机 App 保存多台电脑，提供原生扫码、剪贴板、文件下载和通知；浏览器入口同时保留。
 
-**[v2.1.2 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
+**[v2.1.3 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
 
-## 待发布：Mermaid 图表预览
+## v2.1.3：通知、图表与连接恢复
 
-聊天与 Markdown 文件中的完整 `mermaid` 代码块可直接预览。点击图表或“全屏查看”后，可双指缩放、放大后拖动、双击缩放，或用“适应屏幕”还原；卡片和全屏中均保留源码查看与复制入口。后续回复文字更新复用未变化图表，保留当前源码视图和全屏缩放。
+手机 App 与网关配合管理多个 Webhook 接收目标，提供飞书、钉钉、Discord、Telegram 和自定义模板；保存的地址与密钥默认隐藏。聊天与 Markdown 文件中的 Mermaid 图表支持源码查看、复制和全屏缩放。iOS App 修复图表子页面被导航策略拦截的问题，并在网关或隧道不可达时提供原生重试及返回电脑列表入口。手机界面也改善弹窗、焦点和补充回答输入框的键盘可见性。
 
-iOS 本轮修复了预览子页面被原生导航策略拦截的问题。使用此功能需更新网关及配套 iOS App，单独刷新旧 App 不能消除该限制。独立 iPhone Test 已覆盖安装并通过图表、全屏缩放实测，原电脑列表和绑定保留；Android App 与宽屏 Web 的图表预览也已通过用户实测。本节为开发版说明，尚未包含在上方 v2.1.2 Release 中，详见[待发布说明](../RELEASE_NOTES.md#unreleased-mermaid)。
+网关与手机版本统一为 **2.1.3**，Android/iOS 构建号 **35**。覆盖安装并保留原电脑列表及配对；iOS 保留正式 Bundle ID，使用原签名身份安装。Mermaid 子页面和 iOS 原生连接恢复需要同时更新网关与 App。详见 [v2.1.3 更新说明](../RELEASE_NOTES.md#v213)。
 
-**English:** unreleased Mermaid previews add diagram/source switching, original-source copying and fullscreen pinch, drag, double-tap and fit-to-screen controls. Streaming text updates reuse unchanged diagrams and retain the reading state. iOS requires both the gateway and App update to fix its native subframe navigation restriction. The independent iPhone Test update retained saved computers and bindings and passed diagram/fullscreen checks; Android and wide-screen Web previews also passed user testing. These changes are not yet in the linked v2.1.2 release.
+**English:** v2.1.3/build 35 adds multiple Webhook destinations with editable service presets, Mermaid source and fullscreen reading, and native iOS Retry/Back to computers actions when the gateway is unreachable. The iOS app also fixes diagram-subframe navigation. Mobile dialogs, focus appearance and answer-card keyboard visibility are refined. Update both gateway and app for native iOS changes; install over the existing app to retain saved computers and pairings.
 
 ## v2.1.2：终端输入、触摸滚动与显示
 
@@ -46,11 +46,11 @@ iOS 本轮修复了预览子页面被原生导航策略拦截的问题。使用�
 
 ## 安装与升级
 
-- **Android 8.0 及以上**：从 Release 下载 `Codex-Mobile-Bridge-2.1.2-Android.apk`，按系统提示安装。升级时覆盖安装，不要先卸载，以保留电脑列表和登录。相机权限仅供扫码，拒绝后仍可粘贴地址登录。
+- **Android 8.0 及以上**：从 Release 下载 `Codex-Mobile-Bridge-2.1.3-Android.apk`，按系统提示安装。升级时覆盖安装，不要先卸载，以保留电脑列表和登录。相机权限仅供扫码，拒绝后仍可粘贴地址登录。
 - **iPhone / iPad**：Release 提供未签名 IPA 和 Xcode 源码包，需使用自己的 Apple 账号签名；不能直接点击 IPA 安装，暂无 App Store / TestFlight 分发。免费签名可能需要定期重新安装。
 - 使用 Release 中的 `SHA256SUMS.txt` 校验下载。编译通过不代表已验证所有机型、系统版本和网络环境。
 
-首次从较旧版本升级到 v2.1.2，可先下载 APK 覆盖安装；新版 Android 再次更新时可直接使用以下应用内流程。
+首次从较旧版本升级到 v2.1.3，可先下载 APK 覆盖安装；新版 Android 再次更新时可直接使用以下应用内流程。
 
 在「手机设置 → 应用更新」查看当前版本并检查更新。正式版只检查正式发布，预览版也可检查后续预览；不会在后台自动下载或安装。确认更新后，Android 会在 App 内下载 APK 并打开系统安装器，iOS 打开新版与签名安装指引。访问公开 GitHub Release 的请求不携带网关凭据或 Cookie。
 
