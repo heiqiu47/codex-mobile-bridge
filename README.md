@@ -5,11 +5,11 @@
 
 # Codex Mobile Bridge · 多客户端远程工作台
 
-> **v2.1.2 正式版**：[发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2) · [完整更新说明](RELEASE_NOTES.md) · [手机安装说明](mobile/README.md)。改善终端直接输入、OpenCode 类终端 CLI 的触摸滚动、断线恢复与跨平台显示，补齐 Windows 终端组件。
+> **v2.1.3 正式版**：[发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3) · [完整更新说明](RELEASE_NOTES.md) · [手机安装说明](mobile/README.md)。新增多目标 Webhook、Mermaid 图表阅读，改善弱网加载和 iOS 连接恢复。
 
 [简体中文](README.md) · [English](README_EN.md)
 
-**[双语介绍与使用演示 ↗](https://try2love.github.io/codex-mobile-bridge/?lang=zh)** · **[下载桌面与手机 App](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2)**
+**[双语介绍与使用演示 ↗](https://try2love.github.io/codex-mobile-bridge/?lang=zh)** · **[下载桌面与手机 App](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3)**
 
 [![桌面网关：客户端与接入（演示数据）](site/assets/v2-clients.png)](https://try2love.github.io/codex-mobile-bridge/?lang=zh)
 
@@ -19,16 +19,14 @@
 
 <a id="mermaid-preview"></a>
 
-## 待发布：Mermaid 图表阅读
+## v2.1.3 更新
 
-当前开发版已加入以下功能，已发布的 v2.1.2 安装包尚不包含这些改动：
+- **多目标通知**：可以添加多个独立 Webhook，分别启停、测试和编辑。提供通用自定义、飞书、钉钉、Discord、Telegram 可编辑 JSON 模板；飞书与钉钉支持可选签名。已保存地址与密钥默认隐藏，测试仅使用已保存配置。[配置说明](docs/webhook-notifications.md)
+- **图表阅读**：聊天与 Markdown 文件中的 Mermaid 代码块可预览、查看或复制源码，并全屏缩放。iOS 同步修复图表子页面导航；需要更新配套 App。
+- **弱网与接入**：静态资源按内容缓存，减少重复打开时的传输；Windows 包只保留支持的 Electron 语言资源。修复 DeepSeek Harness 折行配置识别，并为 iOS 网关不可达提供原生重试与返回入口。
+- **手机交互**：弹窗不再被原生“更多”入口遮挡，优化焦点外观和补充回答输入框的键盘可见性。
 
-- 聊天正文与文件列表中打开的 `.md` 文档，可将完整的 `mermaid` 代码块显示为图表，支持中文和浅色、深色主题。
-- 点击“源码”查看原文，点击“复制源码”复制 Mermaid 文本；点击图表或“全屏查看”进入大图阅读。
-- 手机支持双指缩放、放大后拖动与双击；电脑支持滚轮、拖动和加减按钮。“适应屏幕”恢复完整视图，全屏内也可切换源码。
-- 未完成的流式代码先保留源码；后续文字更新复用未变化图表，不打断当前全屏和缩放。图表无法显示时仍可查看、复制源码。
-
-使用时更新网关并刷新页面；iOS 还需配套更新 App，以修复图表子页面被拦截的问题。详见[待发布说明](RELEASE_NOTES.md#unreleased-mermaid)。
+桌面和手机 App 版本统一为 **2.1.3**，Android/iOS 构建号 **35**。完整说明与贡献者见 [v2.1.3 更新说明](RELEASE_NOTES.md#v213)。
 
 ## v2.1.2 更新
 
@@ -64,7 +62,7 @@
 - **源码阅读**：常见代码显示语法高亮和行号；点击“自动换行”让长行适合屏幕，或切回“原始行宽”。复制代码保留原文，不带行号；这是只读预览，不修改文件。未知语言与较大文本使用纯文本。
 - **PDF 阅读**：手机滑动翻阅、双指缩放，电脑浏览器保留翻页和缩放按钮。有文本层时可选择文字，扫描件不提供 OCR；不同尺寸的页面分别适配宽度。快速缩放时先保留原画面，再替换完成的新画面，减少闪烁。
 - **HTML 阅读**：在“预览 / 源代码”之间切换。自包含 HTML 的内联交互和动画可运行；外部资源、CDN、后端请求、弹窗和表单提交不受支持。预览与网关登录信息、父页面和手机原生接口隔离。
-- **Mermaid 图表（待发布）**：Markdown 文件与聊天使用相同的图表、源码和全屏阅读入口，见[图表阅读说明](#mermaid-preview)。
+- **Mermaid 图表**：Markdown 文件与聊天使用相同的图表、源码和全屏阅读入口，见[图表阅读说明](#mermaid-preview)。
 - **紧凑操作与全屏**：下载、复制或预览操作位于文件描述右侧；下载旁可展开全屏。全屏进出保留 PDF 位置和 HTML 状态；切换文件标签后返回 PDF 仍保留位置，HTML 则重新加载。
 
 PDF 在线阅读最大 **20 MiB**，且不超过当前普通点击下载限额；源码和 HTML 为 **512 KiB 以内的 UTF-8 文本**。超限或不支持的文件可下载后打开。完整使用本轮改进需配套更新网关与手机 App；浏览器用户更新网关后刷新即可。
@@ -109,18 +107,18 @@ Codex 与 Claude CLI 接入分别在各自账号管理中配置；本机 CLI 同
 
 ## 下载与快速开始（推荐）
 
-日常使用直接下载桌面 App，**无需 Agent 帮忙部署，也无需安装 Python、Node.js 或打开终端**。下列链接对应 **v2.1.2 正式版**。
+日常使用直接下载桌面 App，**无需 Agent 帮忙部署，也无需安装 Python、Node.js 或打开终端**。下列链接对应 **v2.1.3 正式版**。
 
 | 系统 | 下载 | 打开方式 |
 | --- | --- | --- |
-| Windows x64（推荐安装包） | [下载 Setup.exe](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Windows-x64-Setup.exe) | 运行安装包，从快捷方式打开 |
-| Windows x64（免安装） | [下载完整 ZIP](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Windows-x64.zip) | 完整解压后运行 `Codex Mobile Bridge.exe`，不要单独移动 exe |
-| macOS Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-macOS-arm64.dmg) | 打开 DMG，将 App 拖入“应用程序” |
-| macOS Intel（英特尔） | [下载 x64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-macOS-x64.dmg) | 打开 DMG，将 App 拖入“应用程序” |
-| Ubuntu x64（实验性） | [下载 .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Linux-amd64.deb) | Ubuntu 22.04；安装后以普通用户启动 |
-| Ubuntu ARM64（实验性） | [下载 .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Linux-arm64.deb) | Ubuntu 22.04 ARM64；不含 32 位 ARM |
+| Windows x64（推荐安装包） | [下载 Setup.exe](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Windows-x64-Setup.exe) | 运行安装包，从快捷方式打开 |
+| Windows x64（免安装） | [下载完整 ZIP](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Windows-x64.zip) | 完整解压后运行 `Codex Mobile Bridge.exe`，不要单独移动 exe |
+| macOS Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-macOS-arm64.dmg) | 打开 DMG，将 App 拖入“应用程序” |
+| macOS Intel（英特尔） | [下载 x64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-macOS-x64.dmg) | 打开 DMG，将 App 拖入“应用程序” |
+| Ubuntu x64（实验性） | [下载 .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Linux-amd64.deb) | Ubuntu 22.04；安装后以普通用户启动 |
+| Ubuntu ARM64（实验性） | [下载 .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Linux-arm64.deb) | Ubuntu 22.04 ARM64；不含 32 位 ARM |
 
-[查看所有版本与更新说明](https://github.com/try2love/codex-mobile-bridge/releases) · [下载 SHA256 校验文件](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/SHA256SUMS.txt)。两种 Mac 同时提供 ZIP，供应用内更新或手动替换使用。Windows ARM 暂无专用安装包。Mac 版采用本地完整性签名但未公证，首次打开可能需要手动允许；Windows 版未做证书签名。详见下方 macOS 首次打开说明。
+[查看所有版本与更新说明](https://github.com/try2love/codex-mobile-bridge/releases) · [下载 SHA256 校验文件](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/SHA256SUMS.txt)。两种 Mac 同时提供 ZIP，供应用内更新或手动替换使用。Windows ARM 暂无专用安装包。Mac 版采用本地完整性签名但未公证，首次打开可能需要手动允许；Windows 版未做证书签名。详见下方 macOS 首次打开说明。
 
 1. 安装并登录要使用的桌面客户端，打开 **Codex Mobile Bridge**。在 **客户端与接入** 检查扫描结果，完成需要的授权，并启用配置就绪的客户端。
 2. 在 **网络访问** 保留局域网访问或添加 HTTPS 入口，保存后从概览或客户端页点击 **启动网关**。已有配置时沿用原端口。
@@ -129,7 +127,7 @@ Codex 与 Claude CLI 接入分别在各自账号管理中配置；本机 CLI 同
 
 需要外网访问时，可选 [Tailscale 固定 HTTPS](docs/tailscale.md)、内置 Cloudflare 临时 HTTPS、[固定 Cloudflare Tunnel](docs/fixed-domain.md)、[自有服务器 + SSH](docs/server-ssh.md) 或 NAS 反代。详细要求见[连接方式说明](#connections)。固定地址不保证国内直连速度，首次配置请用实际蜂窝网络测试。
 
-Android APK、iOS 未签名 IPA 与 Xcode 源码包见同一 [v2.1.2 Release](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2)。Android 覆盖安装以保留数据；iOS 需自行签名，暂无 App Store/TestFlight 分发。源码运行与自定义部署见后面的[部署 Agent 执行说明](#agent-deployment)。
+Android APK、iOS 未签名 IPA 与 Xcode 源码包见同一 [v2.1.3 Release](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3)。Android 覆盖安装以保留数据；iOS 需自行签名，暂无 App Store/TestFlight 分发。源码运行与自定义部署见后面的[部署 Agent 执行说明](#agent-deployment)。
 
 <a id="macos-first-launch"></a>
 
@@ -139,7 +137,7 @@ Android APK、iOS 未签名 IPA 与 Xcode 源码包见同一 [v2.1.2 Release](ht
 
 从 `v0.2.0-beta.5` 起，可在桌面 App 的「应用更新」中检查新版、查看说明并点击「更新并重启」。下载与校验完成后短暂重启网关，保留登录、网络、通知和关注聊天配置；失败时尝试恢复原版本。此前版本需要先手动安装一次支持更新的版本。使用临时 HTTPS 时，重启后请打开最新地址。发布与恢复说明见 [桌面更新文档](docs/desktop-updates.md)。
 
-**Windows beta.7 / 1.0.0 用户：**旧更新器可能因目录占用报 `WinError 32` 并回退。请先在托盘选择“停止网关并退出”，再用 **2.1.2 Setup.exe** 安装到原位置；无需卸载或删除数据。1.1.0 修复后续更新的目录占用问题。
+**Windows beta.7 / 1.0.0 用户：**旧更新器可能因目录占用报 `WinError 32` 并回退。请先在托盘选择“停止网关并退出”，再用 **2.1.3 Setup.exe** 安装到原位置；无需卸载或删除数据。1.1.0 修复后续更新的目录占用问题。
 
 Android v2.0.3 起支持应用内 APK 更新，并可选择手机下载或电脑下载；旧版首次升级可手动覆盖安装。电脑协助方式需要配套网关，下载失败可重选方式，已完成的包可继续安装或保存。iOS 仍按签名安装指引升级，详见[手机说明](mobile/README.md#安装与升级)。
 
@@ -190,7 +188,7 @@ v2.0.0 在线查询订阅周期日期，显示剩余时间和具体日期；接�
 1. 从本仓库的 Release 下载对应芯片的 DMG 或 ZIP，以及 `SHA256SUMS.txt`。计算下载文件的 SHA-256，与校验文件中同名文件的一行比较；不一致时重新下载，不要放行。以下以 2.1.0 的 M 系列 Mac DMG 为例，其他文件请替换文件名：
 
    ```sh
-   shasum -a 256 "$HOME/Downloads/Codex-Mobile-Bridge-2.1.2-macOS-arm64.dmg"
+   shasum -a 256 "$HOME/Downloads/Codex-Mobile-Bridge-2.1.3-macOS-arm64.dmg"
    ```
 
 2. 打开 DMG，将 `Codex Mobile Bridge.app` 拖入“应用程序”，再推出磁盘映像；ZIP 则先解压并移动 App。尝试从“应用程序”打开后，前往 **系统设置 → 隐私与安全性 → 仍要打开**，按系统提示确认。
@@ -292,7 +290,7 @@ Cloudflare Tunnel 和 Tailscale 公网转发/中继可能经过境外节点，�
 
 ### 配置第三方通知：Bark、ntfy 与 PushPlus
 
-待发布版本支持配置多个 **Webhook** 接收目标：每个机器人可分别命名、启停、编辑、测试和删除，自定义 HTTPS 地址、请求头与 JSON 模板。旧版单个 Webhook 配置会保留，投递继续复用现有提醒策略、去重和重试。见 [Webhook 配置说明](docs/webhook-notifications.md)。
+v2.1.3 支持配置多个 **Webhook** 接收目标：每个机器人可分别命名、启停、编辑、测试和删除，自定义 HTTPS 地址、请求头与 JSON 模板。旧版单个 Webhook 配置会保留，投递继续复用现有提醒策略、去重和重试。见 [Webhook 配置说明](docs/webhook-notifications.md)。
 
 直连网关后，从手机「外观与显示」、Web 设置或聊天列表底部进入 **第三方通知**，选择 **Bark（iPhone）、ntfy（Android）或 PushPlus（微信）**，再进入对应配置页。英文入口显示 **Push alerts**。共享中继不开放此配置入口。
 
@@ -874,7 +872,7 @@ python3 -B -m unittest discover -s tests -v
 
 感谢 [@RigerWu](https://github.com/RigerWu) 在 [PR #52](https://github.com/try2love/codex-mobile-bridge/pull/52) 中贡献 iOS 网关不可达时的原生重试与返回电脑列表入口。
 
-感谢 [@heiqiu47](https://github.com/heiqiu47) 在 [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40) 中贡献账号与模型界面及查询优化。本次继续采纳查询收敛部分，未纳入重置预测或入口迁移。
+感谢 [@heiqiu47](https://github.com/heiqiu47) 在 [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40) 中提出账号与模型界面及查询改进；v2.1.3 仅采纳查询生命周期收敛，未纳入重置预测或设置入口迁移。
 
 感谢 [@tiancai123123](https://github.com/tiancai123123) 通过 [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54) 定位并复现弱网下静态资源重复下载问题，并在 [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56) 中贡献内容哈希、浏览器缓存及条件请求的实现与测试。整合保留其原始提交，并与项目已有的缓存失效和资源版本处理统一。
 

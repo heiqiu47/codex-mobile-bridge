@@ -5,11 +5,11 @@
 
 # Codex Mobile Bridge · A remote workbench for desktop agents
 
-> **v2.1.2 (stable):** [Release page](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2) · [Full release notes](RELEASE_NOTES.md) · [Mobile installation](mobile/README.md). This release improves direct terminal input, touch scrolling in terminal CLIs such as OpenCode, reconnection and cross-platform rendering, with complete Windows terminal components.
+> **v2.1.3 (stable):** [Release page](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3) · [Full release notes](RELEASE_NOTES.md) · [Mobile installation](mobile/README.md). This release adds multiple Webhook destinations and Mermaid reading, and improves slow-link loading and iOS connection recovery.
 
 [简体中文](README.md) · [English](README_EN.md)
 
-**[Product guide and interactive demos ↗](https://try2love.github.io/codex-mobile-bridge/?lang=en)** · **[Download desktop and mobile apps](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2)**
+**[Product guide and interactive demos ↗](https://try2love.github.io/codex-mobile-bridge/?lang=en)** · **[Download desktop and mobile apps](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3)**
 
 [![Desktop gateway: clients and access, with demo data](site/assets/v2-clients.png)](https://try2love.github.io/codex-mobile-bridge/?lang=en)
 
@@ -19,16 +19,14 @@ Tasks run on the original computer, or the original SSH host for Codex remote se
 
 <a id="mermaid-preview"></a>
 
-## Unreleased: Mermaid diagram reading
+## What's new in v2.1.3
 
-The development version includes the following changes; the published v2.1.2 packages do not yet contain them:
+- **Multiple Webhooks:** add independent destinations and enable, test or edit each one. Editable JSON presets cover Custom Webhook, Feishu, DingTalk, Discord and Telegram; Feishu and DingTalk offer optional signing. Saved addresses and secrets are hidden by default, and tests use saved settings only. [Setup guide](docs/webhook-notifications.md#english)
+- **Diagram reading:** preview Mermaid fences in chats and Markdown files, view or copy source and zoom fullscreen. iOS also fixes diagram-subframe navigation and needs the matching app update.
+- **Slow links and connections:** content-versioned caching avoids repeated static downloads; Windows packages keep supported Electron locales only. DeepSeek Harness recognizes folded connection settings, and iOS offers native Retry and Back to computers actions when the gateway cannot be reached.
+- **Mobile controls:** dialogs no longer overlap the native More menu; focus appearance and answer-card visibility above the keyboard are refined.
 
-- Render complete fenced `mermaid` blocks in chat bodies and `.md` documents opened from Files, with Chinese labels and light/dark themes.
-- Select source to read the original code or copy source to copy Mermaid text. Tap the diagram or the fullscreen action for a larger view.
-- Pinch, drag when zoomed and double-tap on touch devices; use the wheel, dragging or zoom buttons on desktop. Fit to screen restores the complete diagram, and source remains available fullscreen.
-- Incomplete streamed code stays readable as source. Later text updates reuse unchanged diagrams without interrupting fullscreen or zoom. Failed previews retain source viewing and copying.
-
-Update the gateway and reload the page. iOS also needs the matching App update to allow the diagram preview subframe. See the [unreleased notes](RELEASE_NOTES.md#unreleased-mermaid).
+Desktop and mobile apps use version **2.1.3**, with Android/iOS build **35**. See the [full v2.1.3 notes](RELEASE_NOTES.md#v213) for details and contributor credits.
 
 ## What's new in v2.1.2
 
@@ -64,7 +62,7 @@ Update the gateway and reload the page. iOS also needs the matching App update t
 - **Source reading:** view common languages with syntax highlighting and line numbers. Select **Wrap lines** to fit long lines to the screen, or restore **Original line width**. Copy preserves the source without line numbers; previews never edit the file. Unknown languages and larger text use plain text.
 - **PDF reading:** scroll and pinch on touch devices; use page and zoom buttons on desktop browsers. Select text when available; scanned pages do not gain OCR. Fit each page to the available width, including mixed page sizes. During rapid zoom, keep the completed image visible until its replacement is ready to reduce flashes.
 - **HTML reading:** switch between **Preview** and **Source code**. Self-contained inline interactions and animations work; external resources, CDN/API requests, popups and form submission are unsupported. Preview content is isolated from gateway sign-in data, the parent page and native mobile interfaces.
-- **Mermaid diagrams (unreleased):** Markdown files and chat bodies share diagram, source and fullscreen controls. See [diagram reading](#mermaid-preview).
+- **Mermaid diagrams:** Markdown files and chat bodies share diagram, source and fullscreen controls. See [diagram reading](#mermaid-preview).
 - **Compact actions and fullscreen:** actions sit beside file details, with fullscreen next to Download. Entering or leaving fullscreen preserves PDF position and HTML state. Switching file tabs preserves PDF position but reloads HTML on return.
 
 PDF previews are capped at **20 MiB** and the configured ordinary-download limit, whichever is lower. HTML and source previews accept **UTF-8 text up to 512 KiB**. Download larger or unsupported files to open elsewhere. Update both the gateway and mobile app for the complete feature set; browser users reload after updating the gateway.
@@ -111,18 +109,18 @@ Supports macOS, Windows and experimental Ubuntu x64/ARM64. See the [Linux guide]
 
 ## Download and quick start (recommended)
 
-Download the desktop App for everyday use. **No deployment Agent, Python, Node.js or terminal is required.** The links below target **v2.1.2 (stable)**.
+Download the desktop App for everyday use. **No deployment Agent, Python, Node.js or terminal is required.** The links below target **v2.1.3 (stable)**.
 
 | Platform | Download | Open |
 | --- | --- | --- |
-| Windows x64 (recommended installer) | [Download Setup.exe](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Windows-x64-Setup.exe) | Run the installer and launch from the shortcut |
-| Windows x64 (no installation) | [Download full ZIP](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Windows-x64.zip) | Extract the entire ZIP and run `Codex Mobile Bridge.exe`; do not move just the exe |
-| macOS Apple Silicon (M series) | [Download arm64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-macOS-arm64.dmg) | Open the DMG and drag the App to Applications |
-| macOS Intel | [Download x64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-macOS-x64.dmg) | Open the DMG and drag the App to Applications |
-| Ubuntu x64 (experimental) | [Download .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Linux-amd64.deb) | Ubuntu 22.04; launch as a regular user |
-| Ubuntu ARM64 (experimental) | [Download .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/Codex-Mobile-Bridge-2.1.2-Linux-arm64.deb) | Ubuntu 22.04 ARM64; no 32-bit ARM build |
+| Windows x64 (recommended installer) | [Download Setup.exe](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Windows-x64-Setup.exe) | Run the installer and launch from the shortcut |
+| Windows x64 (no installation) | [Download full ZIP](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Windows-x64.zip) | Extract the entire ZIP and run `Codex Mobile Bridge.exe`; do not move just the exe |
+| macOS Apple Silicon (M series) | [Download arm64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-macOS-arm64.dmg) | Open the DMG and drag the App to Applications |
+| macOS Intel | [Download x64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-macOS-x64.dmg) | Open the DMG and drag the App to Applications |
+| Ubuntu x64 (experimental) | [Download .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Linux-amd64.deb) | Ubuntu 22.04; launch as a regular user |
+| Ubuntu ARM64 (experimental) | [Download .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Linux-arm64.deb) | Ubuntu 22.04 ARM64; no 32-bit ARM build |
 
-[All releases and release notes](https://github.com/try2love/codex-mobile-bridge/releases) · [Download SHA256 checksums](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.2/SHA256SUMS.txt). Both Mac architectures also include ZIPs for in-app updates or manual replacement. Windows ARM packages are not available. The Mac build is ad-hoc signed but not notarized and may require manual approval; Windows builds have no certificate signature. See the macOS first-launch instructions below.
+[All releases and release notes](https://github.com/try2love/codex-mobile-bridge/releases) · [Download SHA256 checksums](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/SHA256SUMS.txt). Both Mac architectures also include ZIPs for in-app updates or manual replacement. Windows ARM packages are not available. The Mac build is ad-hoc signed but not notarized and may require manual approval; Windows builds have no certificate signature. See the macOS first-launch instructions below.
 
 1. Install and sign in to the desktop clients you need. Open **Codex Mobile Bridge**, inspect **Clients and access**, complete required permissions and enable configured clients.
 2. Keep LAN access or add an HTTPS entry under **Network access**, save, and select **Start gateway** from Overview or Clients. Preserve your configured port.
@@ -131,7 +129,7 @@ Download the desktop App for everyday use. **No deployment Agent, Python, Node.j
 
 For remote access, choose [Tailscale HTTPS](docs/tailscale.md), bundled temporary Cloudflare HTTPS, a [fixed Cloudflare tunnel](docs/fixed-domain.md), an [existing HTTPS tunnel](docs/external-tunnel.md), [your own SSH server](docs/server-ssh.md) or an advanced NAS proxy. See [Parallel connections](#parallel-connections). Fixed addresses do not guarantee mainland China performance; test the actual cellular network.
 
-Android APK, unsigned iOS IPA and Xcode source downloads are in the same [v2.1.2 Release](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.2). Install Android over the existing app; iOS requires your own signing, with no App Store/TestFlight distribution. Source/custom setups are covered by the [Deployment Agent instructions](#deployment-agent-instructions).
+Android APK, unsigned iOS IPA and Xcode source downloads are in the same [v2.1.3 Release](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3). Install Android over the existing app; iOS requires your own signing, with no App Store/TestFlight distribution. Source/custom setups are covered by the [Deployment Agent instructions](#deployment-agent-instructions).
 
 ### In-app updates
 
@@ -139,7 +137,7 @@ Android APK, unsigned iOS IPA and Xcode source downloads are in the same [v2.1.2
 
 Starting with `v0.2.0-beta.5`, use **App updates** to check for a release, read its notes, and select **Update and restart**. The app verifies the signed manifest and package before replacing itself, preserves login, network, notification and watched-chat settings, and restores a previously running gateway. Installation failures attempt to restore the previous app. Older versions need one manual upgrade to a version with this feature. Temporary HTTPS addresses change when the gateway restarts.
 
-**Windows beta.7 / 1.0.0 users:** the old updater may roll back with `WinError 32` because its working directory is locked. Choose **Stop gateway and quit** in the tray, then install **2.1.2 Setup.exe** to the same location. Do not uninstall or delete your data. Version 1.1.0 fixes this working-directory issue for subsequent updates.
+**Windows beta.7 / 1.0.0 users:** the old updater may roll back with `WinError 32` because its working directory is locked. Choose **Stop gateway and quit** in the tray, then install **2.1.3 Setup.exe** to the same location. Do not uninstall or delete your data. Version 1.1.0 fixes this working-directory issue for subsequent updates.
 
 Android v2.0.3 adds in-app APK updates with a phone/computer download choice. Older apps can be upgraded manually once; computer-assisted downloads need a compatible gateway. Failed downloads allow another route, and completed APKs remain available for installation or export. iOS still uses the signing and installation flow described in the [mobile guide](mobile/README.md).
 
@@ -187,7 +185,7 @@ The Mac build has an **ad-hoc integrity signature**, but **no Apple Developer ID
 1. Download the DMG or ZIP for your Mac's chip and `SHA256SUMS.txt` from this repository's Release. Calculate the downloaded file's hash and compare it with the matching filename in the checksum file. If they differ, download again instead of allowing the app. The example below uses the 2.0.3 Apple Silicon DMG; replace the filename for other downloads.
 
    ```sh
-   shasum -a 256 "$HOME/Downloads/Codex-Mobile-Bridge-2.1.2-macOS-arm64.dmg"
+   shasum -a 256 "$HOME/Downloads/Codex-Mobile-Bridge-2.1.3-macOS-arm64.dmg"
    ```
 
 2. Open the DMG, drag `Codex Mobile Bridge.app` to Applications, then eject the disk image. For a ZIP, extract it and move the App instead. Try opening it from Applications, then go to **System Settings → Privacy & Security → Open Anyway** and confirm.
@@ -307,7 +305,7 @@ The desktop App and phone website each have a **Language / 语言** selector and
 
 ### Third-party notifications: Bark, ntfy and PushPlus
 
-The unreleased version supports multiple **Webhook** destinations. Name, enable, edit, test and delete each bot independently, with its own HTTPS endpoint, headers and JSON template. Existing single-Webhook settings remain available; notification policies, deduplication and retries still apply. See [Webhook setup](docs/webhook-notifications.md#english).
+v2.1.3 supports multiple **Webhook** destinations. Name, enable, edit, test and delete each bot independently, with its own HTTPS endpoint, headers and JSON template. Existing single-Webhook settings remain available; notification policies, deduplication and retries still apply. See [Webhook setup](docs/webhook-notifications.md#english).
 
 With a direct gateway connection, open **Push alerts** from mobile appearance settings, Web settings or the chat-list footer. Choose **Bark for iPhone, ntfy for Android or PushPlus for WeChat**, then open that channel's configuration page. Shared-relay connections do not expose this configuration entry.
 
@@ -581,7 +579,7 @@ Thanks to [@wangzheuser](https://github.com/wangzheuser) for submitting [PR #51]
 
 Thanks to [@RigerWu](https://github.com/RigerWu) for the native iOS retry and back-to-computers controls when a gateway is unreachable in [PR #52](https://github.com/try2love/codex-mobile-bridge/pull/52).
 
-Thanks to [@heiqiu47](https://github.com/heiqiu47) for account and model UI improvements and query optimizations in [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40). This integration adds the scoped query lifecycle improvements; reset predictions and moving settings entries are not included.
+Thanks to [@heiqiu47](https://github.com/heiqiu47) for proposing account and model UI and query improvements in [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40). v2.1.3 integrates only the scoped query lifecycle improvements; reset predictions and moving settings entries are not included.
 
 Thanks to [@tiancai123123](https://github.com/tiancai123123) for diagnosing and reproducing repeated static-resource downloads on slow connections in [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54), and contributing content-hash versioning, browser caching, conditional requests and tests in [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56). The integration preserves the original commit and reconciles it with the project's existing cache invalidation and resource-version handling.
 
