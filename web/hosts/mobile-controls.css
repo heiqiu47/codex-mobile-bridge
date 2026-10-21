@@ -1,0 +1,2 @@
+.bridge-mobile :is(button,input:not([type=checkbox]):not([type=radio]),textarea,select):not(.xterm *){-webkit-tap-highlight-color:transparent}
+.bridge-mobile :is(button,input:not([type=checkbox]):not([type=radio]),textarea,select):not(.xterm *):focus-visible{outline:2px solid var(--muted);outline-offset:-2px}
