@@ -381,6 +381,16 @@ test('desktop Webhook keeps drafts through refresh, validates headers and clears
   await ui.nodes.get('test-webhook').onclick();assert.equal(channel,'webhook');
 });
 
+test('watch panel recognizes Webhook and PushPlus as enabled notification channels',async()=>{
+  const ui=await renderer();
+  ui.value.runtime.running=true;
+  ui.value.watches=[{id:'fixture-chat',host:'local',title:'Fixture'}];
+  ui.value.notifications.webhookEnabled=true;await ui.poll();
+  assert.match(ui.nodes.get('watches').children[0].textContent,/正在监控/);
+  ui.value.notifications.webhookEnabled=false;ui.value.notifications.pushplusEnabled=true;await ui.poll();
+  assert.match(ui.nodes.get('watches').children[0].textContent,/正在监控/);
+});
+
 test('Bark drafts survive polling and language changes and remain after saving',async()=>{
   const ui=await renderer();
   const ids=['bark-key','bark-server','bark-enabled','clear-bark-key'];

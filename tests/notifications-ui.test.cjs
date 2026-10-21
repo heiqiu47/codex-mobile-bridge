@@ -209,6 +209,9 @@ test('Webhook form has English labels and narrow-screen scroll styling',async()=
   const css=fs.readFileSync(path.join(__dirname,'../web/shell/content.css'),'utf8');
   assert.match(css,/#webhook-dialog\{[^}]*overflow-y:auto/);
   assert.match(css,/#webhook-dialog textarea\{[^}]*width:100%/);
+  assert.match(dialog,/maxlength="4096"/);
+  assert.match(dialog,/\{\{title\}\}/);
+  for(const error of ['Webhook 地址格式不正确','Webhook 请求头格式不正确','Webhook JSON 模板格式不正确','Webhook 模板包含未知占位符','开启 Webhook 前请填写地址','Webhook 测试失败，请检查服务地址、认证和网络'])assert.notEqual(ui.run(`BridgeI18n.t(${JSON.stringify(error)})`),error);
 });
 
 test('common notification controls save once outside provider detail',async()=>{
