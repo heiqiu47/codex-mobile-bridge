@@ -185,7 +185,7 @@ v2.0.0 在线查询订阅周期日期，显示剩余时间和具体日期；接�
 
 当前 Mac 版具有本地完整性签名（ad-hoc），**没有 Apple Developer ID 签名和公证**，首次打开仍可能被 macOS 拦截。旧版 `v0.2.0-beta.1` 还存在包签名缺陷，请优先下载 `v1.1.0` 或后续版本。
 
-1. 从本仓库的 Release 下载对应芯片的 DMG 或 ZIP，以及 `SHA256SUMS.txt`。计算下载文件的 SHA-256，与校验文件中同名文件的一行比较；不一致时重新下载，不要放行。以下以 2.1.0 的 M 系列 Mac DMG 为例，其他文件请替换文件名：
+1. 从本仓库的 Release 下载对应芯片的 DMG 或 ZIP，以及 `SHA256SUMS.txt`。计算下载文件的 SHA-256，与校验文件中同名文件的一行比较；不一致时重新下载，不要放行。以下以 2.1.3 的 M 系列 Mac DMG 为例，其他文件请替换文件名：
 
    ```sh
    shasum -a 256 "$HOME/Downloads/Codex-Mobile-Bridge-2.1.3-macOS-arm64.dmg"
@@ -872,7 +872,7 @@ python3 -B -m unittest discover -s tests -v
 
 感谢 [@RigerWu](https://github.com/RigerWu) 在 [PR #52](https://github.com/try2love/codex-mobile-bridge/pull/52) 中贡献 iOS 网关不可达时的原生重试与返回电脑列表入口。
 
-感谢 [@heiqiu47](https://github.com/heiqiu47) 在 [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40) 中提出账号与模型界面及查询改进；v2.1.3 仅采纳查询生命周期收敛，未纳入重置预测或设置入口迁移。
+感谢 [@heiqiu47](https://github.com/heiqiu47) 在 [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40) 中提出账号与模型界面及查询改进；v2.1.3 仅采纳查询生命周期收敛。
 
 感谢 [@tiancai123123](https://github.com/tiancai123123) 通过 [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54) 定位并复现弱网下静态资源重复下载问题，并在 [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56) 中贡献内容哈希、浏览器缓存及条件请求的实现与测试。整合保留其原始提交，并与项目已有的缓存失效和资源版本处理统一。
 

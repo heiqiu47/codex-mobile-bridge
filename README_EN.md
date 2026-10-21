@@ -182,7 +182,7 @@ View remaining percentages, reset times and available usage resets. In v2.0.0, r
 
 The Mac build has an **ad-hoc integrity signature**, but **no Apple Developer ID signature or notarization**. macOS can still block the first launch. The older `v0.2.0-beta.1` also has a bundle-signing defect; use `v1.1.0` or later.
 
-1. Download the DMG or ZIP for your Mac's chip and `SHA256SUMS.txt` from this repository's Release. Calculate the downloaded file's hash and compare it with the matching filename in the checksum file. If they differ, download again instead of allowing the app. The example below uses the 2.0.3 Apple Silicon DMG; replace the filename for other downloads.
+1. Download the DMG or ZIP for your Mac's chip and `SHA256SUMS.txt` from this repository's Release. Calculate the downloaded file's hash and compare it with the matching filename in the checksum file. If they differ, download again instead of allowing the app. The example below uses the 2.1.3 Apple Silicon DMG; replace the filename for other downloads.
 
    ```sh
    shasum -a 256 "$HOME/Downloads/Codex-Mobile-Bridge-2.1.3-macOS-arm64.dmg"
@@ -579,7 +579,7 @@ Thanks to [@wangzheuser](https://github.com/wangzheuser) for submitting [PR #51]
 
 Thanks to [@RigerWu](https://github.com/RigerWu) for the native iOS retry and back-to-computers controls when a gateway is unreachable in [PR #52](https://github.com/try2love/codex-mobile-bridge/pull/52).
 
-Thanks to [@heiqiu47](https://github.com/heiqiu47) for proposing account and model UI and query improvements in [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40). v2.1.3 integrates only the scoped query lifecycle improvements; reset predictions and moving settings entries are not included.
+Thanks to [@heiqiu47](https://github.com/heiqiu47) for proposing account and model UI and query improvements in [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40). v2.1.3 integrates only the scoped query lifecycle improvements.
 
 Thanks to [@tiancai123123](https://github.com/tiancai123123) for diagnosing and reproducing repeated static-resource downloads on slow connections in [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54), and contributing content-hash versioning, browser caching, conditional requests and tests in [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56). The integration preserves the original commit and reconciles it with the project's existing cache invalidation and resource-version handling.
 

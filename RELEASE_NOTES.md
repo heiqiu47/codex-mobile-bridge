@@ -8,11 +8,11 @@
 
 ### 新增与改进
 
-- **多个 Webhook 接收目标**：每条配置可单独命名、启停、编辑、测试和删除；旧单目标配置仍可见。支持自动识别、通用自定义、飞书、钉钉、Discord 和 Telegram 的可编辑 JSON 模板，飞书与钉钉支持可选签名。测试只使用已保存配置；保存不会发送通知。普通配置读取隐藏已保存地址、请求头和签名密钥，地址仅在主动查看时返回。每个已启用目标独立投递、去重与重试，不启动会话，也不补发历史通知。详见 [Webhook 配置说明](docs/webhook-notifications.md)。
-- **Mermaid 图表阅读**：在 Codex、Claude、DeepSeek Harness 聊天与 Markdown 文件中预览完整 Mermaid 代码块，切换源码、复制原文和全屏缩放。流式未完成内容保留源码；后续文字更新复用未变化图表。iOS App 同步修复图表预览子页面被导航策略拦截的问题，需同时更新网关与 App。
+- **多个 Webhook 接收目标**：每条配置可单独命名、启停、编辑、测试和删除；旧单目标配置仍可见。支持自动识别、通用自定义、飞书、钉钉、Discord 和 Telegram 的可编辑 JSON 模板，飞书与钉钉支持可选签名。修复飞书返回 HTTP 200 但业务拒绝时误报成功的问题。测试只使用已保存配置；保存不会发送通知。普通配置读取隐藏已保存地址、请求头和签名密钥，地址仅在主动查看时返回。每个已启用目标独立投递、去重与重试，不启动会话，也不补发历史通知。详见 [Webhook 配置说明](docs/webhook-notifications.md)。
+- **Mermaid 图表阅读**：在 Codex、Claude、DeepSeek Harness 聊天与 Markdown 文件中预览完整 Mermaid 代码块，可切换源码并复制原文。全屏时手机可双指缩放、放大后拖动或双击放大、还原；宽屏可用滚轮、按钮和双击缩放，再拖动图表。流式未完成内容保留源码；后续文字更新复用未变化图表。iOS App 同步修复图表预览子页面被导航策略拦截的问题，需同时更新网关与 App。
 - **弱网加载与 Windows 包体**：静态资源按内容生成版本地址，重复访问可使用浏览器缓存与条件请求；带页面专属安全随机数的 HTML 仍不缓存。Windows 包仅保留支持的 Electron 语言资源，以缩减包体。
-- **接入与恢复**：修复 DeepSeek Harness 自动折行的 YAML 接入配置无法识别的问题；iOS 网关不可达或遇到隧道错误时提供原生重试、返回电脑列表入口。账号查询在桌面标签可见性变化后恢复，收敛不必要的请求；未加入重置预测或设置入口迁移。
-- **手机交互**：弹窗打开时隐藏原生“更多”入口；调整手机列表、弹窗与常规输入框的焦点外观，并让需要补充回答的卡片输入框在键盘遮挡后保持可见。
+- **接入与恢复**：修复 DeepSeek Harness 自动折行的 YAML 接入配置无法识别的问题；iOS 网关不可达或遇到隧道错误时提供原生重试、返回电脑列表入口。账号查询在桌面标签可见性变化后恢复，收敛不必要的请求。
+- **手机交互**：弹窗打开时隐藏原生“更多”入口；调整手机列表、弹窗与常规输入框的焦点外观。补充回答卡片输入框被键盘遮挡时做一次可见定位，输入中不反复移动。
 
 ### 升级
 
@@ -29,11 +29,11 @@
 
 **v2.1.3 brings multiple Webhook destinations, Mermaid reading, faster repeat loads on slow links, iOS connection recovery and mobile interaction refinements.** Desktop and mobile apps use version **2.1.3**; Android/iOS build number **35**. See the [verification record](VERIFICATION.md) for platform-specific coverage.
 
-- **Webhook destinations:** create multiple named endpoints and enable, edit, test or delete each independently. Editable JSON presets cover automatic detection, Custom Webhook, Feishu, DingTalk, Discord and Telegram; Feishu and DingTalk offer optional signing. Tests use saved settings only, and saving does not send a notification. Ordinary settings reads mask saved URLs, headers and signing secrets; a saved URL is returned only on explicit reveal. Enabled endpoints deliver, deduplicate and retry independently, without activating chats or replaying past notifications. See the [setup guide](docs/webhook-notifications.md#english).
-- **Mermaid reading:** preview complete Mermaid fences in Codex, Claude and DeepSeek Harness chats and Markdown files, switch to source, copy it and zoom fullscreen. Incomplete streamed diagrams remain source; unchanged diagrams are reused as text continues. iOS also fixes navigation of the diagram preview subframe, so update both the gateway and iOS app.
+- **Webhook destinations:** create multiple named endpoints and enable, edit, test or delete each independently. Editable JSON presets cover automatic detection, Custom Webhook, Feishu, DingTalk, Discord and Telegram; Feishu and DingTalk offer optional signing. Feishu responses with HTTP 200 but a rejected business code no longer report success. Tests use saved settings only, and saving does not send a notification. Ordinary settings reads mask saved URLs, headers and signing secrets; a saved URL is returned only on explicit reveal. Enabled endpoints deliver, deduplicate and retry independently, without activating chats or replaying past notifications. See the [setup guide](docs/webhook-notifications.md#english).
+- **Mermaid reading:** preview complete Mermaid fences in Codex, Claude and DeepSeek Harness chats and Markdown files, switch to source and copy it. In fullscreen, pinch to zoom, drag when enlarged or double-tap to zoom and reset on mobile; use the wheel, buttons or double-click to zoom, then drag, on wider screens. Incomplete streamed diagrams remain source; unchanged diagrams are reused as text continues. iOS also fixes navigation of the diagram preview subframe, so update both the gateway and iOS app.
 - **Slow-link loading and Windows size:** content-versioned static assets use browser caching and conditional requests on repeat visits. The HTML shell still avoids caching because it contains a per-page security nonce. Windows packages retain supported Electron locales only.
-- **Connections:** parse DeepSeek Harness YAML settings folded across lines; show native Retry and Back to computers actions when the iOS gateway or tunnel is unreachable. Account queries resume when the desktop tab becomes visible, with narrower request scope. Reset predictions and settings-entry relocation are not included.
-- **Mobile controls:** hide the native More menu over open dialogs, refine list and dialog focus appearance, and keep answer-card input visible when the keyboard covers it.
+- **Connections:** parse DeepSeek Harness YAML settings folded across lines; show native Retry and Back to computers actions when the iOS gateway or tunnel is unreachable. Account queries resume when the desktop tab becomes visible, with narrower request scope.
+- **Mobile controls:** hide the native More menu over open dialogs and refine list and dialog focus appearance. When the keyboard covers an answer-card input, bring it into view once without repeatedly moving it during typing.
 
 Install over the existing app to retain saved computers, pairings and gateway data. Android keeps its signing identity; iOS keeps its official bundle IDs and requires your own signing. Refresh Web pages after the gateway update. iOS recovery and Mermaid subframe changes require the matching app; shared-relay deployments should update the relay.
 
