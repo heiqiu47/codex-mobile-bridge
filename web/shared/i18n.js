@@ -190,6 +190,7 @@ const en={
 "使用飞书模板":"Use Feishu template",
 "Webhook 类型格式不正确":"Invalid Webhook service type.",
 "飞书签名密钥格式不正确":"Invalid Feishu signing secret.",
+"Webhook 签名密钥格式不正确":"Invalid Webhook signing secret.",
 "签名仅支持飞书 Webhook":"Signing is available only for Feishu Webhooks.",
 "开启飞书签名前请填写密钥；更换地址或类型后需重新填写":"Enter a signing secret before enabling Feishu signing; enter it again after changing the endpoint or service type.",
 "签名消息不能自行设置 timestamp 或 sign":"Signed messages cannot set timestamp or sign in the body template.",
