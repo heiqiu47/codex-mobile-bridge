@@ -240,8 +240,12 @@ test('empty multi-Webhook list retains server-provided preset templates',async()
   const ui=await fixture(),templates={generic:'{"event":"{{event}}"}',discord:'{"content":"{{body}}"}'};
   ui.saved.set('/api/notifications/channels/webhook',{webhookEndpoints:[],webhookTemplates:templates});
   await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  assert.equal(ui.nodes.get('webhook-endpoints').hidden,true);
   ui.nodes.get('webhook-provider').value='discord';ui.nodes.get('webhook-provider').onchange();
   assert.equal(ui.nodes.get('webhook-body-template').value,templates.discord);
+  ui.nodes.get('webhook-url').value='https://example.test/hook';await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.nodes.get('webhook-endpoints').hidden,false);
+  assert.match(ui.html,/id="webhook-add" class="plain"/);
 });
 
 test('revealing a saved Webhook URL keeps the test clean and sends no URL update',async()=>{

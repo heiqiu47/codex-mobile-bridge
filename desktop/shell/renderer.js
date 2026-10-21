@@ -18,6 +18,7 @@ function renderWebhookCopy(row){
   $('webhook-headers-saved').textContent=t(row.hasWebhookHeaders?'已保存请求头；留空保留':'尚未保存请求头');
   $('webhook-sign-saved').textContent=t(row.hasWebhookSignSecret?'已保存签名密钥；留空保留':'尚未保存签名密钥');
   $('webhook-provider-hint').textContent=webhookProviderHint(row);
+  const visible=$('webhook-url').type==='text';$('webhook-url-eye').textContent=t(visible?'隐藏地址':'显示地址');$('webhook-url-eye').setAttribute('aria-label',t(visible?'隐藏地址':'显示地址'));
 }
 function renderWebhookEditor(row){
   hideWebhookUrl();webhookTemplates=row.webhookTemplates||snapshot?.notifications?.webhookTemplates||webhookTemplates;
@@ -213,7 +214,8 @@ function render(value,watchRevision=watchPanel.revision){
   $('ntfy-token').placeholder=value.notifications.hasToken?t('已保存；留空保留，服务地址变化时清除'):t('如服务需要认证，在这里填写');
   $('bark-key').placeholder=value.notifications.hasBarkKey?t('已保存；留空保留，服务地址变化时清除'):t('填写 Bark App 中的 Device Key');
   $('pushplus-token').placeholder=value.notifications.hasPushplusToken?t('已保存，留空保留'):t('填写 PushPlus Token');
-  if(!webhookCreating){if(!webhookRows().some(row=>row.webhookId===webhookSelectedId)&&(!webhookSavedFields||!webhookDirty()))webhookSelectedId=webhookRows()[0]?.webhookId||'legacy';const row=webhookRow();if(!webhookSavedFields||(JSON.stringify(row)!==webhookRenderedRowSignature&&!webhookDirty()))renderWebhookEditor(row);renderWebhookCopy(row);}
+  if(!webhookCreating){if(!webhookRows().some(row=>row.webhookId===webhookSelectedId)&&(!webhookSavedFields||!webhookDirty()))webhookSelectedId=webhookRows()[0]?.webhookId||'legacy';const row=webhookRow();if(!webhookSavedFields||(JSON.stringify(row)!==webhookRenderedRowSignature&&!webhookDirty()))renderWebhookEditor(row);}
+  renderWebhookCopy(webhookCreating?{}:webhookRow());
   renderWebhookList();
   updateDirty();
   $('network-lock').hidden=!running;

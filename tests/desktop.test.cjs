@@ -436,7 +436,15 @@ test('desktop language switch translates Webhook hints without losing drafts or 
   await ui.nodes.get('webhook-url-eye').onclick();body.value='{"custom":"{{body}}"}';
   ui.context.applyLanguage('en');
   assert.equal(url.type,'text');assert.equal(url.value,'https://example.test/hook?token=private');assert.equal(body.value,'{"custom":"{{body}}"}');
+  assert.equal(ui.nodes.get('webhook-url-eye').textContent,'Hide address');
   assert.equal(ui.nodes.get('webhook-name').value,'Default Webhook');assert.equal(ui.run('webhookDirty()'),true);
+  for(const id of ['webhook-provider-hint','webhook-url-saved','webhook-headers-saved','webhook-sign-saved'])assert.doesNotMatch(ui.nodes.get(id).textContent,/[\u4e00-\u9fff]/);
+});
+
+test('desktop language switch translates new Webhook hints without clearing its draft',async()=>{
+  const ui=await renderer();await ui.poll();ui.nodes.get('webhook-add').onclick();ui.nodes.get('webhook-name').value='Ops';ui.nodes.get('webhook-sign-secret').value='private draft';
+  ui.context.applyLanguage('en');
+  assert.equal(ui.nodes.get('webhook-name').value,'Ops');assert.equal(ui.nodes.get('webhook-sign-secret').value,'private draft');
   for(const id of ['webhook-provider-hint','webhook-url-saved','webhook-headers-saved','webhook-sign-saved'])assert.doesNotMatch(ui.nodes.get(id).textContent,/[\u4e00-\u9fff]/);
 });
 
