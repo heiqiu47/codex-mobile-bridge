@@ -65,6 +65,12 @@ test('file-transfer settings reach the worker through the IPC allowlist',async()
   const result=await runWorker({executable:process.execPath,prefix:['-e',script],dataDir:'/fixture'},'transfer-settings',{clickDownloadMiB:60});
   assert.deepEqual(result,{action:'transfer-settings',payload:{clickDownloadMiB:60}});
 });
+test('named Webhook edits reach the worker through the IPC allowlist',async()=>{
+  const script="let value='';process.stdin.on('data',data=>value+=data);process.stdin.on('end',()=>console.log(JSON.stringify({ok:true,result:{action:process.argv[1],payload:JSON.parse(value)}})));";
+  const payload={action:'delete',webhookId:'named-1'};
+  const result=await runWorker({executable:process.execPath,prefix:['-e',script],dataDir:'/fixture'},'webhook-endpoint',payload);
+  assert.deepEqual(result,{action:'webhook-endpoint',payload});
+});
 test('unknown IPC action cannot become a command',async()=>{await assert.rejects(runWorker({executable:'unused',dataDir:'unused'},'shell'),/未知操作/);});
 test('development launch keeps script as its own argument',()=>{
   const result=workerFor({packaged:false,root:'/source path',dataDir:'/data'});assert.deepEqual(result.prefix,['-B',path.join('/source path','desktop.py')]);
@@ -372,61 +378,31 @@ test('notification test buttons select the channel and block unsaved drafts',asy
   assert.equal(calls.length,2);assert.match(ui.nodes.get('toast-message').textContent,/请先保存通知配置/);
 });
 
-test('desktop Webhook keeps drafts through refresh, validates headers and clears submitted secrets',async()=>{
-  const ui=await renderer(),ids=['webhook-url','webhook-headers','webhook-enabled','webhook-body-template','clear-webhook-url','clear-webhook-headers'];
-  for(const id of ids){ui.nodes.get(id).id=id;ui.nodes.get(id).closest=()=>({dataset:{panel:'notifications'}});}
-  for(const id of ['webhook-enabled','clear-webhook-url','clear-webhook-headers'])ui.nodes.get(id).type='checkbox';
-  ui.run("fields=()=>['webhook-url','webhook-headers','webhook-enabled','webhook-body-template','clear-webhook-url','clear-webhook-headers'].map($);savedFields=fieldValues()");
-  ui.nodes.get('webhook-url').value='https://example.test/hook?token=secret';
-  ui.nodes.get('webhook-headers').value='{bad';ui.nodes.get('webhook-enabled').checked=true;ui.run('updateDirty()');
-  await ui.poll();assert.equal(ui.nodes.get('webhook-url').value,'https://example.test/hook?token=secret');
-  let saved;ui.api.save=async value=>{saved=value;return structuredClone(ui.value);};
-  await ui.nodes.get('settings').onsubmit({preventDefault(){}});
-  assert.equal(saved,undefined);assert.match(ui.nodes.get('toast-message').textContent,/JSON/);
-  ui.nodes.get('webhook-headers').value='{"X-Key":"secret"}';
-  await ui.nodes.get('settings').onsubmit({preventDefault(){}});
-  assert.equal(saved.notifications.webhookEnabled,true);
-  assert.equal(saved.notifications.webhookUrl,'https://example.test/hook?token=secret');
-  assert.deepEqual(JSON.parse(JSON.stringify(saved.notifications.webhookHeaders)),{'X-Key':'secret'});
+test('desktop Webhook edits save per endpoint and failed saves retain secrets',async()=>{
+  const ui=await renderer();ui.value.notifications.webhookEndpoints=[{webhookId:'legacy',webhookName:'Default Webhook',webhookProvider:'auto',webhookBodyTemplate:'{\"event\":\"{{event}}\"}',webhookTemplates:ui.value.notifications.webhookTemplates}];await ui.poll();
+  ui.nodes.get('webhook-url').value='https://example.test/hook?token=secret';ui.nodes.get('webhook-headers').value='{bad';
+  let payload;ui.api.webhookEndpoint=async value=>{payload=value;throw Error('Save failed');};
+  await ui.nodes.get('webhook-save').onclick();assert.equal(payload,undefined);assert.match(ui.nodes.get('toast-message').textContent,/JSON/);
+  ui.nodes.get('webhook-headers').value='{"X-Key":"secret"}';await ui.nodes.get('webhook-save').onclick();assert.equal(ui.nodes.get('webhook-url').value,'https://example.test/hook?token=secret');
+  ui.api.webhookEndpoint=async value=>{payload=value;return {selectedWebhookId:'legacy',webhookEndpoints:[{webhookId:'legacy',webhookName:'Default Webhook',webhookEnabled:true,webhookProvider:'auto',webhookBodyTemplate:value.webhookBodyTemplate,hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:true,webhookTemplates:ui.value.notifications.webhookTemplates}]};};
+  ui.nodes.get('webhook-enabled').checked=true;await ui.nodes.get('webhook-save').onclick();
+  assert.equal(payload.webhookId,'legacy');assert.equal(payload.webhookUrl,'https://example.test/hook?token=secret');assert.deepEqual(JSON.parse(JSON.stringify(payload.webhookHeaders)),{'X-Key':'secret'});
   assert.equal(ui.nodes.get('webhook-url').value,'');assert.equal(ui.nodes.get('webhook-headers').value,'');
-  assert.equal(ui.run('dirty'),false);
-  let channel;ui.api.testNotification=async value=>{channel=value.channel;return {message:'accepted'};};
-  await ui.nodes.get('test-webhook').onclick();assert.equal(channel,'webhook');
+  assert.equal(ui.run('collect().notifications.webhookUrl'),'');
 });
 
-test('desktop Feishu signing and template edits remain drafts until successful save',async()=>{
-  const ui=await renderer(),ids=['webhook-provider','webhook-sign-enabled','webhook-sign-secret','clear-webhook-sign-secret','webhook-body-template'];
-  for(const id of ids){ui.nodes.get(id).id=id;ui.nodes.get(id).closest=()=>({dataset:{panel:'notifications'}});}
-  for(const id of ['webhook-sign-enabled','clear-webhook-sign-secret'])ui.nodes.get(id).type='checkbox';
-  ui.run("fields=()=>['webhook-provider','webhook-sign-enabled','webhook-sign-secret','clear-webhook-sign-secret','webhook-body-template'].map($);savedFields=fieldValues()");
-  ui.nodes.get('webhook-provider').value='feishu';ui.nodes.get('webhook-sign-enabled').checked=true;
-  ui.nodes.get('webhook-sign-secret').value='sample-secret';ui.nodes.get('webhook-use-template').onclick();
-  await ui.poll();assert.equal(ui.nodes.get('webhook-sign-secret').value,'sample-secret');
-  let tests=0;ui.api.testNotification=async()=>{tests++;return {message:'accepted'};};
-  await ui.nodes.get('test-webhook').onclick();assert.equal(tests,0);
-  ui.api.save=async()=>{throw Error('Save failed');};
-  await ui.nodes.get('settings').onsubmit({preventDefault(){}});
-  assert.equal(ui.nodes.get('webhook-sign-secret').value,'sample-secret');
-  let payload;ui.api.save=async value=>{payload=value;return structuredClone(ui.value);};
-  await ui.nodes.get('settings').onsubmit({preventDefault(){}});
-  assert.equal(payload.notifications.webhookProvider,'feishu');
-  assert.equal(payload.notifications.webhookSignEnabled,true);
-  assert.equal(payload.notifications.webhookSignSecret,'sample-secret');
-  assert.deepEqual(JSON.parse(payload.notifications.webhookBodyTemplate),{msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}});
-  assert.equal(ui.nodes.get('webhook-sign-secret').value,'');
+test('desktop Webhook test is saved-only and named creation has isolated identity',async()=>{
+  const ui=await renderer();await ui.poll();ui.nodes.get('webhook-add').onclick();ui.nodes.get('webhook-name').value='Ops';ui.nodes.get('webhook-provider').value='feishu';ui.nodes.get('webhook-sign-secret').value='sample-secret';ui.nodes.get('webhook-use-template').onclick();
+  let tests=0;ui.api.testNotification=async()=>{tests++;return {message:'accepted'};};await ui.nodes.get('test-webhook').onclick();assert.equal(tests,0);
+  let payload;ui.api.webhookEndpoint=async value=>{payload=value;return {selectedWebhookId:'named-1',webhookEndpoints:[{webhookId:'named-1',webhookName:'Ops',webhookEnabled:true,webhookProvider:'feishu',webhookBodyTemplate:value.webhookBodyTemplate,webhookTemplates:ui.value.notifications.webhookTemplates}]};};
+  await ui.nodes.get('webhook-save').onclick();assert.equal(payload.webhookId,undefined);assert.equal(payload.webhookSignSecret,'sample-secret');assert.equal(ui.nodes.get('webhook-sign-secret').value,'');
   await ui.nodes.get('test-webhook').onclick();assert.equal(tests,1);
 });
 
-test('desktop saved Webhook URL is revealed only on request without becoming a draft',async()=>{
-  const ui=await renderer(),url=ui.nodes.get('webhook-url');
-  url.id='webhook-url';url.closest=()=>({dataset:{panel:'notifications'}});
-  ui.value.notifications.hasWebhookUrl=true;ui.value.notifications.webhookUrlDisplay='https://example.test';
-  await ui.poll();ui.run("activeTab='notifications';fields=()=>[$('webhook-url')];savedFields=fieldValues()");
-  let calls=0;ui.api.readCredentials=async request=>{calls++;assert.deepEqual(JSON.parse(JSON.stringify(request)),{channel:'webhook'});return {webhookUrl:'https://example.test/hook?token=private'};};
-  assert.equal(calls,0);await ui.nodes.get('webhook-url-eye').onclick();
-  assert.equal(calls,1);assert.equal(url.type,'text');assert.equal(ui.run('webhookUrlDraft()'),'');
-  assert.equal(ui.run('collect().notifications.webhookUrl'),'');
-  assert.equal(ui.run('dirty'),false);
+test('desktop saved Webhook URL reveal is scoped to selected endpoint',async()=>{
+  const ui=await renderer(),url=ui.nodes.get('webhook-url');ui.value.notifications.webhookEndpoints=[{webhookId:'named-1',webhookName:'Ops',hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',webhookTemplates:ui.value.notifications.webhookTemplates}];await ui.poll();ui.run("activeTab='notifications'");
+  let calls=0;ui.api.readCredentials=async request=>{calls++;assert.deepEqual(JSON.parse(JSON.stringify(request)),{channel:'webhook',webhookId:'named-1'});return {webhookUrl:'https://example.test/hook?token=private'};};
+  await ui.nodes.get('webhook-url-eye').onclick();assert.equal(calls,1);assert.equal(url.type,'text');assert.equal(ui.run('webhookDirty()'),false);assert.equal(ui.run('webhookUrlDraft()'),'');
   await ui.nodes.get('webhook-url-eye').onclick();assert.equal(url.value,'');assert.equal(url.type,'password');
 });
 

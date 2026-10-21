@@ -979,6 +979,16 @@ $('rename-form').onsubmit=async event=>{
 let notificationChannelBusy=false,selectedNotificationChannel='',notificationListRequest=0,notificationCommonLoaded=false;
 const defaultWebhookBodyTemplate=JSON.stringify({event:'{{event}}',title:'{{title}}',body:'{{body}}',session_name:'{{session_name}}',url:'{{url}}'},null,2);
 let savedWebhookFields=null,webhookTemplates={},webhookResolvedProvider='generic',revealedWebhookUrl='',webhookRevealRequest=0;
+let webhookConfig={},selectedWebhookId='legacy',creatingWebhook=false;
+function webhookRows(){return webhookConfig.webhookEndpoints||[{...webhookConfig,webhookId:'legacy',webhookName:t('默认 Webhook')}];}
+function currentWebhook(){return webhookRows().find(row=>row.webhookId===selectedWebhookId)||{};}
+function renderWebhookList(){
+  $('webhook-endpoint-list').replaceChildren();
+  const rows=[...webhookRows()];if(!rows.some(row=>row.webhookId==='legacy'))rows.unshift({webhookId:'legacy',webhookName:t('默认 Webhook')});
+  for(const row of rows){const button=document.createElement('button');button.type='button';button.className='plain';button.dataset.webhookId=row.webhookId;button.setAttribute('aria-current',String(!creatingWebhook&&selectedWebhookId===row.webhookId));button.textContent=[row.webhookName||t('默认 Webhook'),row.webhookUrlDisplay||'',t(row.webhookEnabled?'已启用':'未启用')].filter(Boolean).join(' · ');button.onclick=()=>selectWebhook(row.webhookId);$('webhook-endpoint-list').append(button);}
+  $('webhook-delete').hidden=creatingWebhook||!webhookRows().some(row=>row.webhookId===selectedWebhookId);
+}
+function selectWebhook(id){if(notificationChannelBusy)return;if(webhookDirty()){$('webhook-error').textContent=t('请先保存或取消当前修改。');return;}selectedWebhookId=id;creatingWebhook=false;renderWebhookChannel(currentWebhook());renderWebhookList();$('webhook-error').textContent='';}
 function webhookUrlDraft(){return $('webhook-url').value===revealedWebhookUrl?'':$('webhook-url').value.trim();}
 function selectedWebhookTemplate(){return webhookTemplates[$('webhook-provider').value==='auto'?webhookResolvedProvider:$('webhook-provider').value]||webhookTemplates.generic||defaultWebhookBodyTemplate;}
 function switchWebhookTemplate(){const current=$('webhook-body-template').value;if(!current.trim()||(current===defaultWebhookBodyTemplate||Object.values(webhookTemplates).includes(current)))$('webhook-body-template').value=selectedWebhookTemplate();}
@@ -987,14 +997,15 @@ async function toggleWebhookUrl(){
   if($('webhook-url').type==='text'){hideWebhookUrl();return;}
   if($('webhook-url').value||!savedWebhookHasUrl){$('webhook-url').type='text';$('webhook-url-eye').textContent=t('隐藏地址');$('webhook-url-eye').setAttribute('aria-label',t('隐藏地址'));return;}
   const request=++webhookRevealRequest,before=$('webhook-url').value,host=currentHost,chat=currentId,token=csrf;
-  try{const result=await api('/api/notifications/channels/webhook/url',{});if(request!==webhookRevealRequest||!$('webhook-dialog').open||$('webhook-url').value!==before||currentHost!==host||currentId!==chat||csrf!==token)return;revealedWebhookUrl=result.webhookUrl||'';$('webhook-url').value=revealedWebhookUrl;$('webhook-url').type='text';$('webhook-url-eye').textContent=t('隐藏地址');$('webhook-url-eye').setAttribute('aria-label',t('隐藏地址'));}catch(error){$('webhook-error').textContent=t(error.message);}
+  const id=selectedWebhookId;try{const result=await api('/api/notifications/channels/webhook/url',{webhookId:id});if(request!==webhookRevealRequest||selectedWebhookId!==id||!$('webhook-dialog').open||$('webhook-url').value!==before||currentHost!==host||currentId!==chat||csrf!==token)return;revealedWebhookUrl=result.webhookUrl||'';$('webhook-url').value=revealedWebhookUrl;$('webhook-url').type='text';$('webhook-url-eye').textContent=t('隐藏地址');$('webhook-url-eye').setAttribute('aria-label',t('隐藏地址'));}catch(error){$('webhook-error').textContent=t(error.message);}
 }
 let savedWebhookHasUrl=false;
-function webhookFields(){return {webhookEnabled:$('webhook-enabled').checked,webhookProvider:$('webhook-provider').value,webhookSignEnabled:$('webhook-sign-enabled').checked,webhookBodyTemplate:$('webhook-body-template').value,clearWebhookUrl:$('webhook-clear-url').checked,clearWebhookHeaders:$('webhook-clear-headers').checked,clearWebhookSignSecret:$('webhook-clear-sign-secret').checked};}
-function webhookDirty(){return !savedWebhookFields||JSON.stringify(webhookFields())!==JSON.stringify(savedWebhookFields)||!!(webhookUrlDraft()||$('webhook-headers').value||$('webhook-sign-secret').value);}
+function webhookFields(){return {webhookName:$('webhook-name').value.trim(),webhookEnabled:$('webhook-enabled').checked,webhookProvider:$('webhook-provider').value,webhookSignEnabled:$('webhook-sign-enabled').checked,webhookBodyTemplate:$('webhook-body-template').value,clearWebhookUrl:$('webhook-clear-url').checked,clearWebhookHeaders:$('webhook-clear-headers').checked,clearWebhookSignSecret:$('webhook-clear-sign-secret').checked};}
+function webhookDirty(){return creatingWebhook||!savedWebhookFields||JSON.stringify(webhookFields())!==JSON.stringify(savedWebhookFields)||!!(webhookUrlDraft()||$('webhook-headers').value||$('webhook-sign-secret').value);}
 function webhookProviderHint(config){const provider=$('webhook-provider').value;return t(({auto:config.webhookResolvedProvider==='feishu'?'已识别飞书地址；默认模板自动使用飞书格式。':'按地址自动识别服务类型，并选择相应默认模板。',generic:'自定义 HTTPS Webhook，可编辑 JSON 正文。',feishu:'飞书群机器人地址形如 open.feishu.cn/open-apis/bot/v2/hook/…；签名可选。',dingtalk:'钉钉群机器人地址形如 oapi.dingtalk.com/robot/send?access_token=…；签名可选。',discord:'Discord 地址形如 discord.com/api/webhooks/…；content 最多 2000 字符。',telegram:'Telegram 地址形如 api.telegram.org/bot…/sendMessage；在 JSON 中填写 chat_id，text 最多 4096 字符。'})[provider]||'');}
 function renderWebhookChannel(config){
   hideWebhookUrl();webhookTemplates=config.webhookTemplates||webhookTemplates;webhookResolvedProvider=config.webhookResolvedProvider||'generic';savedWebhookHasUrl=!!config.hasWebhookUrl;
+  $('webhook-name').value=config.webhookName|| (selectedWebhookId==='legacy'?t('默认 Webhook'):'');$('webhook-name').disabled=selectedWebhookId==='legacy'&&!creatingWebhook;
   $('webhook-enabled').checked=!!config.webhookEnabled;
   $('webhook-provider').value=config.webhookProvider||'auto';$('webhook-sign-enabled').checked=!!config.webhookSignEnabled;
   $('webhook-url').value='';$('webhook-headers').value='';$('webhook-sign-secret').value='';
@@ -1017,29 +1028,36 @@ async function webhookAction(test){
   if(notificationChannelBusy)return;
   if(test&&webhookDirty()){$('webhook-error').textContent=t('请先保存通知配置，再发送测试通知。');return;}
   if(!test){try{webhookHeaders();}catch(error){$('webhook-error').textContent=error.message;return;}}
-  notificationChannelBusy=true;for(const id of ['webhook-save','webhook-test'])$(id).disabled=true;$('webhook-error').textContent='';
+  notificationChannelBusy=true;for(const id of ['webhook-save','webhook-test','webhook-delete'])$(id).disabled=true;$('webhook-error').textContent='';
+  const identity=[currentHost,currentId,csrf,selectedWebhookId,creatingWebhook];
+  const stillHere=()=>$('webhook-dialog').open&&currentHost===identity[0]&&currentId===identity[1]&&csrf===identity[2]&&selectedWebhookId===identity[3]&&creatingWebhook===identity[4];
   try{
     const url='/api/notifications/channels/webhook';
-    if(test){const result=await api(url+'/test',{});toast(result.message||'Webhook 已接受测试请求，请检查接收服务');}
+    if(test){const result=await api(url+'/test',{webhookId:selectedWebhookId});toast(result.message||'Webhook 已接受测试请求，请检查接收服务');}
     else{
       const submittedFields=webhookFields(),submittedUrl=$('webhook-url').value,submittedHeaders=$('webhook-headers').value,submittedSecret=$('webhook-sign-secret').value;
-      const body={...submittedFields,webhookUrl:webhookUrlDraft(),webhookHeaders:webhookHeaders(),webhookSignSecret:submittedSecret};
-      const saved=await api(url,body);
+      const body={action:'upsert',...(creatingWebhook?{}:{webhookId:selectedWebhookId}),...submittedFields,webhookUrl:webhookUrlDraft(),webhookHeaders:webhookHeaders(),webhookSignSecret:submittedSecret};
+      const saved=await api(url+'/endpoints',body);
+      if(!stillHere())return;
       const unchanged=JSON.stringify(webhookFields())===JSON.stringify(submittedFields)&&$('webhook-url').value===submittedUrl&&$('webhook-headers').value===submittedHeaders&&$('webhook-sign-secret').value===submittedSecret;
+      webhookConfig=saved;selectedWebhookId=saved.selectedWebhookId||selectedWebhookId;creatingWebhook=false;
       savedWebhookFields=submittedFields;
-      if(unchanged)renderWebhookChannel(saved);
+      if(unchanged)renderWebhookChannel(currentWebhook());renderWebhookList();
       toast('Webhook 配置已保存');if(currentId)await loadNotificationState(currentId,currentHost);
     }
-  }catch(error){$('webhook-error').textContent=t(error.message);}
-  finally{notificationChannelBusy=false;for(const id of ['webhook-save','webhook-test'])$(id).disabled=false;}
+  }catch(error){if(stillHere())$('webhook-error').textContent=t(error.message);}
+  finally{notificationChannelBusy=false;for(const id of ['webhook-save','webhook-test','webhook-delete'])$(id).disabled=false;}
 }
+$('webhook-add').onclick=()=>{if(notificationChannelBusy)return;if(webhookDirty()){$('webhook-error').textContent=t('请先保存或取消当前修改。');return;}creatingWebhook=true;selectedWebhookId='';renderWebhookChannel({webhookProvider:'auto',webhookBodyTemplate:webhookTemplates.generic,webhookTemplates});renderWebhookList();$('webhook-name').focus();};
+$('webhook-cancel').onclick=()=>{if(notificationChannelBusy)return;creatingWebhook=false;selectedWebhookId=webhookRows().some(row=>row.webhookId===selectedWebhookId)?selectedWebhookId:(webhookRows()[0]?.webhookId||'legacy');renderWebhookChannel(currentWebhook());renderWebhookList();$('webhook-error').textContent='';};
+$('webhook-delete').onclick=async()=>{if(notificationChannelBusy||!confirm(t('确定删除此 Webhook 配置？')))return;notificationChannelBusy=true;const id=selectedWebhookId,host=currentHost,chat=currentId,token=csrf;try{const saved=await api('/api/notifications/channels/webhook/endpoints',{action:'delete',webhookId:id});if(!$('webhook-dialog').open||selectedWebhookId!==id||currentHost!==host||currentId!==chat||csrf!==token)return;webhookConfig=saved;selectedWebhookId=saved.selectedWebhookId||'legacy';creatingWebhook=false;renderWebhookChannel(currentWebhook());renderWebhookList();toast('Webhook 配置已删除');}catch(error){if($('webhook-dialog').open&&selectedWebhookId===id)$('webhook-error').textContent=t(error.message);}finally{notificationChannelBusy=false;}};
 $('webhook-form').onsubmit=event=>{event.preventDefault();return webhookAction(false);};
 $('webhook-test').onclick=()=>webhookAction(true);
 $('webhook-provider').onchange=()=>{$('webhook-provider-hint').textContent=webhookProviderHint({webhookResolvedProvider});switchWebhookTemplate();};
 $('webhook-use-template').onclick=()=>{$('webhook-body-template').value=selectedWebhookTemplate();};
 $('webhook-url-eye').onclick=toggleWebhookUrl;
 $('webhook-url').addEventListener('input',()=>{if(revealedWebhookUrl&&$('webhook-url').value!==revealedWebhookUrl)revealedWebhookUrl='';webhookRevealRequest++;});
-$('webhook-dialog').addEventListener('close',hideWebhookUrl);
+$('webhook-dialog').addEventListener('close',()=>{hideWebhookUrl();savedWebhookFields=null;});
 $('webhook-back').onclick=()=>{$('webhook-dialog').close();$('pushplus-settings').onclick();};
 const notificationChannelDetails={
   bark:{name:'Bark',enabled:'barkEnabled',server:'barkServer',secret:'barkKey',hasSecret:'hasBarkKey',clear:'clearBarkKey',secretLabel:'Device Key',help:'在 iPhone 的 Bark 中获取 Device Key，并填写服务地址。'},
@@ -1114,7 +1132,7 @@ for(const button of document.querySelectorAll('[data-notification-channel]'))but
     const config=await api('/api/notifications/channels/'+channel);
     if(request!==notificationListRequest||!$('notification-channels-dialog').open)return;
     if(channel==='webhook'){
-      renderWebhookChannel(config);$('webhook-error').textContent='';$('notification-channels-dialog').close();$('webhook-dialog').showModal();return;
+      webhookConfig=config;selectedWebhookId=config.webhookEndpoints?.[0]?.webhookId||'legacy';creatingWebhook=false;renderWebhookChannel(currentWebhook());renderWebhookList();$('webhook-error').textContent='';$('notification-channels-dialog').close();$('webhook-dialog').showModal();return;
     }
     selectedNotificationChannel=channel;
     renderNotificationChannel(config);

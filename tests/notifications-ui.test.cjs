@@ -21,7 +21,7 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
   let listResponse=()=>response({sessions:[],unavailableHosts:[]}),knownRows=[];
   const context=vm.createContext({ClientNavigation:class{constructor(){this.provider="codex";}async refresh(){}acknowledgeList(provider,value){acknowledgements.push({provider,value});}},DesktopSessionsView:class{bindListCache(){}previewCachedList(){return false;}clear(){}},Workbench:class{constructor(){this.current={};}open(){}reset(){}setThumbnails(){}relabel(){}},navigator:{userAgent:'test'},document:{addEventListener(){},documentElement:{},getElementById:id=>nodes.get(id),querySelector:selector=>selector==='.archive-filter'?archiveFilter:{disabled:false},querySelectorAll:selector=>selector==='[data-notification-channel]'?channelButtons:[],createElement:node},
     renderMarkdown(){},window:{addEventListener(){}},localStorage,sessionStorage:scopedStorage,
-    location:{hash:'',pathname:'/',search:''},history:{replaceState(){}},setTimeout(){},clearTimeout(){},setInterval(){},
+    location:{hash:'',pathname:'/',search:''},history:{replaceState(){}},confirm:()=>true,setTimeout(){},clearTimeout(){},setInterval(){},
     ChatTimeline:class{constructor(){this.abort=new AbortController();}async start(){}dispose(){this.abort.abort();}relabel(){}refreshActions(){}},
     fetch:async(url,options={})=>{
       if(url.includes('/respond?')){writes.push({url,body:JSON.parse(options.body)});return response({status:'accepted'});}
@@ -44,7 +44,7 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
           if(url.includes('/rename?'))return response({title:body.title});
           if(url.endsWith('/test'))return response({ok:true});
           if(url.endsWith('/common'))saved.set(url,body);
-          else if(url.endsWith('/webhook'))saved.set(url,{webhookEnabled:body.webhookEnabled,webhookProvider:body.webhookProvider,webhookSignEnabled:body.webhookSignEnabled,hasWebhookSignSecret:!!body.webhookSignSecret||!body.clearWebhookSignSecret&&!!saved.get(url)?.hasWebhookSignSecret,hasWebhookUrl:!!body.webhookUrl||!body.clearWebhookUrl&&!!saved.get(url)?.hasWebhookUrl,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:!!Object.keys(body.webhookHeaders).length||!body.clearWebhookHeaders&&!!saved.get(url)?.hasWebhookHeaders,webhookBodyTemplate:body.webhookBodyTemplate,webhookTemplates});
+          else if(url.endsWith('/webhook/endpoints')){const key='/api/notifications/channels/webhook',previous=saved.get(key)||{},rows=previous.webhookEndpoints||[];if(body.action==='delete'){saved.set(key,{...previous,webhookEndpoints:rows.filter(row=>row.webhookId!==body.webhookId),selectedWebhookId:''});return response(saved.get(key));}const id=body.webhookId||'named-1',old=rows.find(row=>row.webhookId===id)||previous;const row={webhookId:id,webhookName:body.webhookName,webhookEnabled:body.webhookEnabled,webhookProvider:body.webhookProvider,webhookSignEnabled:body.webhookSignEnabled,hasWebhookSignSecret:!!body.webhookSignSecret||!body.clearWebhookSignSecret&&!!old.hasWebhookSignSecret,hasWebhookUrl:!!body.webhookUrl||!body.clearWebhookUrl&&!!old.hasWebhookUrl,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:!!Object.keys(body.webhookHeaders).length||!body.clearWebhookHeaders&&!!old.hasWebhookHeaders,webhookBodyTemplate:body.webhookBodyTemplate,webhookTemplates};saved.set(key,{...previous,webhookEndpoints:[...rows.filter(item=>item.webhookId!==id),row],selectedWebhookId:id});return response(saved.get(key));}
           else {
             const secret=url.endsWith('/bark')?'barkKey':url.endsWith('/ntfy')?'token':'pushplusToken';
             const marker=url.endsWith('/bark')?'hasBarkKey':url.endsWith('/ntfy')?'hasToken':'hasPushplusToken';
@@ -185,7 +185,7 @@ test('Webhook form validates headers, redacts saved credentials, and tests saved
   assert.equal(ui.nodes.get('webhook-url').value,'');assert.equal(ui.nodes.get('webhook-headers').value,'');
   assert.equal(ui.nodes.get('webhook-url-saved').textContent.includes('secret'),false);
   await ui.nodes.get('webhook-test').onclick();assert.equal(ui.writes[1].url,'/api/notifications/channels/webhook/test');
-  assert.deepEqual(ui.writes[1].body,{});
+  assert.deepEqual(ui.writes[1].body,{webhookId:'legacy'});
   ui.nodes.get('webhook-clear-url').checked=true;ui.nodes.get('webhook-clear-headers').checked=true;
   await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
   assert.equal(ui.writes[2].body.clearWebhookUrl,true);assert.equal(ui.writes[2].body.clearWebhookHeaders,true);
@@ -260,6 +260,20 @@ test('late URL reveal cannot overwrite a newer Webhook draft',async()=>{
   complete(ui.response({webhookUrl:'https://example.test/hook?token=private'}));await pending;
   assert.equal(ui.nodes.get('webhook-url').value,'https://other.test/hook');
   assert.equal(ui.run('webhookDirty()'),true);
+});
+
+test('named Webhooks save, switch, test and delete by stable ID without exposing URLs',async()=>{
+  const ui=await fixture(),channel='/api/notifications/channels/webhook',templates={generic:'{"event":"{{event}}"}'};
+  ui.saved.set(channel,{webhookTemplates:templates,webhookEndpoints:[{webhookId:'legacy',webhookName:'Default Webhook',webhookEnabled:true,webhookProvider:'generic',webhookBodyTemplate:templates.generic,hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',webhookTemplates:templates},{webhookId:'named-2',webhookName:'Ops',webhookProvider:'generic',webhookBodyTemplate:templates.generic,webhookTemplates:templates}]});
+  await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  const buttons=ui.nodes.get('webhook-endpoint-list').children;
+  assert.equal(buttons.length,2);assert.equal(buttons[0].textContent.includes('token'),false);
+  ui.nodes.get('webhook-name').value='Draft';buttons[1].onclick();assert.match(ui.nodes.get('webhook-error').textContent,/保存/);
+  ui.nodes.get('webhook-cancel').onclick();buttons[1].onclick();assert.equal(ui.nodes.get('webhook-name').value,'Ops');
+  ui.nodes.get('webhook-name').value='Ops alerts';await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes[0].body.webhookId,'named-2');assert.equal(ui.writes[0].body.webhookName,'Ops alerts');
+  await ui.nodes.get('webhook-test').onclick();assert.deepEqual(ui.writes[1].body,{webhookId:'named-2'});
+  await ui.nodes.get('webhook-delete').onclick();assert.deepEqual(ui.writes[2].body,{action:'delete',webhookId:'named-2'});
 });
 
 test('Webhook form has English labels and narrow-screen scroll styling',async()=>{
