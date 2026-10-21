@@ -45,6 +45,20 @@ class DesktopTests(unittest.TestCase):
         snapshot['preferences']['codexHome'] = str(self.directory)
         return snapshot
 
+    def test_webhook_snapshot_masks_url_and_headers(self):
+        from bridge.features.notifications.channels import save_settings
+        save_settings(self.directory, {'webhookEnabled': True,
+            'webhookUrl': 'https://receiver.example/secret?signature=private',
+            'webhookHeaders': {'Authorization': 'Bearer secret'}})
+        import json
+        visible = self.desktop.snapshot()['notifications']
+        self.assertEqual(visible['webhookUrlDisplay'], 'https://receiver.example')
+        self.assertTrue(visible['hasWebhookUrl'] and visible['hasWebhookHeaders'])
+        self.assertEqual(visible['webhookUrl'], '')
+        self.assertEqual(visible['webhookHeaders'], {})
+        self.assertNotIn('private', json.dumps(visible))
+        self.assertNotIn('secret', json.dumps(visible))
+
     def test_defaults_preserve_8787_and_private_credentials(self):
         snapshot = self.value()
         self.assertEqual(snapshot['preferences']['port'], 8787)

@@ -1,12 +1,13 @@
 """Opt-in gateway entry delivery, independent of chat subscriptions."""
 import http.client
+import hashlib
 import json
 import ipaddress
 import threading
 import time
 from pathlib import Path
 
-from bridge.features.notifications.channels import channels, publish, publish_bark, publish_pushplus, read_json, settings, write_json
+from bridge.features.notifications.channels import channels, publish, publish_bark, publish_pushplus, publish_webhook, read_json, settings, write_json
 
 
 def gateway_ready(port, instance_id):
@@ -72,7 +73,12 @@ def address_message(config, urls, first=False, test=False):
 
 def send_address(config, channel, urls, first=False, test=False):
     title, body = address_message(config, urls, first, test)
-    {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[channel](config, title, body, urls[0])
+    if channel == 'webhook':
+        publish_webhook(config, title, body, urls[0], event='test' if test else 'gateway.started' if first else 'gateway.address_changed',
+                        event_id=hashlib.sha256(json.dumps(urls).encode()).hexdigest(),
+                        host=config.get('addressName') or 'Codex Mobile Bridge', count=len(urls))
+    else:
+        {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[channel](config, title, body, urls[0])
 
 
 class AddressNotifications:

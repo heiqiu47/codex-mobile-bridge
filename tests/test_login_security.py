@@ -134,6 +134,15 @@ class LoginSecurityTests(unittest.TestCase):
             SecurityNotifications(self.directory).scan()
             self.assertEqual(send.call_count, 2)
 
+    def test_webhook_receives_security_block_event_once(self):
+        save_settings(self.directory, {'webhookEnabled': True, 'webhookUrl': 'https://receiver.example/hook'})
+        self.block()
+        with patch('bridge.features.notifications.security.publish_webhook') as webhook:
+            SecurityNotifications(self.directory).scan()
+            SecurityNotifications(self.directory).scan()
+            webhook.assert_called_once()
+            self.assertEqual(webhook.call_args.kwargs['event'], 'security.ip_blocked')
+
     def test_security_alert_switch_mutes_without_disabling_block(self):
         save_settings(self.directory, {'enabled': True, 'topic': 'fixture', 'securityEnabled': False})
         self.block()

@@ -15,7 +15,7 @@ from bridge.resources import project_root
 
 from bridge.features.auth.auth import Auth, password_record, session_hours, session_file_lock
 from bridge.app.lifecycle import read_record, request_stop, request_pairing
-from bridge.features.notifications.channels import Notifications, read_json, write_json, settings, save_settings, publish, publish_bark, publish_pushplus
+from bridge.features.notifications.channels import Notifications, read_json, write_json, settings, save_settings, publish, publish_bark, publish_pushplus, publish_webhook, visible_webhook
 from bridge.features.sessions.store import SessionStore, StoreUnavailable
 from bridge.clients.codex.remote import AppHosts
 from bridge.clients.codex.catalog import Catalog
@@ -182,7 +182,7 @@ class Desktop:
         notification_urls = entry_urls(preferences, hosts, quick_url, external) if runtime['running'] else []
         notifications = settings(self.data_dir)
         return {'preferences': preferences, 'auth': {'username': config['auth'].get('username', 'admin'), 'mode': config['auth']['mode'], 'sessionHours': config['auth'].get('sessionHours', 12)},
-                'origins': config.get('origins', []), 'notifications': {**notifications, 'token': '', 'hasToken': bool(notifications['token']), 'barkKey': '', 'hasBarkKey': bool(notifications['barkKey']), 'pushplusToken': '', 'hasPushplusToken': bool(notifications['pushplusToken'])},
+                'origins': config.get('origins', []), 'notifications': {**notifications, 'token': '', 'hasToken': bool(notifications['token']), 'barkKey': '', 'hasBarkKey': bool(notifications['barkKey']), 'pushplusToken': '', 'hasPushplusToken': bool(notifications['pushplusToken']), **visible_webhook(notifications)},
                 'watches': self.notification_watches({'action': 'list'})['watches'],
                 'notificationUrls': notification_urls,
                 'securityNotificationStatus': read_json(self.data_dir/'security-notifications.json', {}),
@@ -430,10 +430,10 @@ class Desktop:
                 raise ValueError('部分通道发送失败：' + ', '.join(failed) + '；请在手机确认其他通道是否收到。')
             return {'message': '已向启用通道发送当前入口，请在手机确认是否收到。'}
         channel = (value or {}).get('channel', 'ntfy')
-        if channel not in ('ntfy', 'bark', 'pushplus'):
+        if channel not in ('ntfy', 'bark', 'pushplus', 'webhook'):
             raise ValueError('未知通知通道')
-        name = {'bark': 'Bark', 'ntfy': 'ntfy', 'pushplus': 'PushPlus'}[channel]
-        sender = {'bark': publish_bark, 'ntfy': publish, 'pushplus': publish_pushplus}[channel]
+        name = {'bark': 'Bark', 'ntfy': 'ntfy', 'pushplus': 'PushPlus', 'webhook': 'Webhook'}[channel]
+        sender = {'bark': publish_bark, 'ntfy': publish, 'pushplus': publish_pushplus, 'webhook': publish_webhook}[channel]
         try:
             sender(settings(self.data_dir), 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。')
         except Exception:

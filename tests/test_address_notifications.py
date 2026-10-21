@@ -57,6 +57,17 @@ class AddressNotificationTests(unittest.TestCase):
             self.assertEqual(send.call_args.args[3], B)
             self.assertFalse(self.manager.state['first'])
 
+    def test_webhook_gateway_event_names_follow_existing_address_state(self):
+        save_settings(self.directory, {'enabled': False, 'webhookEnabled': True,
+                                       'webhookUrl': 'https://receiver.example/hook'})
+        with patch('bridge.features.notifications.addresses.publish_webhook') as webhook:
+            self.manager.scan()
+            self.manager.scan()
+            self.url = B
+            self.manager.scan()
+            self.assertEqual([call.kwargs['event'] for call in webhook.call_args_list],
+                             ['gateway.started', 'gateway.address_changed'])
+
     def test_channels_retry_independently_and_persist_backoff(self):
         save_settings(self.directory, {'barkEnabled': True, 'barkKey': 'bark-secret',
                                       'pushplusEnabled': True, 'pushplusToken': 'push-secret'})

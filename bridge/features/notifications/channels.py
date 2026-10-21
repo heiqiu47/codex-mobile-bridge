@@ -17,7 +17,78 @@ from bridge.features.auth.tls import client_context
 DEFAULTS = {'enabled': False, 'server': 'https://ntfy.sh', 'topic': '', 'token': '',
             'barkEnabled': False, 'barkServer': 'https://api.day.app', 'barkKey': '',
             'pushplusEnabled': False, 'pushplusToken': '',
+            'webhookEnabled': False, 'webhookUrl': '', 'webhookHeaders': {},
+            'webhookBodyTemplate': '{\n  "event": "{{event}}",\n  "title": "{{title}}",\n  "body": "{{body}}",\n  "session_name": "{{session_name}}",\n  "url": "{{url}}"\n}',
             'clickBase': '', 'includeTitle': False, 'addressEnabled': True, 'addressName': '', 'securityEnabled': True, 'mobileEnabled': False, 'mobileAppLinks': False}
+
+WEBHOOK_FIELDS = frozenset(('event', 'event_id', 'title', 'body', 'session_name', 'url', 'client', 'host', 'count'))
+WEBHOOK_PLACEHOLDER = re.compile(r'{{\s*([^{}]+?)\s*}}')
+UNSAFE_WEBHOOK_HEADERS = frozenset(('host', 'content-length', 'content-type', 'transfer-encoding', 'connection', 'proxy-authorization', 'proxy-authenticate', 'cookie', 'set-cookie', 'upgrade', 'te', 'trailer', 'keep-alive', 'expect'))
+
+
+def webhook_url(value):
+    if not isinstance(value, str) or len(value) > 4096 or any(ord(c) < 33 or ord(c) == 127 for c in value):
+        raise FieldError('Webhook 地址格式不正确', 'webhook-url')
+    parsed = urlsplit(value)
+    try:
+        port = parsed.port
+    except ValueError:
+        raise FieldError('Webhook 地址格式不正确', 'webhook-url') from None
+    if (parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username is not None
+            or parsed.password is not None or parsed.fragment or not parsed.netloc or port == 0):
+        raise FieldError('Webhook 地址格式不正确', 'webhook-url')
+    if parsed.scheme == 'http' and parsed.hostname not in ('localhost', '127.0.0.1', '::1'):
+        raise FieldError('Webhook 请使用 HTTPS；HTTP 仅用于本机测试', 'webhook-url')
+    return value
+
+
+def webhook_headers(value):
+    if not isinstance(value, dict) or len(value) > 32:
+        raise FieldError('Webhook 请求头格式不正确', 'webhook-headers')
+    result = {}
+    for name, content in value.items():
+        if (not isinstance(name, str) or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,80}", name)
+                or name.lower() in UNSAFE_WEBHOOK_HEADERS or name.lower().startswith(('proxy-', 'sec-'))
+                or not isinstance(content, str) or len(content) > 2000
+                or any(ord(c) < 32 or ord(c) == 127 for c in content)):
+            raise FieldError('Webhook 请求头格式不正确', 'webhook-headers')
+        result[name] = content
+    return result
+
+
+def webhook_template(value):
+    if not isinstance(value, str) or len(value.encode('utf-8')) > 16384:
+        raise FieldError('Webhook JSON 模板格式不正确', 'webhook-body-template')
+    try:
+        document = json.loads(value)
+    except (ValueError, TypeError):
+        raise FieldError('Webhook JSON 模板格式不正确', 'webhook-body-template') from None
+    def check(item):
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if '{{' in key or '}}' in key:
+                    raise FieldError('Webhook 占位符只能用于字符串值', 'webhook-body-template')
+                check(child)
+        elif isinstance(item, list):
+            for child in item:
+                check(child)
+        elif isinstance(item, str):
+            for match in WEBHOOK_PLACEHOLDER.finditer(item):
+                if match.group(1) not in WEBHOOK_FIELDS:
+                    raise FieldError('Webhook 模板包含未知占位符', 'webhook-body-template')
+            if '{{' in WEBHOOK_PLACEHOLDER.sub('', item) or '}}' in WEBHOOK_PLACEHOLDER.sub('', item):
+                raise FieldError('Webhook 模板占位符格式不正确', 'webhook-body-template')
+    check(document)
+    return value
+
+
+def visible_webhook(config):
+    url = config.get('webhookUrl', '')
+    parsed = urlsplit(url) if url else None
+    origin = (parsed.scheme + '://' + parsed.netloc) if parsed else ''
+    return {'webhookEnabled': config['webhookEnabled'], 'webhookUrl': '', 'hasWebhookUrl': bool(url),
+            'webhookUrlDisplay': origin, 'webhookHeaders': {}, 'hasWebhookHeaders': bool(config.get('webhookHeaders')),
+            'webhookBodyTemplate': config['webhookBodyTemplate']}
 
 
 def read_json(path, default):
@@ -55,7 +126,7 @@ def save_settings(data_dir, value):
     result = {**prior, **{k: value[k] for k in DEFAULTS if k in value}}
     result['server'] = at_field('ntfy-server', valid_url, str(result['server']), allow_path=True)
     result['barkServer'] = at_field('bark-server', valid_url, str(result['barkServer']), allow_path=True)
-    for key in ('enabled', 'barkEnabled', 'pushplusEnabled', 'includeTitle', 'addressEnabled', 'securityEnabled', 'mobileEnabled', 'mobileAppLinks'):
+    for key in ('enabled', 'barkEnabled', 'pushplusEnabled', 'webhookEnabled', 'includeTitle', 'addressEnabled', 'securityEnabled', 'mobileEnabled', 'mobileAppLinks'):
         if not isinstance(result[key], bool):
             raise ValueError('通知开关格式不正确')
     if not isinstance(result['addressName'], str) or len(result['addressName']) > 80 or any(not c.isprintable() for c in result['addressName']):
@@ -90,6 +161,27 @@ def save_settings(data_dir, value):
         result['pushplusToken'] = '' if value.get('clearPushplusToken') else prior['pushplusToken']
     if result['pushplusEnabled'] and not result['pushplusToken']:
         raise FieldError('开启 PushPlus 前请填写 Token', 'pushplus-token')
+    for flag in ('clearWebhookUrl', 'clearWebhookHeaders'):
+        if flag in value and not isinstance(value[flag], bool):
+            raise ValueError('Webhook 配置格式不正确')
+    url_changed = False
+    if value.get('clearWebhookUrl'):
+        result['webhookUrl'] = ''
+    elif value.get('webhookUrl'):
+        result['webhookUrl'] = webhook_url(value['webhookUrl'])
+    else:
+        result['webhookUrl'] = prior['webhookUrl']
+    url_changed = result['webhookUrl'] != prior['webhookUrl']
+    if value.get('clearWebhookHeaders'):
+        result['webhookHeaders'] = {}
+    elif value.get('webhookHeaders'):
+        result['webhookHeaders'] = webhook_headers(value['webhookHeaders'])
+    else:
+        result['webhookHeaders'] = {} if url_changed else prior['webhookHeaders']
+    result['webhookHeaders'] = webhook_headers(result['webhookHeaders'])
+    result['webhookBodyTemplate'] = webhook_template(result['webhookBodyTemplate'])
+    if result['webhookEnabled'] and not result['webhookUrl']:
+        raise FieldError('开启 Webhook 前请填写地址', 'webhook-url')
     write_json(Path(data_dir)/'notifications.json', result)
     return result
 
@@ -160,6 +252,38 @@ def publish_pushplus(config, title, body, click=''):
         raise RuntimeError('PushPlus 未接受通知，请检查 Token 和网络') from None
 
 
+def publish_webhook(config, title, body, click='', *, event='test', event_id='', session_name='', client='', host='', count=1):
+    url = webhook_url(config.get('webhookUrl', ''))
+    values = {'event': event, 'event_id': event_id, 'title': title, 'body': body,
+              'session_name': session_name, 'url': click, 'client': client, 'host': host, 'count': str(count)}
+    template = json.loads(webhook_template(config['webhookBodyTemplate']))
+    def render(item):
+        if isinstance(item, dict):
+            return {key: render(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [render(child) for child in item]
+        if isinstance(item, str):
+            return WEBHOOK_PLACEHOLDER.sub(lambda match: values[match.group(1)], item)
+        return item
+    payload = json.dumps(render(template), ensure_ascii=False).encode('utf-8')
+    if len(payload) > 65536:
+        raise ValueError('Webhook 消息过长')
+    headers = {'Content-Type': 'application/json', **webhook_headers(config.get('webhookHeaders', {}))}
+    request = Request(url, data=payload, headers=headers, method='POST')
+    handlers = [NoRedirect(), HTTPSHandler(context=client_context())]
+    if urlsplit(url).hostname in ('localhost', '127.0.0.1', '::1'):
+        handlers.insert(0, ProxyHandler({}))
+    try:
+        with build_opener(*handlers).open(request, timeout=8) as response:
+            if not 200 <= response.status < 300:
+                raise ValueError('Rejected')
+            response.read(65536)
+    except Exception as error:
+        if isinstance(error, HTTPError):
+            error.close()
+        raise RuntimeError('Webhook 未接受通知，请检查地址、认证和网络') from None
+
+
 def destination(config, channel):
     if channel == 'ntfy':
         values = [config['server'].rstrip('/'), config['topic']]
@@ -167,6 +291,8 @@ def destination(config, channel):
         values = [config['barkServer'].rstrip('/'), config['barkKey']]
     elif channel == 'pushplus':
         values = [config.get('pushplusToken', '')]
+    elif channel == 'webhook':
+        values = [config.get('webhookUrl', ''), sorted(config.get('webhookHeaders', {}).items())]
     else:
         raise ValueError('未知通知通道')
     return channel + ':' + hashlib.sha256(json.dumps(values).encode()).hexdigest()
@@ -174,7 +300,8 @@ def destination(config, channel):
 
 def channels(config):
     return {name: destination(config, name) for name, enabled in
-            (('ntfy', config['enabled']), ('bark', config['barkEnabled']), ('pushplus', config.get('pushplusEnabled', False))) if enabled}
+            (('ntfy', config['enabled']), ('bark', config['barkEnabled']), ('pushplus', config.get('pushplusEnabled', False)),
+             ('webhook', config.get('webhookEnabled', False))) if enabled}
 
 
 class Notifications:
@@ -469,6 +596,9 @@ class Notifications:
         pending = [k for k in keys if not self.ledger.get(k, {}).get('delivered') and now >= self.ledger.get(k, {}).get('next', 0)]
         if not pending:
             return False
+        config = settings(self.data_dir)
+        if channel != 'mobile' and channels(config).get(channel) != target:
+            return False
         provider = self.desktop_provider(row['host'])
         if provider and (self.desktop_sessions is None or not self.desktop_sessions.enabled(provider)):
             return False
@@ -485,8 +615,15 @@ class Notifications:
             if channel == 'mobile':
                 self.mobile.append(pending, row, heading, body, completed)
             else:
-                sender = {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[channel]
-                sender(config, heading, body, self.click_url(config, row['id'], row['host']))
+                click = self.click_url(config, row['id'], row['host'])
+                if channel == 'webhook':
+                    publish_webhook(config, heading, body, click,
+                                    event='task.completed' if completed else 'approval.required', event_id=pending[0],
+                                    session_name=title[:120] if config['includeTitle'] else '', client=client,
+                                    host=row['host'], count=len(pending))
+                else:
+                    sender = {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[channel]
+                    sender(config, heading, body, click)
             for key in pending:
                 self.ledger[key] = {'delivered': True, 'time': now}
             self._status(channel, lastSent=now, error='')

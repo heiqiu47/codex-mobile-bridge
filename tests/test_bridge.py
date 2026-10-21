@@ -1011,6 +1011,29 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(self.request('POST', bark, {'barkServer': 'https://other.example', 'barkEnabled': False}, headers)[2]['hasBarkKey'], False)
             self.assertEqual(settings(directory)['barkKey'], '')
 
+    def test_webhook_channel_saved_config_is_masked_and_test_uses_saved_values(self):
+        from bridge.features.notifications.channels import Notifications, settings
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as directory:
+            self.server.notifications = Notifications(None, directory)
+            headers = self.login()
+            path = '/api/notifications/channels/webhook'
+            url = 'https://receiver.example/private/secret?signature=private'
+            body = {'webhookEnabled': True, 'webhookUrl': url,
+                    'webhookHeaders': {'Authorization': 'Bearer secret'}}
+            status, _, saved = self.request('POST', path, body, headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(saved['webhookUrlDisplay'], 'https://receiver.example')
+            self.assertTrue(saved['hasWebhookUrl'] and saved['hasWebhookHeaders'])
+            self.assertNotIn('secret', json.dumps(saved))
+            self.assertNotIn('private', json.dumps(self.request('GET', path, headers=headers)))
+            self.assertEqual(settings(directory)['webhookHeaders'], {'Authorization': 'Bearer secret'})
+            self.assertEqual(self.request('POST', path, {'token': 'other'}, headers)[0], 400)
+            with patch('bridge.api.httpd.publish_webhook') as sender:
+                self.assertEqual(self.request('POST', path + '/test', {'webhookUrl': 'https://other.example'}, headers)[0], 200)
+                self.assertEqual(sender.call_args.args[0]['webhookUrl'], url)
+                self.assertEqual(sender.call_args.kwargs['event'], 'test')
+
     def test_rename_route_requires_csrf_and_routes_to_selected_host(self):
         from unittest.mock import Mock
         headers = self.login()

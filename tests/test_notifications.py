@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-from bridge.features.notifications.channels import Notifications, publish, publish_bark, publish_pushplus, settings, save_settings, write_json, read_json
+from bridge.features.notifications.channels import Notifications, publish, publish_bark, publish_pushplus, publish_webhook, settings, save_settings, write_json, read_json, visible_webhook
 from bridge.app.service import LiveSession
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +80,119 @@ class NotificationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             save_settings(self.directory, {'clearPushplusToken': True})
         self.assertEqual(save_settings(self.directory, {'pushplusEnabled': False, 'clearPushplusToken': True})['pushplusToken'], '')
+
+    def test_webhook_config_validation_and_secret_preservation(self):
+        self.assertFalse(settings(self.directory)['webhookEnabled'])
+        first = 'https://receiver.example/private/key?signature=signed'
+        save_settings(self.directory, {'webhookEnabled': True, 'webhookUrl': first,
+                                       'webhookHeaders': {'Authorization': 'Bearer private'}})
+        visible = visible_webhook(settings(self.directory))
+        self.assertEqual(visible['webhookUrlDisplay'], 'https://receiver.example')
+        self.assertEqual(visible['webhookUrl'], '')
+        self.assertEqual(visible['webhookHeaders'], {})
+        self.assertTrue(visible['hasWebhookUrl'] and visible['hasWebhookHeaders'])
+        self.assertNotIn('private', json.dumps(visible))
+        save_settings(self.directory, {'webhookUrl': '', 'webhookHeaders': {}})
+        self.assertEqual(settings(self.directory)['webhookUrl'], first)
+        self.assertEqual(settings(self.directory)['webhookHeaders'], {'Authorization': 'Bearer private'})
+        save_settings(self.directory, {'webhookUrl': 'https://other.example/path?key=second'})
+        self.assertEqual(settings(self.directory)['webhookHeaders'], {})
+        save_settings(self.directory, {'webhookEnabled': False, 'clearWebhookUrl': True})
+        self.assertEqual(settings(self.directory)['webhookUrl'], '')
+        for invalid in ('http://remote.example/hook', 'https://u:p@example.com', 'https://example.com/#frag',
+                        'ftp://example.com', 'https://example.com/\rInjected'):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                save_settings(self.directory, {'webhookUrl': invalid})
+        for invalid in ({'Host': 'bad'}, {'Content-Length': '3'}, {'X-Test': 'one\r\ntwo'}, {'Bad Header': 'x'}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                save_settings(self.directory, {'webhookHeaders': invalid})
+        for invalid in ('{"{{event}}": 1}', '{"x": "{{unknown}}"}', '{"x": "{{event"}', '{bad'):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                save_settings(self.directory, {'webhookBodyTemplate': invalid})
+
+    def test_webhook_delivery_dedupe_destination_change_and_title_privacy(self):
+        save_settings(self.directory, {'enabled': False, 'webhookEnabled': True,
+                                       'webhookUrl': 'https://receiver.example/hook?key=first'})
+        with patch('bridge.features.notifications.channels.publish_webhook') as send:
+            self.manager.scan(); self.manager.scan()
+            self.assertEqual(send.call_count, 1)
+            self.assertEqual(send.call_args.kwargs['event'], 'approval.required')
+            self.assertEqual(send.call_args.kwargs['session_name'], '')
+            self.assertNotIn('Private project', send.call_args.args[2])
+            save_settings(self.directory, {'webhookHeaders': {'Authorization': 'Bearer second'}})
+            self.manager.scan()
+            self.assertEqual(send.call_count, 2)
+        ledger = json.dumps(read_json(self.directory/'notification-delivery.json', {}))
+        self.assertNotIn('second', ledger)
+        self.assertNotIn('first', ledger)
+
+    def test_webhook_failure_retries_after_restart_only_while_enabled(self):
+        save_settings(self.directory, {'enabled': False, 'webhookEnabled': True,
+                                       'webhookUrl': 'https://receiver.example/hook'})
+        with patch('bridge.features.notifications.channels.publish_webhook', side_effect=OSError('private credential')):
+            self.manager.scan()
+        status = read_json(self.directory/'notification-status.json', {})
+        self.assertNotIn('private credential', json.dumps(status))
+        self.manager.close()
+        self.manager = Notifications(self.source, self.directory)
+        for record in self.manager.ledger.values():
+            record['next'] = 0
+        save_settings(self.directory, {'webhookEnabled': False})
+        with patch('bridge.features.notifications.channels.publish_webhook') as send:
+            self.manager.scan()
+            send.assert_not_called()
+            save_settings(self.directory, {'webhookEnabled': True})
+            self.manager.scan()
+            send.assert_called_once()
+
+    def test_account_reminder_sends_webhook_without_disrupting_existing_channel(self):
+        from bridge.features.accounts.monitor import AccountMonitor
+        manager = type('Manager', (), {'root': self.directory,
+            'bridge': type('Bridge', (), {'data_dir': self.directory})()})()
+        monitor = AccountMonitor(manager)
+        monitor.configure = lambda value: monitor.preferences.update(value)
+        monitor.preferences['lowQuota'] = True
+        save_settings(self.directory, {'webhookEnabled': True, 'webhookUrl': 'https://receiver.example/hook'})
+        with patch('bridge.features.accounts.monitor.publish') as ntfy, \
+                patch('bridge.features.accounts.monitor.publish_webhook') as webhook:
+            self.assertTrue(monitor.deliver('account-1', ('lowQuota', 'window-1', '额度提醒', '请查看')))
+            ntfy.assert_called_once()
+            webhook.assert_called_once()
+            self.assertEqual(webhook.call_args.kwargs['event'], 'account.lowQuota')
+            self.assertTrue(monitor.deliver('account-1', ('lowQuota', 'window-1', '额度提醒', '请查看')))
+            webhook.assert_called_once()
+
+    def test_webhook_post_template_escaping_and_redirect_rejection(self):
+        captured = []
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                captured.append((self.path, self.headers.get('Authorization'),
+                                 json.loads(self.rfile.read(int(self.headers['Content-Length'])))))
+                self.send_response(302 if len(captured) == 2 else 200)
+                if len(captured) == 2:
+                    self.send_header('Location', '/receiver/private')
+                self.end_headers()
+                if len(captured) == 2:
+                    self.wfile.write(b'Bearer secret')
+            def do_GET(self):
+                captured.append(('redirect followed', '', {}))
+            def log_message(self, *args): pass
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            url = f'http://127.0.0.1:{server.server_port}/receiver/private?signature=abc'
+            config = save_settings(self.directory, {'webhookEnabled': True, 'webhookUrl': url,
+                'webhookHeaders': {'Authorization': 'Bearer secret'},
+                'webhookBodyTemplate': '{"event":"{{event}}","nested":["{{body}}","{{session_name}}"],"count":"{{count}}"}'})
+            publish_webhook(config, '标题', '中文 "引号"\n换行', event='task.completed', session_name='私密聊天', count=2)
+            self.assertEqual(captured[0], ('/receiver/private?signature=abc', 'Bearer secret',
+                {'event': 'task.completed', 'nested': ['中文 "引号"\n换行', '私密聊天'], 'count': '2'}))
+            with self.assertRaises(RuntimeError) as error:
+                publish_webhook(config, 'again', 'again')
+            self.assertNotIn('secret', str(error.exception))
+            self.assertEqual(len(captured), 2)
+        finally:
+            server.shutdown(); server.server_close()
 
     def test_pushplus_delivery_deduplicates_and_new_recipient_gets_alert(self):
         save_settings(self.directory, {'enabled': False, 'pushplusEnabled': True, 'pushplusToken': 'first'})

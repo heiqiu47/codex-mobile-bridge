@@ -21,7 +21,7 @@ from bridge.features.workspace.uploads import MAX_FILE
 from bridge.features.workspace.workspace import MAX_TRANSFER, Workspace
 from bridge.features.workspace.preferences import transfer_settings
 from bridge.features.workspace.files import workspace_relative_path
-from bridge.features.notifications.channels import settings as notification_settings, save_settings as save_notification_settings, publish, publish_bark, publish_pushplus
+from bridge.features.notifications.channels import settings as notification_settings, save_settings as save_notification_settings, publish, publish_bark, publish_pushplus, publish_webhook, visible_webhook
 from socketserver import TCPServer
 from urllib.parse import parse_qs, parse_qsl, urlsplit, quote
 
@@ -738,7 +738,7 @@ class Handler(BaseHTTPRequestHandler):
                         config = notification_settings(manager.data_dir)
                     return self.output(200, {key: config[key] for key in fields})
             channel_parts = path.removeprefix('/api/notifications/channels/').split('/') if path.startswith('/api/notifications/channels/') else []
-            channel = channel_parts[0] if channel_parts and channel_parts[0] in ('ntfy', 'bark', 'pushplus') and channel_parts[1:] in ([], ['test']) else None
+            channel = channel_parts[0] if channel_parts and channel_parts[0] in ('ntfy', 'bark', 'pushplus', 'webhook') and channel_parts[1:] in ([], ['test']) else None
             if channel or path in ('/api/notifications/pushplus', '/api/notifications/pushplus/test'):
                 manager = self.server.notifications
                 if manager is None:
@@ -746,9 +746,10 @@ class Handler(BaseHTTPRequestHandler):
                 selected = channel or 'pushplus'
                 fields = {'ntfy': ('enabled', 'server', 'topic', 'token', 'clearToken'),
                           'bark': ('barkEnabled', 'barkServer', 'barkKey', 'clearBarkKey'),
-                          'pushplus': ('pushplusEnabled', 'pushplusToken', 'clearPushplusToken')}[selected]
+                          'pushplus': ('pushplusEnabled', 'pushplusToken', 'clearPushplusToken'),
+                          'webhook': ('webhookEnabled', 'webhookUrl', 'webhookHeaders', 'webhookBodyTemplate', 'clearWebhookUrl', 'clearWebhookHeaders')}[selected]
                 secret, marker = {'ntfy': ('token', 'hasToken'), 'bark': ('barkKey', 'hasBarkKey'),
-                                  'pushplus': ('pushplusToken', 'hasPushplusToken')}[selected]
+                                  'pushplus': ('pushplusToken', 'hasPushplusToken'), 'webhook': ('webhookUrl', 'hasWebhookUrl')}[selected]
                 with manager.lock:
                     config = notification_settings(manager.data_dir)
                     if path.endswith('/test'):
@@ -756,9 +757,12 @@ class Handler(BaseHTTPRequestHandler):
                             return self.output(405, {'error': '需要 POST 请求'})
                         self.read_json()
                         try:
-                            sender = {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[selected]
-                            name = {'ntfy': 'ntfy', 'bark': 'Bark', 'pushplus': 'PushPlus'}[selected]
-                            sender(config, 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。')
+                            sender = {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus, 'webhook': publish_webhook}[selected]
+                            name = {'ntfy': 'ntfy', 'bark': 'Bark', 'pushplus': 'PushPlus', 'webhook': 'Webhook'}[selected]
+                            if selected == 'webhook':
+                                sender(config, 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。', event='test')
+                            else:
+                                sender(config, 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。')
                         except Exception:
                             message = 'PushPlus 测试失败，请检查 Token 和网络' if not channel else f'{name} 测试失败，请检查服务地址、认证和网络'
                             raise ValueError(message) from None
@@ -770,8 +774,9 @@ class Handler(BaseHTTPRequestHandler):
                                 key in body and not isinstance(body[key], bool) for key in allowed if key.startswith('clear')):
                             raise ValueError('通知配置格式不正确' if channel else 'PushPlus 配置格式不正确')
                         config = save_notification_settings(manager.data_dir, body)
-                    visible = {key: config[key] for key in fields if key != secret and not key.startswith('clear')}
-                    visible[marker] = bool(config[secret])
+                    visible = visible_webhook(config) if selected == 'webhook' else {key: config[key] for key in fields if key != secret and not key.startswith('clear')}
+                    if selected != 'webhook':
+                        visible[marker] = bool(config[secret])
                     return self.output(200, visible)
             if desktop_workspace:
                 if self.server.desktop_sessions is None:
