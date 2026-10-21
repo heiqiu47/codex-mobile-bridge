@@ -9,7 +9,7 @@ class WatchPanel {
     const t=BridgeI18n.t,node=(tag,text,cls)=>{const el=document.createElement(tag);if(text)el.textContent=text;if(cls)el.className=cls;return el;};
     if(this.error){const error=node('p',t(this.error),'error');error.setAttribute('role','alert');this.root.append(error);}
     if(!value.watches.length){this.root.append(node('p',t('暂无关注聊天。请在手机打开聊天并开启提醒。'),'hint'));return;}
-    const enabled=value.notifications.enabled||value.notifications.barkEnabled;
+    const enabled=value.notifications.enabled||value.notifications.barkEnabled||value.notifications.pushplusEnabled||value.notifications.webhookEnabled;
     this.root.append(node('p',t(!value.runtime.running?'网关未运行，启动后继续监控。':!enabled?'通知通道未开启，保存的监控暂不发送提醒。':'正在监控以下会话的待确认请求。'),'hint'));
     for(const watch of value.watches){
       const row=node('section',null,'watch-row');row.dataset.id=watch.id;row.dataset.host=watch.host;

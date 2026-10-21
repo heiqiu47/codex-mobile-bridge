@@ -10,12 +10,13 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit, parse_qsl
 
 from bridge.resources import project_root
 
 from bridge.features.auth.auth import Auth, password_record, session_hours, session_file_lock
 from bridge.app.lifecycle import read_record, request_stop, request_pairing
-from bridge.features.notifications.channels import Notifications, read_json, write_json, settings, save_settings, publish, publish_bark, publish_pushplus
+from bridge.features.notifications.channels import Notifications, read_json, write_json, settings, save_settings, save_webhook_endpoint, webhook_config, publish, publish_bark, publish_pushplus, publish_webhook, visible_webhook, WebhookDeliveryError, resolved_webhook_provider
 from bridge.features.sessions.store import SessionStore, StoreUnavailable
 from bridge.clients.codex.remote import AppHosts
 from bridge.clients.codex.catalog import Catalog
@@ -182,7 +183,7 @@ class Desktop:
         notification_urls = entry_urls(preferences, hosts, quick_url, external) if runtime['running'] else []
         notifications = settings(self.data_dir)
         return {'preferences': preferences, 'auth': {'username': config['auth'].get('username', 'admin'), 'mode': config['auth']['mode'], 'sessionHours': config['auth'].get('sessionHours', 12)},
-                'origins': config.get('origins', []), 'notifications': {**notifications, 'token': '', 'hasToken': bool(notifications['token']), 'barkKey': '', 'hasBarkKey': bool(notifications['barkKey']), 'pushplusToken': '', 'hasPushplusToken': bool(notifications['pushplusToken'])},
+                'origins': config.get('origins', []), 'notifications': {**notifications, 'token': '', 'hasToken': bool(notifications['token']), 'barkKey': '', 'hasBarkKey': bool(notifications['barkKey']), 'pushplusToken': '', 'hasPushplusToken': bool(notifications['pushplusToken']), **visible_webhook(notifications)},
                 'watches': self.notification_watches({'action': 'list'})['watches'],
                 'notificationUrls': notification_urls,
                 'securityNotificationStatus': read_json(self.data_dir/'security-notifications.json', {}),
@@ -430,15 +431,25 @@ class Desktop:
                 raise ValueError('部分通道发送失败：' + ', '.join(failed) + '；请在手机确认其他通道是否收到。')
             return {'message': '已向启用通道发送当前入口，请在手机确认是否收到。'}
         channel = (value or {}).get('channel', 'ntfy')
-        if channel not in ('ntfy', 'bark', 'pushplus'):
+        webhook_id = (value or {}).get('webhookId', 'legacy')
+        if channel not in ('ntfy', 'bark', 'pushplus', 'webhook'):
             raise ValueError('未知通知通道')
-        name = {'bark': 'Bark', 'ntfy': 'ntfy', 'pushplus': 'PushPlus'}[channel]
-        sender = {'bark': publish_bark, 'ntfy': publish, 'pushplus': publish_pushplus}[channel]
+        name = {'bark': 'Bark', 'ntfy': 'ntfy', 'pushplus': 'PushPlus', 'webhook': 'Webhook'}[channel]
+        sender = {'bark': publish_bark, 'ntfy': publish, 'pushplus': publish_pushplus, 'webhook': publish_webhook}[channel]
+        config = settings(self.data_dir)
+        if channel == 'webhook':
+            config = webhook_config(config, webhook_id)
+        elif 'webhookId' in (value or {}):
+            raise ValueError('Webhook 标识只适用于 Webhook 测试')
         try:
-            sender(settings(self.data_dir), 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。')
+            sender(config, 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。')
+        except WebhookDeliveryError as error:
+            raise ValueError(str(error)) from None
         except Exception:
             raise ValueError(f'{name} 测试失败，请检查服务地址、认证和网络') from None
-        return {'message': f'{name} 已接受测试通知，请在手机确认是否收到'}
+        provider = resolved_webhook_provider(config) if channel == 'webhook' else 'generic'
+        accepted = {'feishu': '飞书', 'dingtalk': '钉钉', 'discord': 'Discord', 'telegram': 'Telegram'}.get(provider, name) + ' 已接受测试通知'
+        return {'message': f'{accepted}，请在手机确认是否收到'}
 
     def deployment(self, value):
         entry = access.select_connection(self.preferences(), value)
@@ -456,6 +467,10 @@ class Desktop:
 
     def read_credentials(self, value):
         # Explicit private IPC only. Never include plaintext in polled snapshots.
+        if isinstance(value, dict) and value.get('channel') == 'webhook':
+            if set(value) - {'channel', 'webhookId'}:
+                raise ValueError('Webhook 地址读取请求格式不正确')
+            return {'webhookUrl': webhook_config(settings(self.data_dir), value.get('webhookId', 'legacy')).get('webhookUrl', '')}
         if value.get('id'):
             from bridge.features.accounts.secrets import read
             if not any(c['id'] == value['id'] for c in self.preferences()['connections']):
@@ -468,6 +483,10 @@ class Desktop:
         if initial.exists():
             result['password'] = next((line[3:] for line in initial.read_text(encoding='utf-8').splitlines() if line.startswith('密码：')), '')
         return result
+
+    def webhook_endpoint(self, value):
+        config, selected = save_webhook_endpoint(self.data_dir, value)
+        return {**visible_webhook(config), 'selectedWebhookId': selected}
 
     def connection_credentials(self, value):
         entry = next((c for c in self.preferences()['connections'] if c['id'] == value.get('id')), None)
@@ -550,7 +569,20 @@ class Desktop:
                     records[-1].append(line)
             sections.append({'name': label, 'text': '\n'.join('\n'.join(record) for record in reversed(records))})
         notifications = settings(self.data_dir)
-        for secret in (notifications.get('token'), notifications.get('barkKey'), notifications.get('pushplusToken')):
+        secrets = [notifications.get('token'), notifications.get('barkKey'), notifications.get('pushplusToken'),
+                   notifications.get('webhookSignSecret')]
+        for entry in [notifications, *notifications.get('webhookEndpoints', [])]:
+            webhook = entry.get('webhookUrl') or ''
+            parsed_webhook = urlsplit(webhook) if webhook else None
+            secrets.append(webhook)
+            if parsed_webhook:
+                secrets.extend((parsed_webhook.path if parsed_webhook.path not in ('', '/') else '', parsed_webhook.query))
+                secrets.extend(segment for segment in parsed_webhook.path.split('/') if len(segment) >= 8)
+                secrets.extend(value for _, value in parse_qsl(parsed_webhook.query) if value)
+            for header in (entry.get('webhookHeaders') or {}).values():
+                secrets.extend((header, header.rsplit(' ', 1)[-1]))
+            secrets.append(entry.get('webhookSignSecret'))
+        for secret in sorted({value for value in secrets if isinstance(value, str) and value}, key=len, reverse=True):
             if secret:
                 for section in sections:
                     section['text'] = section['text'].replace(secret, '[REDACTED]')

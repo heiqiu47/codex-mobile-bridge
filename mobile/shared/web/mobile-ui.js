@@ -24,9 +24,77 @@
     '.bridge-mobile input:not([type=checkbox]):not([type=radio]), .bridge-mobile textarea { font-size: max(16px, 1em); }'
   ]) sheet.insertRule(rule, sheet.cssRules.length);
   document.documentElement.classList.add('bridge-mobile');
+  let focusedAnswer = null, answerTimer = 0, answerDeadline = 0;
+  const stopAnswerVisibility = () => {
+    clearTimeout(answerTimer);clearTimeout(answerDeadline);answerTimer=answerDeadline=0;
+    const {field, scroller} = focusedAnswer || {};
+    for(const event of ['beforeinput','compositionstart','input'])field?.removeEventListener(event,stopAnswerVisibility);
+    for(const event of ['touchmove','wheel'])scroller?.removeEventListener(event,stopAnswerVisibility);
+    focusedAnswer=null;
+  };
+  const keepAnswerVisible = () => {
+    answerTimer = 0;
+    const {field, scroller} = focusedAnswer || {};
+    if (!field || document.activeElement !== field || !field.isConnected || !scroller.isConnected || !scroller.contains(field)) {stopAnswerVisibility();return;}
+    const visual = window.visualViewport;
+    const viewportTop = visual?.offsetTop || 0;
+    const viewportBottom = viewportTop + (visual?.height || window.innerHeight);
+    const clip = scroller.getBoundingClientRect();
+    const top = Math.max(clip.top, viewportTop) + 12;
+    const bottom = Math.min(clip.bottom, viewportBottom) - 12;
+    if (bottom <= top) return;
+    const rect = field.getBoundingClientRect();
+    let shift = 0;
+    if (rect.height > bottom - top) {
+      const visiblePart = Math.min(48, bottom - top);
+      if (rect.bottom <= top) shift = rect.bottom - top - visiblePart;
+      else if (rect.top >= bottom) shift = rect.top - bottom + visiblePart;
+    } else if (rect.bottom > bottom) shift = rect.bottom - bottom;
+    else if (rect.top < top) shift = rect.top - top;
+    if (shift) {scroller.scrollTop += shift;stopAnswerVisibility();}
+  };
+  const scheduleAnswerVisibility = () => {
+    if (!focusedAnswer) return;
+    clearTimeout(answerTimer);
+    answerTimer = setTimeout(keepAnswerVisible,120);
+  };
+  document.addEventListener('focusin', event => {
+    const field = event.target;
+    if (!field.matches?.('textarea, select, input:not([type=checkbox]):not([type=radio])')) return;
+    const scroller = field.closest('#approvals') ? document.getElementById('timeline')
+      : field.closest('.wb-side-approval')?.closest('.wb-side-approvals')
+      || field.closest('.ds-question')?.closest('.ds-requests');
+    if (!scroller) return;
+    stopAnswerVisibility();
+    focusedAnswer = {field, scroller};
+    for(const event of ['beforeinput','compositionstart','input'])field.addEventListener(event,stopAnswerVisibility);
+    for(const event of ['touchmove','wheel'])scroller.addEventListener(event,stopAnswerVisibility,{passive:true});
+    answerDeadline=setTimeout(stopAnswerVisibility,1000);
+    scheduleAnswerVisibility();
+  });
+  document.addEventListener('focusout', event => {
+    if (event.target !== focusedAnswer?.field) return;
+    stopAnswerVisibility();
+  });
+  window.visualViewport?.addEventListener('resize', scheduleAnswerVisibility);
+  window.visualViewport?.addEventListener('scroll', scheduleAnswerVisibility);
+  window.addEventListener('resize', scheduleAnswerVisibility);
   const sync = () => document.documentElement.classList.toggle('bridge-authenticated', !app.hidden);
   sync();
   new MutationObserver(sync).observe(app, { attributes: true, attributeFilter: ['hidden'] });
+  let modalOpen;
+  const syncModal = () => {
+    const open = !!document.querySelector('dialog[open]');
+    if (open === modalOpen) return;
+    modalOpen = open;
+    window.prompt('codexbridge-modal:__BRIDGE_CLIPBOARD_TOKEN__', open ? 'open' : 'closed');
+  };
+  new MutationObserver(syncModal).observe(document.documentElement,
+    { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] });
+  syncModal();
+  const resyncModal = () => { modalOpen = undefined; syncModal(); };
+  window.addEventListener('focus', resyncModal);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) resyncModal(); });
   const account = document.getElementById('accounts-button');
   if (account) {
     const labelAccount = () => {

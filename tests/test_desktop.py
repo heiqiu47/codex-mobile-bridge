@@ -45,6 +45,20 @@ class DesktopTests(unittest.TestCase):
         snapshot['preferences']['codexHome'] = str(self.directory)
         return snapshot
 
+    def test_webhook_snapshot_masks_url_and_headers(self):
+        from bridge.features.notifications.channels import save_settings
+        save_settings(self.directory, {'webhookEnabled': True,
+            'webhookUrl': 'https://receiver.example/secret?signature=private',
+            'webhookHeaders': {'Authorization': 'Bearer secret'}})
+        import json
+        visible = self.desktop.snapshot()['notifications']
+        self.assertEqual(visible['webhookUrlDisplay'], 'https://receiver.example')
+        self.assertTrue(visible['hasWebhookUrl'] and visible['hasWebhookHeaders'])
+        self.assertEqual(visible['webhookUrl'], '')
+        self.assertEqual(visible['webhookHeaders'], {})
+        self.assertNotIn('private', json.dumps(visible))
+        self.assertNotIn('secret', json.dumps(visible))
+
     def test_defaults_preserve_8787_and_private_credentials(self):
         snapshot = self.value()
         self.assertEqual(snapshot['preferences']['port'], 8787)
@@ -246,6 +260,62 @@ class DesktopTests(unittest.TestCase):
         self.assertNotIn('private-token', text)
         self.assertNotIn('private-bark-key', text)
         self.assertEqual(text.count('[REDACTED]'), 2)
+
+    def test_logs_redact_webhook_url_query_path_and_header_values(self):
+        from bridge.features.notifications.channels import save_settings
+        save_settings(self.directory, {'webhookUrl': 'https://receiver.example/private-path?signature=private-query',
+            'webhookHeaders': {'Authorization': 'Bearer private-header'}})
+        (self.directory/'gateway.log').write_text(
+            'https://receiver.example/private-path?signature=private-query\n'
+            '/private-path signature=private-query Bearer private-header\n')
+        text = self.desktop.logs()['text']
+        for secret in ('private-path', 'private-query', 'private-header'):
+            self.assertNotIn(secret, text)
+
+    def test_feishu_signature_secret_is_masked_in_snapshot_and_logs(self):
+        from bridge.features.notifications.channels import save_settings, WebhookDeliveryError
+        save_settings(self.directory, {'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/private',
+            'webhookSignEnabled': True, 'webhookSignSecret': 'private-sign-secret'})
+        visible = self.desktop.snapshot()['notifications']
+        self.assertEqual(visible['webhookSignSecret'], '')
+        self.assertTrue(visible['hasWebhookSignSecret'])
+        self.assertEqual(visible['webhookResolvedProvider'], 'feishu')
+        (self.directory/'gateway.log').write_text('private-sign-secret\n')
+        self.assertNotIn('private-sign-secret', self.desktop.logs()['text'])
+        with patch('bridge.app.desktop.publish_webhook', side_effect=WebhookDeliveryError('飞书未接受通知（19021：签名或时间无效）')):
+            with self.assertRaisesRegex(ValueError, '19021'):
+                self.desktop.test_notification({'channel': 'webhook'})
+
+    def test_webhook_url_reveal_requires_explicit_private_credentials_request(self):
+        from bridge.features.notifications.channels import save_settings
+        url = 'https://discord.com/api/webhooks/123/private-token'
+        save_settings(self.directory, {'webhookUrl': url})
+        self.assertEqual(self.desktop.read_credentials({'channel': 'webhook'}), {'webhookUrl': url})
+        self.assertNotIn('webhookUrl', self.desktop.read_credentials({}))
+        self.assertEqual(self.desktop.snapshot()['notifications']['webhookUrl'], '')
+
+    def test_named_webhook_desktop_snapshot_test_reveal_and_log_redaction(self):
+        value = self.desktop.webhook_endpoint({'action': 'upsert', 'webhookName': '机器人',
+            'webhookEnabled': True, 'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/private-path',
+            'webhookSignEnabled': True, 'webhookSignSecret': 'private-sign',
+            'webhookHeaders': {'Authorization': 'Bearer private-header'}})
+        webhook_id = value['selectedWebhookId']
+        visible = self.desktop.snapshot()['notifications']
+        self.assertEqual(visible['webhookEndpoints'][0]['webhookId'], webhook_id)
+        self.assertNotIn('private-path', str(visible))
+        self.assertNotIn('private-sign', str(visible))
+        self.assertEqual(self.desktop.read_credentials({'channel': 'webhook', 'webhookId': webhook_id}),
+                         {'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/private-path'})
+        with patch('bridge.app.desktop.publish_webhook') as sender:
+            self.desktop.test_notification({'channel': 'webhook', 'webhookId': webhook_id})
+            self.assertEqual(sender.call_args.args[0]['webhookUrl'],
+                             'https://open.feishu.cn/open-apis/bot/v2/hook/private-path')
+        (self.directory/'gateway.log').write_text('private-path private-sign private-header')
+        text = self.desktop.logs()['text']
+        for secret in ('private-path', 'private-sign', 'private-header'):
+            self.assertNotIn(secret, text)
+        self.desktop.webhook_endpoint({'action': 'delete', 'webhookId': webhook_id})
+        self.assertEqual(self.desktop.snapshot()['notifications']['webhookEndpoints'], [])
 
     def test_running_network_settings_cannot_disconnect_phone(self):
         value = self.value()

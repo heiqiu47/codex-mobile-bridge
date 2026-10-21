@@ -4,9 +4,10 @@ import json
 import ipaddress
 import threading
 import time
+import uuid
 from pathlib import Path
 
-from bridge.features.notifications.channels import channels, publish, publish_bark, publish_pushplus, read_json, settings, write_json
+from bridge.features.notifications.channels import channels, publish, publish_bark, publish_pushplus, publish_webhook, read_json, settings, write_json, webhook_channel_config
 
 
 def gateway_ready(port, instance_id):
@@ -70,9 +71,14 @@ def address_message(config, urls, first=False, test=False):
     return title, body
 
 
-def send_address(config, channel, urls, first=False, test=False):
+def send_address(config, channel, urls, first=False, test=False, event_id=''):
     title, body = address_message(config, urls, first, test)
-    {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[channel](config, title, body, urls[0])
+    if channel == 'webhook' or channel.startswith('webhook:'):
+        publish_webhook(webhook_channel_config(config, channel), title, body, urls[0], event='test' if test else 'gateway.started' if first else 'gateway.address_changed',
+                        event_id=event_id or uuid.uuid4().hex,
+                        host=config.get('addressName') or 'Codex Mobile Bridge', count=len(urls))
+    else:
+        {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[channel](config, title, body, urls[0])
 
 
 class AddressNotifications:
@@ -96,7 +102,10 @@ class AddressNotifications:
             return
         if self.state.get('urls') != urls:
             self.state = {'instanceId': self.instance_id, 'urls': urls,
-                          'first': not bool(self.state.get('urls')), 'deliveries': {}}
+                          'first': not bool(self.state.get('urls')), 'eventId': uuid.uuid4().hex, 'deliveries': {}}
+            write_json(self.path, self.state)
+        elif not self.state.get('eventId'):
+            self.state['eventId'] = uuid.uuid4().hex
             write_json(self.path, self.state)
         targets = channels(config)
         records = self.state['deliveries']
@@ -116,7 +125,7 @@ class AddressNotifications:
             if channels(current).get(channel) != target:
                 continue
             try:
-                send_address(current, channel, urls, first=self.state['first'])
+                send_address(current, channel, urls, first=self.state['first'], event_id=self.state['eventId'])
                 records[target] = {'delivered': True, 'time': now, 'channel': channel}
             except Exception:
                 attempts = record.get('attempts', 0) + 1

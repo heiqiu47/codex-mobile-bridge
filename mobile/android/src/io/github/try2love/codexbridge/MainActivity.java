@@ -188,6 +188,9 @@ public final class MainActivity extends Activity {
     if(prompt.equals("codexbridge-computer:"+clipboardToken)){
      if(view==web&&GatewayURL.sameOrigin(url,origin)&&GatewayURL.sameOrigin(view.getUrl(),origin))result.confirm(computerName(origin));else result.cancel();return true;
     }
+    if(prompt.equals("codexbridge-modal:"+clipboardToken)){
+     if(view==web&&view.hasWindowFocus()&&GatewayURL.sameOrigin(url,origin)&&GatewayURL.sameOrigin(view.getUrl(),origin)&&("open".equals(value)||"closed".equals(value))){boolean open="open".equals(value);menu.setVisibility(open?View.GONE:View.VISIBLE);menu.setEnabled(!open);result.confirm("saved");}else result.cancel();return true;
+    }
     if(prompt.equals("codexbridge-session:"+clipboardToken)){
      if(view==web&&GatewayURL.sameOrigin(url,origin)&&GatewayURL.sameOrigin(view.getUrl(),origin)){authLossAttempted=false;CookieManager.getInstance().flush();MonitorService.bindingsChanged();rememberConnection();result.confirm("saved");}else result.cancel();return true;
     }

@@ -1,0 +1,4 @@
+.bridge-mobile :is(button,input:not([type=checkbox]):not([type=radio]),textarea,select):not(.xterm *){-webkit-tap-highlight-color:transparent}
+.bridge-mobile :where(button,input:not([type=checkbox]):not([type=radio]),textarea,select):not(.xterm *):focus-visible{outline:2px solid var(--muted);outline-offset:-2px}
+.bridge-mobile .primary:not(.xterm *):focus-visible{outline-color:var(--accent-ink)}
+.bridge-mobile :is(.composer #message,.ds-composer-body>textarea,.wb-side-composer-body>textarea):focus-visible{outline:0}
