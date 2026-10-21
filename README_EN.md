@@ -581,6 +581,8 @@ Thanks to [@RigerWu](https://github.com/RigerWu) for the native iOS retry and ba
 
 Thanks to [@heiqiu47](https://github.com/heiqiu47) for proposing account and model UI and query improvements in [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40). v2.1.3 integrates only the scoped query lifecycle improvements.
 
+Thanks to [@jasongzy](https://github.com/jasongzy) for requesting general Webhook notifications in [Issue #60](https://github.com/try2love/codex-mobile-bridge/issues/60).
+
 Thanks to [@tiancai123123](https://github.com/tiancai123123) for diagnosing and reproducing repeated static-resource downloads on slow connections in [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54), and contributing content-hash versioning, browser caching, conditional requests and tests in [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56). The integration preserves the original commit and reconciles it with the project's existing cache invalidation and resource-version handling.
 
 ## License and references

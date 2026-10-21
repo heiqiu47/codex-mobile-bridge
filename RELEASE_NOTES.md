@@ -23,6 +23,7 @@
 - [@wangzheuser](https://github.com/wangzheuser) 提交 [PR #51](https://github.com/try2love/codex-mobile-bridge/pull/51)，修复 Harness 折行配置解析；原提交作者 [@w154594742](https://github.com/w154594742) 的署名保留。
 - [@RigerWu](https://github.com/RigerWu) 在 [PR #52](https://github.com/try2love/codex-mobile-bridge/pull/52) 中贡献 iOS 原生连接恢复入口。
 - [@heiqiu47](https://github.com/heiqiu47) 在 [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40) 中提出账号查询改进；本版纳入范围仅为查询生命周期收敛。
+- [@jasongzy](https://github.com/jasongzy) 通过 [Issue #60](https://github.com/try2love/codex-mobile-bridge/issues/60) 提出通用 Webhook 通知需求。
 - [@tiancai123123](https://github.com/tiancai123123) 在 [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54) 中定位静态资源重复下载，并在 [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56) 中贡献内容哈希缓存与条件请求。
 
 ### English
@@ -38,6 +39,8 @@
 Install over the existing app to retain saved computers, pairings and gateway data. Android keeps its signing identity; iOS keeps its official bundle IDs and requires your own signing. Refresh Web pages after the gateway update. iOS recovery and Mermaid subframe changes require the matching app; shared-relay deployments should update the relay.
 
 **Contributors:** [@wangzheuser](https://github.com/wangzheuser) submitted [PR #51](https://github.com/try2love/codex-mobile-bridge/pull/51), retaining original commit credit for [@w154594742](https://github.com/w154594742); [@RigerWu](https://github.com/RigerWu) contributed iOS recovery in [PR #52](https://github.com/try2love/codex-mobile-bridge/pull/52); the integrated part of [@heiqiu47](https://github.com/heiqiu47)'s [PR #40](https://github.com/try2love/codex-mobile-bridge/pull/40) is limited to account-query lifecycle improvements; and [@tiancai123123](https://github.com/tiancai123123) reported the static-download issue in [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54) and contributed caching in [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56).
+
+[@jasongzy](https://github.com/jasongzy) requested general Webhook notifications in [Issue #60](https://github.com/try2love/codex-mobile-bridge/issues/60).
 
 ---
 
