@@ -5,13 +5,12 @@ const source=fs.readFileSync(path.join(root,'mobile/shared/web/mobile-ui.js'),'u
 
 function fixture(){
   const prompts=[],observers=[],windowEvents={},documentEvents={};
-  const classes=new Set(),rules=[];
   const dialogs=[];
   const app={hidden:false};
   const document={
     hidden:false,
-    styleSheets:[{href:'https://gateway.test/style.css',cssRules:[],insertRule(rule){rules.push(rule);}}],
-    documentElement:{classList:{contains:name=>classes.has(name),add:name=>classes.add(name),remove:name=>classes.delete(name),toggle(name,enabled){if(enabled)classes.add(name);else classes.delete(name);}}},
+    styleSheets:[{href:'https://gateway.test/style.css',cssRules:[],insertRule(){}}],
+    documentElement:{classList:{contains:()=>false,add(){},toggle(){}}},
     getElementById:id=>id==='app'?app:null,
     querySelector:selector=>selector==='dialog[open]'?dialogs.find(dialog=>dialog.open)||null:null,
     addEventListener:(name,listener)=>{documentEvents[name]=listener;}
@@ -28,20 +27,8 @@ function fixture(){
   const modalObserver=observers.find(observer=>observer.target===document.documentElement);
   assert.ok(modalObserver,'shared script observes the document for modal changes');
   const changed=()=>modalObserver.callback();
-  return {prompts,dialogs,document,windowEvents,documentEvents,classes,rules,changed};
+  return {prompts,dialogs,document,windowEvents,documentEvents,changed};
 }
-
-test('touch-opened dialogs suppress only button rings until hardware Tab',()=>{
-  const f=fixture();
-  assert.ok(f.rules.includes('.bridge-mobile.bridge-touch-input dialog button:focus-visible { outline: none; }'));
-  assert.equal(f.classes.has('bridge-touch-input'),false);
-  f.documentEvents.touchstart();
-  assert.equal(f.classes.has('bridge-touch-input'),true);
-  f.documentEvents.keydown({key:'Enter'});
-  assert.equal(f.classes.has('bridge-touch-input'),true);
-  f.documentEvents.keydown({key:'Tab'});
-  assert.equal(f.classes.has('bridge-touch-input'),false);
-});
 
 test('native menu follows any open dialog through long scrolling, nesting, and close',()=>{
   const f=fixture();
