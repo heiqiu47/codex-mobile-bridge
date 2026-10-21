@@ -307,6 +307,8 @@ The desktop App and phone website each have a **Language / 语言** selector and
 
 ### Third-party notifications: Bark, ntfy and PushPlus
 
+The unreleased version adds **Webhook**: configure an HTTPS endpoint, headers and a JSON template, then test saved settings. Existing notification policies, deduplication and retries apply. See [Webhook setup](docs/webhook-notifications.md#english).
+
 With a direct gateway connection, open **Push alerts** from mobile appearance settings, Web settings or the chat-list footer. Choose **Bark for iPhone, ntfy for Android or PushPlus for WeChat**, then open that channel's configuration page. Shared-relay connections do not expose this configuration entry.
 
 Mobile, Web and desktop edit the same gateway settings. Enable a channel, edit its server/topic and credentials, save, then test the saved configuration. Common settings include notification links, title visibility, security events and gateway startup/address-change notifications. Saved secrets are not returned to the mobile page: leave them blank to keep them, and enter them again when changing the server. Confirm actual receipt on the target device.

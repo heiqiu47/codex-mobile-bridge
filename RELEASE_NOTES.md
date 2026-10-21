@@ -1,3 +1,18 @@
+<a id="unreleased-webhook"></a>
+
+## 未发布 · 通用 Webhook 通知
+
+- 新增自定义 HTTPS Webhook 通道，可设置接收地址、请求头和 JSON 正文模板，并单独启用、保存及测试。
+- 电脑网关、Web 与手机端共用配置，支持中英文界面；已保存地址与请求头凭据不会回传页面，未保存输入保留。
+- 任务完成、待确认操作、网关启动与入口变化、安全及已启用的账号提醒复用现有通知策略、去重和重试；不启动会话，不补发已完成历史。
+- 模板支持通知类型、标题、正文、会话名称、跳转链接与事件标识等字段；会话名称继续遵循原有隐私开关。
+
+使用方式见 [Webhook 配置说明](docs/webhook-notifications.md)。此节仅描述本地候选功能，尚未发布；现有版本号和手机绑定格式保持不变。
+
+**English — Unreleased Webhook notifications:** add an optional HTTPS POST/JSON channel with custom headers, body templates and saved-configuration tests. Configure it through the desktop gateway or shared Web/mobile settings. Reuse existing notification preferences, deduplication and retries for chat, gateway, security and enabled account alerts. Saved endpoint/header credentials are masked, and chat names retain their existing opt-in. No chat activation or completed-history replay. See [setup](docs/webhook-notifications.md#english); application versions and binding formats are unchanged.
+
+---
+
 <a id="unreleased-mermaid"></a>
 
 ## 未发布 · Mermaid 图表预览
