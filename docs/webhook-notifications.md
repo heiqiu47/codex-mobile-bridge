@@ -4,10 +4,10 @@ Webhook 将现有通知以 HTTP POST JSON 发到你配置的服务。无需安�
 
 ## 配置与测试
 
-1. 填写接收服务的完整 HTTPS 地址，选择“自动识别”，或选择通用自定义、飞书、钉钉、Discord、Telegram。签名或密钥查询参数会保留；普通 HTTP 仅允许本机测试地址。
+1. 新建接收目标并命名，填写完整 HTTPS 地址，选择“自动识别”，或选择通用自定义、飞书、钉钉、Discord、Telegram。可添加多个同类机器人；旧版单个 Webhook 配置作为独立的默认目标保留。签名或密钥查询参数会保留；普通 HTTP 仅允许本机测试地址。
 2. 在“高级设置”按服务要求填写请求头，例如 `{"Authorization":"Bearer YOUR_TOKEN"}`。请求头必须是 JSON 字符串键值对象。
 3. 调整 JSON 正文模板，保存配置，再点击测试。保存不会发送通知；测试只发送已保存配置，不使用表单中未保存的修改。
-4. 接收服务确认测试后，启用 Webhook 并保存。聊天提醒继续由全局和单会话通知设置控制，网关入口与安全通知沿用各自开关。
+4. 接收服务确认测试后，单独启用该目标并保存。每个目标可分别编辑、测试、停用或删除。聊天提醒继续由全局和单会话通知设置控制，网关入口与安全通知沿用各自开关。
 
 通用 Webhook 默认模板：
 
@@ -70,7 +70,7 @@ Webhook 将现有通知以 HTTP POST JSON 发到你配置的服务。无需安�
 
 完整地址可能包含密钥，因此平常显示“已保存”与服务域名；地址输入框支持隐藏和查看，只有主动点击查看才读取完整已保存地址。普通配置刷新不会返回完整地址，请求头和签名密钥也不回传页面。地址或请求头留空会保留已保存值；使用对应清除选项删除。更换地址会清除旧请求头；更换地址或协议类型也不自动沿用原签名密钥，需要重新填写。请将认证信息放在专用配置中，不要写进可回读的正文模板。
 
-Webhook 默认关闭，复用既有通知策略、去重记录与失败重试。新增通道不会补发已完成的聊天历史，关闭通道或更换接收目标会取消原目标的待发送重试。被动通知不会启动、接管或切换聊天。
+每个 Webhook 目标默认关闭，复用既有通知策略，并拥有独立的去重记录与失败重试。旧版单目标配置无需迁移；新增目标不会补发已完成的聊天历史。停用、删除或更换某个目标只会取消该目标的待发送重试。被动通知不会启动、接管或切换聊天。
 
 通用接收端 HTTP 2xx 只表示请求被接受；内置服务按各自协议判断成功。仍需在下游确认是否收到。超时可能发生在接收端已经处理之后，因此不能保证严格只发送一次；接收端可按 `event_id` 去重。请求不会跟随重定向。除飞书和钉钉之外的动态签名或非 JSON 协议，仍需由你自己的适配服务转换。
 
@@ -78,7 +78,7 @@ Webhook 默认关闭，复用既有通知策略、去重记录与失败重试。
 
 **Unreleased:** configure **Push alerts → Webhook** on Web/mobile, or **Notifications → Webhook** in the desktop gateway. Settings are shared across macOS, Windows and Linux; Android/iOS use the gateway's Web interface. Shared-relay configuration permissions are unchanged.
 
-Set an HTTPS endpoint, optional JSON string-to-string headers and a JSON body template. Save before testing: a test uses saved settings only, and saving does not send anything. Enable the channel after confirming receipt. Existing global/per-chat, gateway-entry, security and account notification preferences remain in control.
+Create and name each destination, then set its HTTPS endpoint, optional JSON string-to-string headers and JSON body template. You can add multiple bots of the same service; an existing single Webhook remains available as the default destination. Save before testing: a test uses saved settings only, and saving does not send anything. Enable each destination after confirming receipt; you can edit, test, disable or delete it independently. Existing global/per-chat, gateway-entry, security and account notification preferences remain in control.
 
 Use `{{event}}`, `{{event_id}}`, `{{title}}`, `{{body}}`, `{{session_name}}`, `{{url}}`, `{{client}}`, `{{host}}` and `{{count}}` inside JSON string values. No scripts, expressions or key substitution are supported. Templates are limited to 16 KiB and rendered bodies to 64 KiB. Chat names require the existing title opt-in; full conversations and model replies are not included.
 
@@ -88,4 +88,4 @@ Saved endpoints stay masked during ordinary configuration reads. Use the address
 
 **Other presets:** choose Custom Webhook, DingTalk, Discord or Telegram and edit the supplied JSON. Custom text is preserved until you explicitly apply the selected template. The expandable field reference lists every supported placeholder. DingTalk uses `msgtype`/`text.content` and supports optional signing with its own millisecond timestamp algorithm. Discord uses `content` (up to 2000 characters), disables mentions by default and waits for message confirmation. Telegram uses the Bot API `/bot<token>/sendMessage` endpoint; fill `chat_id` in the template and keep `text` within 4096 characters. DingTalk requires `errcode: 0`; Telegram requires `ok: true`. These are outgoing notification presets, not incoming bot-update subscriptions.
 
-Delivery reuses existing policies, deduplication and retries. It does not activate chats or replay completed history. Generic HTTP 2xx confirms receiver acceptance; presets use service-specific success responses. Confirm downstream receipt and use the stable `event_id` to deduplicate retries after ambiguous timeouts. Dynamic signatures beyond Feishu/DingTalk and non-JSON protocols require a separate adapter.
+Delivery fans out to enabled destinations and reuses existing policies, with separate deduplication and retries for each destination. It does not activate chats or replay completed history. Disabling, deleting or changing one destination cancels only its pending retries. Generic HTTP 2xx confirms receiver acceptance; presets use service-specific success responses. Confirm downstream receipt and use the stable `event_id` to deduplicate retries after ambiguous timeouts. Dynamic signatures beyond Feishu/DingTalk and non-JSON protocols require a separate adapter.

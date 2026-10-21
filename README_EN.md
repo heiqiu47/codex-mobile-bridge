@@ -307,7 +307,7 @@ The desktop App and phone website each have a **Language / 语言** selector and
 
 ### Third-party notifications: Bark, ntfy and PushPlus
 
-The unreleased version adds **Webhook**: configure an HTTPS endpoint, headers and a JSON template, then test saved settings. Existing notification policies, deduplication and retries apply. See [Webhook setup](docs/webhook-notifications.md#english).
+The unreleased version supports multiple **Webhook** destinations. Name, enable, edit, test and delete each bot independently, with its own HTTPS endpoint, headers and JSON template. Existing single-Webhook settings remain available; notification policies, deduplication and retries still apply. See [Webhook setup](docs/webhook-notifications.md#english).
 
 With a direct gateway connection, open **Push alerts** from mobile appearance settings, Web settings or the chat-list footer. Choose **Bark for iPhone, ntfy for Android or PushPlus for WeChat**, then open that channel's configuration page. Shared-relay connections do not expose this configuration entry.
 

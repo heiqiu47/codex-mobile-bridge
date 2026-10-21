@@ -292,7 +292,7 @@ Cloudflare Tunnel 和 Tailscale 公网转发/中继可能经过境外节点，�
 
 ### 配置第三方通知：Bark、ntfy 与 PushPlus
 
-待发布版本新增 **Webhook**：自定义 HTTPS 地址、请求头与 JSON 模板，保存后可发送测试，并复用现有提醒策略、去重和重试。见 [Webhook 配置说明](docs/webhook-notifications.md)。
+待发布版本支持配置多个 **Webhook** 接收目标：每个机器人可分别命名、启停、编辑、测试和删除，自定义 HTTPS 地址、请求头与 JSON 模板。旧版单个 Webhook 配置会保留，投递继续复用现有提醒策略、去重和重试。见 [Webhook 配置说明](docs/webhook-notifications.md)。
 
 直连网关后，从手机「外观与显示」、Web 设置或聊天列表底部进入 **第三方通知**，选择 **Bark（iPhone）、ntfy（Android）或 PushPlus（微信）**，再进入对应配置页。英文入口显示 **Push alerts**。共享中继不开放此配置入口。
 
