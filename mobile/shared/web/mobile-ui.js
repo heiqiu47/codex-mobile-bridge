@@ -24,11 +24,18 @@
     '.bridge-mobile input:not([type=checkbox]):not([type=radio]), .bridge-mobile textarea { font-size: max(16px, 1em); }'
   ]) sheet.insertRule(rule, sheet.cssRules.length);
   document.documentElement.classList.add('bridge-mobile');
-  let focusedAnswer = null, answerFrame = 0;
-  const keepAnswerVisible = () => {
-    answerFrame = 0;
+  let focusedAnswer = null, answerTimer = 0, answerDeadline = 0;
+  const stopAnswerVisibility = () => {
+    clearTimeout(answerTimer);clearTimeout(answerDeadline);answerTimer=answerDeadline=0;
     const {field, scroller} = focusedAnswer || {};
-    if (!field || document.activeElement !== field || !field.isConnected || !scroller.isConnected || !scroller.contains(field)) return;
+    for(const event of ['beforeinput','compositionstart','input'])field?.removeEventListener(event,stopAnswerVisibility);
+    for(const event of ['touchmove','wheel'])scroller?.removeEventListener(event,stopAnswerVisibility);
+    focusedAnswer=null;
+  };
+  const keepAnswerVisible = () => {
+    answerTimer = 0;
+    const {field, scroller} = focusedAnswer || {};
+    if (!field || document.activeElement !== field || !field.isConnected || !scroller.isConnected || !scroller.contains(field)) {stopAnswerVisibility();return;}
     const visual = window.visualViewport;
     const viewportTop = visual?.offsetTop || 0;
     const viewportBottom = viewportTop + (visual?.height || window.innerHeight);
@@ -37,15 +44,19 @@
     const bottom = Math.min(clip.bottom, viewportBottom) - 12;
     if (bottom <= top) return;
     const rect = field.getBoundingClientRect();
+    let shift = 0;
     if (rect.height > bottom - top) {
       const visiblePart = Math.min(48, bottom - top);
-      if (rect.bottom <= top) scroller.scrollTop += rect.bottom - top - visiblePart;
-      else if (rect.top >= bottom) scroller.scrollTop += rect.top - bottom + visiblePart;
-    } else if (rect.bottom > bottom) scroller.scrollTop += rect.bottom - bottom;
-    else if (rect.top < top) scroller.scrollTop += rect.top - top;
+      if (rect.bottom <= top) shift = rect.bottom - top - visiblePart;
+      else if (rect.top >= bottom) shift = rect.top - bottom + visiblePart;
+    } else if (rect.bottom > bottom) shift = rect.bottom - bottom;
+    else if (rect.top < top) shift = rect.top - top;
+    if (shift) {scroller.scrollTop += shift;stopAnswerVisibility();}
   };
   const scheduleAnswerVisibility = () => {
-    if (focusedAnswer && !answerFrame) answerFrame = requestAnimationFrame(keepAnswerVisible);
+    if (!focusedAnswer) return;
+    clearTimeout(answerTimer);
+    answerTimer = setTimeout(keepAnswerVisible,120);
   };
   document.addEventListener('focusin', event => {
     const field = event.target;
@@ -54,14 +65,16 @@
       : field.closest('.wb-side-approval')?.closest('.wb-side-approvals')
       || field.closest('.ds-question')?.closest('.ds-requests');
     if (!scroller) return;
+    stopAnswerVisibility();
     focusedAnswer = {field, scroller};
+    for(const event of ['beforeinput','compositionstart','input'])field.addEventListener(event,stopAnswerVisibility);
+    for(const event of ['touchmove','wheel'])scroller.addEventListener(event,stopAnswerVisibility,{passive:true});
+    answerDeadline=setTimeout(stopAnswerVisibility,1000);
     scheduleAnswerVisibility();
   });
   document.addEventListener('focusout', event => {
     if (event.target !== focusedAnswer?.field) return;
-    focusedAnswer = null;
-    if (answerFrame) cancelAnimationFrame(answerFrame);
-    answerFrame = 0;
+    stopAnswerVisibility();
   });
   window.visualViewport?.addEventListener('resize', scheduleAnswerVisibility);
   window.visualViewport?.addEventListener('scroll', scheduleAnswerVisibility);
