@@ -75,7 +75,7 @@ test('development launch keeps script as its own argument',()=>{
 async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,loginStartup,AccountsPanel}={}){
   const fs=require('node:fs'),vm=require('node:vm');
   const nodes=new Map();
-  function node(){return {parentNode:{insertBefore(){}},getAnimations(){return [];},animate(){},closest(){return null;},value:'',checked:false,hidden:false,textContent:'',dataset:{},
+  function node(){return {parentNode:{insertBefore(){}},getAnimations(){return [];},animate(){},scrollIntoView(){},focus(){},addEventListener(){},closest(){return null;},value:'',checked:false,hidden:false,textContent:'',dataset:{},
     classList:{toggle(){}},click(){return this.onclick?.();},append(...items){this.children=(this.children||[]).concat(items);},replaceChildren(...items){this.children=items;},setAttribute(){},removeAttribute(){},querySelectorAll(){return [];}};}
   const html=fs.readFileSync(path.join(__dirname,'../desktop/index.html'),'utf8');
   for(const match of html.matchAll(/\bid="([^"]+)"/g))nodes.set(match[1],node());
@@ -357,6 +357,28 @@ test('notification test buttons select the channel and block unsaved drafts',asy
   assert.deepEqual(calls,['bark','ntfy']);
   ui.run('dirty=true');await ui.nodes.get('test-bark').onclick();
   assert.equal(calls.length,2);assert.match(ui.nodes.get('toast-message').textContent,/请先保存通知配置/);
+});
+
+test('desktop Webhook keeps drafts through refresh, validates headers and clears submitted secrets',async()=>{
+  const ui=await renderer(),ids=['webhook-url','webhook-headers','webhook-enabled','webhook-body-template','clear-webhook-url','clear-webhook-headers'];
+  for(const id of ids){ui.nodes.get(id).id=id;ui.nodes.get(id).closest=()=>({dataset:{panel:'notifications'}});}
+  for(const id of ['webhook-enabled','clear-webhook-url','clear-webhook-headers'])ui.nodes.get(id).type='checkbox';
+  ui.run("fields=()=>['webhook-url','webhook-headers','webhook-enabled','webhook-body-template','clear-webhook-url','clear-webhook-headers'].map($);savedFields=fieldValues()");
+  ui.nodes.get('webhook-url').value='https://example.test/hook?token=secret';
+  ui.nodes.get('webhook-headers').value='{bad';ui.nodes.get('webhook-enabled').checked=true;ui.run('updateDirty()');
+  await ui.poll();assert.equal(ui.nodes.get('webhook-url').value,'https://example.test/hook?token=secret');
+  let saved;ui.api.save=async value=>{saved=value;return structuredClone(ui.value);};
+  await ui.nodes.get('settings').onsubmit({preventDefault(){}});
+  assert.equal(saved,undefined);assert.match(ui.nodes.get('toast-message').textContent,/JSON/);
+  ui.nodes.get('webhook-headers').value='{"X-Key":"secret"}';
+  await ui.nodes.get('settings').onsubmit({preventDefault(){}});
+  assert.equal(saved.notifications.webhookEnabled,true);
+  assert.equal(saved.notifications.webhookUrl,'https://example.test/hook?token=secret');
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.notifications.webhookHeaders)),{'X-Key':'secret'});
+  assert.equal(ui.nodes.get('webhook-url').value,'');assert.equal(ui.nodes.get('webhook-headers').value,'');
+  assert.equal(ui.run('dirty'),false);
+  let channel;ui.api.testNotification=async value=>{channel=value.channel;return {message:'accepted'};};
+  await ui.nodes.get('test-webhook').onclick();assert.equal(channel,'webhook');
 });
 
 test('Bark drafts survive polling and language changes and remain after saving',async()=>{

@@ -10,7 +10,7 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
     showModal(){this.open=true;},close(){this.open=false;this.dispatchEvent({type:'close'});}});
   const html=fs.readFileSync(path.join(__dirname,'../web/index.html'),'utf8');
   for(const match of html.matchAll(/\bid="([^"]+)"/g))nodes.set(match[1],node());
-  const channelButtons=['bark','ntfy','pushplus'].map(channel=>Object.assign(node('button'),{dataset:{notificationChannel:channel}}));
+  const channelButtons=['bark','ntfy','pushplus','webhook'].map(channel=>Object.assign(node('button'),{dataset:{notificationChannel:channel}}));
   const localStorage={get length(){return localStore.size;},key(index){return [...localStore.keys()][index]??null;},getItem(key){return localStore.get(key)??null;},setItem(key,value){localStore.set(key,String(value));},removeItem(key){localStore.delete(key);}};
   const scopedStorage={get length(){return sessionStore.size;},key(index){return [...sessionStore.keys()][index]??null;},getItem(key){return sessionStore.get(key)??null;},setItem(key,value){sessionStore.set(key,String(value));},removeItem(key){sessionStore.delete(key);},clear(){sessionStore.clear();}};
   const archiveToggles=[];
@@ -43,6 +43,7 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
           if(url.includes('/rename?'))return response({title:body.title});
           if(url.endsWith('/test'))return response({ok:true});
           if(url.endsWith('/common'))saved.set(url,body);
+          else if(url.endsWith('/webhook'))saved.set(url,{webhookEnabled:body.webhookEnabled,hasWebhookUrl:!!body.webhookUrl||!body.clearWebhookUrl&&!!saved.get(url)?.hasWebhookUrl,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:!!Object.keys(body.webhookHeaders).length||!body.clearWebhookHeaders&&!!saved.get(url)?.hasWebhookHeaders,webhookBodyTemplate:body.webhookBodyTemplate});
           else {
             const secret=url.endsWith('/bark')?'barkKey':url.endsWith('/ntfy')?'token':'pushplusToken';
             const marker=url.endsWith('/bark')?'hasBarkKey':url.endsWith('/ntfy')?'hasToken':'hasPushplusToken';
@@ -166,6 +167,48 @@ test('third-party notification channels save independently, mask secrets and tes
   await ui.nodes.get('pushplus-form').onsubmit({preventDefault(){}});
   assert.equal(ui.nodes.get('pushplus-token').value,'retry-token');
   assert.equal(ui.nodes.get('pushplus-error').textContent,'Network failure');
+});
+
+test('Webhook form validates headers, redacts saved credentials, and tests saved settings',async()=>{
+  const ui=await fixture();await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  assert.equal(ui.nodes.get('webhook-dialog').open,true);
+  ui.nodes.get('webhook-enabled').checked=true;
+  ui.nodes.get('webhook-url').value='https://example.test/hook?token=secret';
+  ui.nodes.get('webhook-headers').value='{bad';
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes.length,0);assert.match(ui.nodes.get('webhook-error').textContent,/JSON/);
+  ui.nodes.get('webhook-headers').value='{"Authorization":"Bearer secret"}';
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.deepEqual(ui.writes[0].body.webhookHeaders,{Authorization:'Bearer secret'});
+  assert.equal(ui.writes[0].body.webhookUrl,'https://example.test/hook?token=secret');
+  assert.equal(ui.nodes.get('webhook-url').value,'');assert.equal(ui.nodes.get('webhook-headers').value,'');
+  assert.equal(ui.nodes.get('webhook-url-saved').textContent.includes('secret'),false);
+  await ui.nodes.get('webhook-test').onclick();assert.equal(ui.writes[1].url,'/api/notifications/channels/webhook/test');
+  assert.deepEqual(ui.writes[1].body,{});
+  ui.nodes.get('webhook-clear-url').checked=true;ui.nodes.get('webhook-clear-headers').checked=true;
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes[2].body.clearWebhookUrl,true);assert.equal(ui.writes[2].body.clearWebhookHeaders,true);
+  assert.equal(ui.nodes.get('webhook-clear-url').checked,false);
+});
+
+test('Webhook save failure retains unsaved endpoint and headers',async()=>{
+  const ui=await fixture();await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  ui.nodes.get('webhook-url').value='https://example.test/hook';ui.nodes.get('webhook-headers').value='{"X-Key":"secret"}';
+  ui.setPost(()=>ui.response({error:'Save failed'},400));
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.nodes.get('webhook-url').value,'https://example.test/hook');
+  assert.equal(ui.nodes.get('webhook-headers').value,'{"X-Key":"secret"}');
+  assert.equal(ui.nodes.get('webhook-error').textContent,'Save failed');
+});
+
+test('Webhook form has English labels and narrow-screen scroll styling',async()=>{
+  const ui=await fixture();
+  ui.run("BridgeI18n.setLanguage('en')");
+  const dialog=ui.html.match(/<dialog id="webhook-dialog"[\s\S]*?<\/dialog>/)[0];
+  for(const [,label] of dialog.matchAll(/data-i18n(?:-aria-label)?="([^"]+)"/g))assert.notEqual(ui.run(`BridgeI18n.t(${JSON.stringify(label)})`),label);
+  const css=fs.readFileSync(path.join(__dirname,'../web/shell/content.css'),'utf8');
+  assert.match(css,/#webhook-dialog\{[^}]*overflow-y:auto/);
+  assert.match(css,/#webhook-dialog textarea\{[^}]*width:100%/);
 });
 
 test('common notification controls save once outside provider detail',async()=>{

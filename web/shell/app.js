@@ -977,6 +977,38 @@ $('rename-form').onsubmit=async event=>{
   finally{renameBusy=false;$('rename-save').disabled=false;}
 };
 let notificationChannelBusy=false,selectedNotificationChannel='',notificationListRequest=0,notificationCommonLoaded=false;
+const defaultWebhookBodyTemplate=JSON.stringify({event:'{{event}}',title:'{{title}}',body:'{{body}}',session_name:'{{session_name}}',url:'{{url}}'},null,2);
+function renderWebhookChannel(config){
+  $('webhook-enabled').checked=!!config.webhookEnabled;
+  $('webhook-url').value='';$('webhook-headers').value='';
+  $('webhook-clear-url').checked=false;$('webhook-clear-headers').checked=false;
+  $('webhook-body-template').value=config.webhookBodyTemplate||defaultWebhookBodyTemplate;
+  $('webhook-url-saved').textContent=config.hasWebhookUrl?t('已保存地址：')+(config.webhookUrlDisplay||t('已配置')):t('尚未保存地址');
+  $('webhook-headers-saved').textContent=t(config.hasWebhookHeaders?'已保存请求头；留空保留':'尚未保存请求头');
+}
+function webhookHeaders(){
+  const raw=$('webhook-headers').value.trim();if(!raw)return {};
+  let value;try{value=JSON.parse(raw);}catch{throw Error(t('请求头必须是有效的 JSON 对象。'));}
+  if(!value||Array.isArray(value)||typeof value!=='object'||Object.entries(value).some(([key,item])=>!key||typeof item!=='string'))throw Error(t('请求头必须是字符串键值组成的 JSON 对象。'));
+  return value;
+}
+async function webhookAction(test){
+  if(notificationChannelBusy)return;
+  if(!test){try{webhookHeaders();}catch(error){$('webhook-error').textContent=error.message;return;}}
+  notificationChannelBusy=true;for(const id of ['webhook-save','webhook-test'])$(id).disabled=true;$('webhook-error').textContent='';
+  try{
+    const url='/api/notifications/channels/webhook';
+    if(test){await api(url+'/test',{});toast('Webhook 已接受测试请求，请检查接收服务');}
+    else{
+      const body={webhookEnabled:$('webhook-enabled').checked,webhookUrl:$('webhook-url').value.trim(),webhookHeaders:webhookHeaders(),webhookBodyTemplate:$('webhook-body-template').value,clearWebhookUrl:$('webhook-clear-url').checked,clearWebhookHeaders:$('webhook-clear-headers').checked};
+      renderWebhookChannel(await api(url,body));toast('Webhook 配置已保存');if(currentId)await loadNotificationState(currentId,currentHost);
+    }
+  }catch(error){$('webhook-error').textContent=t(error.message);}
+  finally{notificationChannelBusy=false;for(const id of ['webhook-save','webhook-test'])$(id).disabled=false;}
+}
+$('webhook-form').onsubmit=event=>{event.preventDefault();return webhookAction(false);};
+$('webhook-test').onclick=()=>webhookAction(true);
+$('webhook-back').onclick=()=>{$('webhook-dialog').close();$('pushplus-settings').onclick();};
 const notificationChannelDetails={
   bark:{name:'Bark',enabled:'barkEnabled',server:'barkServer',secret:'barkKey',hasSecret:'hasBarkKey',clear:'clearBarkKey',secretLabel:'Device Key',help:'在 iPhone 的 Bark 中获取 Device Key，并填写服务地址。'},
   ntfy:{name:'ntfy',enabled:'enabled',server:'server',secret:'token',hasSecret:'hasToken',clear:'clearToken',secretLabel:'Token',help:'在 Android 的 ntfy 中订阅相同服务和主题。公共主题可以留空 Token。'},
@@ -1022,12 +1054,14 @@ async function loadNotificationCommon(request){
   }
 }
 async function loadNotificationChannelStatuses(request){
-  for(const name of Object.keys(notificationChannelDetails))$('notification-status-'+name).textContent=t('读取中');
-  const responses=await Promise.allSettled(Object.keys(notificationChannelDetails).map(name=>api('/api/notifications/channels/'+name)));
+  const names=[...Object.keys(notificationChannelDetails),'webhook'];
+  for(const name of names)$('notification-status-'+name).textContent=t('读取中');
+  const responses=await Promise.allSettled(names.map(name=>api('/api/notifications/channels/'+name)));
   if(request!==notificationListRequest||!$('notification-channels-dialog').open)return;
-  for(const [index,name] of Object.keys(notificationChannelDetails).entries()){
+  for(const [index,name] of names.entries()){
     const result=responses[index],channel=notificationChannelDetails[name];
-    const status=result.status==='rejected'?'读取失败':(name==='ntfy'?!!result.value.topic:!!result.value[channel.hasSecret])?(result.value[channel.enabled]?'已开启':'已关闭'):'未配置';
+    const configured=result.status==='fulfilled'&&(name==='webhook'?!!result.value.hasWebhookUrl:name==='ntfy'?!!result.value.topic:!!result.value[channel.hasSecret]);
+    const status=result.status==='rejected'?'读取失败':configured?(result.value[name==='webhook'?'webhookEnabled':channel.enabled]?'已开启':'已关闭'):'未配置';
     $('notification-status-'+name).textContent=t(status);
   }
 }
@@ -1047,6 +1081,9 @@ for(const button of document.querySelectorAll('[data-notification-channel]'))but
   try{
     const config=await api('/api/notifications/channels/'+channel);
     if(request!==notificationListRequest||!$('notification-channels-dialog').open)return;
+    if(channel==='webhook'){
+      renderWebhookChannel(config);$('webhook-error').textContent='';$('notification-channels-dialog').close();$('webhook-dialog').showModal();return;
+    }
     selectedNotificationChannel=channel;
     renderNotificationChannel(config);
     $('pushplus-error').textContent='';
