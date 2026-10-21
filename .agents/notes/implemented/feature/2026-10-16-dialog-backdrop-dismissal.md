@@ -19,3 +19,5 @@ Adding a click handler to each dialog would make the known dialogs explicit, but
 ## Consequences
 
 Backdrop taps follow the existing close lifecycle, while internal blank space, drags, scrolling, and an inside-to-outside release leave the dialog open. The added listener and one shared script increase the renderer surface slightly. Automated event-flow tests cover the gesture and disabled cases; browser and native WebView delivery still need separate visual checks.
+
+On mobile, [native menu modal visibility](../bug-fix/2026-10-22-mobile-native-menu-modal-visibility.md) separately follows the resulting `dialog[open]` state to hide the host overlay until every dialog closes.
