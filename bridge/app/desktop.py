@@ -441,7 +441,8 @@ class Desktop:
             raise ValueError(str(error)) from None
         except Exception:
             raise ValueError(f'{name} 测试失败，请检查服务地址、认证和网络') from None
-        accepted = '飞书已接受测试通知' if channel == 'webhook' and resolved_webhook_provider(settings(self.data_dir)) == 'feishu' else f'{name} 已接受测试通知'
+        provider = resolved_webhook_provider(settings(self.data_dir)) if channel == 'webhook' else 'generic'
+        accepted = {'feishu': '飞书', 'dingtalk': '钉钉', 'discord': 'Discord', 'telegram': 'Telegram'}.get(provider, name) + ' 已接受测试通知'
         return {'message': f'{accepted}，请在手机确认是否收到'}
 
     def deployment(self, value):
@@ -460,6 +461,8 @@ class Desktop:
 
     def read_credentials(self, value):
         # Explicit private IPC only. Never include plaintext in polled snapshots.
+        if value == {'channel': 'webhook'}:
+            return {'webhookUrl': settings(self.data_dir).get('webhookUrl', '')}
         if value.get('id'):
             from bridge.features.accounts.secrets import read
             if not any(c['id'] == value['id'] for c in self.preferences()['connections']):

@@ -1048,6 +1048,23 @@ class HttpTests(unittest.TestCase):
                 self.assertNotEqual(status, 200)
                 self.assertIn('19021', json.dumps(error))
 
+    def test_webhook_url_reveal_requires_auth_csrf_and_explicit_empty_body(self):
+        from bridge.features.notifications.channels import Notifications, save_settings
+        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as directory:
+            self.server.notifications = Notifications(None, directory)
+            url = 'https://discord.com/api/webhooks/123/private-token'
+            save_settings(directory, {'webhookUrl': url})
+            path = '/api/notifications/channels/webhook/url'
+            self.assertEqual(self.request('POST', path, {})[0], 401)
+            auth = self.login()
+            self.assertEqual(self.request('GET', path, headers=auth)[0], 405)
+            self.assertEqual(self.request('POST', path, {}, {'Cookie': auth['Cookie']})[0], 403)
+            self.assertEqual(self.request('POST', path, {'anything': True}, auth)[0], 400)
+            status, headers, body = self.request('POST', path, {}, auth)
+            self.assertEqual((status, body), (200, {'webhookUrl': url}))
+            self.assertEqual(headers['Cache-Control'], 'no-store')
+            self.assertEqual(self.request('GET', '/api/notifications/channels/webhook', headers=auth)[2]['webhookUrl'], '')
+
     def test_rename_route_requires_csrf_and_routes_to_selected_host(self):
         from unittest.mock import Mock
         headers = self.login()

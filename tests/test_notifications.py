@@ -3,6 +3,7 @@ import json
 import base64
 import hashlib
 import hmac
+from urllib.parse import urlsplit, parse_qs
 import tempfile
 import threading
 import unittest
@@ -251,6 +252,118 @@ class NotificationTests(unittest.TestCase):
                                                  'webhookBodyTemplate': effective})
         self.assertEqual(visible_webhook(changed)['webhookBodyTemplate'], changed['webhookBodyTemplate'])
         self.assertIn('"event"', changed['webhookBodyTemplate'])
+
+    def test_provider_presets_resolve_and_round_trip_default(self):
+        urls = {'dingtalk': 'https://oapi.dingtalk.com/robot/send?access_token=private',
+                'discord': 'https://discord.com/api/webhooks/123/private',
+                'telegram': 'https://api.telegram.org/botprivate/sendMessage'}
+        for provider, url in urls.items():
+            with self.subTest(provider=provider):
+                config = save_settings(self.directory, {'webhookUrl': url, 'webhookProvider': 'auto'})
+                visible = visible_webhook(config)
+                self.assertEqual(visible['webhookResolvedProvider'], provider)
+                self.assertEqual(set(visible['webhookTemplates']), {'generic', 'feishu', 'dingtalk', 'discord', 'telegram'})
+                self.assertEqual(visible['webhookBodyTemplate'], visible['webhookTemplates'][provider])
+                saved = save_settings(self.directory, {'webhookBodyTemplate': visible['webhookBodyTemplate']})
+                self.assertIn('"event"', saved['webhookBodyTemplate'])
+        self.assertEqual(resolved_webhook_provider({'webhookUrl': 'https://oapi.dingtalk.com.evil/robot/send'}), 'generic')
+        self.assertEqual(resolved_webhook_provider({'webhookUrl': 'https://api.telegram.org/botprivate/getMe'}), 'generic')
+
+    def test_dingtalk_signing_and_response_codes(self):
+        config = save_settings(self.directory, {'webhookUrl': 'https://oapi.dingtalk.com/robot/send?access_token=private&timestamp=old&sign=old',
+            'webhookProvider': 'dingtalk', 'webhookSignEnabled': True, 'webhookSignSecret': 'dingtalk-secret'})
+        with patch('bridge.features.notifications.channels.time.time', return_value=1700000000.123), \
+                patch('bridge.features.notifications.channels.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b'{"errcode":0,"errmsg":"ok"}'
+            publish_webhook(config, 'title', 'body')
+            request = opener.return_value.open.call_args.args[0]
+        query = parse_qs(urlsplit(request.full_url).query)
+        expected = base64.b64encode(hmac.new(b'dingtalk-secret', b'1700000000123\ndingtalk-secret', hashlib.sha256).digest()).decode()
+        self.assertEqual(query, {'access_token': ['private'], 'timestamp': ['1700000000123'], 'sign': [expected]})
+        self.assertEqual(json.loads(request.data)['msgtype'], 'text')
+        with patch('bridge.features.notifications.channels.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b'{"errcode":310000,"errmsg":"private token"}'
+            with self.assertRaisesRegex(RuntimeError, '310000') as error:
+                publish_webhook(config, 'title', 'body')
+        self.assertNotIn('private token', str(error.exception))
+
+    def test_discord_wait_confirmation_and_telegram_validation(self):
+        discord = save_settings(self.directory, {'webhookUrl': 'https://discord.com/api/webhooks/123/private?thread_id=456&wait=false',
+            'webhookProvider': 'discord'})
+        with patch('bridge.features.notifications.channels.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b'{"id":"789"}'
+            publish_webhook(discord, 'title', 'body')
+            request = opener.return_value.open.call_args.args[0]
+        self.assertEqual(parse_qs(urlsplit(request.full_url).query), {'thread_id': ['456'], 'wait': ['true']})
+        self.assertEqual(json.loads(request.data)['allowed_mentions'], {'parse': []})
+        with patch('bridge.features.notifications.channels.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.status = 204
+            response.read.return_value = b''
+            with self.assertRaisesRegex(RuntimeError, '响应格式不正确'):
+                publish_webhook(discord, 'title', 'body')
+        telegram = save_settings(self.directory, {'webhookUrl': 'https://api.telegram.org/botprivate/sendMessage',
+            'webhookProvider': 'telegram'})
+        with self.assertRaisesRegex(RuntimeError, 'chat_id'):
+            publish_webhook(telegram, 'title', 'body')
+        telegram = save_settings(self.directory, {'webhookBodyTemplate': '{"chat_id":"123","text":"{{body}}"}'})
+        with patch('bridge.features.notifications.channels.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b'{"ok":true}'
+            publish_webhook(telegram, 'title', 'body')
+            self.assertEqual(json.loads(opener.return_value.open.call_args.args[0].data)['chat_id'], '123')
+            response.read.return_value = b'{"ok":false,"description":"private token"}'
+            with self.assertRaisesRegex(RuntimeError, 'Telegram 未接受') as error:
+                publish_webhook(telegram, 'title', 'body')
+            self.assertNotIn('private token', str(error.exception))
+
+    def test_provider_limits_and_custom_message_shapes(self):
+        discord = save_settings(self.directory, {'webhookUrl': 'https://discord.com/api/webhooks/123/private',
+            'webhookProvider': 'discord', 'webhookBodyTemplate': '{"embeds":[{"description":"{{body}}"}]}'})
+        with patch('bridge.features.notifications.channels.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b'{"id":"123"}'
+            publish_webhook(discord, 'title', 'embed body')
+            self.assertEqual(json.loads(opener.return_value.open.call_args.args[0].data)['embeds'][0]['description'], 'embed body')
+        discord = save_settings(self.directory, {'webhookBodyTemplate': '{"content":"{{body}}"}'})
+        with self.assertRaisesRegex(RuntimeError, '2000'):
+            publish_webhook(discord, 'title', 'x' * 2001)
+        telegram = save_settings(self.directory, {'webhookUrl': 'https://api.telegram.org/botprivate/sendMessage',
+            'webhookProvider': 'telegram', 'webhookBodyTemplate': '{"chat_id":123,"text":"{{body}}"}'})
+        with self.assertRaisesRegex(RuntimeError, '4096'):
+            publish_webhook(telegram, 'title', 'x' * 4097)
+        feishu = save_settings(self.directory, {'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/private',
+            'webhookProvider': 'feishu'})
+        with self.assertRaisesRegex(RuntimeError, '过长'):
+            publish_webhook(feishu, 'title', 'x' * (20 * 1024))
+
+    def test_provider_http_errors_do_not_echo_urls_or_response_bodies(self):
+        urls = {'feishu': 'https://open.feishu.cn/open-apis/bot/v2/hook/private-token',
+                'dingtalk': 'https://oapi.dingtalk.com/robot/send?access_token=private-token',
+                'discord': 'https://discord.com/api/webhooks/123/private-token',
+                'telegram': 'https://api.telegram.org/botprivate-token/sendMessage'}
+        for provider, url in urls.items():
+            with self.subTest(provider=provider):
+                config = save_settings(self.directory, {'webhookUrl': url, 'webhookProvider': provider,
+                    'webhookBodyTemplate': '{"chat_id":"123","text":"{{body}}"}' if provider == 'telegram' else
+                                           '{"content":"{{body}}"}' if provider == 'discord' else
+                                           '{"msgtype":"text","text":{"content":"{{body}}"}}' if provider == 'dingtalk' else
+                                           '{"msg_type":"text","content":{"text":"{{body}}"}}'})
+                with patch('bridge.features.notifications.channels.build_opener') as opener:
+                    response = opener.return_value.open.return_value.__enter__.return_value
+                    response.status = 429
+                    response.read.return_value = b'private-token'
+                    with self.assertRaisesRegex(RuntimeError, 'HTTP 429') as error:
+                        publish_webhook(config, 'title', 'body')
+                self.assertNotIn('private-token', str(error.exception))
 
     def test_feishu_secret_mask_clear_and_rotation(self):
         url = 'https://open.feishu.cn/open-apis/bot/v2/hook/one'

@@ -10,7 +10,7 @@ import time
 import uuid
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit, parse_qsl, urlencode
 from urllib.request import Request, build_opener, HTTPRedirectHandler, HTTPSHandler, ProxyHandler
 
 from bridge.features.sessions.model import pending_requests, ordered_turns
@@ -25,7 +25,13 @@ DEFAULTS = {'enabled': False, 'server': 'https://ntfy.sh', 'topic': '', 'token':
             'clickBase': '', 'includeTitle': False, 'addressEnabled': True, 'addressName': '', 'securityEnabled': True, 'mobileEnabled': False, 'mobileAppLinks': False}
 
 WEBHOOK_FIELDS = frozenset(('event', 'event_id', 'title', 'body', 'session_name', 'url', 'client', 'host', 'count'))
-FEISHU_TEMPLATE = json.dumps({'msg_type': 'text', 'content': {'text': '{{title}}\n{{body}}\n{{url}}'}}, ensure_ascii=False, indent=2)
+WEBHOOK_TEMPLATES = {
+    'generic': DEFAULTS['webhookBodyTemplate'],
+    'feishu': json.dumps({'msg_type': 'text', 'content': {'text': '{{title}}\n{{body}}\n{{url}}'}}, ensure_ascii=False, indent=2),
+    'dingtalk': json.dumps({'msgtype': 'text', 'text': {'content': '{{title}}\n{{body}}\n{{url}}'}}, ensure_ascii=False, indent=2),
+    'discord': json.dumps({'content': '{{title}}\n{{body}}\n{{url}}', 'allowed_mentions': {'parse': []}}, ensure_ascii=False, indent=2),
+    'telegram': json.dumps({'chat_id': '', 'text': '{{title}}\n{{body}}\n{{url}}'}, ensure_ascii=False, indent=2),
+}
 WEBHOOK_PLACEHOLDER = re.compile(r'{{\s*([^{}]+?)\s*}}')
 UNSAFE_WEBHOOK_HEADERS = frozenset(('host', 'content-length', 'content-type', 'transfer-encoding', 'connection', 'proxy-authorization', 'proxy-authenticate', 'cookie', 'set-cookie', 'upgrade', 'te', 'trailer', 'keep-alive', 'expect'))
 
@@ -34,17 +40,29 @@ class WebhookDeliveryError(RuntimeError):
     """A fixed, safe message that can be shown by a notification test endpoint."""
 
 
+WEBHOOK_PROVIDER_NAMES = {'feishu': '飞书', 'dingtalk': '钉钉', 'discord': 'Discord', 'telegram': 'Telegram'}
+
+
 def resolved_webhook_provider(config):
     provider = config.get('webhookProvider', 'auto')
     if provider != 'auto':
         return provider
     parsed = urlsplit(config.get('webhookUrl') or '')
-    return 'feishu' if parsed.hostname == 'open.feishu.cn' and parsed.path.startswith('/open-apis/bot/v2/hook/') else 'generic'
+    host, path = parsed.hostname, parsed.path
+    if host == 'open.feishu.cn' and path.startswith('/open-apis/bot/v2/hook/'):
+        return 'feishu'
+    if host == 'oapi.dingtalk.com' and path == '/robot/send':
+        return 'dingtalk'
+    if host in ('discord.com', 'discordapp.com') and path.startswith('/api/webhooks/'):
+        return 'discord'
+    if host == 'api.telegram.org' and re.fullmatch(r'/bot[^/]+/sendMessage', path):
+        return 'telegram'
+    return 'generic'
 
 
 def effective_webhook_template(config):
     template = config.get('webhookBodyTemplate', DEFAULTS['webhookBodyTemplate'])
-    return FEISHU_TEMPLATE if resolved_webhook_provider(config) == 'feishu' and template == DEFAULTS['webhookBodyTemplate'] else template
+    return WEBHOOK_TEMPLATES[resolved_webhook_provider(config)] if template == DEFAULTS['webhookBodyTemplate'] else template
 
 
 def webhook_url(value):
@@ -134,6 +152,7 @@ def visible_webhook(config):
             'webhookResolvedProvider': resolved_webhook_provider(config),
             'webhookSignEnabled': config.get('webhookSignEnabled', False),
             'webhookSignSecret': '', 'hasWebhookSignSecret': bool(config.get('webhookSignSecret')),
+            'webhookTemplates': WEBHOOK_TEMPLATES,
             'webhookBodyTemplate': effective_webhook_template(config)}
 
 
@@ -224,7 +243,7 @@ def save_settings(data_dir, value):
     else:
         result['webhookUrl'] = prior['webhookUrl']
     url_changed = result['webhookUrl'] != prior['webhookUrl']
-    if result['webhookProvider'] not in ('auto', 'generic', 'feishu'):
+    if result['webhookProvider'] not in ('auto', *WEBHOOK_TEMPLATES):
         raise FieldError('Webhook 类型格式不正确', 'webhook-provider')
     provider_changed = result['webhookProvider'] != prior['webhookProvider']
     secret = result['webhookSignSecret']
@@ -233,10 +252,10 @@ def save_settings(data_dir, value):
     if not value.get('webhookSignSecret'):
         result['webhookSignSecret'] = '' if value.get('clearWebhookSignSecret') or url_changed or provider_changed else prior['webhookSignSecret']
     if result['webhookSignEnabled']:
-        if resolved_webhook_provider(result) != 'feishu':
-            raise FieldError('签名仅支持飞书 Webhook', 'webhook-sign-enabled')
+        if resolved_webhook_provider(result) not in ('feishu', 'dingtalk'):
+            raise FieldError('签名仅支持飞书和钉钉 Webhook', 'webhook-sign-enabled')
         if not result['webhookSignSecret']:
-            raise FieldError('开启飞书签名前请填写密钥；更换地址或类型后需重新填写', 'webhook-sign-secret')
+            raise FieldError('开启签名前请填写密钥；更换地址或类型后需重新填写', 'webhook-sign-secret')
     if value.get('clearWebhookHeaders'):
         result['webhookHeaders'] = {}
     elif value.get('webhookHeaders'):
@@ -245,7 +264,7 @@ def save_settings(data_dir, value):
         result['webhookHeaders'] = {} if url_changed else prior['webhookHeaders']
     result['webhookHeaders'] = webhook_headers(result['webhookHeaders'])
     result['webhookBodyTemplate'] = webhook_template(result['webhookBodyTemplate'])
-    if result['webhookSignEnabled']:
+    if result['webhookSignEnabled'] and resolved_webhook_provider(result) == 'feishu':
         signed_template = json.loads(effective_webhook_template(result))
         if not isinstance(signed_template, dict) or any(key in signed_template for key in ('timestamp', 'sign')):
             raise FieldError('签名消息不能自行设置 timestamp 或 sign', 'webhook-body-template')
@@ -336,15 +355,38 @@ def publish_webhook(config, title, body, click='', *, event='test', event_id='',
             return WEBHOOK_PLACEHOLDER.sub(lambda match: values[match.group(1)], item)
         return item
     document = render(template)
+    if provider == 'telegram':
+        if (not isinstance(document, dict) or type(document.get('chat_id')) not in (str, int)
+                or not str(document['chat_id']).strip() or not isinstance(document.get('text'), str)):
+            raise WebhookDeliveryError('Telegram 请在 JSON 模板中填写 chat_id 和 text')
+        if len(document['text']) > 4096:
+            raise WebhookDeliveryError('Telegram 消息超过 4096 字')
+    if provider == 'discord':
+        if not isinstance(document, dict) or ('content' in document and not isinstance(document['content'], str)):
+            raise WebhookDeliveryError('Discord JSON 模板格式不正确')
+        if len(document.get('content', '')) > 2000:
+            raise WebhookDeliveryError('Discord 消息超过 2000 字')
     if config.get('webhookSignEnabled'):
-        if provider != 'feishu' or not config.get('webhookSignSecret'):
-            raise WebhookDeliveryError('飞书签名配置不完整，请检查类型和密钥')
-        if not isinstance(document, dict) or any(key in document for key in ('timestamp', 'sign')):
-            raise WebhookDeliveryError('签名消息不能自行设置 timestamp 或 sign')
-        timestamp = str(int(time.time()))
-        key = (timestamp + '\n' + config['webhookSignSecret']).encode('utf-8')
-        document['timestamp'] = timestamp
-        document['sign'] = base64.b64encode(hmac.new(key, b'', hashlib.sha256).digest()).decode('ascii')
+        if provider not in ('feishu', 'dingtalk') or not config.get('webhookSignSecret'):
+            raise WebhookDeliveryError('Webhook 签名配置不完整，请检查类型和密钥')
+        if provider == 'feishu':
+            if not isinstance(document, dict) or any(key in document for key in ('timestamp', 'sign')):
+                raise WebhookDeliveryError('签名消息不能自行设置 timestamp 或 sign')
+            timestamp = str(int(time.time()))
+            key = (timestamp + '\n' + config['webhookSignSecret']).encode('utf-8')
+            document['timestamp'] = timestamp
+            document['sign'] = base64.b64encode(hmac.new(key, b'', hashlib.sha256).digest()).decode('ascii')
+        else:
+            timestamp = str(int(time.time() * 1000))
+            message = (timestamp + '\n' + config['webhookSignSecret']).encode('utf-8')
+            sign = base64.b64encode(hmac.new(config['webhookSignSecret'].encode('utf-8'), message, hashlib.sha256).digest()).decode('ascii')
+            parsed = urlsplit(url)
+            query = [(key, val) for key, val in parse_qsl(parsed.query, keep_blank_values=True) if key not in ('timestamp', 'sign')]
+            url = urlunsplit(parsed._replace(query=urlencode(query + [('timestamp', timestamp), ('sign', sign)])))
+    if provider == 'discord':
+        parsed = urlsplit(url)
+        query = [(key, val) for key, val in parse_qsl(parsed.query, keep_blank_values=True) if key != 'wait']
+        url = urlunsplit(parsed._replace(query=urlencode(query + [('wait', 'true')])))
     payload = json.dumps(document, ensure_ascii=False).encode('utf-8')
     if len(payload) > (20 * 1024 if provider == 'feishu' else 65536):
         raise WebhookDeliveryError('飞书消息过长' if provider == 'feishu' else 'Webhook 消息过长')
@@ -355,26 +397,41 @@ def publish_webhook(config, title, body, click='', *, event='test', event_id='',
         handlers.insert(0, ProxyHandler({}))
     try:
         with build_opener(*handlers).open(request, timeout=8) as response:
-            if provider == 'feishu':
-                if response.status != 200:
-                    raise WebhookDeliveryError('飞书未接受通知，请检查地址和网络')
+            if provider != 'generic':
+                if (response.status != 200 if provider in ('feishu', 'dingtalk', 'telegram') else not 200 <= response.status < 300):
+                    raise WebhookDeliveryError(f'{WEBHOOK_PROVIDER_NAMES[provider]}未接受通知（HTTP {response.status}）')
                 try:
                     raw = response.read(65537)
                     if len(raw) > 65536:
-                        raise WebhookDeliveryError('飞书响应格式不正确')
+                        raise WebhookDeliveryError(f'{WEBHOOK_PROVIDER_NAMES[provider]}响应格式不正确')
                     result = json.loads(raw)
                 except (ValueError, UnicodeDecodeError, RecursionError):
-                    raise WebhookDeliveryError('飞书响应格式不正确') from None
+                    raise WebhookDeliveryError(f'{WEBHOOK_PROVIDER_NAMES[provider]}响应格式不正确') from None
                 if not isinstance(result, dict):
-                    raise WebhookDeliveryError('飞书响应格式不正确')
-                code = result.get('code', result.get('StatusCode'))
-                if type(code) is not int:
-                    raise WebhookDeliveryError('飞书响应格式不正确')
-                code = int(code)
-                if code:
-                    reasons = {9499: '消息格式错误', 19002: '消息格式错误', 19021: '签名或时间无效', 19022: 'IP 不在允许范围',
-                               19024: '未满足关键词要求', 11232: '发送过于频繁'}
-                    raise WebhookDeliveryError(f'飞书未接受通知（{code}：{reasons.get(code, "请检查机器人配置")}）')
+                    raise WebhookDeliveryError(f'{WEBHOOK_PROVIDER_NAMES[provider]}响应格式不正确')
+                if provider == 'feishu':
+                    code = result.get('code', result.get('StatusCode'))
+                    if type(code) is not int:
+                        raise WebhookDeliveryError('飞书响应格式不正确')
+                    if code:
+                        reasons = {9499: '消息格式错误', 19002: '消息格式错误', 19021: '签名或时间无效', 19022: 'IP 不在允许范围',
+                                   19024: '未满足关键词要求', 11232: '发送过于频繁'}
+                        raise WebhookDeliveryError(f'飞书未接受通知（{code}：{reasons.get(code, "请检查机器人配置")}）')
+                elif provider == 'dingtalk':
+                    code = result.get('errcode')
+                    if type(code) is not int:
+                        raise WebhookDeliveryError('钉钉响应格式不正确')
+                    if code:
+                        reasons = {310000: '请检查关键词、签名、时间或 IP 限制', 40035: '消息格式错误',
+                                   400101: '访问令牌无效', 400102: '机器人已停用', 400105: '消息类型不支持',
+                                   400106: '机器人不存在', 410100: '发送过于频繁', -1: '服务暂时不可用'}
+                        raise WebhookDeliveryError(f'钉钉未接受通知（{code}：{reasons.get(code, "请检查机器人配置")}）')
+                elif provider == 'telegram':
+                    if result.get('ok') is not True:
+                        raise WebhookDeliveryError('Telegram 未接受通知，请检查 chat_id 和机器人权限')
+                elif provider == 'discord':
+                    if not isinstance(result.get('id'), str) or not result['id']:
+                        raise WebhookDeliveryError('Discord 响应缺少消息 ID')
             else:
                 if not 200 <= response.status < 300:
                     raise ValueError('Rejected')
@@ -384,7 +441,9 @@ def publish_webhook(config, title, body, click='', *, event='test', event_id='',
     except Exception as error:
         if isinstance(error, HTTPError):
             error.close()
-        raise WebhookDeliveryError('飞书未接受通知，请检查地址和网络' if provider == 'feishu'
+            if provider != 'generic':
+                raise WebhookDeliveryError(f'{WEBHOOK_PROVIDER_NAMES[provider]}未接受通知（HTTP {error.code}）') from None
+        raise WebhookDeliveryError(f'{WEBHOOK_PROVIDER_NAMES[provider]}未接受通知，请检查地址和网络' if provider != 'generic'
                                    else 'Webhook 未接受通知，请检查地址、认证和网络') from None
 
 

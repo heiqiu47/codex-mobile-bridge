@@ -737,6 +737,16 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         config = notification_settings(manager.data_dir)
                     return self.output(200, {key: config[key] for key in fields})
+            if path == '/api/notifications/channels/webhook/url':
+                if not write:
+                    return self.output(405, {'error': '需要 POST 请求'})
+                manager = self.server.notifications
+                if manager is None:
+                    raise ValueError('当前网关未启用通知服务')
+                if self.read_json() != {}:
+                    raise ValueError('Webhook 地址读取请求格式不正确')
+                with manager.lock:
+                    return self.output(200, {'webhookUrl': notification_settings(manager.data_dir).get('webhookUrl', '')})
             channel_parts = path.removeprefix('/api/notifications/channels/').split('/') if path.startswith('/api/notifications/channels/') else []
             channel = channel_parts[0] if channel_parts and channel_parts[0] in ('ntfy', 'bark', 'pushplus', 'webhook') and channel_parts[1:] in ([], ['test']) else None
             if channel or path in ('/api/notifications/pushplus', '/api/notifications/pushplus/test'):
@@ -768,7 +778,9 @@ class Handler(BaseHTTPRequestHandler):
                         except Exception:
                             message = 'PushPlus 测试失败，请检查 Token 和网络' if not channel else f'{name} 测试失败，请检查服务地址、认证和网络'
                             raise ValueError(message) from None
-                        return self.output(200, {'ok': True, 'message': '飞书已接受测试通知' if selected == 'webhook' and resolved_webhook_provider(config) == 'feishu' else f'{name} 已接受测试通知'})
+                        provider = resolved_webhook_provider(config) if selected == 'webhook' else 'generic'
+                        accepted = {'feishu': '飞书', 'dingtalk': '钉钉', 'discord': 'Discord', 'telegram': 'Telegram'}.get(provider, name)
+                        return self.output(200, {'ok': True, 'message': f'{accepted} 已接受测试通知'})
                     if write:
                         body = self.read_json()
                         allowed = set(fields)

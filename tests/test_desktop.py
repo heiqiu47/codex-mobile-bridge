@@ -286,6 +286,14 @@ class DesktopTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, '19021'):
                 self.desktop.test_notification({'channel': 'webhook'})
 
+    def test_webhook_url_reveal_requires_explicit_private_credentials_request(self):
+        from bridge.features.notifications.channels import save_settings
+        url = 'https://discord.com/api/webhooks/123/private-token'
+        save_settings(self.directory, {'webhookUrl': url})
+        self.assertEqual(self.desktop.read_credentials({'channel': 'webhook'}), {'webhookUrl': url})
+        self.assertNotIn('webhookUrl', self.desktop.read_credentials({}))
+        self.assertEqual(self.desktop.snapshot()['notifications']['webhookUrl'], '')
+
     def test_running_network_settings_cannot_disconnect_phone(self):
         value = self.value()
         self.desktop.save(value)
