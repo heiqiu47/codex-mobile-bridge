@@ -14,14 +14,18 @@
 | macOS arm64 | 独立 Test 已替换并启动 8788，实际窗口布局已核对；正式版、配置及手机绑定保护检查通过 |
 | Windows x64 | 构建、临时文件与验收均在 F 盘；独立 Test 已覆盖安装，705 个安装文件与候选一致，真实 GUI 和 8788 启动检查通过；正式版、配置及绑定保留 |
 | Ubuntu x64 | 用户完成覆盖安装后，715 个文件与冻结包一致，真实 GUI、8788 启动、静态资源缓存与正式版/配置/绑定保护检查通过 |
-| iOS | 用户确认 `70ed6ef` 的弹窗“更多”入口与紧凑布局通过。`d2020b1` 覆盖安装保留了 5 个电脑连接及偏好，但用户反馈蓝框消失后会话无法唤起输入法且点击无响应；该修订不通过，已撤回；恢复包已覆盖安装并启动，5 个电脑连接及偏好再次核对不变，等待用户确认输入和点击恢复，不能以此前样式检查代替输入验收 |
+| iOS | 用户确认 `70ed6ef` 的弹窗“更多”入口与紧凑布局通过。`d2020b1` 覆盖安装保留了 5 个电脑连接及偏好，但用户反馈蓝框消失后会话无法唤起输入法且点击无响应；该修订不通过，已撤回。恢复包覆盖安装后，5 个电脑连接及偏好再次核对不变；用户确认会话按钮与普通输入框已恢复，补充回答框的键盘后定位以及列表返回高亮单独修订 |
 | Android | 新 APK 已构建，原包名、版本与签名保持一致；包内共用脚本与源码字节一致。本轮未连接 Android 真机 |
 
-已撤回的焦点修订曾在实际 Chromium 中通过按钮轮廓与输入方式切换检查，但该检查遗漏真实 WKWebView 的会话触摸、键盘弹出与点击链路，不能支撑完整可用性。当前 Chromium 触摸对照仍能聚焦并触发点击，尚未复现用户的 iPhone 故障；全页触摸监听导致根节点样式变更属于待验证原因，而非已确认根因。恢复后需重新验证会话输入和按钮交互，蓝框问题仍待后续解决。
+已撤回的焦点修订曾在实际 Chromium 中通过按钮轮廓与输入方式切换检查，但该检查遗漏真实 WKWebView 的会话触摸、键盘弹出与点击链路，不能支撑完整可用性。当前 Chromium 触摸对照仍能聚焦并触发点击，尚未复现用户的 iPhone 故障；全页触摸监听导致根节点样式变更属于待验证原因，而非已确认根因。用户已确认回退后普通输入与按钮恢复。
+
+随后按三个独立分支修订：`8665e05` 只在紧凑布局返回列表后清除会话选中背景，并限制无悬停设备的列表悬停背景；宽屏当前会话标识保留。`6964f48` 在原生手机键盘改变视口时，只校正当前回答卡片所属滚动区；不转移焦点、不修改草稿、不截获触摸或输入事件。`22a9744` 给账号管理、第三方通知与应用管理的标题设置初始焦点，保留按钮 Tab 导航，不修改通用弹窗或输入处理。
+
+新修订通过移动脚本 36/36、账号/导航/弹窗/资源与布局 Node 132/132、Web 资源 Python 8/8。真实 Chromium 的三个客户端紧凑触摸进入/返回与宽屏选中态共 6 个场景通过；回答框在 844→500px 视口变化后无需输入即进入可见区，保持原焦点，重复事件、失焦、普通输入框与部分可见长回答框不被滚动。弹窗合成页核验初始焦点从按钮改为标题，Tab 仍到按钮，触摸输入可键入。以上是浏览器与源码证据，不能替代 iPhone 真机的键盘动画和按钮颜色验收；新 Test 待覆盖安装及用户确认。
 
 本地记录位于 `.tmp/issue60-feedback-20261022/`，包括归档和安装包哈希、配置保护摘要、截图及清理清单，不提交凭据或完整配置。Mac 和 Windows 的被替代 Test 包与重复构建产物已按精确路径清理；当前安装包、已安装 Test、签名资源及必要验收记录保留。Ubuntu 安装验收后已清理旧 DEB/AppImage 与重复中间产物，回收约 1.16 GiB，保留当前安装包、解包核验副本和共享缓存。故障手机包与恢复包暂保留作回归对照，待恢复确认后再清理。
 
-**English:** packaged gateways on macOS, Windows and Ubuntu passed the same 115-check loopback suite, followed by Test installation, GUI, startup and preservation checks. The user accepted iOS modal-menu and layout behavior, but reported that the subsequent touch-focus change prevented conversation input and interaction. That change failed acceptance and was reverted; the recovery build restores the complete mobile source from `70ed6ef` and has been installed and launched with all five saved computers and preferences preserved. Chromium outline checks did not cover the real WKWebView input path, and the cause remains unconfirmed. Device recovery must be verified separately. No GitHub push or release occurred.
+**English:** packaged gateways on macOS, Windows and Ubuntu passed the same 115-check loopback suite, followed by Test installation, GUI, startup and preservation checks. The user accepted iOS modal-menu and layout behavior, but reported that the subsequent touch-focus change prevented conversation input and interaction. That change failed acceptance and was reverted; all five saved computers and preferences remained intact, and the user confirmed normal input and buttons recovered. Three separate follow-ups address compact-list selection, focused answer-card visibility after keyboard resizing, and initial focus for selected management dialogs. Source and Chromium checks pass; native iPhone acceptance is pending. No GitHub push or release occurred.
 
 ---
 
