@@ -388,6 +388,11 @@ class NotificationTests(unittest.TestCase):
         cleared = save_settings(self.directory, {'webhookSignEnabled': False, 'clearWebhookSignSecret': True})
         self.assertFalse(visible_webhook(cleared)['hasWebhookSignSecret'])
 
+    def test_shared_webhook_sign_secret_validation_label(self):
+        for provider in ('feishu', 'dingtalk'):
+            with self.subTest(provider=provider), self.assertRaisesRegex(ValueError, 'Webhook 签名密钥格式不正确'):
+                save_settings(self.directory, {'webhookProvider': provider, 'webhookSignSecret': 'invalid secret'})
+
     def test_feishu_signing_and_safe_response_errors(self):
         config = save_settings(self.directory, {'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/x',
             'webhookSignEnabled': True, 'webhookSignSecret': 'private-secret'})

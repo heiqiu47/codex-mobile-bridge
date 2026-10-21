@@ -248,7 +248,7 @@ def save_settings(data_dir, value):
     provider_changed = result['webhookProvider'] != prior['webhookProvider']
     secret = result['webhookSignSecret']
     if not isinstance(secret, str) or len(secret) > 2000 or any(ord(c) < 33 or ord(c) == 127 for c in secret):
-        raise FieldError('飞书签名密钥格式不正确', 'webhook-sign-secret')
+        raise FieldError('Webhook 签名密钥格式不正确', 'webhook-sign-secret')
     if not value.get('webhookSignSecret'):
         result['webhookSignSecret'] = '' if value.get('clearWebhookSignSecret') or url_changed or provider_changed else prior['webhookSignSecret']
     if result['webhookSignEnabled']:
