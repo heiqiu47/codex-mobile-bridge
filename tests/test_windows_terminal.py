@@ -269,9 +269,10 @@ class ConPtyTests(unittest.TestCase):
                     for _ in range(2): sessions.append(WindowsTerminalSession(root, 80, 24))
                 first, second = sessions
                 first.stop(); self.assertTrue(first.done.wait(5))
-                second.write(str(uuid.uuid4()), 'echo independent> survived.txt\r')
+                second.write(str(uuid.uuid4()), 'echo independent> survived.txt && echo complete> survived.done\r')
                 deadline = time.monotonic()+10
-                while not (root/'survived.txt').exists() and time.monotonic()<deadline: time.sleep(.05)
+                while not (root/'survived.done').exists() and time.monotonic()<deadline: time.sleep(.05)
+                self.assertTrue((root/'survived.done').exists(), repr(second.read()))
                 self.assertEqual((root/'survived.txt').read_text().strip(), 'independent')
                 self.assertFalse(second.done.is_set())
             finally:
