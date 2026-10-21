@@ -15,6 +15,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler, HTTPSHand
 
 from bridge.features.sessions.model import pending_requests, ordered_turns
 from bridge.features.auth.tls import client_context
+from bridge.features.auth.auth import session_file_lock
 
 DEFAULTS = {'enabled': False, 'server': 'https://ntfy.sh', 'topic': '', 'token': '',
             'barkEnabled': False, 'barkServer': 'https://api.day.app', 'barkKey': '',
@@ -252,7 +253,10 @@ def merge_webhook_config(prior, value):
 
 def save_settings(data_dir, value):
     with SETTINGS_LOCK:
-        return _save_settings_unlocked(data_dir, value)
+        path = Path(data_dir)/'notifications.json'
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with session_file_lock(path):
+            return _save_settings_unlocked(data_dir, value)
 
 
 def _save_settings_unlocked(data_dir, value):
@@ -322,43 +326,50 @@ def save_webhook_endpoint(data_dir, value):
     if set(value) - allowed:
         raise ValueError('Webhook 配置格式不正确')
     with SETTINGS_LOCK:
-        config = settings(data_dir)
-        rows = list(config['webhookEndpoints'])
-        webhook_id = value.get('webhookId')
-        if value['action'] == 'delete':
-            if set(value) != {'action', 'webhookId'}:
-                raise ValueError('Webhook 删除请求格式不正确')
-            webhook_config(config, webhook_id)
-            if webhook_id == 'legacy':
-                config.update({key: DEFAULTS[key] for key in WEBHOOK_CONFIG_FIELDS})
-                config['webhookName'] = '默认 Webhook'
-            else:
-                config['webhookEndpoints'] = [row for row in rows if row['webhookId'] != webhook_id]
+        path = Path(data_dir)/'notifications.json'
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with session_file_lock(path):
+            return _save_webhook_endpoint_unlocked(data_dir, value)
+
+
+def _save_webhook_endpoint_unlocked(data_dir, value):
+    config = settings(data_dir)
+    rows = list(config['webhookEndpoints'])
+    webhook_id = value.get('webhookId')
+    if value['action'] == 'delete':
+        if set(value) != {'action', 'webhookId'}:
+            raise ValueError('Webhook 删除请求格式不正确')
+        webhook_config(config, webhook_id)
+        if webhook_id == 'legacy':
+            config.update({key: DEFAULTS[key] for key in WEBHOOK_CONFIG_FIELDS})
+            config['webhookName'] = '默认 Webhook'
         else:
-            creating = webhook_id is None
-            if creating:
-                if len(rows) >= 20:
-                    raise ValueError('最多配置 20 个额外 Webhook')
-                webhook_id = uuid.uuid4().hex
-                prior = {key: DEFAULTS[key] for key in WEBHOOK_CONFIG_FIELDS}
-            else:
-                prior = webhook_config(config, webhook_id)
-            name = value.get('webhookName', prior.get('webhookName', '默认 Webhook' if webhook_id == 'legacy' else ''))
-            if not isinstance(name, str) or not name.strip() or len(name) > 80 or any(not c.isprintable() for c in name):
-                raise FieldError('Webhook 名称应为不超过 80 字的单行文本', 'webhook-name')
-            updated = {**merge_webhook_config(prior, value), 'webhookId': webhook_id, 'webhookName': name.strip()}
-            if webhook_id == 'legacy':
-                config.update({key: updated[key] for key in WEBHOOK_CONFIG_FIELDS})
-                config['webhookName'] = updated['webhookName']
-            elif creating:
-                config['webhookEndpoints'] = rows + [updated]
-            else:
-                config['webhookEndpoints'] = [updated if row['webhookId'] == webhook_id else row for row in rows]
-        write_json(Path(data_dir)/'notifications.json', config)
-        selected = webhook_id if value['action'] == 'upsert' else (
-            'legacy' if config.get('webhookUrl') or config.get('webhookEnabled') else
-            config['webhookEndpoints'][0]['webhookId'] if config['webhookEndpoints'] else '')
-        return config, selected
+            config['webhookEndpoints'] = [row for row in rows if row['webhookId'] != webhook_id]
+    else:
+        creating = webhook_id is None
+        if creating:
+            if len(rows) >= 20:
+                raise ValueError('最多配置 20 个额外 Webhook')
+            webhook_id = uuid.uuid4().hex
+            prior = {key: DEFAULTS[key] for key in WEBHOOK_CONFIG_FIELDS}
+        else:
+            prior = webhook_config(config, webhook_id)
+        name = value.get('webhookName', prior.get('webhookName', '默认 Webhook' if webhook_id == 'legacy' else ''))
+        if not isinstance(name, str) or not name.strip() or len(name) > 80 or any(not c.isprintable() for c in name):
+            raise FieldError('Webhook 名称应为不超过 80 字的单行文本', 'webhook-name')
+        updated = {**merge_webhook_config(prior, value), 'webhookId': webhook_id, 'webhookName': name.strip()}
+        if webhook_id == 'legacy':
+            config.update({key: updated[key] for key in WEBHOOK_CONFIG_FIELDS})
+            config['webhookName'] = updated['webhookName']
+        elif creating:
+            config['webhookEndpoints'] = rows + [updated]
+        else:
+            config['webhookEndpoints'] = [updated if row['webhookId'] == webhook_id else row for row in rows]
+    write_json(Path(data_dir)/'notifications.json', config)
+    selected = webhook_id if value['action'] == 'upsert' else (
+        'legacy' if config.get('webhookUrl') or config.get('webhookEnabled') else
+        config['webhookEndpoints'][0]['webhookId'] if config['webhookEndpoints'] else '')
+    return config, selected
 
 
 class NoRedirect(HTTPRedirectHandler):

@@ -1,0 +1,33 @@
+# Agent Note: 多个 Webhook 接收目标与旧配置兼容
+
+Status: implemented
+
+## Problem
+
+Issue #60 的首版 Webhook 只保存一个接收目标。用户需要同时发送给不同服务，以及同一服务的多个机器人，并分别管理各目标。直接把旧配置改成数组会改变已投递事件的通道身份，可能重放历史通知或混淆待重试事件。
+
+## Decision
+
+保留原有顶层 `webhookEnabled`、`webhookUrl` 等设置及 `webhook` 通道身份，作为 ID 为 `legacy` 的默认目标。额外目标保存于私有 `notifications.json` 的 `webhookEndpoints` 数组，每项有服务端生成的稳定 `webhookId`、可编辑的 `webhookName` 和独立的原 Webhook 配置字段。未配置的默认目标不占列表空行；删除默认目标会清空其字段，不会把其他目标提升为默认目标。最多保存 20 个额外目标。
+
+普通配置读取、桌面快照和保存响应中的 `webhookEndpoints` 列表都使用脱敏视图：完整 URL、请求头、签名密钥不回传；服务域名、是否已配置、所选服务及有效模板可见。显式查看地址才读取所选目标的完整 URL。Web 端通过带认证和 CSRF 校验的 `POST /api/notifications/channels/webhook/url` 传入 `webhookId`，桌面端通过私有 `read-credentials` 操作读取；省略 ID 时只指向旧默认目标。测试同样按 ID 指向已保存目标，不使用未保存表单值。
+
+新增或更新、删除目标使用 `POST /api/notifications/channels/webhook/endpoints` 或桌面私有 `webhook-endpoint` 操作，提交 `action: upsert|delete` 和目标 ID；新增时省略 ID。响应返回脱敏配置及 `selectedWebhookId`，供同名目标仍能保持选中。旧全量设置保存继续只更新默认目标，不替换额外目标。两条保存路径对同一 `notifications.json` 使用进程内锁及同一跨进程文件锁，覆盖读取、验证、原子替换的完整读改写过程，避免桌面 worker 与网关进程并发保存时丢失其他目标。
+
+各通知来源共用目标枚举：聊天、网关入口、安全和账号提醒都向启用的目标投递。额外目标使用 `webhook:<webhookId>` 通道身份，各有目的地摘要、去重账本和重试状态；旧目标继续使用原 `webhook` 身份与摘要，避免迁移后重放。发送和重试前重新核验当前配置；停用、删除或更换某个目标，只使该目标的旧重试失效。接收端已经处理但网关超时仍可能造成重复，应按稳定 `event_id` 去重。
+
+## Related decisions
+
+[自定义 Webhook 通知通道](2026-10-21-custom-webhook-notifications.md) 记录原单目标设计，本决定扩展其目标数量与身份规则。[Webhook 服务预设、签名与成功判定](../bug-fix/2026-10-21-feishu-webhook-delivery.md) 的协议预设、签名和响应判断分别应用于每个目标，不改变本决定的隔离边界。
+
+## Alternatives considered
+
+整体迁移为数组并删除旧字段会简化存储结构，但改变旧通道身份并增加历史通知重放风险。让多个界面表单共享单一目标会覆盖前一个机器人。为额外目标建立第二套队列会重复已有通知策略和账本；沿用原通道机制并为新目标分配稳定子通道。
+
+## Verification
+
+Python 定向测试覆盖旧设置保留、两个同服务目标、跨服务扇出、各目标状态与重试隔离、删除、脱敏、认证与 CSRF。新增双进程回归分别并发保存两个命名目标，以及同时保存默认目标和命名目标；修复前复现丢写，使用跨进程文件锁后通过。未在此决定中确认真实第三方平台最终送达或安装包验收。
+
+## Consequences
+
+已保存的旧 Webhook 无需手工迁移，也不会因新增目标补发已完成历史。每个新增目标有独立配置与投递状态，删除后不自动改变其他目标。文件锁只协调使用同一数据目录并遵守该锁的网关与桌面进程；外部直接编辑配置文件不在此同步契约内。

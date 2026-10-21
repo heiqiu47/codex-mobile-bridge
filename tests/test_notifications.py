@@ -5,6 +5,7 @@ import hashlib
 import hmac
 from urllib.parse import urlsplit, parse_qs
 import tempfile
+import multiprocessing
 import threading
 import unittest
 import uuid
@@ -15,6 +16,27 @@ from bridge.features.notifications.channels import Notifications, publish, publi
 from bridge.app.service import LiveSession
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _save_notification_in_process(data_dir, operation, started=None, other_done=None):
+    if started is not None:
+        import bridge.features.notifications.channels as notification_channels
+        original_settings = notification_channels.settings
+
+        def read_then_pause(path):
+            current = original_settings(path)
+            started.set()
+            other_done.wait(2)
+            return current
+
+        notification_channels.settings = read_then_pause
+    if operation == 'legacy':
+        save_settings(data_dir, {'webhookEnabled': True, 'webhookUrl': 'https://receiver.example/legacy'})
+    else:
+        save_webhook_endpoint(data_dir, {'action': 'upsert', 'webhookName': operation,
+            'webhookEnabled': True, 'webhookUrl': 'https://receiver.example/' + operation})
+    if other_done is not None and started is None:
+        other_done.set()
 
 
 class NotificationTests(unittest.TestCase):
@@ -275,6 +297,37 @@ class NotificationTests(unittest.TestCase):
         for thread in threads:
             thread.join()
         self.assertEqual({row['webhookName'] for row in settings(self.directory)['webhookEndpoints']}, set(names))
+
+    def test_separate_processes_preserve_named_webhook_updates(self):
+        self._assert_separate_process_updates('甲', '乙')
+
+    def test_separate_processes_preserve_legacy_and_named_webhooks(self):
+        self._assert_separate_process_updates('legacy', '乙')
+
+    def _assert_separate_process_updates(self, first_operation, second_operation):
+        context = multiprocessing.get_context('fork' if 'fork' in multiprocessing.get_all_start_methods() else 'spawn')
+        started, second_done = context.Event(), context.Event()
+        first = context.Process(target=_save_notification_in_process,
+            args=(self.directory, first_operation, started, second_done))
+        second = context.Process(target=_save_notification_in_process,
+            args=(self.directory, second_operation, None, second_done))
+        first.start()
+        try:
+            self.assertTrue(started.wait(5))
+            second.start()
+            first.join(10)
+            second.join(10)
+            self.assertEqual((first.exitcode, second.exitcode), (0, 0))
+            current = settings(self.directory)
+            self.assertEqual({row['webhookName'] for row in current['webhookEndpoints']},
+                             {'乙'} if first_operation == 'legacy' else {'甲', '乙'})
+            if first_operation == 'legacy':
+                self.assertEqual(current['webhookUrl'], 'https://receiver.example/legacy')
+        finally:
+            for process in (first, second):
+                if process.is_alive():
+                    process.terminate()
+                    process.join()
 
     def test_account_reminder_sends_webhook_without_disrupting_existing_channel(self):
         from bridge.features.accounts.monitor import AccountMonitor
