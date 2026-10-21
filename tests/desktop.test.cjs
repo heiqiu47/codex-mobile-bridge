@@ -388,7 +388,7 @@ test('desktop Webhook edits save per endpoint and failed saves retain secrets',a
   ui.nodes.get('webhook-enabled').checked=true;await ui.nodes.get('webhook-save').onclick();
   assert.equal(payload.webhookId,'legacy');assert.equal(payload.webhookUrl,'https://example.test/hook?token=secret');assert.deepEqual(JSON.parse(JSON.stringify(payload.webhookHeaders)),{'X-Key':'secret'});
   assert.equal(ui.nodes.get('webhook-url').value,'');assert.equal(ui.nodes.get('webhook-headers').value,'');
-  assert.equal(ui.run('collect().notifications.webhookUrl'),'');
+  assert.equal(ui.run('collect().notifications.webhookUrl'),undefined);
 });
 
 test('desktop Webhook test is saved-only and named creation has isolated identity',async()=>{
@@ -404,6 +404,29 @@ test('desktop saved Webhook URL reveal is scoped to selected endpoint',async()=>
   let calls=0;ui.api.readCredentials=async request=>{calls++;assert.deepEqual(JSON.parse(JSON.stringify(request)),{channel:'webhook',webhookId:'named-1'});return {webhookUrl:'https://example.test/hook?token=private'};};
   await ui.nodes.get('webhook-url-eye').onclick();assert.equal(calls,1);assert.equal(url.type,'text');assert.equal(ui.run('webhookDirty()'),false);assert.equal(ui.run('webhookUrlDraft()'),'');
   await ui.nodes.get('webhook-url-eye').onclick();assert.equal(url.value,'');assert.equal(url.type,'password');
+});
+
+test('desktop slow create adopts its ID while preserving edits made during save',async()=>{
+  const ui=await renderer();await ui.poll();ui.nodes.get('webhook-add').onclick();ui.nodes.get('webhook-name').value='First';
+  let complete,payload;ui.api.webhookEndpoint=value=>{payload=value;return new Promise(resolve=>{complete=resolve;});};
+  const pending=ui.nodes.get('webhook-save').onclick();ui.nodes.get('webhook-name').value='Edited while saving';
+  complete({selectedWebhookId:'named-1',webhookEndpoints:[{webhookId:'named-1',webhookName:'First',webhookBodyTemplate:payload.webhookBodyTemplate,webhookTemplates:ui.value.notifications.webhookTemplates}]});await pending;
+  assert.equal(ui.run('webhookSelectedId'),'named-1');assert.equal(ui.run('webhookCreating'),false);
+  assert.equal(ui.nodes.get('webhook-name').value,'Edited while saving');assert.equal(ui.run('webhookDirty()'),true);
+  ui.api.webhookEndpoint=async value=>{payload=value;return {selectedWebhookId:'named-1',webhookEndpoints:[]};};
+  await ui.nodes.get('webhook-save').onclick();assert.equal(payload.webhookId,'named-1');
+});
+
+test('ordinary desktop settings save omits every legacy Webhook field',async()=>{
+  const ui=await renderer();await ui.poll();const notifications=ui.run('collect().notifications');
+  assert.deepEqual(Object.keys(notifications).filter(key=>/^webhook|^clearWebhook/.test(key)),[]);
+});
+
+test('unrelated desktop snapshot does not hide a revealed Webhook URL',async()=>{
+  const ui=await renderer(),url=ui.nodes.get('webhook-url');ui.value.notifications.webhookEndpoints=[{webhookId:'named-1',webhookName:'Ops',hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',webhookTemplates:ui.value.notifications.webhookTemplates}];await ui.poll();ui.run("activeTab='notifications'");
+  ui.api.readCredentials=async()=>({webhookUrl:'https://example.test/hook?token=private'});
+  await ui.nodes.get('webhook-url-eye').onclick();ui.value.runtime.running=true;await ui.poll();
+  assert.equal(url.type,'text');assert.equal(url.value,'https://example.test/hook?token=private');assert.equal(ui.run('webhookDirty()'),false);
 });
 
 test('watch panel recognizes Webhook and PushPlus as enabled notification channels',async()=>{
