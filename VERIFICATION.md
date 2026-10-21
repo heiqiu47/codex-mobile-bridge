@@ -1,3 +1,28 @@
+<a id="webhook-local-acceptance"></a>
+
+# 通用 Webhook 本地验收（2026-10-21，未发布）
+
+候选源码为 `76867ecadbb44cdaa223d81e572099f730f9cdeb`，分支为 `feature/issue60-webhook-notifications`，基于 main `d900c02`。本轮只增加 Issue #60 的通用 Webhook 通道、JSON 模板和已保存配置的测试发送，沿用既有通知策略、去重和重试。版本仍为 `2.1.2`、手机构建号 `34`；未推送 GitHub，未创建 Release。
+
+| 范围 | 本轮证据 |
+| --- | --- |
+| 后端与界面 | 232 项相关后端测试运行，2 项条件跳过；112 项桌面与通知 UI 检查通过。移动事件、推送和 iOS 构建边界 25 项通过，其中 3 项回环 HTTP 测试取得网络权限后单独复验通过 |
+| Web / 手机共享界面 | 390px 实际 Chromium 中通过 9 项检查，覆盖中英文、布局、非法请求头、保存后脱敏、仅测试已保存配置及保存失败后草稿保留；桌面生产页面配合合成 IPC 通过 11 项检查 |
+| 三平台打包网关 | macOS arm64、Windows x64、Ubuntu x64 各通过同一组 17 项真实 HTTP 检查：认证、CSRF、配置保存与脱敏、中文/引号/换行 JSON、已保存目标测试及重定向拒绝；全部只访问隔离回环接收器，运行后停止测试进程 |
+| macOS arm64 | Test DMG/ZIP、网关和嵌套签名核验通过；旧 Test 已替换，实际窗口中的 Webhook 表单与测试入口可用，原配置和绑定保留。原 Test 启用了当前未连接的 Tailscale，常用 8788 网关启动被该既有网络前置条件阻止；用户选择恢复 Tailscale 后自行实测，未自动修改网络设置 |
+| Windows x64 | F 盘完成低优先级单任务构建，安装后 705 个载荷文件与候选逐项一致；二维码、真实 GUI、Webhook 控件、8788 启动及静态资源检查通过。安装目录约 450 MB，包含 ConPTY，正式版、配置、可信会话及自启动项保持不变 |
+| Ubuntu x64 | DEB/AppImage 构建通过；用户覆盖安装独立 Test DEB，715 个安装文件与候选一致；真实 GUI、Webhook 控件及 8788 网关启动通过。正式版文件、配置、绑定及独立 Test 自启动身份保留 |
+| Android | 使用原独立预览标识和签名生成 APK，签名核验通过；本轮尚未覆盖安装真实 Android 设备 |
+| iOS | 沿用现有独立 Test 标识与开发团队，签名构建、覆盖安装并启动通过；安装前后 12 项已保存偏好逐项一致，原 App 未修改 |
+
+17 项检查是三种平台各自运行的相同功能检查，不累加为不同功能的测试数量。HTTP 接收成功不等于用户真实通知服务已经送达；本轮未向日常第三方接收地址发送测试消息。iPhone/Android 的实际接收平台与手机上手结果由后续用户实测确认。未运行新的 GitHub 发布 CI，也不借用此前正式版结果作为本轮证据。
+
+源码归档摘要、安装包哈希、配置/绑定摘要、运行结果和截图保留在本地 `.tmp/issue60-webhook-20261021/`；凭据及完整配置不提交。已安装的 Test 与必要安装包保留，旧 Test App 副本和已验收后的重复构建目录按精确路径清理。
+
+**English:** the unreleased Webhook candidate passed targeted backend/UI checks and the same 17-check loopback HTTP suite in real packaged gateways on macOS arm64, Windows x64 and Ubuntu x64. Windows and Ubuntu Test upgrades passed installed-file, visible-GUI, startup and preservation checks. The macOS Test GUI is updated, but its existing Tailscale connection must be restored before the regular gateway can start. The independent iPhone Test was upgraded with all 12 saved preferences retained; a signed Android Test APK is ready. No real third-party notification delivery, GitHub push, release CI or release is claimed.
+
+---
+
 <a id="mermaid-preview-acceptance"></a>
 
 # Mermaid 预览本地验收（2026-10-21，未发布）
