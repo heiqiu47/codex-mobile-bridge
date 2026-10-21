@@ -21,11 +21,13 @@
 
 随后按三个独立分支修订：`8665e05` 只在紧凑布局返回列表后清除会话选中背景，并限制无悬停设备的列表悬停背景；宽屏当前会话标识保留。`6964f48` 在原生手机键盘改变视口时，只校正当前回答卡片所属滚动区；不转移焦点、不修改草稿、不截获触摸或输入事件。`22a9744` 给账号管理、第三方通知与应用管理的标题设置初始焦点，保留按钮 Tab 导航，不修改通用弹窗或输入处理。
 
-新修订通过移动脚本 36/36、账号/导航/弹窗/资源与布局 Node 132/132、Web 资源 Python 8/8。真实 Chromium 的三个客户端紧凑触摸进入/返回与宽屏选中态共 6 个场景通过；回答框在 844→500px 视口变化后无需输入即进入可见区，保持原焦点，重复事件、失焦、普通输入框与部分可见长回答框不被滚动。弹窗合成页核验初始焦点从按钮改为标题，Tab 仍到按钮，触摸输入可键入。以上是浏览器与源码证据，不能替代 iPhone 真机的键盘动画和按钮颜色验收；新 Test 待覆盖安装及用户确认。
+新修订通过移动脚本 36/36、账号/导航/弹窗/资源与布局 Node 132/132、Web 资源 Python 8/8。真实 Chromium 的三个客户端紧凑触摸进入/返回与宽屏选中态共 6 个场景通过；回答框在 844→500px 视口变化后无需输入即进入可见区，保持原焦点，重复事件、失焦、普通输入框与部分可见长回答框不被滚动。弹窗合成页核验初始焦点从按钮改为标题；补充提交 `3173754` 仅去掉这些非交互标题自身的浏览器默认轮廓。最终生产 CSS 独立复核：三个标题均无轮廓，Tab 后按钮仍显示键盘焦点框，触摸输入可键入中文。以上是浏览器与源码证据，不能替代 iPhone 真机的键盘动画和按钮颜色验收。
+
+后续候选 `2e4d7f87e4f013ddce9f613ecf4421ff3212951a` 已编译 Mac Test、签名 iOS Test 和 Android APK。Mac 独立 Test 已覆盖并启动 8788，正式版进程、配置与绑定核对不变；5 个修改后的已安装 Web 文件与源码一致，实际首页除运行时安全 nonce 外一致并保持 no-store，三个脚本/样式的内容与 304 重新校验通过。本机网页入口按原配置保持关闭，资产验收使用原局域网入口。iPhone Test 覆盖安装并启动，5 个电脑连接及全部偏好逐项相同，等待用户复测三处反馈。Windows/Ubuntu 仍是已通过验收的 `70ed6ef`，未将这次仅在 Mac/手机安装的焦点后续修订记作远端已更新。
 
 本地记录位于 `.tmp/issue60-feedback-20261022/`，包括归档和安装包哈希、配置保护摘要、截图及清理清单，不提交凭据或完整配置。Mac 和 Windows 的被替代 Test 包与重复构建产物已按精确路径清理；当前安装包、已安装 Test、签名资源及必要验收记录保留。Ubuntu 安装验收后已清理旧 DEB/AppImage 与重复中间产物，回收约 1.16 GiB，保留当前安装包、解包核验副本和共享缓存。故障手机包与恢复包暂保留作回归对照，待恢复确认后再清理。
 
-**English:** packaged gateways on macOS, Windows and Ubuntu passed the same 115-check loopback suite, followed by Test installation, GUI, startup and preservation checks. The user accepted iOS modal-menu and layout behavior, but reported that the subsequent touch-focus change prevented conversation input and interaction. That change failed acceptance and was reverted; all five saved computers and preferences remained intact, and the user confirmed normal input and buttons recovered. Three separate follow-ups address compact-list selection, focused answer-card visibility after keyboard resizing, and initial focus for selected management dialogs. Source and Chromium checks pass; native iPhone acceptance is pending. No GitHub push or release occurred.
+**English:** packaged gateways on macOS, Windows and Ubuntu passed the same 115-check loopback suite, followed by Test installation, GUI, startup and preservation checks. The user accepted iOS modal-menu and layout behavior, but reported that the subsequent touch-focus change prevented conversation input and interaction. That change failed acceptance and was reverted; all five saved computers and preferences remained intact, and the user confirmed normal input and buttons recovered. Three separate follow-ups address compact-list selection, focused answer-card visibility after keyboard resizing, and initial focus for selected management dialogs. The `2e4d7f8` candidate passed source and Chromium checks and was built for Mac, iOS and Android. Mac 8788 and the independent iPhone Test were upgraded and launched with preservation checks passed; native iPhone acceptance is pending. Windows/Ubuntu remain on the previously accepted gateway candidate. No GitHub push or release occurred.
 
 ---
 
