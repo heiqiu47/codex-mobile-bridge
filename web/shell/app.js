@@ -1203,7 +1203,7 @@ function openCurrentAccounts(){
   const name=clientNavigation.clients.find(row=>row.id===provider)?.name||provider;
   const dialog=desktopSessions.dialog('账号与接入'),content=el('div','provider-account');
   const head=dialog.querySelector('.picker-head'),title=head.querySelector('h2'),toolbar=el('div','accounts-dialog-heading');
-  title.tabIndex=-1;title.autofocus=true;title.replaceWith(toolbar);toolbar.append(title);
+  title.classList.add('dialog-content-start');title.tabIndex=-1;title.autofocus=true;title.replaceWith(toolbar);toolbar.append(title);
   dialog.append(el('p','account-muted',name),content);
   const panel=new DesktopClientAccountsPanel({root:content,provider,toolbar,
     read:()=>api('/api/desktop-sessions/'+provider+'/accounts'),
