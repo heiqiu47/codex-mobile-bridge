@@ -6,7 +6,7 @@ const connectionAdvancedExpanded=new Map();
 function connectionLabel(mode){return t({quick:'临时 HTTPS · Cloudflare',cloudflare:'固定域名 · Cloudflare Tunnel',server:'固定域名 · 自有服务器 + SSH',external:'已有穿透 / 反向代理',nas:'已有穿透 / 反向代理',tailscale:'固定 HTTPS · Tailscale'}[mode]);}
 function normalizeExternalUrl(value){const trimmed=value.trim();return /^[^\s/:?#@]+(?::\d+)?$/.test(trimmed)?'https://'+trimmed:trimmed;}
 function connectionCheckIdentity(row){return JSON.stringify([snapshot?.dataDir,snapshot?.runtime.instanceId,snapshot?.runtime.running,row]);}
-function connectionSummary(row){return [row.name,row.publicUrl||'',t(row.enabled?'已启用':'已配置但未启用')].filter(Boolean).join(' · ');}
+function connectionSummary(row){const saved=snapshot?.preferences?.connections?.find(item=>item.id===row.id);const state=!saved||JSON.stringify(saved)!==JSON.stringify(row)?'待保存':saved.enabled?'已启用':'已配置但未启用';return [row.name,row.publicUrl||'',t(state)].filter(Boolean).join(' · ');}
 function setupGuide(link,mode){
   link.className='setup-guide';link.textContent=t('在线指引');
   const guideMode=mode==='nas'?'external':mode;

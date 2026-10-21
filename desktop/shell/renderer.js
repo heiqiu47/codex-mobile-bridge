@@ -47,6 +47,11 @@ function updateDirty(){
   $('dirty-dot').hidden=!dirty;
   $('dirty-label').textContent=dirty?t('有未保存的修改'):t('配置已保存');
   $('save-bar').hidden=!dirty;
+  for(const [id,key] of [['lan','lan'],['local-access','localAccess']]){
+    const status=$(id+'-saved-state');if(!status)continue;
+    const saved=key==='localAccess'?snapshot?.preferences?.localAccess!==false:!!snapshot?.preferences?.[key];
+    status.textContent=t($(id).checked!==saved?'待保存':saved?'已启用':'已配置但未启用');
+  }
   document.querySelectorAll('[data-connection-action]').forEach(button=>button.disabled=dirty||busyActions.size>0||(!['inspect','diagnostics','credentials','clearCredentials','tailscaleInspect','tailscaleAuthorize'].includes(button.dataset.connectionAction)&&!connectionDraft.find(c=>c.id===button.dataset.connection)?.enabled));
 }
 let toastTimer;
