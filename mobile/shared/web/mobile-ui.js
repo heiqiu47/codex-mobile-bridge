@@ -21,9 +21,14 @@
     '.bridge-mobile .sidebar-foot:not(.client-functions) button, .bridge-mobile .sidebar-foot:not(.client-functions) a { min-height: 40px; display: inline-flex; align-items: center; text-decoration: none; }',
     '.bridge-mobile .sidebar-foot > span { display: none; }',
     '.bridge-mobile .composer { padding-bottom: 8px; }',
-    '.bridge-mobile input:not([type=checkbox]):not([type=radio]), .bridge-mobile textarea { font-size: max(16px, 1em); }'
+    '.bridge-mobile input:not([type=checkbox]):not([type=radio]), .bridge-mobile textarea { font-size: max(16px, 1em); }',
+    '.bridge-mobile.bridge-touch-input dialog button:focus-visible { outline: none; }'
   ]) sheet.insertRule(rule, sheet.cssRules.length);
   document.documentElement.classList.add('bridge-mobile');
+  document.addEventListener('touchstart', () => document.documentElement.classList.add('bridge-touch-input'), true);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Tab') document.documentElement.classList.remove('bridge-touch-input');
+  }, true);
   const sync = () => document.documentElement.classList.toggle('bridge-authenticated', !app.hidden);
   sync();
   new MutationObserver(sync).observe(app, { attributes: true, attributeFilter: ['hidden'] });
