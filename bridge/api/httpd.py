@@ -21,7 +21,7 @@ from bridge.features.workspace.uploads import MAX_FILE
 from bridge.features.workspace.workspace import MAX_TRANSFER, Workspace
 from bridge.features.workspace.preferences import transfer_settings
 from bridge.features.workspace.files import workspace_relative_path
-from bridge.features.notifications.channels import settings as notification_settings, save_settings as save_notification_settings, publish, publish_bark, publish_pushplus, publish_webhook, visible_webhook
+from bridge.features.notifications.channels import settings as notification_settings, save_settings as save_notification_settings, publish, publish_bark, publish_pushplus, publish_webhook, visible_webhook, WebhookDeliveryError, resolved_webhook_provider
 from socketserver import TCPServer
 from urllib.parse import parse_qs, parse_qsl, urlsplit, quote
 
@@ -747,7 +747,7 @@ class Handler(BaseHTTPRequestHandler):
                 fields = {'ntfy': ('enabled', 'server', 'topic', 'token', 'clearToken'),
                           'bark': ('barkEnabled', 'barkServer', 'barkKey', 'clearBarkKey'),
                           'pushplus': ('pushplusEnabled', 'pushplusToken', 'clearPushplusToken'),
-                          'webhook': ('webhookEnabled', 'webhookUrl', 'webhookHeaders', 'webhookBodyTemplate', 'clearWebhookUrl', 'clearWebhookHeaders')}[selected]
+                          'webhook': ('webhookEnabled', 'webhookUrl', 'webhookHeaders', 'webhookBodyTemplate', 'webhookProvider', 'webhookSignEnabled', 'webhookSignSecret', 'clearWebhookUrl', 'clearWebhookHeaders', 'clearWebhookSignSecret')}[selected]
                 secret, marker = {'ntfy': ('token', 'hasToken'), 'bark': ('barkKey', 'hasBarkKey'),
                                   'pushplus': ('pushplusToken', 'hasPushplusToken'), 'webhook': ('webhookUrl', 'hasWebhookUrl')}[selected]
                 with manager.lock:
@@ -763,10 +763,12 @@ class Handler(BaseHTTPRequestHandler):
                                 sender(config, 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。', event='test')
                             else:
                                 sender(config, 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。')
+                        except WebhookDeliveryError as error:
+                            raise ValueError(str(error)) from None
                         except Exception:
                             message = 'PushPlus 测试失败，请检查 Token 和网络' if not channel else f'{name} 测试失败，请检查服务地址、认证和网络'
                             raise ValueError(message) from None
-                        return self.output(200, {'ok': True})
+                        return self.output(200, {'ok': True, 'message': '飞书已接受测试通知' if selected == 'webhook' and resolved_webhook_provider(config) == 'feishu' else f'{name} 已接受测试通知'})
                     if write:
                         body = self.read_json()
                         allowed = set(fields)

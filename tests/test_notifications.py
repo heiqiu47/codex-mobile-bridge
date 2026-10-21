@@ -1,5 +1,8 @@
 import http.server
 import json
+import base64
+import hashlib
+import hmac
 import tempfile
 import threading
 import unittest
@@ -7,7 +10,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-from bridge.features.notifications.channels import Notifications, publish, publish_bark, publish_pushplus, publish_webhook, settings, save_settings, write_json, read_json, visible_webhook
+from bridge.features.notifications.channels import Notifications, publish, publish_bark, publish_pushplus, publish_webhook, settings, save_settings, write_json, read_json, visible_webhook, destination, resolved_webhook_provider
 from bridge.app.service import LiveSession
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -200,6 +203,119 @@ class NotificationTests(unittest.TestCase):
             self.assertEqual(len(captured), 2)
         finally:
             server.shutdown(); server.server_close()
+
+    def test_feishu_auto_uses_text_payload_for_unchanged_default(self):
+        config = save_settings(self.directory, {'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/private'})
+        with patch('bridge.features.notifications.channels.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b'{"code":0,"msg":"success"}'
+            publish_webhook(config, '标题', '内容', click='https://example.com')
+            payload = json.loads(opener.return_value.open.call_args.args[0].data)
+        self.assertEqual(payload, {'msg_type': 'text', 'content': {'text': '标题\n内容\nhttps://example.com'}})
+
+    def test_feishu_http_200_error_is_not_success(self):
+        config = save_settings(self.directory, {'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/private'})
+        with patch('bridge.features.notifications.channels.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b'{"code":9499,"msg":"private upstream text"}'
+            with self.assertRaises(RuntimeError) as error:
+                publish_webhook(config, 'title', 'body')
+        self.assertIn('9499', str(error.exception))
+        self.assertNotIn('private upstream text', str(error.exception))
+
+    def test_feishu_provider_resolution_and_custom_template(self):
+        official = 'https://open.feishu.cn/open-apis/bot/v2/hook/private'
+        for url in ('https://open.feishu.cn.evil.example/open-apis/bot/v2/hook/x',
+                    'https://open.feishu.cn/other/bot/v2/hook/x'):
+            self.assertEqual(resolved_webhook_provider({'webhookUrl': url}), 'generic')
+        config = save_settings(self.directory, {'webhookUrl': official,
+            'webhookBodyTemplate': '{"msg_type":"text","content":{"text":"{{body}}"}}'})
+        self.assertEqual(visible_webhook(config)['webhookBodyTemplate'], config['webhookBodyTemplate'])
+        with patch('bridge.features.notifications.channels.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b'{"StatusCode":0}'
+            publish_webhook(config, 'title', 'custom')
+            payload = json.loads(opener.return_value.open.call_args.args[0].data)
+        self.assertEqual(payload['content']['text'], 'custom')
+
+    def test_feishu_effective_template_round_trip_keeps_default_on_target_change(self):
+        official = 'https://open.feishu.cn/open-apis/bot/v2/hook/private'
+        config = save_settings(self.directory, {'webhookUrl': official})
+        effective = visible_webhook(config)['webhookBodyTemplate']
+        saved = save_settings(self.directory, {'webhookBodyTemplate': effective})
+        self.assertEqual(saved['webhookBodyTemplate'], settings(self.directory)['webhookBodyTemplate'])
+        changed = save_settings(self.directory, {'webhookUrl': 'https://receiver.example/hook',
+                                                 'webhookBodyTemplate': effective})
+        self.assertEqual(visible_webhook(changed)['webhookBodyTemplate'], changed['webhookBodyTemplate'])
+        self.assertIn('"event"', changed['webhookBodyTemplate'])
+
+    def test_feishu_secret_mask_clear_and_rotation(self):
+        url = 'https://open.feishu.cn/open-apis/bot/v2/hook/one'
+        config = save_settings(self.directory, {'webhookUrl': url, 'webhookSignEnabled': True,
+                                                  'webhookSignSecret': 'private-secret'})
+        visible = visible_webhook(config)
+        self.assertEqual(visible['webhookSignSecret'], '')
+        self.assertTrue(visible['hasWebhookSignSecret'])
+        self.assertEqual(visible['webhookResolvedProvider'], 'feishu')
+        self.assertNotIn('private-secret', json.dumps(visible))
+        self.assertEqual(save_settings(self.directory, {'webhookSignSecret': ''})['webhookSignSecret'], 'private-secret')
+        before = destination(config, 'webhook')
+        rotated = save_settings(self.directory, {'webhookSignSecret': 'new-secret'})
+        self.assertNotEqual(before, destination(rotated, 'webhook'))
+        with self.assertRaises(ValueError):
+            save_settings(self.directory, {'webhookUrl': url + 'two'})
+        self.assertEqual(settings(self.directory)['webhookUrl'], url)
+        with self.assertRaises(ValueError):
+            save_settings(self.directory, {'webhookProvider': 'generic'})
+        with self.assertRaises(ValueError):
+            save_settings(self.directory, {'clearWebhookSignSecret': True})
+        cleared = save_settings(self.directory, {'webhookSignEnabled': False, 'clearWebhookSignSecret': True})
+        self.assertFalse(visible_webhook(cleared)['hasWebhookSignSecret'])
+
+    def test_feishu_signing_and_safe_response_errors(self):
+        config = save_settings(self.directory, {'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/x',
+            'webhookSignEnabled': True, 'webhookSignSecret': 'private-secret'})
+        with patch('bridge.features.notifications.channels.time.time', return_value=1700000000), \
+                patch('bridge.features.notifications.channels.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b'{"code":0}'
+            publish_webhook(config, 'title', 'body')
+            payload = json.loads(opener.return_value.open.call_args.args[0].data)
+        expected = base64.b64encode(hmac.new(b'1700000000\nprivate-secret', b'', hashlib.sha256).digest()).decode()
+        self.assertEqual((payload['timestamp'], payload['sign']), ('1700000000', expected))
+        for code in (9499, 19002, 19021, 19022, 19024, 11232, 99999):
+            with patch('bridge.features.notifications.channels.build_opener') as opener:
+                response = opener.return_value.open.return_value.__enter__.return_value
+                response.status = 200
+                response.read.return_value = json.dumps({'code': code, 'msg': 'private-secret'}).encode()
+                with self.assertRaises(RuntimeError) as error:
+                    publish_webhook(config, 'title', 'body')
+            self.assertIn(str(code), str(error.exception))
+            self.assertNotIn('private-secret', str(error.exception))
+        with self.assertRaises(ValueError):
+            save_settings(self.directory, {'webhookBodyTemplate': '{"timestamp":"x","msg_type":"text"}'})
+        with self.assertRaises(ValueError):
+            save_settings(self.directory, {'webhookBodyTemplate': '[]'})
+        for raw in (b'not json private-secret', b'{"code":false}', b' ' * 65537):
+            with patch('bridge.features.notifications.channels.build_opener') as opener:
+                response = opener.return_value.open.return_value.__enter__.return_value
+                response.status = 200
+                response.read.return_value = raw
+                with self.assertRaisesRegex(RuntimeError, '响应格式不正确'):
+                    publish_webhook(config, 'title', 'body')
+        with patch('bridge.features.notifications.channels.time.time', side_effect=[1700000000, 1700000001]), \
+                patch('bridge.features.notifications.channels.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b'{"code":0}'
+            publish_webhook(config, 'title', 'body')
+            publish_webhook(config, 'title', 'body')
+            requests = [json.loads(call.args[0].data) for call in opener.return_value.open.call_args_list]
+        self.assertNotEqual(requests[0]['sign'], requests[1]['sign'])
 
     def test_pushplus_delivery_deduplicates_and_new_recipient_gets_alert(self):
         save_settings(self.directory, {'enabled': False, 'pushplusEnabled': True, 'pushplusToken': 'first'})

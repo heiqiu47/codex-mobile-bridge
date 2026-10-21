@@ -272,6 +272,20 @@ class DesktopTests(unittest.TestCase):
         for secret in ('private-path', 'private-query', 'private-header'):
             self.assertNotIn(secret, text)
 
+    def test_feishu_signature_secret_is_masked_in_snapshot_and_logs(self):
+        from bridge.features.notifications.channels import save_settings, WebhookDeliveryError
+        save_settings(self.directory, {'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/private',
+            'webhookSignEnabled': True, 'webhookSignSecret': 'private-sign-secret'})
+        visible = self.desktop.snapshot()['notifications']
+        self.assertEqual(visible['webhookSignSecret'], '')
+        self.assertTrue(visible['hasWebhookSignSecret'])
+        self.assertEqual(visible['webhookResolvedProvider'], 'feishu')
+        (self.directory/'gateway.log').write_text('private-sign-secret\n')
+        self.assertNotIn('private-sign-secret', self.desktop.logs()['text'])
+        with patch('bridge.app.desktop.publish_webhook', side_effect=WebhookDeliveryError('飞书未接受通知（19021：签名或时间无效）')):
+            with self.assertRaisesRegex(ValueError, '19021'):
+                self.desktop.test_notification({'channel': 'webhook'})
+
     def test_running_network_settings_cannot_disconnect_phone(self):
         value = self.value()
         self.desktop.save(value)

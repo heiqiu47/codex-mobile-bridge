@@ -16,7 +16,7 @@ from bridge.resources import project_root
 
 from bridge.features.auth.auth import Auth, password_record, session_hours, session_file_lock
 from bridge.app.lifecycle import read_record, request_stop, request_pairing
-from bridge.features.notifications.channels import Notifications, read_json, write_json, settings, save_settings, publish, publish_bark, publish_pushplus, publish_webhook, visible_webhook
+from bridge.features.notifications.channels import Notifications, read_json, write_json, settings, save_settings, publish, publish_bark, publish_pushplus, publish_webhook, visible_webhook, WebhookDeliveryError, resolved_webhook_provider
 from bridge.features.sessions.store import SessionStore, StoreUnavailable
 from bridge.clients.codex.remote import AppHosts
 from bridge.clients.codex.catalog import Catalog
@@ -437,9 +437,12 @@ class Desktop:
         sender = {'bark': publish_bark, 'ntfy': publish, 'pushplus': publish_pushplus, 'webhook': publish_webhook}[channel]
         try:
             sender(settings(self.data_dir), 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。')
+        except WebhookDeliveryError as error:
+            raise ValueError(str(error)) from None
         except Exception:
             raise ValueError(f'{name} 测试失败，请检查服务地址、认证和网络') from None
-        return {'message': f'{name} 已接受测试通知，请在手机确认是否收到'}
+        accepted = '飞书已接受测试通知' if channel == 'webhook' and resolved_webhook_provider(settings(self.data_dir)) == 'feishu' else f'{name} 已接受测试通知'
+        return {'message': f'{accepted}，请在手机确认是否收到'}
 
     def deployment(self, value):
         entry = access.select_connection(self.preferences(), value)
@@ -553,7 +556,8 @@ class Desktop:
         notifications = settings(self.data_dir)
         webhook = notifications.get('webhookUrl') or ''
         parsed_webhook = urlsplit(webhook) if webhook else None
-        secrets = [notifications.get('token'), notifications.get('barkKey'), notifications.get('pushplusToken'), webhook]
+        secrets = [notifications.get('token'), notifications.get('barkKey'), notifications.get('pushplusToken'),
+                   notifications.get('webhookSignSecret'), webhook]
         if parsed_webhook:
             secrets.extend((parsed_webhook.path if parsed_webhook.path not in ('', '/') else '', parsed_webhook.query))
         secrets.extend((notifications.get('webhookHeaders') or {}).values())

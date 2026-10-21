@@ -1012,7 +1012,7 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(settings(directory)['barkKey'], '')
 
     def test_webhook_channel_saved_config_is_masked_and_test_uses_saved_values(self):
-        from bridge.features.notifications.channels import Notifications, settings
+        from bridge.features.notifications.channels import Notifications, settings, WebhookDeliveryError
         from unittest.mock import patch
         with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as directory:
             self.server.notifications = Notifications(None, directory)
@@ -1033,6 +1033,20 @@ class HttpTests(unittest.TestCase):
                 self.assertEqual(self.request('POST', path + '/test', {'webhookUrl': 'https://other.example'}, headers)[0], 200)
                 self.assertEqual(sender.call_args.args[0]['webhookUrl'], url)
                 self.assertEqual(sender.call_args.kwargs['event'], 'test')
+            feishu = 'https://open.feishu.cn/open-apis/bot/v2/hook/private'
+            status, _, saved = self.request('POST', path, {'webhookUrl': feishu, 'webhookProvider': 'auto',
+                'webhookSignEnabled': True, 'webhookSignSecret': 'private-sign-secret'}, headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(saved['webhookResolvedProvider'], 'feishu')
+            self.assertEqual(saved['webhookSignSecret'], '')
+            self.assertTrue(saved['hasWebhookSignSecret'])
+            self.assertNotIn('private-sign-secret', json.dumps(saved))
+            self.assertEqual(self.request('GET', path)[0], 401)
+            self.assertEqual(self.request('POST', path, {'webhookSignSecret': 'other'}, {'Cookie': headers['Cookie']})[0], 403)
+            with patch('bridge.api.httpd.publish_webhook', side_effect=WebhookDeliveryError('飞书未接受通知（19021：签名或时间无效）')):
+                status, _, error = self.request('POST', path + '/test', {}, headers)
+                self.assertNotEqual(status, 200)
+                self.assertIn('19021', json.dumps(error))
 
     def test_rename_route_requires_csrf_and_routes_to_selected_host(self):
         from unittest.mock import Mock

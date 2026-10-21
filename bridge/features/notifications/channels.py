@@ -1,5 +1,7 @@
 """Opt-in phone notifications. Watching a chat never changes its execution owner."""
 import hashlib
+import base64
+import hmac
 from bridge.api.validation import FieldError, at_field
 import json
 import re
@@ -18,12 +20,31 @@ DEFAULTS = {'enabled': False, 'server': 'https://ntfy.sh', 'topic': '', 'token':
             'barkEnabled': False, 'barkServer': 'https://api.day.app', 'barkKey': '',
             'pushplusEnabled': False, 'pushplusToken': '',
             'webhookEnabled': False, 'webhookUrl': '', 'webhookHeaders': {},
+            'webhookProvider': 'auto', 'webhookSignEnabled': False, 'webhookSignSecret': '',
             'webhookBodyTemplate': '{\n  "event": "{{event}}",\n  "title": "{{title}}",\n  "body": "{{body}}",\n  "session_name": "{{session_name}}",\n  "url": "{{url}}"\n}',
             'clickBase': '', 'includeTitle': False, 'addressEnabled': True, 'addressName': '', 'securityEnabled': True, 'mobileEnabled': False, 'mobileAppLinks': False}
 
 WEBHOOK_FIELDS = frozenset(('event', 'event_id', 'title', 'body', 'session_name', 'url', 'client', 'host', 'count'))
+FEISHU_TEMPLATE = json.dumps({'msg_type': 'text', 'content': {'text': '{{title}}\n{{body}}\n{{url}}'}}, ensure_ascii=False, indent=2)
 WEBHOOK_PLACEHOLDER = re.compile(r'{{\s*([^{}]+?)\s*}}')
 UNSAFE_WEBHOOK_HEADERS = frozenset(('host', 'content-length', 'content-type', 'transfer-encoding', 'connection', 'proxy-authorization', 'proxy-authenticate', 'cookie', 'set-cookie', 'upgrade', 'te', 'trailer', 'keep-alive', 'expect'))
+
+
+class WebhookDeliveryError(RuntimeError):
+    """A fixed, safe message that can be shown by a notification test endpoint."""
+
+
+def resolved_webhook_provider(config):
+    provider = config.get('webhookProvider', 'auto')
+    if provider != 'auto':
+        return provider
+    parsed = urlsplit(config.get('webhookUrl') or '')
+    return 'feishu' if parsed.hostname == 'open.feishu.cn' and parsed.path.startswith('/open-apis/bot/v2/hook/') else 'generic'
+
+
+def effective_webhook_template(config):
+    template = config.get('webhookBodyTemplate', DEFAULTS['webhookBodyTemplate'])
+    return FEISHU_TEMPLATE if resolved_webhook_provider(config) == 'feishu' and template == DEFAULTS['webhookBodyTemplate'] else template
 
 
 def webhook_url(value):
@@ -109,7 +130,11 @@ def visible_webhook(config):
     origin = (parsed.scheme + '://' + parsed.netloc) if parsed else ''
     return {'webhookEnabled': config['webhookEnabled'], 'webhookUrl': '', 'hasWebhookUrl': bool(url),
             'webhookUrlDisplay': origin, 'webhookHeaders': {}, 'hasWebhookHeaders': bool(config.get('webhookHeaders')),
-            'webhookBodyTemplate': config['webhookBodyTemplate']}
+            'webhookProvider': config.get('webhookProvider', 'auto'),
+            'webhookResolvedProvider': resolved_webhook_provider(config),
+            'webhookSignEnabled': config.get('webhookSignEnabled', False),
+            'webhookSignSecret': '', 'hasWebhookSignSecret': bool(config.get('webhookSignSecret')),
+            'webhookBodyTemplate': effective_webhook_template(config)}
 
 
 def read_json(path, default):
@@ -145,9 +170,12 @@ def settings(data_dir):
 def save_settings(data_dir, value):
     prior = settings(data_dir)
     result = {**prior, **{k: value[k] for k in DEFAULTS if k in value}}
+    if (prior['webhookBodyTemplate'] == DEFAULTS['webhookBodyTemplate']
+            and value.get('webhookBodyTemplate') == effective_webhook_template(prior)):
+        result['webhookBodyTemplate'] = DEFAULTS['webhookBodyTemplate']
     result['server'] = at_field('ntfy-server', valid_url, str(result['server']), allow_path=True)
     result['barkServer'] = at_field('bark-server', valid_url, str(result['barkServer']), allow_path=True)
-    for key in ('enabled', 'barkEnabled', 'pushplusEnabled', 'webhookEnabled', 'includeTitle', 'addressEnabled', 'securityEnabled', 'mobileEnabled', 'mobileAppLinks'):
+    for key in ('enabled', 'barkEnabled', 'pushplusEnabled', 'webhookEnabled', 'webhookSignEnabled', 'includeTitle', 'addressEnabled', 'securityEnabled', 'mobileEnabled', 'mobileAppLinks'):
         if not isinstance(result[key], bool):
             raise ValueError('通知开关格式不正确')
     if not isinstance(result['addressName'], str) or len(result['addressName']) > 80 or any(not c.isprintable() for c in result['addressName']):
@@ -182,7 +210,7 @@ def save_settings(data_dir, value):
         result['pushplusToken'] = '' if value.get('clearPushplusToken') else prior['pushplusToken']
     if result['pushplusEnabled'] and not result['pushplusToken']:
         raise FieldError('开启 PushPlus 前请填写 Token', 'pushplus-token')
-    for flag in ('clearWebhookUrl', 'clearWebhookHeaders'):
+    for flag in ('clearWebhookUrl', 'clearWebhookHeaders', 'clearWebhookSignSecret'):
         if flag in value and not isinstance(value[flag], bool):
             raise ValueError('Webhook 配置格式不正确')
     if 'webhookUrl' in value and not isinstance(value['webhookUrl'], str):
@@ -196,6 +224,19 @@ def save_settings(data_dir, value):
     else:
         result['webhookUrl'] = prior['webhookUrl']
     url_changed = result['webhookUrl'] != prior['webhookUrl']
+    if result['webhookProvider'] not in ('auto', 'generic', 'feishu'):
+        raise FieldError('Webhook 类型格式不正确', 'webhook-provider')
+    provider_changed = result['webhookProvider'] != prior['webhookProvider']
+    secret = result['webhookSignSecret']
+    if not isinstance(secret, str) or len(secret) > 2000 or any(ord(c) < 33 or ord(c) == 127 for c in secret):
+        raise FieldError('飞书签名密钥格式不正确', 'webhook-sign-secret')
+    if not value.get('webhookSignSecret'):
+        result['webhookSignSecret'] = '' if value.get('clearWebhookSignSecret') or url_changed or provider_changed else prior['webhookSignSecret']
+    if result['webhookSignEnabled']:
+        if resolved_webhook_provider(result) != 'feishu':
+            raise FieldError('签名仅支持飞书 Webhook', 'webhook-sign-enabled')
+        if not result['webhookSignSecret']:
+            raise FieldError('开启飞书签名前请填写密钥；更换地址或类型后需重新填写', 'webhook-sign-secret')
     if value.get('clearWebhookHeaders'):
         result['webhookHeaders'] = {}
     elif value.get('webhookHeaders'):
@@ -204,6 +245,10 @@ def save_settings(data_dir, value):
         result['webhookHeaders'] = {} if url_changed else prior['webhookHeaders']
     result['webhookHeaders'] = webhook_headers(result['webhookHeaders'])
     result['webhookBodyTemplate'] = webhook_template(result['webhookBodyTemplate'])
+    if result['webhookSignEnabled']:
+        signed_template = json.loads(effective_webhook_template(result))
+        if not isinstance(signed_template, dict) or any(key in signed_template for key in ('timestamp', 'sign')):
+            raise FieldError('签名消息不能自行设置 timestamp 或 sign', 'webhook-body-template')
     if result['webhookEnabled'] and not result['webhookUrl']:
         raise FieldError('开启 Webhook 前请填写地址', 'webhook-url')
     write_json(Path(data_dir)/'notifications.json', result)
@@ -278,9 +323,10 @@ def publish_pushplus(config, title, body, click=''):
 
 def publish_webhook(config, title, body, click='', *, event='test', event_id='', session_name='', client='', host='', count=1):
     url = webhook_url(config.get('webhookUrl', ''))
+    provider = resolved_webhook_provider(config)
     values = {'event': event, 'event_id': event_id or uuid.uuid4().hex, 'title': title, 'body': body,
               'session_name': session_name, 'url': click, 'client': client, 'host': host, 'count': str(count)}
-    template = json.loads(webhook_template(config['webhookBodyTemplate']))
+    template = json.loads(webhook_template(effective_webhook_template(config)))
     def render(item):
         if isinstance(item, dict):
             return {key: render(child) for key, child in item.items()}
@@ -289,9 +335,19 @@ def publish_webhook(config, title, body, click='', *, event='test', event_id='',
         if isinstance(item, str):
             return WEBHOOK_PLACEHOLDER.sub(lambda match: values[match.group(1)], item)
         return item
-    payload = json.dumps(render(template), ensure_ascii=False).encode('utf-8')
-    if len(payload) > 65536:
-        raise ValueError('Webhook 消息过长')
+    document = render(template)
+    if config.get('webhookSignEnabled'):
+        if provider != 'feishu' or not config.get('webhookSignSecret'):
+            raise WebhookDeliveryError('飞书签名配置不完整，请检查类型和密钥')
+        if not isinstance(document, dict) or any(key in document for key in ('timestamp', 'sign')):
+            raise WebhookDeliveryError('签名消息不能自行设置 timestamp 或 sign')
+        timestamp = str(int(time.time()))
+        key = (timestamp + '\n' + config['webhookSignSecret']).encode('utf-8')
+        document['timestamp'] = timestamp
+        document['sign'] = base64.b64encode(hmac.new(key, b'', hashlib.sha256).digest()).decode('ascii')
+    payload = json.dumps(document, ensure_ascii=False).encode('utf-8')
+    if len(payload) > (20 * 1024 if provider == 'feishu' else 65536):
+        raise WebhookDeliveryError('飞书消息过长' if provider == 'feishu' else 'Webhook 消息过长')
     headers = {'Content-Type': 'application/json', **webhook_headers(config.get('webhookHeaders', {}))}
     request = Request(url, data=payload, headers=headers, method='POST')
     handlers = [NoRedirect(), HTTPSHandler(context=client_context())]
@@ -299,13 +355,37 @@ def publish_webhook(config, title, body, click='', *, event='test', event_id='',
         handlers.insert(0, ProxyHandler({}))
     try:
         with build_opener(*handlers).open(request, timeout=8) as response:
-            if not 200 <= response.status < 300:
-                raise ValueError('Rejected')
-            response.read(65536)
+            if provider == 'feishu':
+                if response.status != 200:
+                    raise WebhookDeliveryError('飞书未接受通知，请检查地址和网络')
+                try:
+                    raw = response.read(65537)
+                    if len(raw) > 65536:
+                        raise WebhookDeliveryError('飞书响应格式不正确')
+                    result = json.loads(raw)
+                except (ValueError, UnicodeDecodeError, RecursionError):
+                    raise WebhookDeliveryError('飞书响应格式不正确') from None
+                if not isinstance(result, dict):
+                    raise WebhookDeliveryError('飞书响应格式不正确')
+                code = result.get('code', result.get('StatusCode'))
+                if type(code) is not int:
+                    raise WebhookDeliveryError('飞书响应格式不正确')
+                code = int(code)
+                if code:
+                    reasons = {9499: '消息格式错误', 19002: '消息格式错误', 19021: '签名或时间无效', 19022: 'IP 不在允许范围',
+                               19024: '未满足关键词要求', 11232: '发送过于频繁'}
+                    raise WebhookDeliveryError(f'飞书未接受通知（{code}：{reasons.get(code, "请检查机器人配置")}）')
+            else:
+                if not 200 <= response.status < 300:
+                    raise ValueError('Rejected')
+                response.read(65536)
+    except WebhookDeliveryError:
+        raise
     except Exception as error:
         if isinstance(error, HTTPError):
             error.close()
-        raise RuntimeError('Webhook 未接受通知，请检查地址、认证和网络') from None
+        raise WebhookDeliveryError('飞书未接受通知，请检查地址和网络' if provider == 'feishu'
+                                   else 'Webhook 未接受通知，请检查地址、认证和网络') from None
 
 
 def destination(config, channel):
@@ -316,7 +396,9 @@ def destination(config, channel):
     elif channel == 'pushplus':
         values = [config.get('pushplusToken', '')]
     elif channel == 'webhook':
-        values = [config.get('webhookUrl', ''), sorted(config.get('webhookHeaders', {}).items())]
+        values = [config.get('webhookUrl', ''), sorted(config.get('webhookHeaders', {}).items()),
+                  config.get('webhookProvider', 'auto'), resolved_webhook_provider(config),
+                  config.get('webhookSignEnabled', False), config.get('webhookSignSecret', '')]
     else:
         raise ValueError('未知通知通道')
     return channel + ':' + hashlib.sha256(json.dumps(values).encode()).hexdigest()
