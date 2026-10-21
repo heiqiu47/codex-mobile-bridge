@@ -65,8 +65,31 @@ class AddressNotificationTests(unittest.TestCase):
             self.manager.scan()
             self.url = B
             self.manager.scan()
+            self.url = A
+            self.manager.scan()
             self.assertEqual([call.kwargs['event'] for call in webhook.call_args_list],
-                             ['gateway.started', 'gateway.address_changed'])
+                             ['gateway.started', 'gateway.address_changed', 'gateway.address_changed'])
+            ids = [call.kwargs['event_id'] for call in webhook.call_args_list]
+            self.assertEqual(len(set(ids)), 3)
+
+    def test_webhook_address_retry_retains_event_id_after_restart(self):
+        save_settings(self.directory, {'enabled': False, 'webhookEnabled': True,
+                                       'webhookUrl': 'https://receiver.example/hook'})
+        with patch('bridge.features.notifications.addresses.publish_webhook', side_effect=OSError('offline')) as webhook:
+            self.manager.scan()
+            first_id = webhook.call_args.kwargs['event_id']
+        self.manager = AddressNotifications(self.directory, lambda: [self.url], 'instance-1')
+        for record in self.manager.state['deliveries'].values():
+            record['next'] = 0
+        with patch('bridge.features.notifications.addresses.publish_webhook') as webhook:
+            self.manager.scan()
+            self.assertEqual(webhook.call_args.kwargs['event_id'], first_id)
+            self.manager.scan()
+            webhook.assert_called_once()
+        self.manager = AddressNotifications(self.directory, lambda: [self.url], 'instance-2')
+        with patch('bridge.features.notifications.addresses.publish_webhook') as webhook:
+            self.manager.scan()
+            self.assertNotEqual(webhook.call_args.kwargs['event_id'], first_id)
 
     def test_channels_retry_independently_and_persist_backoff(self):
         save_settings(self.directory, {'barkEnabled': True, 'barkKey': 'bark-secret',

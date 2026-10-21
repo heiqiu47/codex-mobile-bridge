@@ -100,13 +100,18 @@ class NotificationTests(unittest.TestCase):
         save_settings(self.directory, {'webhookEnabled': False, 'clearWebhookUrl': True})
         self.assertEqual(settings(self.directory)['webhookUrl'], '')
         for invalid in ('http://remote.example/hook', 'https://u:p@example.com', 'https://example.com/#frag',
-                        'ftp://example.com', 'https://example.com/\rInjected'):
+                        'ftp://example.com', 'https://example.com/\rInjected', 'https://[broken'):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 save_settings(self.directory, {'webhookUrl': invalid})
         for invalid in ({'Host': 'bad'}, {'Content-Length': '3'}, {'X-Test': 'one\r\ntwo'}, {'Bad Header': 'x'}):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 save_settings(self.directory, {'webhookHeaders': invalid})
-        for invalid in ('{"{{event}}": 1}', '{"x": "{{unknown}}"}', '{"x": "{{event"}', '{bad'):
+        for field, invalid in (('webhookUrl', None), ('webhookUrl', False), ('webhookHeaders', None),
+                               ('webhookHeaders', []), ('webhookHeaders', False)):
+            with self.subTest(field=field, invalid=invalid), self.assertRaises(ValueError):
+                save_settings(self.directory, {field: invalid})
+        for invalid in ('{"{{event}}": 1}', '{"x": "{{unknown}}"}', '{"x": "{{event"}', '{bad',
+                        '{"x": NaN}', '{"x": "\\ud800"}', '[' * 40 + '0' + ']' * 40):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 save_settings(self.directory, {'webhookBodyTemplate': invalid})
 
@@ -183,10 +188,12 @@ class NotificationTests(unittest.TestCase):
             url = f'http://127.0.0.1:{server.server_port}/receiver/private?signature=abc'
             config = save_settings(self.directory, {'webhookEnabled': True, 'webhookUrl': url,
                 'webhookHeaders': {'Authorization': 'Bearer secret'},
-                'webhookBodyTemplate': '{"event":"{{event}}","nested":["{{body}}","{{session_name}}"],"count":"{{count}}"}'})
+                'webhookBodyTemplate': '{"event":"{{event}}","event_id":"{{event_id}}","nested":["{{body}}","{{session_name}}"],"count":"{{count}}"}'})
             publish_webhook(config, '标题', '中文 "引号"\n换行', event='task.completed', session_name='私密聊天', count=2)
-            self.assertEqual(captured[0], ('/receiver/private?signature=abc', 'Bearer secret',
-                {'event': 'task.completed', 'nested': ['中文 "引号"\n换行', '私密聊天'], 'count': '2'}))
+            self.assertEqual(captured[0][0:2], ('/receiver/private?signature=abc', 'Bearer secret'))
+            self.assertEqual({key: value for key, value in captured[0][2].items() if key != 'event_id'},
+                {'event': 'task.completed', 'nested': ['中文 "引号"\n换行', '私密聊天'], 'count': '2'})
+            self.assertTrue(captured[0][2]['event_id'])
             with self.assertRaises(RuntimeError) as error:
                 publish_webhook(config, 'again', 'again')
             self.assertNotIn('secret', str(error.exception))

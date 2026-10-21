@@ -10,6 +10,7 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from bridge.resources import project_root
 
@@ -550,7 +551,13 @@ class Desktop:
                     records[-1].append(line)
             sections.append({'name': label, 'text': '\n'.join('\n'.join(record) for record in reversed(records))})
         notifications = settings(self.data_dir)
-        for secret in (notifications.get('token'), notifications.get('barkKey'), notifications.get('pushplusToken')):
+        webhook = notifications.get('webhookUrl') or ''
+        parsed_webhook = urlsplit(webhook) if webhook else None
+        secrets = [notifications.get('token'), notifications.get('barkKey'), notifications.get('pushplusToken'), webhook]
+        if parsed_webhook:
+            secrets.extend((parsed_webhook.path if parsed_webhook.path not in ('', '/') else '', parsed_webhook.query))
+        secrets.extend((notifications.get('webhookHeaders') or {}).values())
+        for secret in sorted({value for value in secrets if isinstance(value, str) and value}, key=len, reverse=True):
             if secret:
                 for section in sections:
                     section['text'] = section['text'].replace(secret, '[REDACTED]')

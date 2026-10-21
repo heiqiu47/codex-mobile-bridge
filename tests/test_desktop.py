@@ -261,6 +261,17 @@ class DesktopTests(unittest.TestCase):
         self.assertNotIn('private-bark-key', text)
         self.assertEqual(text.count('[REDACTED]'), 2)
 
+    def test_logs_redact_webhook_url_query_path_and_header_values(self):
+        from bridge.features.notifications.channels import save_settings
+        save_settings(self.directory, {'webhookUrl': 'https://receiver.example/private-path?signature=private-query',
+            'webhookHeaders': {'Authorization': 'Bearer private-header'}})
+        (self.directory/'gateway.log').write_text(
+            'https://receiver.example/private-path?signature=private-query\n'
+            '/private-path signature=private-query Bearer private-header\n')
+        text = self.desktop.logs()['text']
+        for secret in ('private-path', 'private-query', 'private-header'):
+            self.assertNotIn(secret, text)
+
     def test_running_network_settings_cannot_disconnect_phone(self):
         value = self.value()
         self.desktop.save(value)

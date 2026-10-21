@@ -29,7 +29,10 @@ UNSAFE_WEBHOOK_HEADERS = frozenset(('host', 'content-length', 'content-type', 't
 def webhook_url(value):
     if not isinstance(value, str) or len(value) > 4096 or any(ord(c) < 33 or ord(c) == 127 for c in value):
         raise FieldError('Webhook 地址格式不正确', 'webhook-url')
-    parsed = urlsplit(value)
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        raise FieldError('Webhook 地址格式不正确', 'webhook-url') from None
     try:
         port = parsed.port
     except ValueError:
@@ -57,22 +60,40 @@ def webhook_headers(value):
 
 
 def webhook_template(value):
-    if not isinstance(value, str) or len(value.encode('utf-8')) > 16384:
+    if not isinstance(value, str):
         raise FieldError('Webhook JSON 模板格式不正确', 'webhook-body-template')
     try:
-        document = json.loads(value)
-    except (ValueError, TypeError):
+        size = len(value.encode('utf-8'))
+    except UnicodeEncodeError:
         raise FieldError('Webhook JSON 模板格式不正确', 'webhook-body-template') from None
-    def check(item):
+    if size > 16384:
+        raise FieldError('Webhook JSON 模板格式不正确', 'webhook-body-template')
+    def reject_constant(_):
+        raise ValueError('Non-finite JSON number')
+    try:
+        document = json.loads(value, parse_constant=reject_constant)
+    except (ValueError, TypeError, RecursionError):
+        raise FieldError('Webhook JSON 模板格式不正确', 'webhook-body-template') from None
+    def check(item, depth=0):
+        if depth > 32:
+            raise FieldError('Webhook JSON 模板层级过深', 'webhook-body-template')
         if isinstance(item, dict):
             for key, child in item.items():
+                try:
+                    key.encode('utf-8')
+                except UnicodeEncodeError:
+                    raise FieldError('Webhook JSON 模板格式不正确', 'webhook-body-template') from None
                 if '{{' in key or '}}' in key:
                     raise FieldError('Webhook 占位符只能用于字符串值', 'webhook-body-template')
-                check(child)
+                check(child, depth + 1)
         elif isinstance(item, list):
             for child in item:
-                check(child)
+                check(child, depth + 1)
         elif isinstance(item, str):
+            try:
+                item.encode('utf-8')
+            except UnicodeEncodeError:
+                raise FieldError('Webhook JSON 模板格式不正确', 'webhook-body-template') from None
             for match in WEBHOOK_PLACEHOLDER.finditer(item):
                 if match.group(1) not in WEBHOOK_FIELDS:
                     raise FieldError('Webhook 模板包含未知占位符', 'webhook-body-template')
@@ -164,7 +185,10 @@ def save_settings(data_dir, value):
     for flag in ('clearWebhookUrl', 'clearWebhookHeaders'):
         if flag in value and not isinstance(value[flag], bool):
             raise ValueError('Webhook 配置格式不正确')
-    url_changed = False
+    if 'webhookUrl' in value and not isinstance(value['webhookUrl'], str):
+        raise FieldError('Webhook 地址格式不正确', 'webhook-url')
+    if 'webhookHeaders' in value and not isinstance(value['webhookHeaders'], dict):
+        raise FieldError('Webhook 请求头格式不正确', 'webhook-headers')
     if value.get('clearWebhookUrl'):
         result['webhookUrl'] = ''
     elif value.get('webhookUrl'):
@@ -254,7 +278,7 @@ def publish_pushplus(config, title, body, click=''):
 
 def publish_webhook(config, title, body, click='', *, event='test', event_id='', session_name='', client='', host='', count=1):
     url = webhook_url(config.get('webhookUrl', ''))
-    values = {'event': event, 'event_id': event_id, 'title': title, 'body': body,
+    values = {'event': event, 'event_id': event_id or uuid.uuid4().hex, 'title': title, 'body': body,
               'session_name': session_name, 'url': click, 'client': client, 'host': host, 'count': str(count)}
     template = json.loads(webhook_template(config['webhookBodyTemplate']))
     def render(item):
