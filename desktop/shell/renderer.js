@@ -7,10 +7,27 @@ let webhookTemplates={},revealedWebhookUrl='',webhookRevealRequest=0;
 let webhookSelectedId='legacy',webhookCreating=false,webhookSavedFields=null,webhookSaving=false,webhookRenderedRowSignature='';
 function webhookRows(){const config=snapshot?.notifications||{};return config.webhookEndpoints||[{...config,webhookId:'legacy',webhookName:t('默认 Webhook')}];}
 function webhookRow(){return webhookRows().find(row=>row.webhookId===webhookSelectedId)||{};}
-function webhookFields(){return {webhookName:$('webhook-name').value.trim(),webhookEnabled:$('webhook-enabled').checked,webhookProvider:$('webhook-provider').value,webhookSignEnabled:$('webhook-sign-enabled').checked,webhookBodyTemplate:$('webhook-body-template').value,clearWebhookUrl:$('clear-webhook-url').checked,clearWebhookHeaders:$('clear-webhook-headers').checked,clearWebhookSignSecret:$('clear-webhook-sign-secret').checked};}
+function webhookFields(){return {webhookName:webhookSelectedId==='legacy'?'默认 Webhook':$('webhook-name').value.trim(),webhookEnabled:$('webhook-enabled').checked,webhookProvider:$('webhook-provider').value,webhookSignEnabled:$('webhook-sign-enabled').checked,webhookBodyTemplate:$('webhook-body-template').value,clearWebhookUrl:$('clear-webhook-url').checked,clearWebhookHeaders:$('clear-webhook-headers').checked,clearWebhookSignSecret:$('clear-webhook-sign-secret').checked};}
 function webhookDirty(){return webhookCreating||!webhookSavedFields||JSON.stringify(webhookFields())!==JSON.stringify(webhookSavedFields)||!!(webhookUrlDraft()||$('webhook-headers').value||$('webhook-sign-secret').value);}
-function renderWebhookList(){const list=$('webhook-endpoint-list');list.replaceChildren();const rows=[...webhookRows()];if(!rows.some(row=>row.webhookId==='legacy'))rows.unshift({webhookId:'legacy',webhookName:t('默认 Webhook')});for(const row of rows){const button=document.createElement('button');button.type='button';button.dataset.webhookId=row.webhookId;button.setAttribute('aria-current',String(!webhookCreating&&webhookSelectedId===row.webhookId));button.textContent=[row.webhookName||t('默认 Webhook'),row.webhookUrlDisplay||'',t(row.webhookEnabled?'已启用':'未启用')].filter(Boolean).join(' · ');button.onclick=()=>selectWebhook(row.webhookId);list.append(button);}$('webhook-delete').hidden=webhookCreating||!webhookRows().some(row=>row.webhookId===webhookSelectedId);}
-function renderWebhookEditor(row){hideWebhookUrl();webhookTemplates=row.webhookTemplates||snapshot?.notifications?.webhookTemplates||webhookTemplates;input('webhook-name',row.webhookName||(webhookSelectedId==='legacy'?t('默认 Webhook'):''));$('webhook-name').disabled=webhookSelectedId==='legacy'&&!webhookCreating;$('webhook-enabled').checked=!!row.webhookEnabled;input('webhook-provider',row.webhookProvider||'auto');$('webhook-sign-enabled').checked=!!row.webhookSignEnabled;input('webhook-body-template',row.webhookBodyTemplate||webhookTemplates.generic||defaultWebhookBodyTemplate);for(const id of ['webhook-url','webhook-headers','webhook-sign-secret'])input(id,'');for(const id of ['clear-webhook-url','clear-webhook-headers','clear-webhook-sign-secret'])$(id).checked=false;$('webhook-url-saved').textContent=row.hasWebhookUrl?t('地址已保存：')+(row.webhookUrlDisplay||''):t('尚未保存地址');$('webhook-url').placeholder=t(row.hasWebhookUrl?'已保存，留空保留':'输入 HTTPS 地址');$('webhook-headers-saved').textContent=t(row.hasWebhookHeaders?'已保存请求头；留空保留':'尚未保存请求头');$('webhook-sign-saved').textContent=t(row.hasWebhookSignSecret?'已保存签名密钥；留空保留':'尚未保存签名密钥');$('webhook-provider-hint').textContent=webhookProviderHint(row);webhookSavedFields=webhookFields();webhookRenderedRowSignature=JSON.stringify(row);}
+function webhookDisplayName(row){return row.webhookId==='legacy'&&(!row.webhookName||row.webhookName==='默认 Webhook')?t('默认 Webhook'):row.webhookName||'';}
+function renderWebhookList(){const list=$('webhook-endpoint-list');list.replaceChildren();const rows=[...webhookRows()];if(!rows.some(row=>row.webhookId==='legacy'))rows.unshift({webhookId:'legacy',webhookName:'默认 Webhook'});for(const row of rows){const button=document.createElement('button');button.type='button';button.dataset.webhookId=row.webhookId;button.setAttribute('aria-current',String(!webhookCreating&&webhookSelectedId===row.webhookId));button.textContent=[webhookDisplayName(row),row.webhookUrlDisplay||'',t(row.webhookEnabled?'已启用':'未启用')].filter(Boolean).join(' · ');button.onclick=()=>selectWebhook(row.webhookId);list.append(button);}$('webhook-delete').hidden=webhookCreating||!webhookRows().some(row=>row.webhookId===webhookSelectedId);}
+function renderWebhookCopy(row){
+  if(webhookSelectedId==='legacy'&&!webhookCreating)$('webhook-name').value=webhookDisplayName({...row,webhookId:'legacy'});
+  $('webhook-url-saved').textContent=row.hasWebhookUrl?t('地址已保存：')+(row.webhookUrlDisplay||''):t('尚未保存地址');
+  $('webhook-url').placeholder=t(row.hasWebhookUrl?'已保存，留空保留':'输入 HTTPS 地址');
+  $('webhook-headers-saved').textContent=t(row.hasWebhookHeaders?'已保存请求头；留空保留':'尚未保存请求头');
+  $('webhook-sign-saved').textContent=t(row.hasWebhookSignSecret?'已保存签名密钥；留空保留':'尚未保存签名密钥');
+  $('webhook-provider-hint').textContent=webhookProviderHint(row);
+}
+function renderWebhookEditor(row){
+  hideWebhookUrl();webhookTemplates=row.webhookTemplates||snapshot?.notifications?.webhookTemplates||webhookTemplates;
+  input('webhook-name',webhookDisplayName({...row,webhookId:webhookSelectedId}));$('webhook-name').disabled=webhookSelectedId==='legacy'&&!webhookCreating;
+  $('webhook-enabled').checked=!!row.webhookEnabled;input('webhook-provider',row.webhookProvider||'auto');$('webhook-sign-enabled').checked=!!row.webhookSignEnabled;
+  input('webhook-body-template',row.webhookBodyTemplate||webhookTemplates.generic||defaultWebhookBodyTemplate);
+  for(const id of ['webhook-url','webhook-headers','webhook-sign-secret'])input(id,'');
+  for(const id of ['clear-webhook-url','clear-webhook-headers','clear-webhook-sign-secret'])$(id).checked=false;
+  renderWebhookCopy(row);webhookSavedFields=webhookFields();webhookRenderedRowSignature=JSON.stringify(row);
+}
 function selectWebhook(id){if(webhookSaving)return;if(webhookDirty()){feedback(t('请先保存或取消当前修改。'),true);return;}webhookSelectedId=id;webhookCreating=false;renderWebhookEditor(webhookRow());renderWebhookList();}
 function webhookUrlDraft(){return $('webhook-url').value===revealedWebhookUrl?'':$('webhook-url').value.trim();}
 function selectedWebhookTemplate(config=webhookRow()){const provider=$('webhook-provider').value;return webhookTemplates[provider==='auto'?config.webhookResolvedProvider||'generic':provider]||webhookTemplates.generic||defaultWebhookBodyTemplate;}
@@ -196,7 +213,7 @@ function render(value,watchRevision=watchPanel.revision){
   $('ntfy-token').placeholder=value.notifications.hasToken?t('已保存；留空保留，服务地址变化时清除'):t('如服务需要认证，在这里填写');
   $('bark-key').placeholder=value.notifications.hasBarkKey?t('已保存；留空保留，服务地址变化时清除'):t('填写 Bark App 中的 Device Key');
   $('pushplus-token').placeholder=value.notifications.hasPushplusToken?t('已保存，留空保留'):t('填写 PushPlus Token');
-  if(!webhookCreating){if(!webhookRows().some(row=>row.webhookId===webhookSelectedId)&&(!webhookSavedFields||!webhookDirty()))webhookSelectedId=webhookRows()[0]?.webhookId||'legacy';const row=webhookRow();if(!webhookSavedFields||(JSON.stringify(row)!==webhookRenderedRowSignature&&!webhookDirty()))renderWebhookEditor(row);}
+  if(!webhookCreating){if(!webhookRows().some(row=>row.webhookId===webhookSelectedId)&&(!webhookSavedFields||!webhookDirty()))webhookSelectedId=webhookRows()[0]?.webhookId||'legacy';const row=webhookRow();if(!webhookSavedFields||(JSON.stringify(row)!==webhookRenderedRowSignature&&!webhookDirty()))renderWebhookEditor(row);renderWebhookCopy(row);}
   renderWebhookList();
   updateDirty();
   $('network-lock').hidden=!running;

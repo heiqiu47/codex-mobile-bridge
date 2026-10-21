@@ -429,6 +429,17 @@ test('unrelated desktop snapshot does not hide a revealed Webhook URL',async()=>
   assert.equal(url.type,'text');assert.equal(url.value,'https://example.test/hook?token=private');assert.equal(ui.run('webhookDirty()'),false);
 });
 
+test('desktop language switch translates Webhook hints without losing drafts or revealed URL',async()=>{
+  const ui=await renderer(),url=ui.nodes.get('webhook-url'),body=ui.nodes.get('webhook-body-template');
+  ui.value.notifications.webhookEndpoints=[{webhookId:'legacy',webhookName:'默认 Webhook',webhookProvider:'auto',webhookResolvedProvider:'feishu',hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:true,hasWebhookSignSecret:true,webhookBodyTemplate:'{"event":"{{event}}"}',webhookTemplates:ui.value.notifications.webhookTemplates}];
+  await ui.poll();ui.run("activeTab='notifications'");ui.api.readCredentials=async()=>({webhookUrl:'https://example.test/hook?token=private'});
+  await ui.nodes.get('webhook-url-eye').onclick();body.value='{"custom":"{{body}}"}';
+  ui.context.applyLanguage('en');
+  assert.equal(url.type,'text');assert.equal(url.value,'https://example.test/hook?token=private');assert.equal(body.value,'{"custom":"{{body}}"}');
+  assert.equal(ui.nodes.get('webhook-name').value,'Default Webhook');assert.equal(ui.run('webhookDirty()'),true);
+  for(const id of ['webhook-provider-hint','webhook-url-saved','webhook-headers-saved','webhook-sign-saved'])assert.doesNotMatch(ui.nodes.get(id).textContent,/[\u4e00-\u9fff]/);
+});
+
 test('remote deletion keeps a desktop Webhook draft tied to its original ID',async()=>{
   const ui=await renderer(),templates=ui.value.notifications.webhookTemplates;
   ui.value.notifications.webhookEndpoints=[{webhookId:'named-1',webhookName:'First',webhookBodyTemplate:templates.generic,webhookTemplates:templates},{webhookId:'named-2',webhookName:'Second',webhookBodyTemplate:templates.generic,webhookTemplates:templates}];
