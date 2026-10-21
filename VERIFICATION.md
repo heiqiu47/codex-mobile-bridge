@@ -1,3 +1,70 @@
+<a id="webhook-multi-target-acceptance"></a>
+
+# 多目标 Webhook 与手机弹窗本地验收（2026-10-22，未发布）
+
+桌面网关候选为 `70ed6efdf71cc642dd2627c9da9cc046eea1b50e`。手机焦点修订 `d2020b18e45d` 安装后收到严重交互回归反馈，已在独立分支 `bugfix/issue60-ios-input-recovery` 的 `6acebf9556e9` 中撤回；恢复候选的整个 `mobile/` 源码与 `70ed6ef` 相同。网关资源未改变。版本仍为 `2.1.2`、手机构建号 `34`；未推送 GitHub，也未发布新版。
+
+本轮补齐多个同类或不同服务的 Webhook、独立目标编辑与发送、跨进程保存保护、已保存启用状态、紧凑操作布局，以及手机原生菜单对弹窗的让位。旧单目标配置与凭据保留；普通读取脱敏，主动查看与测试均限定已选目标。
+
+| 范围 | 当前证据 |
+| --- | --- |
+| 源码 | Python 201 项中 199 通过、2 跳过；桌面/Web Node 840 通过、1 跳过。首次 Node 运行的两项回环服务测试受沙箱端口限制，允许回环后定向重跑通过。恢复候选手机脚本 33/33 通过 |
+| 打包后端 | macOS、Windows、Ubuntu 的冻结网关各通过相同的 115 项真实回环 HTTP/桌面工作进程检查，包含五种服务协议、签名、认证与 CSRF、脱敏、多目标增删改查、失效目标拒绝及跨进程可见性；没有向真实机器人发送本轮验收消息 |
+| 界面 | 实际浏览器核验桌面 900px、手机 390px 的中英文布局，无横向溢出；配置选择与添加同行、地址查看同行、底部操作分组。多目标交互及弹窗菜单信号检查通过 |
+| macOS arm64 | 独立 Test 已替换并启动 8788，实际窗口布局已核对；正式版、配置及手机绑定保护检查通过 |
+| Windows x64 | 构建、临时文件与验收均在 F 盘；独立 Test 已覆盖安装，705 个安装文件与候选一致，真实 GUI 和 8788 启动检查通过；正式版、配置及绑定保留 |
+| Ubuntu x64 | 用户完成覆盖安装后，715 个文件与冻结包一致，真实 GUI、8788 启动、静态资源缓存与正式版/配置/绑定保护检查通过 |
+| iOS | 用户确认 `70ed6ef` 的弹窗“更多”入口与紧凑布局通过。`d2020b1` 覆盖安装保留了 5 个电脑连接及偏好，但用户反馈蓝框消失后会话无法唤起输入法且点击无响应；该修订不通过，已撤回。恢复包覆盖安装后，5 个电脑连接及偏好再次核对不变；用户确认会话按钮与普通输入框已恢复，补充回答框的键盘后定位以及列表返回高亮单独修订 |
+| Android | 新 APK 已构建，原包名、版本与签名保持一致；包内共用脚本与源码字节一致。本轮未连接 Android 真机 |
+
+已撤回的焦点修订曾在实际 Chromium 中通过按钮轮廓与输入方式切换检查，但该检查遗漏真实 WKWebView 的会话触摸、键盘弹出与点击链路，不能支撑完整可用性。当前 Chromium 触摸对照仍能聚焦并触发点击，尚未复现用户的 iPhone 故障；全页触摸监听导致根节点样式变更属于待验证原因，而非已确认根因。用户已确认回退后普通输入与按钮恢复。
+
+随后按三个独立分支修订：`8665e05` 只在紧凑布局返回列表后清除会话选中背景，并限制无悬停设备的列表悬停背景；宽屏当前会话标识保留。`6964f48` 在原生手机键盘改变视口时，只校正当前回答卡片所属滚动区；不转移焦点、不修改草稿、不截获触摸或输入事件。`22a9744` 给账号管理、第三方通知与应用管理的标题设置初始焦点，保留按钮 Tab 导航，不修改通用弹窗或输入处理。
+
+新修订通过移动脚本 36/36、账号/导航/弹窗/资源与布局 Node 132/132、Web 资源 Python 8/8。真实 Chromium 的三个客户端紧凑触摸进入/返回与宽屏选中态共 6 个场景通过；回答框在 844→500px 视口变化后无需输入即进入可见区，保持原焦点，重复事件、失焦、普通输入框与部分可见长回答框不被滚动。弹窗合成页核验初始焦点从按钮改为标题；补充提交 `3173754` 仅去掉这些非交互标题自身的浏览器默认轮廓。最终生产 CSS 独立复核：三个标题均无轮廓，Tab 后按钮仍显示键盘焦点框，触摸输入可键入中文。以上是浏览器与源码证据，不能替代 iPhone 真机的键盘动画和按钮颜色验收。
+
+后续候选 `2e4d7f87e4f013ddce9f613ecf4421ff3212951a` 已编译 Mac Test、签名 iOS Test 和 Android APK。Mac 独立 Test 已覆盖并启动 8788，正式版进程、配置与绑定核对不变；5 个修改后的已安装 Web 文件与源码一致，实际首页除运行时安全 nonce 外一致并保持 no-store，三个脚本/样式的内容与 304 重新校验通过。本机网页入口按原配置保持关闭，资产验收使用原局域网入口。iPhone Test 覆盖安装并启动，5 个电脑连接及全部偏好逐项相同。用户随后确认列表返回、弹窗按钮与回答卡片等操作基本正常，剩余返回按钮、Webhook 地址框及刚进入聊天的输入框仍出现蓝色边框，未把颜色验收记为全部通过。Windows/Ubuntu 仍是已通过验收的 `70ed6ef`，未将这次仅在 Mac/手机安装的焦点后续修订记作远端已更新。
+
+针对剩余蓝框，独立分支 `bugfix/issue60-mobile-control-focus` 只调整两个通知子弹窗的标题初始焦点，并添加原生手机宿主的控件样式：关闭默认蓝色触摸高亮，保留中性贴边焦点提示，主按钮使用高对比内圈；普通 Web、终端辅助输入及勾选控件不受该规则影响。没有修改 `mobile/`、触摸监听、键盘处理或草稿逻辑。Node 50/50 和资源 Python 5/5 通过；完整生产 CSS 的浅/深色 × 原生手机宿主/普通 Web 共四个实际 Chromium 场景通过，包含子弹窗初始标题、Tab 导航、触摸点击和中文文本插入。浏览器验收发现主按钮样式优先级不足并在编译前修正。该证据未确认 iOS 初入聊天时的实际焦点来源，也不等同于真实手机 IME 组合输入验收。候选 `95153e59f7d8` 只编译 Mac Test；iOS/Android 原生包沿用 `2e4d7f8`。 Mac Test 已覆盖安装并启动 8788，3 个变更资源与源码一致，首页及时刷新及样式 304 重新校验通过；正式版文件与进程、原配置及手机绑定核验不变。iPhone 无需重装，退出到电脑列表再进入原 Mac 连接即可复测，颜色结果等待用户确认。 安装验收后又清理 14 项本轮重复产物及旧 Mac Test 包，逻辑文件大小约 1.30 GiB（不等于 APFS 实际释放空间）；当前 DMG、已安装 App、原手机测试包和记录保留。
+
+用户对 `95153e5` 的反馈进一步区分了剩余问题：Webhook 当前配置仍有蓝色选中框，新建会话关闭按钮及普通聊天输入框有灰色外框，补充回答框在输入中仍会主动移位。独立分支 `bugfix/issue60-mobile-focus-residual` 的 `84a5849` 将 Webhook 持久选中样式改为中性填充和字重，为 Codex/Claude/DSH 新建弹窗指定标题初始焦点，并仅取消原生手机普通聊天输入框的附加轮廓；输入框边框与光标保留。`bugfix/issue60-answer-focus-once` 的 `4847b4d` 将回答卡片校正限制为每次聚焦最多一次：首个 1 秒内等待 120ms 视口稳定，输入、中文组合输入、手动触摸/滚轮滚动或失焦即取消待执行校正；没有强制失焦、拦截输入、修改草稿或全页触摸样式切换。
+
+集成候选 `0af8fb61cabc` 的 Node 163/163、资源 Python 5/5 通过。旧实现的连续键盘尺寸变化用例先复现二次移位，新实现及真实 Chromium 隔离夹具确认首次必要校正仅写一次滚动位置，随后输入及视口变化不再由该辅助逻辑滚动；浏览器自身的焦点滚动未被禁用。生产 CSS 检查确认选中 Webhook 无外框、创建弹窗标题初始聚焦、普通手机输入框无附加轮廓，其他控件与普通 Web 的焦点样式保留。Mac Test、iOS Test 和 Android APK 均已构建，签名及变更资源与冻结源码核验一致。Mac 8788 已覆盖启动，正式版文件/进程、配置与绑定保护核验通过；4 个已安装 Web 文件、实际首页及三项静态资源内容和 304 重新校验通过。iPhone 独立 Test 已覆盖安装并启动，5 个电脑连接及持久偏好相同，仅当前 Mac 连接的最近打开时间更新。用户随后完成本候选 iPhone 复测，反馈“现在似乎是没有了这些问题了”；据此将本次反馈范围内的选中/焦点外框、回答卡片移位及基本输入点击记为实测未再复现，不外推为所有设备或场景均已验证。Android 无真机连接，Windows/Ubuntu 未重装该焦点候选。安装验收后清理 18 项重复中间产物和旧 Mac Test 包，逻辑文件大小约 1.43 GiB；当前已安装 App、DMG、iOS App、APK 与验收记录保留。
+
+本地记录位于 `.tmp/issue60-feedback-20261022/`，包括归档和安装包哈希、配置保护摘要、截图及清理清单，不提交凭据或完整配置。Mac 和 Windows 的被替代 Test 包与重复构建产物已按精确路径清理；当前安装包、已安装 Test、签名资源及必要验收记录保留。Ubuntu 安装验收后已清理旧 DEB/AppImage 与重复中间产物，回收约 1.16 GiB，保留当前安装包、解包核验副本和共享缓存。焦点后续修订安装检查通过后，删除故障手机包、废弃候选、旧 Mac 安装包和重复中间产物，额外回收约 2.35 GiB；保留当前 DMG/iOS App/APK，以及用户已确认恢复基本输入的上一份手机包，等待新修订真机验收。
+
+**English:** packaged gateways on macOS, Windows and Ubuntu passed the same 115-check loopback suite, followed by Test installation, GUI, startup and preservation checks. The user accepted iOS modal-menu and layout behavior, but reported that the subsequent touch-focus change prevented conversation input and interaction. That change failed acceptance and was reverted; all five saved computers and preferences remained intact, and the user confirmed normal input and buttons recovered. Three separate follow-ups address compact-list selection, focused answer-card visibility after keyboard resizing, and initial focus for selected management dialogs. The `2e4d7f8` candidate passed source and Chromium checks and was built for Mac, iOS and Android. Mac 8788 and the independent iPhone Test were upgraded and launched with preservation checks passed; the user accepted the interaction follow-ups while reporting remaining blue control outlines. A CSS-only mobile-host follow-up plus initial headings for notification subdialogs passed four light/dark browser scenarios and preserves keyboard focus visibility; native iPhone color acceptance remains pending. Windows/Ubuntu remain on the previously accepted gateway candidate. No GitHub push or release occurred.
+
+The latest local candidate, `0af8fb61cabc`, removes the persistent Webhook selection outline and extra native-composer ring, starts new-chat dialogs on their heading, and bounds answer-card positioning to one initial correction. Typing, IME composition and manual scrolling cancel pending repositioning. Targeted Node checks (163), resource checks (5), and isolated Chromium scenarios passed. Mac 8788 and the existing iPhone Test were upgraded and launched; five saved computers and persistent preferences were preserved, with only the current connection's last-opened timestamp advancing. Android was built and signed. The user subsequently reported that the previously observed problems seemed absent on the iPhone retest. The reported outline, answer-card positioning and basic interaction cases are therefore recorded as no longer reproduced in that test, without extending the result to all devices or scenarios. Windows and Ubuntu were not upgraded to this focus-only candidate.
+
+---
+
+<a id="webhook-local-acceptance"></a>
+
+# Webhook 服务预设本地验收（2026-10-22，未发布）
+
+上一轮安装候选源码为 `e766d406cea87d9e2f0a962a765e675564ec2239`，分支为 `feature/issue60-webhook-notifications`，基于 main `d900c02`。Issue #60 的通用 Webhook 通道在本轮补齐通用自定义、飞书、钉钉、Discord、Telegram 的可编辑模板、可用字段说明、可选飞书/钉钉签名、服务业务响应检查及已保存地址的隐藏/查看；沿用既有通知策略、去重和重试。版本仍为 `2.1.2`、手机构建号 `34`；未推送 GitHub，未创建 Release。
+
+首轮 `76867ec` 通过通用回环接收器检查，但用户真实飞书测试未收到消息。本轮授权对照确认：原通用 JSON 得到 HTTP 200 / 业务码 19002，正确飞书文本格式得到业务码 0，用户确认收到消息。因此本轮按服务协议检查响应，不再把飞书 HTTP 200 直接视为接受通知；首轮的通用接收器结果不作为飞书兼容证据。
+
+| 范围 | 本轮证据 |
+| --- | --- |
+| 后端与界面 | 本次修订通过通知/桌面 Python 70 项、桌面/Web JS 118 项、鉴权与 CSRF HTTP 3 项；覆盖默认模板迁移、自定义正文保留、两种签名算法、密钥保留/更换/清除、业务失败判定及主动查看地址 |
+| Web / 手机共享界面 | 390px 实际 Chromium 中通过 24 项检查；1200px 桌面生产页面配合合成 IPC 通过 22 项检查。覆盖五种预设、签名字段、地址隐藏/查看、非法输入、保存失败草稿保留及仅测试已保存配置；没有横向溢出 |
+| 三平台打包网关 | macOS arm64、Windows x64、Ubuntu x64 各通过同一组 76 项真实回环 HTTP 检查：认证、CSRF、脱敏与主动读取地址、中文 JSON、各服务默认格式与业务失败、独立计算的飞书/钉钉签名、Discord 确认及 Telegram chat_id；隔离网关运行后均停止 |
+| macOS arm64 | 新 Test DMG/ZIP、网关和签名核验通过；旧 Test 已替换，原配置与绑定保留，8788 启动正常。真实窗口中的服务选择与保存状态已检查；安装后的网关通过已保存配置向授权飞书机器人发送测试，飞书返回接受成功。正式 8787 进程和配置保持不变 |
+| Windows x64 | 全部构建、临时与验收文件位于 F 盘，低优先级单任务构建；安装后 705 个载荷文件与候选逐项一致，二维码、真实 GUI、五种服务配置、8788 启动及静态资源检查通过。安装目录约 450 MB，包含 ConPTY；正式版、配置、可信手机会话、自启动项及已运行 DSH 均保留 |
+| Ubuntu x64 | DEB/AppImage 构建通过；用户覆盖安装独立 Test DEB，715 个安装文件与候选逐项一致；真实 GUI、Webhook 控件及 8788 网关启动通过。正式版文件与进程、配置、可信绑定及独立 Test 自启动身份保留 |
+| Android / iOS | 本次服务预设与地址查看只修改网关共享界面，可沿用原独立手机 Test，重新打开连接即可加载。首轮已生成签名 Android APK，并覆盖安装、启动独立 iPhone Test，12 项已保存偏好保持一致；本次未重新编译原生手机壳，也未把 Chromium 手机尺寸检查等同于真实手机验收 |
+
+76 项检查是三种平台各自运行的相同功能检查，不累加为不同功能的测试数量。飞书有授权真实机器人接收确认及新版已安装网关的服务响应；钉钉、Discord、Telegram 本轮使用本机协议接收器验证，没有声称取得其真实账号的送达确认。服务接受与用户实际看到通知分别记录。未运行新的 GitHub 发布 CI，也不借用此前正式版结果作为本轮证据。
+
+源码归档摘要、安装包哈希、配置/绑定摘要、运行结果和截图保留在本地 `.tmp/issue60-webhook-20261021/` 与 `.tmp/issue60-feishu-20261021/`；凭据及完整配置不提交。已安装 Test、当前安装包、共享构建依赖与验收记录保留；被替代的首轮 Test 包和本轮重复构建目录仅在安装验收通过后按精确路径清理。
+
+**English:** the revised, unreleased candidate supplies five editable presets, Feishu/DingTalk signing, service-specific success checks and explicit saved-endpoint visibility. All three packaged gateways passed the same 76-check loopback suite, followed by Test installation, visible GUI, startup and preservation checks. Windows compared 705 installed files; Ubuntu compared 715. Formal apps, settings and trusted phone bindings remain intact. The user confirmed receipt from the authorized Feishu bot, and the newly installed macOS gateway also obtained a successful Feishu response; other providers have protocol-fixture evidence only. Existing mobile Test apps load the shared UI without a native rebuild. No GitHub push, release CI or new release occurred.
+
+---
+
 <a id="mermaid-preview-acceptance"></a>
 
 # Mermaid 预览本地验收（2026-10-21，未发布）

@@ -90,7 +90,8 @@
     "shared/presentation-content.css",
     "layouts/compact/presentation.css",
     "shared/presentation-controls.css",
-    "hosts/mobile-footer.css"
+    "hosts/mobile-footer.css",
+    "hosts/mobile-controls.css"
   ],
   "/host.js": "hosts/environment.js",
   "/layout.js": "layouts/viewport.js",

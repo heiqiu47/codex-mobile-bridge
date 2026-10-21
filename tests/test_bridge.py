@@ -1011,6 +1011,93 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(self.request('POST', bark, {'barkServer': 'https://other.example', 'barkEnabled': False}, headers)[2]['hasBarkKey'], False)
             self.assertEqual(settings(directory)['barkKey'], '')
 
+    def test_webhook_channel_saved_config_is_masked_and_test_uses_saved_values(self):
+        from bridge.features.notifications.channels import Notifications, settings, WebhookDeliveryError
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as directory:
+            self.server.notifications = Notifications(None, directory)
+            headers = self.login()
+            path = '/api/notifications/channels/webhook'
+            url = 'https://receiver.example/private/secret?signature=private'
+            body = {'webhookEnabled': True, 'webhookUrl': url,
+                    'webhookHeaders': {'Authorization': 'Bearer secret'}}
+            status, _, saved = self.request('POST', path, body, headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(saved['webhookUrlDisplay'], 'https://receiver.example')
+            self.assertTrue(saved['hasWebhookUrl'] and saved['hasWebhookHeaders'])
+            self.assertNotIn('secret', json.dumps(saved))
+            self.assertNotIn('private', json.dumps(self.request('GET', path, headers=headers)))
+            self.assertEqual(settings(directory)['webhookHeaders'], {'Authorization': 'Bearer secret'})
+            self.assertEqual(self.request('POST', path, {'token': 'other'}, headers)[0], 400)
+            with patch('bridge.api.httpd.publish_webhook') as sender:
+                self.assertEqual(self.request('POST', path + '/test', {'webhookUrl': 'https://other.example'}, headers)[0], 200)
+                self.assertEqual(sender.call_args.args[0]['webhookUrl'], url)
+                self.assertEqual(sender.call_args.kwargs['event'], 'test')
+            feishu = 'https://open.feishu.cn/open-apis/bot/v2/hook/private'
+            status, _, saved = self.request('POST', path, {'webhookUrl': feishu, 'webhookProvider': 'auto',
+                'webhookSignEnabled': True, 'webhookSignSecret': 'private-sign-secret'}, headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(saved['webhookResolvedProvider'], 'feishu')
+            self.assertEqual(saved['webhookSignSecret'], '')
+            self.assertTrue(saved['hasWebhookSignSecret'])
+            self.assertNotIn('private-sign-secret', json.dumps(saved))
+            self.assertEqual(self.request('GET', path)[0], 401)
+            self.assertEqual(self.request('POST', path, {'webhookSignSecret': 'other'}, {'Cookie': headers['Cookie']})[0], 403)
+            with patch('bridge.api.httpd.publish_webhook', side_effect=WebhookDeliveryError('飞书未接受通知（19021：签名或时间无效）')):
+                status, _, error = self.request('POST', path + '/test', {}, headers)
+                self.assertNotEqual(status, 200)
+                self.assertIn('19021', json.dumps(error))
+
+    def test_webhook_url_reveal_requires_auth_csrf_and_explicit_empty_body(self):
+        from bridge.features.notifications.channels import Notifications, save_settings
+        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as directory:
+            self.server.notifications = Notifications(None, directory)
+            url = 'https://discord.com/api/webhooks/123/private-token'
+            save_settings(directory, {'webhookUrl': url})
+            path = '/api/notifications/channels/webhook/url'
+            self.assertEqual(self.request('POST', path, {})[0], 401)
+            auth = self.login()
+            self.assertEqual(self.request('GET', path, headers=auth)[0], 405)
+            self.assertEqual(self.request('POST', path, {}, {'Cookie': auth['Cookie']})[0], 403)
+            self.assertEqual(self.request('POST', path, {'anything': True}, auth)[0], 400)
+            status, headers, body = self.request('POST', path, {}, auth)
+            self.assertEqual((status, body), (200, {'webhookUrl': url}))
+            self.assertEqual(headers['Cache-Control'], 'no-store')
+            self.assertEqual(self.request('GET', '/api/notifications/channels/webhook', headers=auth)[2]['webhookUrl'], '')
+
+    def test_multiple_webhook_api_masks_secrets_and_targets_test_reveal_delete(self):
+        from bridge.features.notifications.channels import Notifications, settings
+        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as directory:
+            self.server.notifications = Notifications(None, directory)
+            path = '/api/notifications/channels/webhook'
+            self.assertEqual(self.request('POST', path + '/endpoints', {'action': 'upsert', 'webhookName': '飞书'})[0], 401)
+            auth = self.login()
+            self.assertEqual(self.request('POST', path + '/endpoints', {'action': 'upsert', 'webhookName': '飞书'},
+                                          {'Cookie': auth['Cookie']})[0], 403)
+            self.assertEqual(self.request('GET', path + '/endpoints', headers=auth)[0], 405)
+            url = 'https://open.feishu.cn/open-apis/bot/v2/hook/private-token'
+            status, _, saved = self.request('POST', path + '/endpoints', {'action': 'upsert',
+                'webhookName': '飞书', 'webhookEnabled': True, 'webhookUrl': url,
+                'webhookSignEnabled': True, 'webhookSignSecret': 'private-sign'}, auth)
+            self.assertEqual(status, 200)
+            webhook_id = saved['selectedWebhookId']
+            self.assertEqual(saved['webhookEndpoints'][0]['webhookId'], webhook_id)
+            self.assertNotIn('private-token', json.dumps(saved))
+            self.assertNotIn('private-sign', json.dumps(saved))
+            self.assertEqual(self.request('GET', path, headers=auth)[2]['webhookEndpoints'][0]['webhookUrl'], '')
+            self.assertEqual(self.request('POST', path + '/url', {'webhookId': webhook_id},
+                                          {'Cookie': auth['Cookie']})[0], 403)
+            status, headers, revealed = self.request('POST', path + '/url', {'webhookId': webhook_id}, auth)
+            self.assertEqual((status, revealed), (200, {'webhookUrl': url}))
+            self.assertEqual(headers['Cache-Control'], 'no-store')
+            with patch('bridge.api.httpd.publish_webhook') as sender:
+                self.assertEqual(self.request('POST', path + '/test', {'webhookId': webhook_id}, auth)[0], 200)
+                self.assertEqual(sender.call_args.args[0]['webhookUrl'], url)
+            self.assertEqual(self.request('POST', path + '/endpoints', {'action': 'delete',
+                'webhookId': webhook_id}, auth)[2]['selectedWebhookId'], '')
+            self.assertEqual(settings(directory)['webhookEndpoints'], [])
+            self.assertEqual(self.request('POST', path + '/url', {'webhookId': webhook_id}, auth)[0], 400)
+
     def test_rename_route_requires_csrf_and_routes_to_selected_host(self):
         from unittest.mock import Mock
         headers = self.login()

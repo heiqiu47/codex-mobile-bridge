@@ -2,17 +2,65 @@
 const $=id=>document.getElementById(id),api=window.bridgeDesktop,t=BridgeI18n.t;
 let connectionDraft=[],savedConnections='[]',lanDraft=[],savedLan='[]';
 let snapshot,dirty=false,loading=false,startingUntil=0,activeTab='overview',savedFields={},feedbackKind='',lastFeedback;
+const defaultWebhookBodyTemplate=JSON.stringify({event:'{{event}}',title:'{{title}}',body:'{{body}}',session_name:'{{session_name}}',url:'{{url}}'},null,2);
+let webhookTemplates={},revealedWebhookUrl='',webhookRevealRequest=0;
+let webhookSelectedId='legacy',webhookCreating=false,webhookSavedFields=null,webhookSaving=false,webhookRenderedRowSignature='';
+function webhookRows(){const config=snapshot?.notifications||{};return config.webhookEndpoints||[{...config,webhookId:'legacy',webhookName:t('默认 Webhook')}];}
+function webhookRow(){return webhookRows().find(row=>row.webhookId===webhookSelectedId)||{};}
+function webhookFields(){return {webhookName:webhookSelectedId==='legacy'?'默认 Webhook':$('webhook-name').value.trim(),webhookEnabled:$('webhook-enabled').checked,webhookProvider:$('webhook-provider').value,webhookSignEnabled:$('webhook-sign-enabled').checked,webhookBodyTemplate:$('webhook-body-template').value,clearWebhookUrl:$('clear-webhook-url').checked,clearWebhookHeaders:$('clear-webhook-headers').checked,clearWebhookSignSecret:$('clear-webhook-sign-secret').checked};}
+function webhookDirty(){return webhookCreating||!webhookSavedFields||JSON.stringify(webhookFields())!==JSON.stringify(webhookSavedFields)||!!(webhookUrlDraft()||$('webhook-headers').value||$('webhook-sign-secret').value);}
+function webhookDisplayName(row){return row.webhookId==='legacy'&&(!row.webhookName||row.webhookName==='默认 Webhook')?t('默认 Webhook'):row.webhookName||'';}
+function renderWebhookList(){const list=$('webhook-endpoint-list');list.replaceChildren();const rows=[...webhookRows()];if(!rows.some(row=>row.webhookId==='legacy'))rows.unshift({webhookId:'legacy',webhookName:'默认 Webhook'});for(const row of rows){const button=document.createElement('button');button.type='button';button.dataset.webhookId=row.webhookId;button.setAttribute('aria-current',String(!webhookCreating&&webhookSelectedId===row.webhookId));button.textContent=[webhookDisplayName(row),row.webhookUrlDisplay||'',t(row.webhookEnabled?'已启用':'未启用')].filter(Boolean).join(' · ');button.onclick=()=>selectWebhook(row.webhookId);list.append(button);}$('webhook-delete').hidden=webhookCreating||!webhookRows().some(row=>row.webhookId===webhookSelectedId);}
+function renderWebhookCopy(row){
+  if(webhookSelectedId==='legacy'&&!webhookCreating)$('webhook-name').value=webhookDisplayName({...row,webhookId:'legacy'});
+  $('webhook-url-saved').textContent=row.hasWebhookUrl?t('地址已保存：')+(row.webhookUrlDisplay||''):t('尚未保存地址');
+  $('webhook-url').placeholder=t(row.hasWebhookUrl?'已保存，留空保留':'输入 HTTPS 地址');
+  $('webhook-headers-saved').textContent=t(row.hasWebhookHeaders?'已保存请求头；留空保留':'尚未保存请求头');
+  $('webhook-sign-saved').textContent=t(row.hasWebhookSignSecret?'已保存签名密钥；留空保留':'尚未保存签名密钥');
+  $('webhook-provider-hint').textContent=webhookProviderHint(row);
+  const visible=$('webhook-url').type==='text';$('webhook-url-eye').textContent=t(visible?'隐藏地址':'显示地址');$('webhook-url-eye').setAttribute('aria-label',t(visible?'隐藏地址':'显示地址'));
+}
+function renderWebhookEditor(row){
+  hideWebhookUrl();webhookTemplates=row.webhookTemplates||snapshot?.notifications?.webhookTemplates||webhookTemplates;
+  input('webhook-name',webhookDisplayName({...row,webhookId:webhookSelectedId}));$('webhook-name').disabled=webhookSelectedId==='legacy'&&!webhookCreating;
+  $('webhook-enabled').checked=!!row.webhookEnabled;input('webhook-provider',row.webhookProvider||'auto');$('webhook-sign-enabled').checked=!!row.webhookSignEnabled;
+  input('webhook-body-template',row.webhookBodyTemplate||webhookTemplates.generic||defaultWebhookBodyTemplate);
+  for(const id of ['webhook-url','webhook-headers','webhook-sign-secret'])input(id,'');
+  for(const id of ['clear-webhook-url','clear-webhook-headers','clear-webhook-sign-secret'])$(id).checked=false;
+  renderWebhookCopy(row);webhookSavedFields=webhookFields();webhookRenderedRowSignature=JSON.stringify(row);
+}
+function selectWebhook(id){if(webhookSaving)return;if(webhookDirty()){feedback(t('请先保存或取消当前修改。'),true);return;}webhookSelectedId=id;webhookCreating=false;renderWebhookEditor(webhookRow());renderWebhookList();}
+function webhookUrlDraft(){return $('webhook-url').value===revealedWebhookUrl?'':$('webhook-url').value.trim();}
+function selectedWebhookTemplate(config=webhookRow()){const provider=$('webhook-provider').value;return webhookTemplates[provider==='auto'?config.webhookResolvedProvider||'generic':provider]||webhookTemplates.generic||defaultWebhookBodyTemplate;}
+function switchWebhookTemplate(){const current=$('webhook-body-template').value;if(!current.trim()||(current===defaultWebhookBodyTemplate||Object.values(webhookTemplates).includes(current)))input('webhook-body-template',selectedWebhookTemplate());updateDirty();}
+function hideWebhookUrl(){webhookRevealRequest++;if(revealedWebhookUrl&&$('webhook-url').value===revealedWebhookUrl)$('webhook-url').value='';revealedWebhookUrl='';$('webhook-url').type='password';$('webhook-url-eye').textContent=t('显示地址');$('webhook-url-eye').setAttribute('aria-label',t('显示地址'));}
+async function toggleWebhookUrl(){
+  if($('webhook-url').type==='text'){hideWebhookUrl();updateDirty();return;}
+  if($('webhook-url').value||!webhookRow().hasWebhookUrl){$('webhook-url').type='text';$('webhook-url-eye').textContent=t('隐藏地址');$('webhook-url-eye').setAttribute('aria-label',t('隐藏地址'));return;}
+  const request=++webhookRevealRequest,directory=snapshot.dataDir,before=$('webhook-url').value,id=webhookSelectedId;
+  try{const result=await api.readCredentials({channel:'webhook',webhookId:id});if(request!==webhookRevealRequest||webhookSelectedId!==id||snapshot?.dataDir!==directory||activeTab!=='notifications'||$('webhook-url').value!==before)return;revealedWebhookUrl=result.webhookUrl||'';$('webhook-url').value=revealedWebhookUrl;$('webhook-url').type='text';$('webhook-url-eye').textContent=t('隐藏地址');$('webhook-url-eye').setAttribute('aria-label',t('隐藏地址'));updateDirty();}catch(error){feedback(error.message,true);}
+}
+function webhookProviderHint(config){
+  const provider=$('webhook-provider').value;
+  return t(({auto:config.webhookResolvedProvider==='feishu'?'已识别飞书地址；默认模板自动使用飞书格式。':'按地址自动识别服务类型，并选择相应默认模板。',generic:'自定义 HTTPS Webhook，可编辑 JSON 正文。',feishu:'飞书群机器人地址形如 open.feishu.cn/open-apis/bot/v2/hook/…；签名可选。',dingtalk:'钉钉群机器人地址形如 oapi.dingtalk.com/robot/send?access_token=…；签名可选。',discord:'Discord 地址形如 discord.com/api/webhooks/…；content 最多 2000 字符。',telegram:'Telegram 地址形如 api.telegram.org/bot…/sendMessage；在 JSON 中填写 chat_id，text 最多 4096 字符。'})[provider]||'');
+}
+function webhookHeaders(){
+  const raw=$('webhook-headers').value.trim();if(!raw)return {};
+  let value;try{value=JSON.parse(raw);}catch{throw Object.assign(Error(t('请求头必须是有效的 JSON 对象。')),{validation:{field:'webhook-headers'}});}
+  if(!value||Array.isArray(value)||typeof value!=='object'||Object.entries(value).some(([key,item])=>!key||typeof item!=='string'))throw Object.assign(Error(t('请求头必须是字符串键值组成的 JSON 对象。')),{validation:{field:'webhook-headers'}});
+  return value;
+}
 const busyActions=new Set();
 let saving=false,startPending=false,stopPending=false,cloudflaredBusy=false,cloudflaredResult=null,cloudflaredProgress=null;
 const titles={'desktop-sessions':'桌面会话',harness:'Harness 官方 Web',overview:t('概览'),network:t('网络访问'),devices:t('登录与设备'),notifications:t('消息通知'),advanced:t('应用与维护'),accounts:t('客户端与接入'),account:t('账户与额度'),updates:t('应用更新'),logs:t('运行日志')};
 const watchPanel=new WatchPanel({root:$('watches'),change:value=>api.notificationWatches(value)});
 const harnessPanel=typeof HarnessPanel==='undefined'?null:new HarnessPanel({root:$('harness-panel'),api,t,feedback});
 const desktopConnections=typeof DesktopConnectionsPanel==='undefined'?null:new DesktopConnectionsPanel({root:$('desktop-connections'),api,feedback});
-function fields(){return [...$('settings').querySelectorAll('input,textarea,select')].filter(node=>!node.closest('#watches')&&!node.closest('#connections')&&!node.closest('#lan-addresses')&&!node.closest('#file-transfer-settings')&&node.id!=='connection-kind');}
-function fieldValues(){return Object.fromEntries(fields().map(node=>[node.id,node.type==='checkbox'?node.checked:node.value]));}
+function fields(){return [...$('settings').querySelectorAll('input,textarea,select')].filter(node=>!node.closest('#watches')&&!node.closest('#connections')&&!node.closest('#lan-addresses')&&!node.closest('#file-transfer-settings')&&!node.closest('#webhook-editor')&&node.id!=='connection-kind');}
+function fieldValues(){return Object.fromEntries(fields().map(node=>[node.id,node.id==='webhook-sign-secret'?!!node.value:node.id==='webhook-url'?webhookUrlDraft():node.type==='checkbox'?node.checked:node.value]));}
 function updateDirty(){
   const changed=new Set();
-  for(const node of fields())if((node.type==='checkbox'?node.checked:node.value)!==savedFields[node.id])changed.add(moduleName(node.closest('[data-panel]').dataset.panel));
+  for(const node of fields())if((node.id==='webhook-sign-secret'?!!node.value:node.id==='webhook-url'?webhookUrlDraft():node.type==='checkbox'?node.checked:node.value)!==savedFields[node.id])changed.add(moduleName(node.closest('[data-panel]').dataset.panel));
   if(JSON.stringify(connectionDraft)!==savedConnections||JSON.stringify(lanDraft)!==savedLan)changed.add('network');
   dirty=changed.size>0;
   for(const button of document.querySelectorAll('[data-tab]')){
@@ -25,6 +73,11 @@ function updateDirty(){
   $('dirty-dot').hidden=!dirty;
   $('dirty-label').textContent=dirty?t('有未保存的修改'):t('配置已保存');
   $('save-bar').hidden=!dirty;
+  for(const [id,key] of [['lan','lan'],['local-access','localAccess']]){
+    const status=$(id+'-saved-state');if(!status)continue;
+    const saved=key==='localAccess'?snapshot?.preferences?.localAccess!==false:!!snapshot?.preferences?.[key];
+    status.textContent=t($(id).checked!==saved?'待保存':saved?'已启用':'已配置但未启用');
+  }
   document.querySelectorAll('[data-connection-action]').forEach(button=>button.disabled=dirty||busyActions.size>0||(!['inspect','diagnostics','credentials','clearCredentials','tailscaleInspect','tailscaleAuthorize'].includes(button.dataset.connectionAction)&&!connectionDraft.find(c=>c.id===button.dataset.connection)?.enabled));
 }
 let toastTimer;
@@ -60,6 +113,7 @@ function showError(error){
 
 function moduleName(name){return ({account:'accounts','desktop-sessions':'accounts',harness:'accounts',updates:'advanced',logs:'advanced'})[name]||name;}
 function tab(name){const requested=name;name=moduleName(name);activeTab=name;
+  if(name!=='notifications')hideWebhookUrl();
   if(name!=='accounts'&&typeof codexCliAccessPanel!=='undefined'){codexCliAccessPanel?.clear();claudeCliAccessPanel?.clear();}
   if(name==='accounts'){desktopConnections?.refresh();desktopConnections?.refreshClients();harnessPanel?.refresh();}
   document.querySelectorAll('[data-panel]').forEach(node=>node.hidden=moduleName(node.dataset.panel)!==name);
@@ -102,7 +156,7 @@ function render(value,watchRevision=watchPanel.revision){
   $('login-startup-setting').hidden=$('login-startup-hint').hidden=!value.loginStartup?.supported;
   $('login-startup-hint').textContent=t(value.loginStartup?.requiresApproval?'请在系统设置的登录项中允许此应用。':'开启后，登录电脑时自动启动网关。');
   if(snapshot&&(snapshot.runtime.instanceId!==value.runtime.instanceId||snapshot.dataDir!==value.dataDir)){resetPairing();connectionSetupState.clear();}
-  if(snapshot&&snapshot.dataDir!==value.dataDir){resetSecretFields();harnessPanel?.clear();if(activeTab==='accounts')harnessPanel?.refresh();watchPanel.clear();watchRevision=watchPanel.revision;devicesState=null;devicesDirty=false;$('device-list').replaceChildren();$('auto-blocks').replaceChildren();}
+  if(snapshot&&snapshot.dataDir!==value.dataDir){hideWebhookUrl();webhookSavedFields=null;webhookCreating=false;webhookSelectedId='legacy';resetSecretFields();harnessPanel?.clear();if(activeTab==='accounts')harnessPanel?.refresh();watchPanel.clear();watchRevision=watchPanel.revision;devicesState=null;devicesDirty=false;$('device-list').replaceChildren();$('auto-blocks').replaceChildren();}
   snapshot=value;const running=value.runtime.running;
   if(running||value.runtime.portOccupied)startingUntil=0;
   const starting=Date.now()<startingUntil;
@@ -118,7 +172,9 @@ function render(value,watchRevision=watchPanel.revision){
   renderGatewayActions();
   $('login-summary').textContent=value.auth.mode==='none'?t('免密访问'):t('账号：')+value.auth.username;
   $('credentials').disabled=!value.credentialsAvailable;
-  const notificationsEnabled=value.notifications.enabled||value.notifications.barkEnabled||value.notifications.pushplusEnabled;
+  const notificationsEnabled=value.notifications.enabled||value.notifications.barkEnabled||value.notifications.pushplusEnabled||value.notifications.webhookEndpoints?.some(row=>row.webhookEnabled)||value.notifications.webhookEnabled;
+  const channelKeys={'bark-enabled':'barkEnabled','ntfy-enabled':'enabled','pushplus-enabled':'pushplusEnabled','webhook-enabled':'webhookEnabled','mobile-enabled':'mobileEnabled'};
+  for(const status of document.querySelectorAll('[data-notification-status]'))status.textContent=t((status.dataset.notificationStatus==='webhook-enabled'?value.notifications.webhookEndpoints?.some(row=>row.webhookEnabled):value.notifications[channelKeys[status.dataset.notificationStatus]])?'已启用':'未启用');
   const addressReady=value.notifications.addressEnabled&&notificationsEnabled;
   const addressHint=!value.notifications.addressEnabled?t('入口通知未开启，网关启动或地址变化时不会自动通知你。'):!notificationsEnabled?t('请启用至少一个通知通道，并发送测试通知。'):t('入口通知已开启，每次启动网关都会发送地址，入口变化后补发更新。请先确认手机能收到测试通知。');
   const addressRecords=Object.values(value.addressNotificationStatus?.deliveries||{});
@@ -130,7 +186,7 @@ function render(value,watchRevision=watchPanel.revision){
   $('update-address-state').textContent=addressHint;
   $('notification-summary').textContent=notificationsEnabled?t('已开启 · ')+value.watches.length+t(' 个关注聊天'):t('未开启');
   $('notification-state').textContent=value.runtime.running&&!value.runtime.supportsNotifications?t('当前网关版本较旧，重启后启用通知能力。'):t(value.notificationStatus.error)||t('手机关闭网页后，已关注聊天仍会继续提醒。');
-  for(const [channel,id] of [['ntfy','notification-detail'],['bark','bark-detail'],['pushplus','pushplus-detail']]){
+  for(const [channel,id] of [['ntfy','notification-detail'],['bark','bark-detail'],['pushplus','pushplus-detail'],['webhook','webhook-detail']]){
     const status=value.notificationStatus[channel]||(channel==='ntfy'?value.notificationStatus:{});
     $(id).textContent=t(status.error)||(status.lastSent?t('最近一次发送：')+new Date(status.lastSent*1000).toLocaleString(BridgeI18n.locale()):t('尚无发送记录'));
   }
@@ -158,13 +214,16 @@ function render(value,watchRevision=watchPanel.revision){
   $('ntfy-token').placeholder=value.notifications.hasToken?t('已保存；留空保留，服务地址变化时清除'):t('如服务需要认证，在这里填写');
   $('bark-key').placeholder=value.notifications.hasBarkKey?t('已保存；留空保留，服务地址变化时清除'):t('填写 Bark App 中的 Device Key');
   $('pushplus-token').placeholder=value.notifications.hasPushplusToken?t('已保存，留空保留'):t('填写 PushPlus Token');
+  if(!webhookCreating){if(!webhookRows().some(row=>row.webhookId===webhookSelectedId)&&(!webhookSavedFields||!webhookDirty()))webhookSelectedId=webhookRows()[0]?.webhookId||'legacy';const row=webhookRow();if(!webhookSavedFields||(JSON.stringify(row)!==webhookRenderedRowSignature&&!webhookDirty()))renderWebhookEditor(row);}
+  renderWebhookCopy(webhookCreating?{}:webhookRow());
+  renderWebhookList();
   updateDirty();
   $('network-lock').hidden=!running;
   for(const id of ['lan','local-access','port','connection-kind','add-connection','origins','cloudflared','codex-home','ipc-path','codex-bin'])$(id).disabled=running;
   document.querySelectorAll('[data-connection-field],[data-remove-connection]').forEach(node=>node.disabled=running);
   for(const node of document.querySelectorAll('[data-connection-status]')){
     const row=connectionDraft.find(c=>c.id===node.dataset.connectionStatus),mode=row?.accessMode;
-    node.textContent=t([connectionSetupState.get(node.dataset.connectionStatus),value.externalStatus?.[node.dataset.connectionStatus]?.message].filter(Boolean).map(t).join(' ')||(!running?t(mode==='tailscale'?'先保存连接配置，然后检测 Tailscale。':mode==='external'?'保存并启动网关后可检测入口。':'网关未启动。可先保存配置并导出部署包。'):t('网关正在运行；固定入口是否可用，请点击检测。')));
+    node.textContent=!row?.enabled?t('已配置但未启用'):t([connectionSetupState.get(node.dataset.connectionStatus),value.externalStatus?.[node.dataset.connectionStatus]?.message].filter(Boolean).map(t).join(' ')||(!running?t(mode==='tailscale'?'先保存连接配置，然后检测 Tailscale。':mode==='external'?'保存并启动网关后可检测入口。':'网关未启动。可先保存配置并导出部署包。'):t('网关正在运行；固定入口是否可用，请点击检测。')));
     const summary=node.closest('.connection-card')?.querySelector('.connection-summary');if(summary&&row)summary.textContent=connectionSummary(row);
   }
   document.querySelectorAll('[data-pick]').forEach(button=>button.disabled=running);
@@ -177,7 +236,7 @@ let renderedSnapshot='',renderedDirty=false,renderedRevision=-1;
 async function refresh(force=false){if(loading||(document.hidden&&force!==true))return;loading=true;try{const revision=watchPanel.revision,value=await api.snapshot(),signature=JSON.stringify(value);if(signature!==renderedSnapshot||renderedDirty!==dirty||renderedRevision!==revision||startingUntil){render(value,revision);renderedSnapshot=signature;renderedDirty=dirty;renderedRevision=revision;}}catch(e){feedback(e.message,true);}finally{loading=false;}}
 function collect(){return {...(snapshot?.loginStartup?.supported?{loginStartup:$('login-startup').checked}:{}),preferences:{autoStart:$('auto-start').checked,port:Number($('port').value),lan:$('lan').checked,lanAddresses:$('lan-scope').value==='all'?null:[...lanDraft],localAccess:$('local-access').checked,connections:connectionDraft.map(row=>row.accessMode==='external'||row.accessMode==='nas'?{...row,publicUrl:normalizeExternalUrl(row.publicUrl||'')}:row),cloudflared:$('cloudflared').value.trim(),codexHome:$('codex-home').value.trim(),ipcPath:$('ipc-path').value.trim(),codexBin:$('codex-bin').value.trim()},auth:{sessionHours:Number($('session-hours').value),mode:$('auth-mode').value,username:$('username').value.trim(),password:submittedSecret('password'),revokeBoundDevices:$('revoke-bound-devices').checked},origins:$('origins').value.split('\n').map(s=>s.trim()).filter(Boolean),notifications:{mobileEnabled:$('mobile-enabled').checked,mobileAppLinks:$('mobile-app-links').checked,securityEnabled:$('security-enabled').checked,addressEnabled:$('address-enabled').checked,addressName:$('address-name').value.trim(),pushplusEnabled:$('pushplus-enabled').checked,pushplusToken:submittedSecret('pushplus-token'),clearPushplusToken:$('clear-pushplus-token').checked,enabled:$('ntfy-enabled').checked,server:$('ntfy-server').value.trim(),topic:$('ntfy-topic').value.trim(),token:submittedSecret('ntfy-token'),clearToken:$('clear-token').checked,barkEnabled:$('bark-enabled').checked,barkServer:$('bark-server').value.trim(),barkKey:submittedSecret('bark-key'),clearBarkKey:$('clear-bark-key').checked,clickBase:$('click-base').value.trim(),includeTitle:$('include-title').checked}};}
 $('settings').onsubmit=async event=>{
-  event.preventDefault();if(saving||busyActions.size)return;const invalid=[...$('settings').querySelectorAll('input,textarea,select')].find(node=>!node.closest('#file-transfer-settings')&&!node.disabled&&!node.validity.valid&&(!node.closest('.connection-card')||connectionDraft.find(row=>row.id===node.closest('.connection-card').dataset.connectionId)?.enabled));if(invalid){focusField(invalid);feedback(invalid.validationMessage,true);return;}saving=true;$('save').disabled=true;const submitted=fieldValues(),submittedConnections=JSON.stringify(connectionDraft),submittedLan=JSON.stringify(lanDraft);
+  event.preventDefault();if(saving||busyActions.size)return;const invalid=[...$('settings').querySelectorAll('input,textarea,select')].find(node=>!node.closest('#file-transfer-settings')&&!node.closest('#webhook-editor')&&!node.disabled&&!node.validity.valid&&(!node.closest('.connection-card')||connectionDraft.find(row=>row.id===node.closest('.connection-card').dataset.connectionId)?.enabled));if(invalid){focusField(invalid);feedback(invalid.validationMessage,true);return;}saving=true;$('save').disabled=true;const submitted=fieldValues(),submittedConnections=JSON.stringify(connectionDraft),submittedLan=JSON.stringify(lanDraft);
   try{
     const value=unwrapValidation(await api.save(collect()));savedFields={...submitted};savedConnections=submittedConnections;savedLan=submittedLan;
     // Edits made while saving must remain visibly unsaved.
@@ -193,6 +252,35 @@ async function stopGateway(){if(startPending||stopPending||!snapshot?.runtime.ru
 for(const id of ['start','clients-start'])if($(id))$(id).onclick=startGateway;
 for(const id of ['stop','clients-stop'])if($(id))$(id).onclick=stopGateway;
 for(const [id,channel] of [['test-notification','ntfy'],['test-bark','bark'],['test-pushplus','pushplus'],['test-address','address']])$(id).onclick=async()=>{if(dirty){feedback(t('请先保存通知配置，再发送测试通知。'),true);return;}$(id).disabled=true;try{feedback((await api.testNotification({channel})).message);}catch(e){feedback(e.message,true);}finally{$(id).disabled=false;}};
+$('webhook-add').onclick=()=>{if(webhookSaving)return;if(webhookDirty()){feedback(t('请先保存或取消当前修改。'),true);return;}webhookCreating=true;webhookSelectedId='';renderWebhookEditor({webhookProvider:'auto',webhookBodyTemplate:webhookTemplates.generic,webhookTemplates});renderWebhookList();$('webhook-name').focus();};
+$('webhook-cancel').onclick=()=>{if(webhookSaving)return;webhookCreating=false;webhookSelectedId=webhookRows().some(row=>row.webhookId===webhookSelectedId)?webhookSelectedId:webhookRows()[0]?.webhookId||'legacy';renderWebhookEditor(webhookRow());renderWebhookList();};
+$('webhook-save').onclick=async()=>{
+  if(webhookSaving)return;
+  let headers;try{headers=webhookHeaders();}catch(error){showError(error);return;}
+  webhookSaving=true;
+  const submitted=webhookFields(),url=$('webhook-url').value,rawHeaders=$('webhook-headers').value,secret=$('webhook-sign-secret').value,directory=snapshot?.dataDir;
+  try{
+    const body={action:'upsert',...(webhookCreating?{}:{webhookId:webhookSelectedId}),...submitted,webhookUrl:webhookUrlDraft(),webhookHeaders:headers,webhookSignSecret:secret};
+    const result=unwrapValidation(await api.webhookEndpoint(body));
+    if(snapshot?.dataDir!==directory)return;
+    const edited=JSON.stringify(webhookFields())!==JSON.stringify(submitted)||$('webhook-url').value!==url||$('webhook-headers').value!==rawHeaders||$('webhook-sign-secret').value!==secret;
+    webhookSelectedId=result.selectedWebhookId||webhookSelectedId;webhookCreating=false;
+    if(edited){
+      for(const [id,value] of [['webhook-url',url],['webhook-headers',rawHeaders],['webhook-sign-secret',secret]])if($(id).value===value)$(id).value='';
+      for(const [id,key] of [['clear-webhook-url','clearWebhookUrl'],['clear-webhook-headers','clearWebhookHeaders'],['clear-webhook-sign-secret','clearWebhookSignSecret']])if($(id).checked===submitted[key])$(id).checked=false;
+      webhookSavedFields={...submitted,clearWebhookUrl:false,clearWebhookHeaders:false,clearWebhookSignSecret:false};
+      webhookRenderedRowSignature=JSON.stringify(result.webhookEndpoints?.find(row=>row.webhookId===webhookSelectedId)||{});
+    }else webhookSavedFields=null;
+    render({...snapshot,notifications:{...snapshot.notifications,...result}});
+    feedback(t(edited?'已保存提交的配置，仍有新修改待保存。':'Webhook 配置已保存'));
+  }catch(error){showError(error);}finally{webhookSaving=false;}
+};
+$('test-webhook').onclick=async()=>{if(webhookDirty()){feedback(t('请先保存通知配置，再发送测试通知。'),true);return;}$('test-webhook').disabled=true;try{feedback((await api.testNotification({channel:'webhook',webhookId:webhookSelectedId})).message);}catch(error){showError(error);}finally{$('test-webhook').disabled=false;}};
+$('webhook-delete').onclick=async()=>{if(webhookSaving||!window.confirm(t('确定删除此 Webhook 配置？')))return;webhookSaving=true;try{const result=unwrapValidation(await api.webhookEndpoint({action:'delete',webhookId:webhookSelectedId}));webhookSelectedId=result.selectedWebhookId||'legacy';webhookCreating=false;webhookSavedFields=null;render({...snapshot,notifications:{...snapshot.notifications,...result}});feedback(t('Webhook 配置已删除'));}catch(error){showError(error);}finally{webhookSaving=false;}};
+$('webhook-provider').addEventListener('change',()=>{$('webhook-provider-hint').textContent=webhookProviderHint(webhookRow());switchWebhookTemplate();});
+$('webhook-use-template').onclick=()=>{input('webhook-body-template',selectedWebhookTemplate());updateDirty();};
+$('webhook-url-eye').onclick=toggleWebhookUrl;
+$('webhook-url').addEventListener('input',()=>{if(revealedWebhookUrl&&$('webhook-url').value!==revealedWebhookUrl)revealedWebhookUrl='';webhookRevealRequest++;});
 $('ntfy-help').onclick=()=>api.open('ntfy-help').catch(e=>feedback(e.message,true));
 $('bark-help').onclick=()=>api.open('bark-help').catch(e=>feedback(e.message,true));
 for(const id of ['project-home'])$(id).onclick=()=>api.open(id).catch(e=>feedback(e.message,true));

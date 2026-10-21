@@ -5,12 +5,13 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 // Run the actual phone handlers with an isolated DOM and notification API.
 async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=false}={}){
   const nodes=new Map(),saved=new Map(),writes=[],listRequests=[],acknowledgements=[];
+  const webhookTemplates={generic:'{"event":"{{event}}"}',feishu:JSON.stringify({msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}}),dingtalk:'{"msgtype":"text"}',discord:'{"content":"{{body}}"}',telegram:'{"chat_id":"","text":"{{body}}"}'};
   const node=(tag='')=>({tagName:tag.toUpperCase(),children:[],value:'',checked:false,disabled:false,hidden:false,open:false,textContent:'',dataset:{},options:[],style:{setProperty(k,v){this[k]=v;}},scrollTop:0,parentElement:{},listeners:{},
     setAttribute(k,v){this[k]=v;},after(child){this.nextSibling=child;},getBoundingClientRect(){return {width:390,height:844};},classList:{add(){},remove(){},toggle(){},contains(){return false;}},addEventListener(type,listener){(this.listeners[type]??=[]).push(listener);},dispatchEvent(event){for(const listener of this.listeners[event.type]||[])listener(event);},replaceChildren(...values){this.children=values;},append(...values){this.children.push(...values);},querySelectorAll(){return [];},querySelector(){return {disabled:false};},
     showModal(){this.open=true;},close(){this.open=false;this.dispatchEvent({type:'close'});}});
   const html=fs.readFileSync(path.join(__dirname,'../web/index.html'),'utf8');
   for(const match of html.matchAll(/\bid="([^"]+)"/g))nodes.set(match[1],node());
-  const channelButtons=['bark','ntfy','pushplus'].map(channel=>Object.assign(node('button'),{dataset:{notificationChannel:channel}}));
+  const channelButtons=['bark','ntfy','pushplus','webhook'].map(channel=>Object.assign(node('button'),{dataset:{notificationChannel:channel}}));
   const localStorage={get length(){return localStore.size;},key(index){return [...localStore.keys()][index]??null;},getItem(key){return localStore.get(key)??null;},setItem(key,value){localStore.set(key,String(value));},removeItem(key){localStore.delete(key);}};
   const scopedStorage={get length(){return sessionStore.size;},key(index){return [...sessionStore.keys()][index]??null;},getItem(key){return sessionStore.get(key)??null;},setItem(key,value){sessionStore.set(key,String(value));},removeItem(key){sessionStore.delete(key);},clear(){sessionStore.clear();}};
   const archiveToggles=[];
@@ -20,7 +21,7 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
   let listResponse=()=>response({sessions:[],unavailableHosts:[]}),knownRows=[];
   const context=vm.createContext({ClientNavigation:class{constructor(){this.provider="codex";}async refresh(){}acknowledgeList(provider,value){acknowledgements.push({provider,value});}},DesktopSessionsView:class{bindListCache(){}previewCachedList(){return false;}clear(){}},Workbench:class{constructor(){this.current={};}open(){}reset(){}setThumbnails(){}relabel(){}},navigator:{userAgent:'test'},document:{addEventListener(){},documentElement:{},getElementById:id=>nodes.get(id),querySelector:selector=>selector==='.archive-filter'?archiveFilter:{disabled:false},querySelectorAll:selector=>selector==='[data-notification-channel]'?channelButtons:[],createElement:node},
     renderMarkdown(){},window:{addEventListener(){}},localStorage,sessionStorage:scopedStorage,
-    location:{hash:'',pathname:'/',search:''},history:{replaceState(){}},setTimeout(){},clearTimeout(){},setInterval(){},
+    location:{hash:'',pathname:'/',search:''},history:{replaceState(){}},confirm:()=>true,setTimeout(){},clearTimeout(){},setInterval(){},
     ChatTimeline:class{constructor(){this.abort=new AbortController();}async start(){}dispose(){this.abort.abort();}relabel(){}refreshActions(){}},
     fetch:async(url,options={})=>{
       if(url.includes('/respond?')){writes.push({url,body:JSON.parse(options.body)});return response({status:'accepted'});}
@@ -43,13 +44,14 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
           if(url.includes('/rename?'))return response({title:body.title});
           if(url.endsWith('/test'))return response({ok:true});
           if(url.endsWith('/common'))saved.set(url,body);
+          else if(url.endsWith('/webhook/endpoints')){const key='/api/notifications/channels/webhook',previous=saved.get(key)||{},rows=previous.webhookEndpoints||[];if(body.action==='delete'){saved.set(key,{...previous,webhookEndpoints:rows.filter(row=>row.webhookId!==body.webhookId),selectedWebhookId:''});return response(saved.get(key));}const id=body.webhookId||'named-1',old=rows.find(row=>row.webhookId===id)||previous;const row={webhookId:id,webhookName:body.webhookName,webhookEnabled:body.webhookEnabled,webhookProvider:body.webhookProvider,webhookSignEnabled:body.webhookSignEnabled,hasWebhookSignSecret:!!body.webhookSignSecret||!body.clearWebhookSignSecret&&!!old.hasWebhookSignSecret,hasWebhookUrl:!!body.webhookUrl||!body.clearWebhookUrl&&!!old.hasWebhookUrl,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:!!Object.keys(body.webhookHeaders).length||!body.clearWebhookHeaders&&!!old.hasWebhookHeaders,webhookBodyTemplate:body.webhookBodyTemplate,webhookTemplates};saved.set(key,{...previous,webhookEndpoints:[...rows.filter(item=>item.webhookId!==id),row],selectedWebhookId:id});return response(saved.get(key));}
           else {
             const secret=url.endsWith('/bark')?'barkKey':url.endsWith('/ntfy')?'token':'pushplusToken';
             const marker=url.endsWith('/bark')?'hasBarkKey':url.endsWith('/ntfy')?'hasToken':'hasPushplusToken';
             saved.set(url,{...body,[secret]:undefined,[marker]:!!body[secret]||!body['clear'+secret[0].toUpperCase()+secret.slice(1)]&&!!saved.get(url)?.[marker]});
           }
         }
-        return response(saved.get(url)||{pushplusEnabled:false,hasPushplusToken:false,barkServer:'https://api.day.app',server:'https://ntfy.sh'});
+        return response(saved.get(url)||{pushplusEnabled:false,hasPushplusToken:false,barkServer:'https://api.day.app',server:'https://ntfy.sh',webhookTemplates});
       }
       assert.match(url,/\/notifications\?/);
       if(options.method==='POST'){
@@ -168,6 +170,140 @@ test('third-party notification channels save independently, mask secrets and tes
   assert.equal(ui.nodes.get('pushplus-error').textContent,'Network failure');
 });
 
+test('Webhook form validates headers, redacts saved credentials, and tests saved settings',async()=>{
+  const ui=await fixture();await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  assert.equal(ui.nodes.get('webhook-dialog').open,true);
+  ui.nodes.get('webhook-enabled').checked=true;
+  ui.nodes.get('webhook-url').value='https://example.test/hook?token=secret';
+  ui.nodes.get('webhook-headers').value='{bad';
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes.length,0);assert.match(ui.nodes.get('webhook-error').textContent,/JSON/);
+  ui.nodes.get('webhook-headers').value='{"Authorization":"Bearer secret"}';
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.deepEqual(ui.writes[0].body.webhookHeaders,{Authorization:'Bearer secret'});
+  assert.equal(ui.writes[0].body.webhookUrl,'https://example.test/hook?token=secret');
+  assert.equal(ui.nodes.get('webhook-url').value,'');assert.equal(ui.nodes.get('webhook-headers').value,'');
+  assert.equal(ui.nodes.get('webhook-url-saved').textContent.includes('secret'),false);
+  await ui.nodes.get('webhook-test').onclick();assert.equal(ui.writes[1].url,'/api/notifications/channels/webhook/test');
+  assert.deepEqual(ui.writes[1].body,{webhookId:'legacy'});
+  ui.nodes.get('webhook-clear-url').checked=true;ui.nodes.get('webhook-clear-headers').checked=true;
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes[2].body.clearWebhookUrl,true);assert.equal(ui.writes[2].body.clearWebhookHeaders,true);
+  assert.equal(ui.nodes.get('webhook-clear-url').checked,false);
+});
+
+test('Webhook save failure retains unsaved endpoint and headers',async()=>{
+  const ui=await fixture();await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  ui.nodes.get('webhook-url').value='https://example.test/hook';ui.nodes.get('webhook-headers').value='{"X-Key":"secret"}';
+  ui.setPost(()=>ui.response({error:'Save failed'},400));
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.nodes.get('webhook-url').value,'https://example.test/hook');
+  assert.equal(ui.nodes.get('webhook-headers').value,'{"X-Key":"secret"}');
+  assert.equal(ui.nodes.get('webhook-error').textContent,'Save failed');
+});
+
+test('Feishu preset and signing secret require save before a Webhook test',async()=>{
+  const ui=await fixture();await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  ui.nodes.get('webhook-provider').value='feishu';ui.nodes.get('webhook-sign-enabled').checked=true;
+  ui.nodes.get('webhook-sign-secret').value='sample-secret';
+  ui.nodes.get('webhook-use-template').onclick();
+  await ui.nodes.get('webhook-test').onclick();
+  assert.equal(ui.writes.length,0);assert.match(ui.nodes.get('webhook-error').textContent,/保存/);
+  ui.setPost(()=>ui.response({error:'Save failed'},400));
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.nodes.get('webhook-sign-secret').value,'sample-secret');
+  assert.equal(ui.nodes.get('webhook-sign-enabled').checked,true);
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes[1].body.webhookProvider,'feishu');
+  assert.equal(ui.writes[1].body.webhookSignEnabled,true);
+  assert.equal(ui.writes[1].body.webhookSignSecret,'sample-secret');
+  assert.deepEqual(JSON.parse(ui.writes[1].body.webhookBodyTemplate),{msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}});
+  assert.equal(ui.nodes.get('webhook-sign-secret').value,'');
+  assert.equal(ui.nodes.get('webhook-sign-saved').textContent.includes('sample-secret'),false);
+  ui.nodes.get('webhook-clear-sign-secret').checked=true;
+  await ui.nodes.get('webhook-test').onclick();assert.equal(ui.writes.length,2);
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes[2].body.clearWebhookSignSecret,true);
+  assert.equal(ui.nodes.get('webhook-clear-sign-secret').checked,false);
+});
+
+test('provider preset changes known templates but preserves custom JSON',async()=>{
+  const ui=await fixture();await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  const provider=ui.nodes.get('webhook-provider'),body=ui.nodes.get('webhook-body-template');
+  provider.value='discord';provider.onchange();assert.equal(body.value,'{"content":"{{body}}"}');
+  body.value='{"custom":"{{event_id}}"}';provider.value='telegram';provider.onchange();
+  assert.equal(body.value,'{"custom":"{{event_id}}"}');
+  ui.nodes.get('webhook-use-template').onclick();assert.equal(body.value,'{"chat_id":"","text":"{{body}}"}');
+});
+
+test('empty multi-Webhook list retains server-provided preset templates',async()=>{
+  const ui=await fixture(),templates={generic:'{"event":"{{event}}"}',discord:'{"content":"{{body}}"}'};
+  ui.saved.set('/api/notifications/channels/webhook',{webhookEndpoints:[],webhookTemplates:templates});
+  await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  assert.equal(ui.nodes.get('webhook-endpoints').hidden,true);
+  ui.nodes.get('webhook-provider').value='discord';ui.nodes.get('webhook-provider').onchange();
+  assert.equal(ui.nodes.get('webhook-body-template').value,templates.discord);
+  ui.nodes.get('webhook-url').value='https://example.test/hook';await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.nodes.get('webhook-endpoints').hidden,false);
+  assert.match(ui.html,/id="webhook-add" class="plain"/);
+});
+
+test('revealing a saved Webhook URL keeps the test clean and sends no URL update',async()=>{
+  const ui=await fixture(),channel='/api/notifications/channels/webhook';
+  ui.saved.set(channel,{webhookEnabled:true,hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',webhookProvider:'generic',webhookBodyTemplate:'{"event":"{{event}}"}',webhookTemplates:{generic:'{"event":"{{event}}"}'}});
+  await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  ui.setPost(()=>ui.response({webhookUrl:'https://example.test/hook?token=private'}));
+  await ui.nodes.get('webhook-url-eye').onclick();
+  assert.equal(ui.nodes.get('webhook-url').type,'text');
+  assert.equal(ui.run('webhookDirty()'),false);
+  await ui.nodes.get('webhook-test').onclick();assert.equal(ui.writes[1].url,channel+'/test');
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes[2].body.webhookUrl,'');
+  assert.equal(ui.nodes.get('webhook-url').value,'');
+});
+
+test('late URL reveal cannot overwrite a newer Webhook draft',async()=>{
+  const ui=await fixture(),channel='/api/notifications/channels/webhook';
+  ui.saved.set(channel,{hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',webhookTemplates:{generic:'{"event":"{{event}}"}'}});
+  await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  let complete;ui.setPost(()=>new Promise(resolve=>{complete=resolve;}));
+  const pending=ui.nodes.get('webhook-url-eye').onclick();
+  ui.nodes.get('webhook-url').value='https://other.test/hook';ui.nodes.get('webhook-url').dispatchEvent({type:'input'});
+  complete(ui.response({webhookUrl:'https://example.test/hook?token=private'}));await pending;
+  assert.equal(ui.nodes.get('webhook-url').value,'https://other.test/hook');
+  assert.equal(ui.run('webhookDirty()'),true);
+});
+
+test('named Webhooks save, switch, test and delete by stable ID without exposing URLs',async()=>{
+  const ui=await fixture(),channel='/api/notifications/channels/webhook',templates={generic:'{"event":"{{event}}"}'};
+  ui.saved.set(channel,{webhookTemplates:templates,webhookEndpoints:[{webhookId:'legacy',webhookName:'Default Webhook',webhookEnabled:true,webhookProvider:'generic',webhookBodyTemplate:templates.generic,hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',webhookTemplates:templates},{webhookId:'named-2',webhookName:'Ops',webhookProvider:'generic',webhookBodyTemplate:templates.generic,webhookTemplates:templates}]});
+  await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  const buttons=ui.nodes.get('webhook-endpoint-list').children;
+  assert.equal(buttons.length,2);assert.equal(buttons[0].textContent.includes('token'),false);
+  ui.nodes.get('webhook-name').value='Draft';buttons[1].onclick();assert.match(ui.nodes.get('webhook-error').textContent,/保存/);
+  ui.nodes.get('webhook-cancel').onclick();buttons[1].onclick();assert.equal(ui.nodes.get('webhook-name').value,'Ops');
+  ui.nodes.get('webhook-name').value='Ops alerts';await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes[0].body.webhookId,'named-2');assert.equal(ui.writes[0].body.webhookName,'Ops alerts');
+  await ui.nodes.get('webhook-test').onclick();assert.deepEqual(ui.writes[1].body,{webhookId:'named-2'});
+  await ui.nodes.get('webhook-delete').onclick();assert.deepEqual(ui.writes[2].body,{action:'delete',webhookId:'named-2'});
+});
+
+test('Webhook form has English labels and narrow-screen scroll styling',async()=>{
+  const ui=await fixture();
+  ui.run("BridgeI18n.setLanguage('en')");
+  const dialog=ui.html.match(/<dialog id="webhook-dialog"[\s\S]*?<\/dialog>/)[0];
+  for(const [,label] of dialog.matchAll(/data-i18n(?:-aria-label)?="([^"]+)"/g))assert.notEqual(ui.run(`BridgeI18n.t(${JSON.stringify(label)})`),label);
+  const css=fs.readFileSync(path.join(__dirname,'../web/shell/content.css'),'utf8');
+  assert.match(css,/#webhook-dialog\{[^}]*overflow-y:auto/);
+  assert.match(css,/#webhook-dialog textarea\{[^}]*width:100%/);
+  assert.match(dialog,/maxlength="4096"/);
+  assert.match(dialog,/\{\{title\}\}/);
+  for(const error of ['Webhook 地址格式不正确','Webhook 请求头格式不正确','Webhook JSON 模板格式不正确','Webhook 模板包含未知占位符','开启 Webhook 前请填写地址','Webhook 测试失败，请检查服务地址、认证和网络'])assert.notEqual(ui.run(`BridgeI18n.t(${JSON.stringify(error)})`),error);
+  assert.equal(ui.run("BridgeI18n.t('飞书未接受通知（19022：签名或时间无效）')"),'Feishu did not accept the notification (19022: Invalid signature or timestamp).');
+  assert.equal(ui.run("BridgeI18n.t('钉钉未接受通知（400101：访问令牌无效）')"),'DingTalk did not accept the notification (400101: Invalid access token).');
+  assert.equal(ui.run("BridgeI18n.t('Discord 未接受通知（HTTP 404）')"),'Discord did not accept the notification (HTTP 404).');
+});
+
 test('common notification controls save once outside provider detail',async()=>{
   const ui=await fixture();await ui.nodes.get('pushplus-settings').onclick();
   ui.nodes.get('notification-security-enabled').checked=true;
@@ -184,10 +320,12 @@ test('provider list reports configured and enabled states',async()=>{
   const ui=await fixture();
   ui.saved.set('/api/notifications/channels/bark',{barkEnabled:true,hasBarkKey:true});
   ui.saved.set('/api/notifications/channels/ntfy',{enabled:false,topic:'saved-topic'});
+  ui.saved.set('/api/notifications/channels/webhook',{webhookEndpoints:[{webhookId:'named-1',webhookName:'Ops',hasWebhookUrl:true,webhookEnabled:true}]});
   await ui.nodes.get('pushplus-settings').onclick();
   assert.equal(ui.nodes.get('notification-status-bark').textContent,'已开启');
   assert.equal(ui.nodes.get('notification-status-ntfy').textContent,'已关闭');
   assert.equal(ui.nodes.get('notification-status-pushplus').textContent,'未配置');
+  assert.equal(ui.nodes.get('notification-status-webhook').textContent,'已开启');
 });
 
 test('common settings wait for a valid read and ignore late responses after close',async()=>{

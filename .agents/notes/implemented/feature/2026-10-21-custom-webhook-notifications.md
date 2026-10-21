@@ -1,0 +1,52 @@
+# Agent Note: 自定义 Webhook 通知通道
+
+Status: implemented
+
+## Problem
+
+现有 Bark、ntfy 和 PushPlus 适配无法覆盖用户自建通知服务与自动化平台。Issue #60 请求通用 HTTP 通知出口，同时保留既有通知策略、去重与失败重试。
+
+## Decision
+
+首版新增默认关闭的单个 Webhook 通道，固定 POST JSON，允许配置完整 URL、自定义请求头及 JSON 请求体模板。请求体先解析为 JSON，再仅在字符串值中替换白名单字段；不执行表达式，不替换对象键。字段涵盖事件类型及标识、标题、正文、会话名称、跳转地址、客户端、主机和合并事件数量。会话名称服从现有 `includeTitle` 开关；不发送聊天正文、凭据或完整配置。
+
+桌面网关和已认证 Web/手机端维护同一份通知设置，采用已有字段白名单、认证与 CSRF 边界。URL 可能在路径或查询参数中携带密钥，因此普通配置读取只返回是否已保存及服务 origin；请求头同样不回传值。更换 URL 不自动沿用旧请求头。保存不触发发送，测试仅显式发送已保存的通道配置。
+
+聊天完成、等待确认、网关启动/入口变化和安全事件接入已有投递状态机。通道身份由完整目的地址及请求头的摘要区分，不把凭据写入状态键。重试继续核验当前启用状态、目的地和事件有效性。Webhook 的 HTTP 成功仅表示接收端接受请求，不证明下游已展示；网络超时仍可能产生接收端重复，应提供稳定事件标识供接收端去重。
+
+HTTPS 为正常发送方式，本机 loopback HTTP 沿用现有测试边界。Webhook 单独支持 URL 查询参数，不放宽旧通知通道校验；拒绝重定向，限定请求与响应大小及等待时间，错误不包含接收端回显或密钥。
+
+## Related decisions
+
+[多个 Webhook 接收目标与旧配置兼容](2026-10-22-multiple-webhook-destinations.md) 扩展首版单目标结构，保留旧目标身份和投递记录，同时为额外目标建立独立配置、去重与重试。
+
+[Webhook 服务预设、签名与成功判定](../bug-fix/2026-10-21-feishu-webhook-delivery.md) 取代下文首版“所有服务只判断 HTTP 2xx、动态签名全部不支持、接收地址不可回读”的边界，增加指定服务预设及主动查看地址；通用模板、保存、去重和通知策略仍按本决定执行。首版取舍保留作为历史原因，不代表当前能力。
+
+[第三方通知设置](../../implemented/feature/2026-10-13-third-party-notification-settings.md) 部分重叠：新增通道沿用其共享配置、密钥回读和显式测试约束，不取代原决定。对活跃笔记的通知关键词检查，其余命中涉及通知游标、客户端加载、配对或网络入口，均不改变本功能的发送契约。
+
+## Alternatives considered
+
+逐个平台内置适配能够处理签名和业务响应，但会持续增加平台维护成本。首版提供通用通道，不承诺动态签名平台全部兼容。允许脚本模板可以支持更多转换，却会引入执行权限和跨平台依赖；选择有限字段替换。另建独立 Webhook 任务队列可以单独优化投递，但会重复既有通知策略与去重边界；本轮直接复用现有流程。
+
+## Verification
+
+1. 已有设置无需迁移即可加载；三个原通道的保存、测试与通知行为保持通过。
+2. 合成中文、引号、换行及缺失可选字段通过真实 loopback POST 验收；非法 JSON、字段、URL 和请求头被拒绝。
+3. 配置回读、桌面状态和失败日志不泄漏 URL 或请求头凭据；重定向不转发凭据。
+4. 全局/单会话策略、去重、独立重试、重启恢复、关闭和目的地变更均有针对性测试。
+5. 桌面与 Web/手机界面在中英文、宽窄屏下可保存和测试，未保存输入不会被后台刷新覆盖。
+6. 独立 Test 构建与平台检查分别记录，正式版、配置和手机绑定保留，不推送 GitHub。
+
+## Risks
+
+平台返回 HTTP 2xx 后仍可能在业务层拒绝消息；首版不执行平台自定义响应判断或动态签名。Webhook URL 与 Headers 包含用户授权的接入秘密，必须沿用本地私有配置和脱敏处理。真实第三方送达需要用户选定接收端后另行确认；隔离验收只向本机测试接收器发送合成数据。
+
+## Implementation and verification
+
+The existing notification module owns settings, bounded JSON substitution, POST transport and destination-aware delivery. Account reminders reuse the same channel. Desktop and shared Web/mobile controls clear secret inputs only after successful saves. Gateway event IDs persist across retry and differ for each startup/address change.
+
+Integrated backend: 232 tests, 2 conditional skips. Desktop/notification UI: 112 passing tests. Full frontend: 818 passing and 1 skip initially; the two loopback groups blocked by the sandbox both passed with loopback permission. Real Chromium at 390px passed nine checks covering layout, English labels, malformed headers, redacted saved state, saved-only tests and failed-save draft retention. Platform build/install evidence is tracked separately in `.tmp/issue60-webhook-20261021/`.
+
+## Consequences
+
+Receivers should deduplicate ambiguous timeout retries by event_id. The initial scope excluded service-specific signatures and response codes; the linked provider correction supersedes that exclusion for the supported presets. Application versions and binding formats are unchanged; Webhook defaults to disabled for existing settings.

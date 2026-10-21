@@ -65,6 +65,12 @@ test('file-transfer settings reach the worker through the IPC allowlist',async()
   const result=await runWorker({executable:process.execPath,prefix:['-e',script],dataDir:'/fixture'},'transfer-settings',{clickDownloadMiB:60});
   assert.deepEqual(result,{action:'transfer-settings',payload:{clickDownloadMiB:60}});
 });
+test('named Webhook edits reach the worker through the IPC allowlist',async()=>{
+  const script="let value='';process.stdin.on('data',data=>value+=data);process.stdin.on('end',()=>console.log(JSON.stringify({ok:true,result:{action:process.argv[1],payload:JSON.parse(value)}})));";
+  const payload={action:'delete',webhookId:'named-1'};
+  const result=await runWorker({executable:process.execPath,prefix:['-e',script],dataDir:'/fixture'},'webhook-endpoint',payload);
+  assert.deepEqual(result,{action:'webhook-endpoint',payload});
+});
 test('unknown IPC action cannot become a command',async()=>{await assert.rejects(runWorker({executable:'unused',dataDir:'unused'},'shell'),/未知操作/);});
 test('development launch keeps script as its own argument',()=>{
   const result=workerFor({packaged:false,root:'/source path',dataDir:'/data'});assert.deepEqual(result.prefix,['-B',path.join('/source path','desktop.py')]);
@@ -75,14 +81,14 @@ test('development launch keeps script as its own argument',()=>{
 async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,loginStartup,AccountsPanel}={}){
   const fs=require('node:fs'),vm=require('node:vm');
   const nodes=new Map();
-  function node(){return {parentNode:{insertBefore(){}},getAnimations(){return [];},animate(){},closest(){return null;},value:'',checked:false,hidden:false,textContent:'',dataset:{},
+  function node(){return {parentNode:{insertBefore(){}},getAnimations(){return [];},animate(){},scrollIntoView(){},focus(){},addEventListener(){},closest(){return null;},value:'',checked:false,hidden:false,textContent:'',dataset:{},
     classList:{toggle(){}},click(){return this.onclick?.();},append(...items){this.children=(this.children||[]).concat(items);},replaceChildren(...items){this.children=items;},setAttribute(){},removeAttribute(){},querySelectorAll(){return [];}};}
   const html=fs.readFileSync(path.join(__dirname,'../desktop/index.html'),'utf8');
   for(const match of html.matchAll(/\bid="([^"]+)"/g))nodes.set(match[1],node());
   for(const id of ['clients-start','clients-stop'])nodes.set(id,node());
   const value={loginStartup,runtime:{running:false,portOccupied:false,supportsNotifications:true},
     preferences:{port:8787,lan:true,tunnel:false,autoStart,connections:[]},
-    auth:{mode:'password',username:'admin'},notifications:{enabled:false,server:'https://ntfy.sh',topic:''},
+    auth:{mode:'password',username:'admin'},notifications:{enabled:false,server:'https://ntfy.sh',topic:'',webhookTemplates:{generic:'{"event":"{{event}}"}',feishu:JSON.stringify({msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}}),dingtalk:'{"msgtype":"text"}',discord:'{"content":"{{body}}"}',telegram:'{"chat_id":"","text":"{{body}}"}'}},
     notificationStatus:{},watches:[],origins:[],urls:[],dataDir:'/test',credentialsAvailable:false};
   let now=1000,poll;
   const calls=[];
@@ -207,7 +213,7 @@ test('submitting a focused bare hostname saves a strict HTTPS origin',async()=>{
   assert.equal(ui.value.preferences.connections[0].accessMode,'external');
 });
 
-test('external status updates a folded summary without replacing the focused card',async()=>{
+test('external status updates detail while summary reports saved enablement',async()=>{
   const ui=await renderer();
   ui.value.preferences.connections=[{id:'entry',name:'Home',enabled:true,accessMode:'external',publicUrl:'https://bridge.example.com'}];
   await ui.poll();
@@ -223,8 +229,21 @@ test('external status updates a folded summary without replacing the focused car
   assert.doesNotMatch(status.textContent,/导出部署包/);
   ui.value.externalStatus={entry:{message:'入口已连接'}};
   await ui.poll();
-  assert.match(summary.textContent,/Home · https:\/\/bridge.example.com · 入口已连接/);
+  assert.match(summary.textContent,/Home · https:\/\/bridge.example.com · 已启用/);
+  assert.match(status.textContent,/入口已连接/);
   assert.equal(ui.nodes.get('connections').children[0],card);
+});
+
+test('disabled connection ignores stale online status',async()=>{
+  const ui=await renderer();ui.value.preferences.connections=[{id:'entry',name:'Home',enabled:false,accessMode:'external',publicUrl:'https://bridge.example.com'}];
+  ui.value.externalStatus={entry:{message:'入口已连接'}};await ui.poll();
+  const descendants=node=>[node,...(node.children||[]).flatMap(descendants)];
+  const card=ui.nodes.get('connections').children[0],items=descendants(card);
+  assert.match(items.find(node=>node.className==='connection-summary').textContent,/已配置但未启用/);
+  const status=items.find(node=>node.dataset.connectionStatus==='entry');
+  ui.context.document.querySelectorAll=selector=>selector==='[data-connection-status]'?[status]:[];
+  ui.value.externalStatus={entry:{message:'入口仍显示已连接'}};
+  await ui.poll();assert.equal(status.textContent,'已配置但未启用');
 });
 
 test('fixed-entry retry replaces an earlier error in card and summary across polling',async()=>{
@@ -357,6 +376,96 @@ test('notification test buttons select the channel and block unsaved drafts',asy
   assert.deepEqual(calls,['bark','ntfy']);
   ui.run('dirty=true');await ui.nodes.get('test-bark').onclick();
   assert.equal(calls.length,2);assert.match(ui.nodes.get('toast-message').textContent,/请先保存通知配置/);
+});
+
+test('desktop Webhook edits save per endpoint and failed saves retain secrets',async()=>{
+  const ui=await renderer();ui.value.notifications.webhookEndpoints=[{webhookId:'legacy',webhookName:'Default Webhook',webhookProvider:'auto',webhookBodyTemplate:'{\"event\":\"{{event}}\"}',webhookTemplates:ui.value.notifications.webhookTemplates}];await ui.poll();
+  ui.nodes.get('webhook-url').value='https://example.test/hook?token=secret';ui.nodes.get('webhook-headers').value='{bad';
+  let payload;ui.api.webhookEndpoint=async value=>{payload=value;throw Error('Save failed');};
+  await ui.nodes.get('webhook-save').onclick();assert.equal(payload,undefined);assert.match(ui.nodes.get('toast-message').textContent,/JSON/);
+  ui.nodes.get('webhook-headers').value='{"X-Key":"secret"}';await ui.nodes.get('webhook-save').onclick();assert.equal(ui.nodes.get('webhook-url').value,'https://example.test/hook?token=secret');
+  ui.api.webhookEndpoint=async value=>{payload=value;return {selectedWebhookId:'legacy',webhookEndpoints:[{webhookId:'legacy',webhookName:'Default Webhook',webhookEnabled:true,webhookProvider:'auto',webhookBodyTemplate:value.webhookBodyTemplate,hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:true,webhookTemplates:ui.value.notifications.webhookTemplates}]};};
+  ui.nodes.get('webhook-enabled').checked=true;await ui.nodes.get('webhook-save').onclick();
+  assert.equal(payload.webhookId,'legacy');assert.equal(payload.webhookUrl,'https://example.test/hook?token=secret');assert.deepEqual(JSON.parse(JSON.stringify(payload.webhookHeaders)),{'X-Key':'secret'});
+  assert.equal(ui.nodes.get('webhook-url').value,'');assert.equal(ui.nodes.get('webhook-headers').value,'');
+  assert.equal(ui.run('collect().notifications.webhookUrl'),undefined);
+});
+
+test('desktop Webhook test is saved-only and named creation has isolated identity',async()=>{
+  const ui=await renderer();await ui.poll();ui.nodes.get('webhook-add').onclick();ui.nodes.get('webhook-name').value='Ops';ui.nodes.get('webhook-provider').value='feishu';ui.nodes.get('webhook-sign-secret').value='sample-secret';ui.nodes.get('webhook-use-template').onclick();
+  let tests=0;ui.api.testNotification=async()=>{tests++;return {message:'accepted'};};await ui.nodes.get('test-webhook').onclick();assert.equal(tests,0);
+  let payload;ui.api.webhookEndpoint=async value=>{payload=value;return {selectedWebhookId:'named-1',webhookEndpoints:[{webhookId:'named-1',webhookName:'Ops',webhookEnabled:true,webhookProvider:'feishu',webhookBodyTemplate:value.webhookBodyTemplate,webhookTemplates:ui.value.notifications.webhookTemplates}]};};
+  await ui.nodes.get('webhook-save').onclick();assert.equal(payload.webhookId,undefined);assert.equal(payload.webhookSignSecret,'sample-secret');assert.equal(ui.nodes.get('webhook-sign-secret').value,'');
+  await ui.nodes.get('test-webhook').onclick();assert.equal(tests,1);
+});
+
+test('desktop saved Webhook URL reveal is scoped to selected endpoint',async()=>{
+  const ui=await renderer(),url=ui.nodes.get('webhook-url');ui.value.notifications.webhookEndpoints=[{webhookId:'named-1',webhookName:'Ops',hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',webhookTemplates:ui.value.notifications.webhookTemplates}];await ui.poll();ui.run("activeTab='notifications'");
+  let calls=0;ui.api.readCredentials=async request=>{calls++;assert.deepEqual(JSON.parse(JSON.stringify(request)),{channel:'webhook',webhookId:'named-1'});return {webhookUrl:'https://example.test/hook?token=private'};};
+  await ui.nodes.get('webhook-url-eye').onclick();assert.equal(calls,1);assert.equal(url.type,'text');assert.equal(ui.run('webhookDirty()'),false);assert.equal(ui.run('webhookUrlDraft()'),'');
+  await ui.nodes.get('webhook-url-eye').onclick();assert.equal(url.value,'');assert.equal(url.type,'password');
+});
+
+test('desktop slow create adopts its ID while preserving edits made during save',async()=>{
+  const ui=await renderer();await ui.poll();ui.nodes.get('webhook-add').onclick();ui.nodes.get('webhook-name').value='First';
+  let complete,payload;ui.api.webhookEndpoint=value=>{payload=value;return new Promise(resolve=>{complete=resolve;});};
+  const pending=ui.nodes.get('webhook-save').onclick();ui.nodes.get('webhook-name').value='Edited while saving';
+  complete({selectedWebhookId:'named-1',webhookEndpoints:[{webhookId:'named-1',webhookName:'First',webhookBodyTemplate:payload.webhookBodyTemplate,webhookTemplates:ui.value.notifications.webhookTemplates}]});await pending;
+  assert.equal(ui.run('webhookSelectedId'),'named-1');assert.equal(ui.run('webhookCreating'),false);
+  assert.equal(ui.nodes.get('webhook-name').value,'Edited while saving');assert.equal(ui.run('webhookDirty()'),true);
+  ui.api.webhookEndpoint=async value=>{payload=value;return {selectedWebhookId:'named-1',webhookEndpoints:[]};};
+  await ui.nodes.get('webhook-save').onclick();assert.equal(payload.webhookId,'named-1');
+});
+
+test('ordinary desktop settings save omits every legacy Webhook field',async()=>{
+  const ui=await renderer();await ui.poll();const notifications=ui.run('collect().notifications');
+  assert.deepEqual(Object.keys(notifications).filter(key=>/^webhook|^clearWebhook/.test(key)),[]);
+});
+
+test('unrelated desktop snapshot does not hide a revealed Webhook URL',async()=>{
+  const ui=await renderer(),url=ui.nodes.get('webhook-url');ui.value.notifications.webhookEndpoints=[{webhookId:'named-1',webhookName:'Ops',hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',webhookTemplates:ui.value.notifications.webhookTemplates}];await ui.poll();ui.run("activeTab='notifications'");
+  ui.api.readCredentials=async()=>({webhookUrl:'https://example.test/hook?token=private'});
+  await ui.nodes.get('webhook-url-eye').onclick();ui.value.runtime.running=true;await ui.poll();
+  assert.equal(url.type,'text');assert.equal(url.value,'https://example.test/hook?token=private');assert.equal(ui.run('webhookDirty()'),false);
+});
+
+test('desktop language switch translates Webhook hints without losing drafts or revealed URL',async()=>{
+  const ui=await renderer(),url=ui.nodes.get('webhook-url'),body=ui.nodes.get('webhook-body-template');
+  ui.value.notifications.webhookEndpoints=[{webhookId:'legacy',webhookName:'默认 Webhook',webhookProvider:'auto',webhookResolvedProvider:'feishu',hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:true,hasWebhookSignSecret:true,webhookBodyTemplate:'{"event":"{{event}}"}',webhookTemplates:ui.value.notifications.webhookTemplates}];
+  await ui.poll();ui.run("activeTab='notifications'");ui.api.readCredentials=async()=>({webhookUrl:'https://example.test/hook?token=private'});
+  await ui.nodes.get('webhook-url-eye').onclick();body.value='{"custom":"{{body}}"}';
+  ui.context.applyLanguage('en');
+  assert.equal(url.type,'text');assert.equal(url.value,'https://example.test/hook?token=private');assert.equal(body.value,'{"custom":"{{body}}"}');
+  assert.equal(ui.nodes.get('webhook-url-eye').textContent,'Hide address');
+  assert.equal(ui.nodes.get('webhook-name').value,'Default Webhook');assert.equal(ui.run('webhookDirty()'),true);
+  for(const id of ['webhook-provider-hint','webhook-url-saved','webhook-headers-saved','webhook-sign-saved'])assert.doesNotMatch(ui.nodes.get(id).textContent,/[\u4e00-\u9fff]/);
+});
+
+test('desktop language switch translates new Webhook hints without clearing its draft',async()=>{
+  const ui=await renderer();await ui.poll();ui.nodes.get('webhook-add').onclick();ui.nodes.get('webhook-name').value='Ops';ui.nodes.get('webhook-sign-secret').value='private draft';
+  ui.context.applyLanguage('en');
+  assert.equal(ui.nodes.get('webhook-name').value,'Ops');assert.equal(ui.nodes.get('webhook-sign-secret').value,'private draft');
+  for(const id of ['webhook-provider-hint','webhook-url-saved','webhook-headers-saved','webhook-sign-saved'])assert.doesNotMatch(ui.nodes.get(id).textContent,/[\u4e00-\u9fff]/);
+});
+
+test('remote deletion keeps a desktop Webhook draft tied to its original ID',async()=>{
+  const ui=await renderer(),templates=ui.value.notifications.webhookTemplates;
+  ui.value.notifications.webhookEndpoints=[{webhookId:'named-1',webhookName:'First',webhookBodyTemplate:templates.generic,webhookTemplates:templates},{webhookId:'named-2',webhookName:'Second',webhookBodyTemplate:templates.generic,webhookTemplates:templates}];
+  await ui.poll();ui.run("selectWebhook('named-2')");ui.nodes.get('webhook-name').value='Unsaved second';
+  ui.value.notifications.webhookEndpoints=ui.value.notifications.webhookEndpoints.slice(0,1);await ui.poll();
+  assert.equal(ui.run('webhookSelectedId'),'named-2');assert.equal(ui.nodes.get('webhook-name').value,'Unsaved second');
+  let requested;ui.api.webhookEndpoint=async value=>{requested=value;throw Error('Webhook 不存在，请刷新列表');};
+  await ui.nodes.get('webhook-save').onclick();assert.equal(requested.webhookId,'named-2');assert.equal(ui.nodes.get('webhook-name').value,'Unsaved second');
+});
+
+test('watch panel recognizes Webhook and PushPlus as enabled notification channels',async()=>{
+  const ui=await renderer();
+  ui.value.runtime.running=true;
+  ui.value.watches=[{id:'fixture-chat',host:'local',title:'Fixture'}];
+  ui.value.notifications.webhookEnabled=true;await ui.poll();
+  assert.match(ui.nodes.get('watches').children[0].textContent,/正在监控/);
+  ui.value.notifications.webhookEnabled=false;ui.value.notifications.pushplusEnabled=true;await ui.poll();
+  assert.match(ui.nodes.get('watches').children[0].textContent,/正在监控/);
 });
 
 test('Bark drafts survive polling and language changes and remain after saving',async()=>{

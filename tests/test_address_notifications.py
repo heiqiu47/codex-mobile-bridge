@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from bridge.features.notifications.addresses import AddressNotifications, ready_url, entry_urls
-from bridge.features.notifications.channels import save_settings, settings, read_json
+from bridge.features.notifications.channels import save_settings, save_webhook_endpoint, settings, read_json
 from bridge.app.desktop import Desktop
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +56,54 @@ class AddressNotificationTests(unittest.TestCase):
             self.manager.scan();self.assertEqual(send.call_count, 3)
             self.assertEqual(send.call_args.args[3], B)
             self.assertFalse(self.manager.state['first'])
+
+    def test_webhook_gateway_event_names_follow_existing_address_state(self):
+        save_settings(self.directory, {'enabled': False, 'webhookEnabled': True,
+                                       'webhookUrl': 'https://receiver.example/hook'})
+        with patch('bridge.features.notifications.addresses.publish_webhook') as webhook:
+            self.manager.scan()
+            self.manager.scan()
+            self.url = B
+            self.manager.scan()
+            self.url = A
+            self.manager.scan()
+            self.assertEqual([call.kwargs['event'] for call in webhook.call_args_list],
+                             ['gateway.started', 'gateway.address_changed', 'gateway.address_changed'])
+            ids = [call.kwargs['event_id'] for call in webhook.call_args_list]
+            self.assertEqual(len(set(ids)), 3)
+
+    def test_address_notice_fans_out_to_named_webhooks(self):
+        save_settings(self.directory, {'enabled': False, 'webhookEnabled': True,
+                                       'webhookUrl': 'https://receiver.example/legacy'})
+        save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': '飞书',
+            'webhookEnabled': True, 'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/one'})
+        save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': 'Telegram',
+            'webhookEnabled': True, 'webhookUrl': 'https://api.telegram.org/botprivate/sendMessage',
+            'webhookBodyTemplate': '{"chat_id":"123","text":"{{body}}"}'})
+        with patch('bridge.features.notifications.addresses.publish_webhook') as webhook:
+            self.manager.scan()
+            self.manager.scan()
+        self.assertEqual(webhook.call_count, 3)
+        self.assertEqual(len(self.manager.state['deliveries']), 3)
+
+    def test_webhook_address_retry_retains_event_id_after_restart(self):
+        save_settings(self.directory, {'enabled': False, 'webhookEnabled': True,
+                                       'webhookUrl': 'https://receiver.example/hook'})
+        with patch('bridge.features.notifications.addresses.publish_webhook', side_effect=OSError('offline')) as webhook:
+            self.manager.scan()
+            first_id = webhook.call_args.kwargs['event_id']
+        self.manager = AddressNotifications(self.directory, lambda: [self.url], 'instance-1')
+        for record in self.manager.state['deliveries'].values():
+            record['next'] = 0
+        with patch('bridge.features.notifications.addresses.publish_webhook') as webhook:
+            self.manager.scan()
+            self.assertEqual(webhook.call_args.kwargs['event_id'], first_id)
+            self.manager.scan()
+            webhook.assert_called_once()
+        self.manager = AddressNotifications(self.directory, lambda: [self.url], 'instance-2')
+        with patch('bridge.features.notifications.addresses.publish_webhook') as webhook:
+            self.manager.scan()
+            self.assertNotEqual(webhook.call_args.kwargs['event_id'], first_id)
 
     def test_channels_retry_independently_and_persist_backoff(self):
         save_settings(self.directory, {'barkEnabled': True, 'barkKey': 'bark-secret',

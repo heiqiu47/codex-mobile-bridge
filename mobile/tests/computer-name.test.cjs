@@ -4,7 +4,7 @@ const root=path.resolve(__dirname,'../..');
 const script=fs.readFileSync(path.join(root,'mobile/shared/web/mobile-ui.js'),'utf8').replace(/\r\n/g,'\n');
 function fixture(alias='My computer',mode=null){
  const events={},clicks={},store={},name={textContent:''},computer={dataset:{deviceName:'Real Mac'},setAttribute(k,v){this[k]=v;},addEventListener(k,f){clicks[k]=f;}};
- const context={URL,location:{origin:'https://gateway.test',host:'gateway.test'},window:{prompt:()=>alias},MutationObserver:class{observe(){}},localStorage:{getItem:()=>mode,setItem:(k,v)=>store[k]=v},BridgeI18n:{t:s=>s},document:{styleSheets:[{href:'https://gateway.test/style.css',cssRules:[],insertRule(){}}],documentElement:{classList:{contains:()=>false,add(){},toggle(){}}},getElementById:id=>({'app':{hidden:false},'connected-computer':computer,'computer-name':name}[id]),querySelector:()=>null,addEventListener:(k,f)=>events[k]=f}};
+ const context={URL,location:{origin:'https://gateway.test',host:'gateway.test'},window:{prompt:()=>alias,addEventListener:()=>{}},MutationObserver:class{observe(){}},localStorage:{getItem:()=>mode,setItem:(k,v)=>store[k]=v},BridgeI18n:{t:s=>s},document:{styleSheets:[{href:'https://gateway.test/style.css',cssRules:[],insertRule(){}}],documentElement:{classList:{contains:()=>false,add(){},toggle(){}}},getElementById:id=>({'app':{hidden:false},'connected-computer':computer,'computer-name':name}[id]),querySelector:()=>null,addEventListener:(k,f)=>events[k]=f}};
  vm.runInNewContext(script,context);return {events,clicks,store,name,computer};
 }
 test('native header defaults to saved connection name and toggles real device name',()=>{
