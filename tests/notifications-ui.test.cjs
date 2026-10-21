@@ -236,6 +236,14 @@ test('provider preset changes known templates but preserves custom JSON',async()
   ui.nodes.get('webhook-use-template').onclick();assert.equal(body.value,'{"chat_id":"","text":"{{body}}"}');
 });
 
+test('empty multi-Webhook list retains server-provided preset templates',async()=>{
+  const ui=await fixture(),templates={generic:'{"event":"{{event}}"}',discord:'{"content":"{{body}}"}'};
+  ui.saved.set('/api/notifications/channels/webhook',{webhookEndpoints:[],webhookTemplates:templates});
+  await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  ui.nodes.get('webhook-provider').value='discord';ui.nodes.get('webhook-provider').onchange();
+  assert.equal(ui.nodes.get('webhook-body-template').value,templates.discord);
+});
+
 test('revealing a saved Webhook URL keeps the test clean and sends no URL update',async()=>{
   const ui=await fixture(),channel='/api/notifications/channels/webhook';
   ui.saved.set(channel,{webhookEnabled:true,hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',webhookProvider:'generic',webhookBodyTemplate:'{"event":"{{event}}"}',webhookTemplates:{generic:'{"event":"{{event}}"}'}});

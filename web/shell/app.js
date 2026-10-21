@@ -1132,7 +1132,7 @@ for(const button of document.querySelectorAll('[data-notification-channel]'))but
     const config=await api('/api/notifications/channels/'+channel);
     if(request!==notificationListRequest||!$('notification-channels-dialog').open)return;
     if(channel==='webhook'){
-      webhookConfig=config;selectedWebhookId=config.webhookEndpoints?.[0]?.webhookId||'legacy';creatingWebhook=false;renderWebhookChannel(currentWebhook());renderWebhookList();$('webhook-error').textContent='';$('notification-channels-dialog').close();$('webhook-dialog').showModal();return;
+      webhookConfig=config;webhookTemplates=config.webhookTemplates||webhookTemplates;selectedWebhookId=config.webhookEndpoints?.[0]?.webhookId||'legacy';creatingWebhook=false;renderWebhookChannel(currentWebhook());renderWebhookList();$('webhook-error').textContent='';$('notification-channels-dialog').close();$('webhook-dialog').showModal();return;
     }
     selectedNotificationChannel=channel;
     renderNotificationChannel(config);
