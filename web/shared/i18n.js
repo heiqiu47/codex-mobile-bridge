@@ -155,6 +155,22 @@ const en={
 "尚未保存签名密钥":"No signing secret saved",
 "清除已保存的签名密钥":"Clear saved signing secret",
 "使用飞书模板":"Use Feishu template",
+"Webhook 类型格式不正确":"Invalid Webhook service type.",
+"飞书签名密钥格式不正确":"Invalid Feishu signing secret.",
+"签名仅支持飞书 Webhook":"Signing is available only for Feishu Webhooks.",
+"开启飞书签名前请填写密钥；更换地址或类型后需重新填写":"Enter a signing secret before enabling Feishu signing; enter it again after changing the endpoint or service type.",
+"签名消息不能自行设置 timestamp 或 sign":"Signed messages cannot set timestamp or sign in the body template.",
+"飞书签名配置不完整，请检查类型和密钥":"Feishu signing is incomplete. Check the service type and secret.",
+"飞书消息过长":"Feishu message is too long.",
+"飞书未接受通知，请检查地址和网络":"Feishu did not accept the notification. Check the endpoint and network.",
+"飞书响应格式不正确":"Invalid response from Feishu.",
+"飞书已接受测试通知":"Feishu accepted the test notification.",
+"消息格式错误":"Invalid message format",
+"签名或时间无效":"Invalid signature or timestamp",
+"IP 不在允许范围":"IP address is not allowed",
+"未满足关键词要求":"Keyword requirement not met",
+"发送过于频繁":"Sending too frequently",
+"请检查机器人配置":"Check the bot configuration",
 "仅 JSON 字符串值可使用 {{title}} 等变量；支持 event、event_id、title、body、session_name、url、client、host、count。":"Place placeholders such as {{title}} only in JSON string values. Supported: event, event_id, title, body, session_name, url, client, host, count.",
 "启用 Webhook":"Enable Webhook",
 "向自定义 HTTPS 服务发送 POST JSON。用于任务完成、待确认操作、入口变化和安全提醒。":"Send POST JSON to a custom HTTPS service for completed tasks, approvals, entry changes and security alerts.",
@@ -3058,6 +3074,8 @@ function translateEnglish(source){
   if(fileLimit)return 'The file exceeds the '+fileLimit[1]+' MiB click-to-download limit.';
   const failed=/^部分通道发送失败：(.+)；请在手机确认其他通道是否收到。$/.exec(source);
   if(failed)return 'Some channels failed: '+failed[1]+'. Check your phone for messages from the other channels.';
+  const feishu=/^飞书未接受通知（(\d+)：([^）]+)）$/.exec(source);
+  if(feishu)return 'Feishu did not accept the notification ('+feishu[1]+': '+(en[feishu[2]]||en['请检查机器人配置'])+').';
   return source;
 }
 function t(source){return lang==='en'?translateEnglish(source):(zh[source]??source);}

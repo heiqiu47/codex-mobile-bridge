@@ -237,6 +237,7 @@ test('Webhook form has English labels and narrow-screen scroll styling',async()=
   assert.match(dialog,/maxlength="4096"/);
   assert.match(dialog,/\{\{title\}\}/);
   for(const error of ['Webhook 地址格式不正确','Webhook 请求头格式不正确','Webhook JSON 模板格式不正确','Webhook 模板包含未知占位符','开启 Webhook 前请填写地址','Webhook 测试失败，请检查服务地址、认证和网络'])assert.notEqual(ui.run(`BridgeI18n.t(${JSON.stringify(error)})`),error);
+  assert.equal(ui.run("BridgeI18n.t('飞书未接受通知（19022：签名或时间无效）')"),'Feishu did not accept the notification (19022: Invalid signature or timestamp).');
 });
 
 test('common notification controls save once outside provider detail',async()=>{
