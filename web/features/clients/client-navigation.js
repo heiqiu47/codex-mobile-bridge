@@ -310,7 +310,8 @@ class ClientNavigation {
   }
   openManager(){
     if(this.manager?.dialog.open)return;
-    const dialog=this.view.dialog('应用管理'),list=document.createElement('div'),note=document.createElement('p');note.className='muted';dialog.append(list,note);this.manager={dialog,list,note};
+    const dialog=this.view.dialog('应用管理'),list=document.createElement('div'),note=document.createElement('p');note.className='muted';
+    const title=dialog.querySelector('.picker-head h2');title.tabIndex=-1;title.autofocus=true;dialog.append(list,note);this.manager={dialog,list,note};
     dialog.addEventListener('close',()=>{if(this.manager?.dialog===dialog)this.manager=null;});dialog.showModal();this.renderManager();this.refresh();
   }
 
