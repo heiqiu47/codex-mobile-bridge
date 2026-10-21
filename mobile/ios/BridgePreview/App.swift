@@ -365,6 +365,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     private func navigation(home: Bool) {
         navigationController?.setNavigationBarHidden(!home, animated: false)
         gatewayMenu.isHidden = home
+        gatewayMenu.isEnabled = true
         title = ""; navigationItem.largeTitleDisplayMode = .never
         let logo = UIImageView(image: UIImage(named: "AppIcon60x60@2x.png")); logo.contentMode = .scaleAspectFit
         logo.widthAnchor.constraint(equalToConstant: 30).isActive = true; logo.heightAnchor.constraint(equalToConstant: 30).isActive = true; logo.layer.cornerRadius = 7; logo.clipsToBounds = true
@@ -714,6 +715,14 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
             guard webView === web, frame.isMainFrame, let source = frame.request.url, GatewayURL.same(source, origin),
                   let current = webView.url, GatewayURL.same(current, origin) else { completionHandler(nil); return }
             completionHandler(computerName(origin)); return
+        }
+        if prompt == "codexbridge-modal:" + clipboardToken {
+            guard webView === web, connectionError == nil, UIApplication.shared.applicationState == .active,
+                  frame.isMainFrame, let source = frame.request.url, GatewayURL.same(source, origin),
+                  let current = webView.url, GatewayURL.same(current, origin),
+                  let state = defaultText, ["open", "closed"].contains(state) else { completionHandler(nil); return }
+            gatewayMenu.isHidden = state == "open"; gatewayMenu.isEnabled = state == "closed"
+            completionHandler("saved"); return
         }
         if prompt == "codexbridge-logout:" + clipboardToken {
             guard webView === web, UIApplication.shared.applicationState == .active, frame.isMainFrame,

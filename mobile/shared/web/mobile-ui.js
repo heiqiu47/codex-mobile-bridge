@@ -27,6 +27,19 @@
   const sync = () => document.documentElement.classList.toggle('bridge-authenticated', !app.hidden);
   sync();
   new MutationObserver(sync).observe(app, { attributes: true, attributeFilter: ['hidden'] });
+  let modalOpen;
+  const syncModal = () => {
+    const open = !!document.querySelector('dialog[open]');
+    if (open === modalOpen) return;
+    modalOpen = open;
+    window.prompt('codexbridge-modal:__BRIDGE_CLIPBOARD_TOKEN__', open ? 'open' : 'closed');
+  };
+  new MutationObserver(syncModal).observe(document.documentElement,
+    { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] });
+  syncModal();
+  const resyncModal = () => { modalOpen = undefined; syncModal(); };
+  window.addEventListener('focus', resyncModal);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) resyncModal(); });
   const account = document.getElementById('accounts-button');
   if (account) {
     const labelAccount = () => {
