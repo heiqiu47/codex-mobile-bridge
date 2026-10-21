@@ -1,8 +1,35 @@
+<a id="webhook-multi-target-acceptance"></a>
+
+# 多目标 Webhook 与手机弹窗本地验收（2026-10-22，未发布）
+
+桌面网关候选为 `70ed6efdf71cc642dd2627c9da9cc046eea1b50e`，手机焦点修订为 `d2020b18e45d`，位于 `integration/issue60-webhook-multi-test`。手机修订只修改共用原生注入脚本与测试，未改变网关资源。版本仍为 `2.1.2`、手机构建号 `34`；未推送 GitHub，也未发布新版。
+
+本轮补齐多个同类或不同服务的 Webhook、独立目标编辑与发送、跨进程保存保护、已保存启用状态、紧凑操作布局，以及手机原生菜单对弹窗的让位。旧单目标配置与凭据保留；普通读取脱敏，主动查看与测试均限定已选目标。
+
+| 范围 | 当前证据 |
+| --- | --- |
+| 源码 | Python 201 项中 199 通过、2 跳过；桌面/Web Node 840 通过、1 跳过。首次 Node 运行的两项回环服务测试受沙箱端口限制，允许回环后定向重跑通过。手机脚本 34/34 通过 |
+| 打包后端 | macOS、Windows、Ubuntu 的冻结网关各通过相同的 115 项真实回环 HTTP/桌面工作进程检查，包含五种服务协议、签名、认证与 CSRF、脱敏、多目标增删改查、失效目标拒绝及跨进程可见性；没有向真实机器人发送本轮验收消息 |
+| 界面 | 实际浏览器核验桌面 900px、手机 390px 的中英文布局，无横向溢出；配置选择与添加同行、地址查看同行、底部操作分组。多目标交互及弹窗菜单信号检查通过 |
+| macOS arm64 | 独立 Test 已替换并启动 8788，实际窗口布局已核对；正式版、配置及手机绑定保护检查通过 |
+| Windows x64 | 构建、临时文件与验收均在 F 盘；独立 Test 已覆盖安装，705 个安装文件与候选一致，真实 GUI 和 8788 启动检查通过；正式版、配置及绑定保留 |
+| Ubuntu x64 | DEB/AppImage 构建及冻结网关检查通过；模拟安装仅覆盖 Test。旧 Test 已安全停止，配置、绑定与原 Codex 进程保留；当前等待用户执行需要本机 sudo 的安装步骤，尚未完成新版安装后验收 |
+| iOS | 独立 Test 已覆盖安装并启动，5 个已保存电脑连接及偏好逐项不变。用户确认弹窗“更多”入口与紧凑布局通过；随后反馈的自动蓝色焦点框已作单独修订并安装，等待用户真机复测 |
+| Android | 新 APK 已构建，原包名、版本与签名保持一致；包内共用脚本与源码字节一致。本轮未连接 Android 真机 |
+
+焦点修订在实际 Chromium 中核验：Tab 聚焦按钮时有蓝色 2px 轮廓，保持焦点并触发触摸事件后轮廓消失，再用 Tab 导航时恢复；输入框焦点与轮廓保留。这验证了样式级联与输入方式切换，不等同于复现或解决 iOS 真机症状的确认。
+
+本地记录位于 `.tmp/issue60-feedback-20261022/`，包括归档和安装包哈希、配置保护摘要、截图及清理清单，不提交凭据或完整配置。Mac 和 Windows 的被替代 Test 包与重复构建产物已按精确路径清理；当前安装包、已安装 Test、签名资源及必要验收记录保留。Ubuntu 的旧包待新版安装验收后再清理。
+
+**English:** the gateway candidate supports independent named Webhooks and compact, status-aware controls. Packaged gateways on macOS, Windows and Ubuntu each passed the same 115-check loopback suite. macOS and Windows Test upgrades passed installed GUI, startup and preservation checks; Ubuntu installation remains pending the user's local sudo step. Updated mobile builds retain their existing identities. The user accepted iOS modal-menu and layout behavior; the subsequent touch-focus fix is installed but awaits device feedback. Chromium verifies touch suppression and keyboard restoration of button outlines, not the original iOS symptom. No GitHub push or release occurred.
+
+---
+
 <a id="webhook-local-acceptance"></a>
 
 # Webhook 服务预设本地验收（2026-10-22，未发布）
 
-当前安装候选源码为 `e766d406cea87d9e2f0a962a765e675564ec2239`，分支为 `feature/issue60-webhook-notifications`，基于 main `d900c02`。Issue #60 的通用 Webhook 通道在本轮补齐通用自定义、飞书、钉钉、Discord、Telegram 的可编辑模板、可用字段说明、可选飞书/钉钉签名、服务业务响应检查及已保存地址的隐藏/查看；沿用既有通知策略、去重和重试。版本仍为 `2.1.2`、手机构建号 `34`；未推送 GitHub，未创建 Release。
+上一轮安装候选源码为 `e766d406cea87d9e2f0a962a765e675564ec2239`，分支为 `feature/issue60-webhook-notifications`，基于 main `d900c02`。Issue #60 的通用 Webhook 通道在本轮补齐通用自定义、飞书、钉钉、Discord、Telegram 的可编辑模板、可用字段说明、可选飞书/钉钉签名、服务业务响应检查及已保存地址的隐藏/查看；沿用既有通知策略、去重和重试。版本仍为 `2.1.2`、手机构建号 `34`；未推送 GitHub，未创建 Release。
 
 首轮 `76867ec` 通过通用回环接收器检查，但用户真实飞书测试未收到消息。本轮授权对照确认：原通用 JSON 得到 HTTP 200 / 业务码 19002，正确飞书文本格式得到业务码 0，用户确认收到消息。因此本轮按服务协议检查响应，不再把飞书 HTTP 200 直接视为接受通知；首轮的通用接收器结果不作为飞书兼容证据。
 
