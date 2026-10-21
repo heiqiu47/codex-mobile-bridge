@@ -1,25 +1,26 @@
 <a id="webhook-local-acceptance"></a>
 
-# 通用 Webhook 本地验收（2026-10-21，未发布）
+# Webhook 服务预设本地验收（2026-10-22，未发布）
 
-候选源码为 `76867ecadbb44cdaa223d81e572099f730f9cdeb`，分支为 `feature/issue60-webhook-notifications`，基于 main `d900c02`。本轮只增加 Issue #60 的通用 Webhook 通道、JSON 模板和已保存配置的测试发送，沿用既有通知策略、去重和重试。版本仍为 `2.1.2`、手机构建号 `34`；未推送 GitHub，未创建 Release。
+当前安装候选源码为 `e766d406cea87d9e2f0a962a765e675564ec2239`，分支为 `feature/issue60-webhook-notifications`，基于 main `d900c02`。Issue #60 的通用 Webhook 通道在本轮补齐通用自定义、飞书、钉钉、Discord、Telegram 的可编辑模板、可用字段说明、可选飞书/钉钉签名、服务业务响应检查及已保存地址的隐藏/查看；沿用既有通知策略、去重和重试。版本仍为 `2.1.2`、手机构建号 `34`；未推送 GitHub，未创建 Release。
+
+首轮 `76867ec` 通过通用回环接收器检查，但用户真实飞书测试未收到消息。本轮授权对照确认：原通用 JSON 得到 HTTP 200 / 业务码 19002，正确飞书文本格式得到业务码 0，用户确认收到消息。因此本轮按服务协议检查响应，不再把飞书 HTTP 200 直接视为接受通知；首轮的通用接收器结果不作为飞书兼容证据。
 
 | 范围 | 本轮证据 |
 | --- | --- |
-| 后端与界面 | 232 项相关后端测试运行，2 项条件跳过；112 项桌面与通知 UI 检查通过。移动事件、推送和 iOS 构建边界 25 项通过，其中 3 项回环 HTTP 测试取得网络权限后单独复验通过 |
-| Web / 手机共享界面 | 390px 实际 Chromium 中通过 9 项检查，覆盖中英文、布局、非法请求头、保存后脱敏、仅测试已保存配置及保存失败后草稿保留；桌面生产页面配合合成 IPC 通过 11 项检查 |
-| 三平台打包网关 | macOS arm64、Windows x64、Ubuntu x64 各通过同一组 17 项真实 HTTP 检查：认证、CSRF、配置保存与脱敏、中文/引号/换行 JSON、已保存目标测试及重定向拒绝；全部只访问隔离回环接收器，运行后停止测试进程 |
-| macOS arm64 | Test DMG/ZIP、网关和嵌套签名核验通过；旧 Test 已替换，实际窗口中的 Webhook 表单与测试入口可用，原配置和绑定保留。原 Test 启用了当前未连接的 Tailscale，常用 8788 网关启动被该既有网络前置条件阻止；用户选择恢复 Tailscale 后自行实测，未自动修改网络设置 |
-| Windows x64 | F 盘完成低优先级单任务构建，安装后 705 个载荷文件与候选逐项一致；二维码、真实 GUI、Webhook 控件、8788 启动及静态资源检查通过。安装目录约 450 MB，包含 ConPTY，正式版、配置、可信会话及自启动项保持不变 |
-| Ubuntu x64 | DEB/AppImage 构建通过；用户覆盖安装独立 Test DEB，715 个安装文件与候选一致；真实 GUI、Webhook 控件及 8788 网关启动通过。正式版文件、配置、绑定及独立 Test 自启动身份保留 |
-| Android | 使用原独立预览标识和签名生成 APK，签名核验通过；本轮尚未覆盖安装真实 Android 设备 |
-| iOS | 沿用现有独立 Test 标识与开发团队，签名构建、覆盖安装并启动通过；安装前后 12 项已保存偏好逐项一致，原 App 未修改 |
+| 后端与界面 | 本次修订通过通知/桌面 Python 70 项、桌面/Web JS 118 项、鉴权与 CSRF HTTP 3 项；覆盖默认模板迁移、自定义正文保留、两种签名算法、密钥保留/更换/清除、业务失败判定及主动查看地址 |
+| Web / 手机共享界面 | 390px 实际 Chromium 中通过 24 项检查；1200px 桌面生产页面配合合成 IPC 通过 22 项检查。覆盖五种预设、签名字段、地址隐藏/查看、非法输入、保存失败草稿保留及仅测试已保存配置；没有横向溢出 |
+| 三平台打包网关 | macOS arm64、Windows x64、Ubuntu x64 各通过同一组 76 项真实回环 HTTP 检查：认证、CSRF、脱敏与主动读取地址、中文 JSON、各服务默认格式与业务失败、独立计算的飞书/钉钉签名、Discord 确认及 Telegram chat_id；隔离网关运行后均停止 |
+| macOS arm64 | 新 Test DMG/ZIP、网关和签名核验通过；旧 Test 已替换，原配置与绑定保留，8788 启动正常。真实窗口中的服务选择与保存状态已检查；安装后的网关通过已保存配置向授权飞书机器人发送测试，飞书返回接受成功。正式 8787 进程和配置保持不变 |
+| Windows x64 | 全部构建、临时与验收文件位于 F 盘，低优先级单任务构建；安装后 705 个载荷文件与候选逐项一致，二维码、真实 GUI、五种服务配置、8788 启动及静态资源检查通过。安装目录约 450 MB，包含 ConPTY；正式版、配置、可信手机会话、自启动项及已运行 DSH 均保留 |
+| Ubuntu x64 | DEB/AppImage 构建通过；用户覆盖安装独立 Test DEB，715 个安装文件与候选逐项一致；真实 GUI、Webhook 控件及 8788 网关启动通过。正式版文件与进程、配置、可信绑定及独立 Test 自启动身份保留 |
+| Android / iOS | 本次服务预设与地址查看只修改网关共享界面，可沿用原独立手机 Test，重新打开连接即可加载。首轮已生成签名 Android APK，并覆盖安装、启动独立 iPhone Test，12 项已保存偏好保持一致；本次未重新编译原生手机壳，也未把 Chromium 手机尺寸检查等同于真实手机验收 |
 
-17 项检查是三种平台各自运行的相同功能检查，不累加为不同功能的测试数量。HTTP 接收成功不等于用户真实通知服务已经送达；本轮未向日常第三方接收地址发送测试消息。iPhone/Android 的实际接收平台与手机上手结果由后续用户实测确认。未运行新的 GitHub 发布 CI，也不借用此前正式版结果作为本轮证据。
+76 项检查是三种平台各自运行的相同功能检查，不累加为不同功能的测试数量。飞书有授权真实机器人接收确认及新版已安装网关的服务响应；钉钉、Discord、Telegram 本轮使用本机协议接收器验证，没有声称取得其真实账号的送达确认。服务接受与用户实际看到通知分别记录。未运行新的 GitHub 发布 CI，也不借用此前正式版结果作为本轮证据。
 
-源码归档摘要、安装包哈希、配置/绑定摘要、运行结果和截图保留在本地 `.tmp/issue60-webhook-20261021/`；凭据及完整配置不提交。已安装的 Test 与必要安装包保留，旧 Test App 副本和已验收后的重复构建目录按精确路径清理。
+源码归档摘要、安装包哈希、配置/绑定摘要、运行结果和截图保留在本地 `.tmp/issue60-webhook-20261021/` 与 `.tmp/issue60-feishu-20261021/`；凭据及完整配置不提交。已安装 Test、当前安装包、共享构建依赖与验收记录保留；被替代的首轮 Test 包和本轮重复构建目录仅在安装验收通过后按精确路径清理。
 
-**English:** the unreleased Webhook candidate passed targeted backend/UI checks and the same 17-check loopback HTTP suite in real packaged gateways on macOS arm64, Windows x64 and Ubuntu x64. Windows and Ubuntu Test upgrades passed installed-file, visible-GUI, startup and preservation checks. The macOS Test GUI is updated, but its existing Tailscale connection must be restored before the regular gateway can start. The independent iPhone Test was upgraded with all 12 saved preferences retained; a signed Android Test APK is ready. No real third-party notification delivery, GitHub push, release CI or release is claimed.
+**English:** the revised, unreleased candidate supplies five editable presets, Feishu/DingTalk signing, service-specific success checks and explicit saved-endpoint visibility. All three packaged gateways passed the same 76-check loopback suite, followed by Test installation, visible GUI, startup and preservation checks. Windows compared 705 installed files; Ubuntu compared 715. Formal apps, settings and trusted phone bindings remain intact. The user confirmed receipt from the authorized Feishu bot, and the newly installed macOS gateway also obtained a successful Feishu response; other providers have protocol-fixture evidence only. Existing mobile Test apps load the shared UI without a native rebuild. No GitHub push, release CI or new release occurred.
 
 ---
 
