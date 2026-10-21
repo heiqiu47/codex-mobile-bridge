@@ -1,11 +1,26 @@
-## v2.1.3 发布候选检查（2026-10-22）
+## v2.1.3 发布验收（2026-10-22）
 
 本版整合已验收的缓存与 Windows 包体优化、Mermaid、PR #51/#52、PR #40 查询生命周期和多目标 Webhook，以及手机弹窗、焦点与回答卡片定位修复。桌面与手机版本统一为 2.1.3，Android/iOS build 35；沿用更新公钥、Android 签名和 iOS 正式应用标识。
 
 - 本机完整 Python discovery：2,057 项，2,018 通过、39 项按平台跳过；包含已有原生 macOS 夹具。前端：849 项，848 通过、1 跳过；更新器：33 项，32 通过、1 跳过。首次前端运行的两项 loopback 监听被沙箱拒绝，以相同代码在允许本机监听后重跑通过。
 - 手机更新选择：Java/Swift 均通过；下载与安装恢复专项分别通过 14、47、38、26、23 项。发布资源与清单检查 8 项通过。
-- Windows CI 原失败是两终端隔离测试在输出文件创建后立即读取；受控 Windows 夹具证实文件存在时内容可仍为空。修订等待后续完成标记，保留原内容和第二终端仍存活的断言，不延长超时、不修改产品终端实现。已有 Windows Python 3.11 定向修订复验 20/20 通过；原失败未在基线 20 次中自然重现，Python 3.13 仍需本轮 CI 确认。
-- 这些结果是发布前检查，尚不代表 v2.1.3 安装包已发布或已完成所有平台覆盖升级。后续正式包、升级回滚与绑定保留结果按实际执行补记。
+- Windows CI 原失败是两终端隔离测试在输出文件创建后立即读取；受控 Windows 夹具证实文件存在时内容可仍为空。修订等待后续完成标记，保留原内容和第二终端仍存活的断言，不延长超时、不修改产品终端实现。已有 Windows Python 3.11 定向修订复验 20/20 通过；原失败未在基线 20 次中自然重现。本轮完整 GitHub CI 的 7 项任务全部通过，包括 Windows Python 3.9/3.13、macOS Python 3.13、Ubuntu Python 3.9/3.13，以及桌面和手机检查（运行 39656034549）。
+- Android API 35 模拟器与 iOS 18.2 模拟器均完成正式应用标识下 2.1.2 → 2.1.3 覆盖安装；电脑列表、当前电脑和 Cookie 命名空间保留，实际 WebView/原生认证沿用升级前的合成可信会话，无需重新登录。Android 沿用原签名，构建号 34 → 35；iOS 同样为 build 35。此项是隔离模拟器升级证据，不等同于新正式包真机验收。
+- 正式构建固定在标签 `v2.1.3`（`fa483c4545d773b5d0e6002d2d20842f75ac1e0f`）。[发布构建 39658137984](https://github.com/try2love/codex-mobile-bridge/actions/runs/39658137984) 的 8 个任务全部通过，覆盖 macOS arm64/x64、Windows x64、Linux x64/arm64 和 iOS。桌面包在对应原生架构构建；Mac/Windows 包完成真实窗口、登录配对、更新与回滚检查，Windows NSIS 安装逐项核对载荷并运行包内原生终端检查，Linux DEB 安装及 AppImage 解包启动均通过。
+- Windows 正式 ZIP 包含锁定版本 `1.25.260930003` 的 6 项 ConPTY 组件；语言资源仅保留 en-GB、en-US、zh-CN、zh-TW。各桌面包更新公钥与源码一致；Windows PEM 的 CRLF 差异已通过规范化及 DER 公钥比较确认不改变密钥。Android 正式 APK 重新执行 aapt/apksigner，原签名、包名、2.1.3/build 35 均通过；iOS IPA 的主 App 与两个扩展使用正式标识，包内手机脚本与源码一致。
+
+| 补充隔离验收 | 结果与边界 |
+| --- | --- |
+| Mac arm64 | 使用已发布 2.1.2 ZIP 和本次正式 ZIP，完成旧版更新工作进程的真实替换、重启及故障注入回滚；四份配置逐字节不变，升级前建立的可信手机 Cookie 在升级和回滚后继续有效。新包冻结网关通过 115 项 Webhook 回环检查 |
+| Windows x64 | CI 的 NSIS 安装、窗口启动、终端、更新与回滚通过；用户设备 F 盘上的真实 2.1.2 → 2.1.3 隔离更新事务亦通过，故障注入后恢复旧包，四份配置原字节和原可信手机绑定保留。SSH Session 0 事务结果不冒充普通桌面的交互 GUI 验收，后者由原生 CI 覆盖 |
+| Ubuntu x64 | 在用户既有虚拟机中以独立目录解包运行 2.1.2 → 2.1.3 → 2.1.2；四份配置原字节和旧 QR 可信绑定均保留，新冻结网关通过 115 项 Webhook 回环检查。此项是版本切换兼容检查，不冒充系统级 dpkg 升降级；真实 DEB 安装由上述原生 CI 覆盖 |
+| Android / iOS | 模拟器正式标识覆盖升级及旧可信会话认证通过，范围如上。此前用户已在独立 iPhone Test 确认本版手机弹窗、焦点和回答框定位修复；没有将该反馈称为本次正式 IPA 真机签署验收 |
+
+上述 115 项为相同协议夹具在各平台复验，不累计成不同功能项；所有新一轮通知验收均使用回环接收器，没有向真实机器人发送消息。日常正式版、Test、账号配置与手机绑定不作为破坏性测试目标。运行记录保存在本地 `.tmp/release-v213-20261022/`，临时数据、凭据和安装包不提交源码。
+
+正式候选的[完整源码 CI 39658147614](https://github.com/try2love/codex-mobile-bridge/actions/runs/39658147614) 7 项全部通过。Mac 任务首轮因 GitHub 执行器容量不足、未获得 runner 而取消，单独补跑后通过，没有修改产品代码绕过测试。15 个草稿附件已从 GitHub 重新下载，GitHub 资产摘要、14 项文件校验和及三种桌面更新载荷的签名清单均核对通过；下载的校验和文件与本地独立整理结果一致。版本号、应用标识、移动构建号及贡献者记录已统一；发布仅在全部验收结果通过后公开。
+
+**English:** v2.1.3 uses native CI builds for both macOS and Linux architectures, Windows x64, and official iOS identifiers. All seven source CI jobs and eight release workflow jobs passed. Additional isolated checks exercise the actual 2.1.2 → 2.1.3 update and injected-failure rollback on Mac/Windows with retained configuration and trusted sessions; Linux bundle switching is distinguished from CI DEB installation, and mobile simulator upgrades are distinguished from physical-device acceptance. Fifteen draft attachments were downloaded again and verified against asset digests, all fourteen file checksums and the signed desktop update manifest. Everyday formal/Test profiles are preserved.
 
 <a id="webhook-multi-target-acceptance"></a>
 
