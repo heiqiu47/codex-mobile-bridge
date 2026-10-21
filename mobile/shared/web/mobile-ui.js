@@ -24,6 +24,48 @@
     '.bridge-mobile input:not([type=checkbox]):not([type=radio]), .bridge-mobile textarea { font-size: max(16px, 1em); }'
   ]) sheet.insertRule(rule, sheet.cssRules.length);
   document.documentElement.classList.add('bridge-mobile');
+  let focusedAnswer = null, answerFrame = 0;
+  const keepAnswerVisible = () => {
+    answerFrame = 0;
+    const {field, scroller} = focusedAnswer || {};
+    if (!field || document.activeElement !== field || !field.isConnected || !scroller.isConnected || !scroller.contains(field)) return;
+    const visual = window.visualViewport;
+    const viewportTop = visual?.offsetTop || 0;
+    const viewportBottom = viewportTop + (visual?.height || window.innerHeight);
+    const clip = scroller.getBoundingClientRect();
+    const top = Math.max(clip.top, viewportTop) + 12;
+    const bottom = Math.min(clip.bottom, viewportBottom) - 12;
+    if (bottom <= top) return;
+    const rect = field.getBoundingClientRect();
+    if (rect.height > bottom - top) {
+      const visiblePart = Math.min(48, bottom - top);
+      if (rect.bottom <= top) scroller.scrollTop += rect.bottom - top - visiblePart;
+      else if (rect.top >= bottom) scroller.scrollTop += rect.top - bottom + visiblePart;
+    } else if (rect.bottom > bottom) scroller.scrollTop += rect.bottom - bottom;
+    else if (rect.top < top) scroller.scrollTop += rect.top - top;
+  };
+  const scheduleAnswerVisibility = () => {
+    if (focusedAnswer && !answerFrame) answerFrame = requestAnimationFrame(keepAnswerVisible);
+  };
+  document.addEventListener('focusin', event => {
+    const field = event.target;
+    if (!field.matches?.('textarea, select, input:not([type=checkbox]):not([type=radio])')) return;
+    const scroller = field.closest('#approvals') ? document.getElementById('timeline')
+      : field.closest('.wb-side-approval')?.closest('.wb-side-approvals')
+      || field.closest('.ds-question')?.closest('.ds-requests');
+    if (!scroller) return;
+    focusedAnswer = {field, scroller};
+    scheduleAnswerVisibility();
+  });
+  document.addEventListener('focusout', event => {
+    if (event.target !== focusedAnswer?.field) return;
+    focusedAnswer = null;
+    if (answerFrame) cancelAnimationFrame(answerFrame);
+    answerFrame = 0;
+  });
+  window.visualViewport?.addEventListener('resize', scheduleAnswerVisibility);
+  window.visualViewport?.addEventListener('scroll', scheduleAnswerVisibility);
+  window.addEventListener('resize', scheduleAnswerVisibility);
   const sync = () => document.documentElement.classList.toggle('bridge-authenticated', !app.hidden);
   sync();
   new MutationObserver(sync).observe(app, { attributes: true, attributeFilter: ['hidden'] });
