@@ -207,7 +207,7 @@ test('submitting a focused bare hostname saves a strict HTTPS origin',async()=>{
   assert.equal(ui.value.preferences.connections[0].accessMode,'external');
 });
 
-test('external status updates a folded summary without replacing the focused card',async()=>{
+test('external status updates detail while summary reports saved enablement',async()=>{
   const ui=await renderer();
   ui.value.preferences.connections=[{id:'entry',name:'Home',enabled:true,accessMode:'external',publicUrl:'https://bridge.example.com'}];
   await ui.poll();
@@ -223,8 +223,21 @@ test('external status updates a folded summary without replacing the focused car
   assert.doesNotMatch(status.textContent,/导出部署包/);
   ui.value.externalStatus={entry:{message:'入口已连接'}};
   await ui.poll();
-  assert.match(summary.textContent,/Home · https:\/\/bridge.example.com · 入口已连接/);
+  assert.match(summary.textContent,/Home · https:\/\/bridge.example.com · 已启用/);
+  assert.match(status.textContent,/入口已连接/);
   assert.equal(ui.nodes.get('connections').children[0],card);
+});
+
+test('disabled connection ignores stale online status',async()=>{
+  const ui=await renderer();ui.value.preferences.connections=[{id:'entry',name:'Home',enabled:false,accessMode:'external',publicUrl:'https://bridge.example.com'}];
+  ui.value.externalStatus={entry:{message:'入口已连接'}};await ui.poll();
+  const descendants=node=>[node,...(node.children||[]).flatMap(descendants)];
+  const card=ui.nodes.get('connections').children[0],items=descendants(card);
+  assert.match(items.find(node=>node.className==='connection-summary').textContent,/已配置但未启用/);
+  const status=items.find(node=>node.dataset.connectionStatus==='entry');
+  ui.context.document.querySelectorAll=selector=>selector==='[data-connection-status]'?[status]:[];
+  ui.value.externalStatus={entry:{message:'入口仍显示已连接'}};
+  await ui.poll();assert.equal(status.textContent,'已配置但未启用');
 });
 
 test('fixed-entry retry replaces an earlier error in card and summary across polling',async()=>{

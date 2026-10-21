@@ -3087,6 +3087,7 @@ const en={
   "启用": "Enable",
   "已启用": "Enabled",
   "未启用": "Disabled",
+  "已配置但未启用": "Configured but disabled",
   "已配置": "Configured",
   "运行中 · ": "Running · ",
   "等待确认": "Awaiting approval",
