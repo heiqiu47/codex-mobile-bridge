@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-from bridge.features.notifications.channels import Notifications, publish, publish_bark, publish_pushplus, publish_webhook, settings, save_settings, write_json, read_json, visible_webhook, destination, resolved_webhook_provider
+from bridge.features.notifications.channels import Notifications, publish, publish_bark, publish_pushplus, publish_webhook, settings, save_settings, save_webhook_endpoint, channels, write_json, read_json, visible_webhook, destination, resolved_webhook_provider
 from bridge.app.service import LiveSession
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -154,6 +154,128 @@ class NotificationTests(unittest.TestCase):
             self.manager.scan()
             send.assert_called_once()
 
+    def test_multiple_webhooks_preserve_legacy_target_and_fan_out(self):
+        legacy_url = 'https://receiver.example/legacy'
+        save_settings(self.directory, {'enabled': False, 'webhookEnabled': True, 'webhookUrl': legacy_url})
+        legacy_target = channels(settings(self.directory))['webhook']
+        first, first_id = save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': '飞书甲',
+            'webhookEnabled': True, 'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/one'})
+        second, second_id = save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': '飞书乙',
+            'webhookEnabled': True, 'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/one'})
+        third, third_id = save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': 'Telegram',
+            'webhookEnabled': True, 'webhookUrl': 'https://api.telegram.org/botprivate/sendMessage',
+            'webhookBodyTemplate': '{"chat_id":"123","text":"{{body}}"}'})
+        targets = channels(third)
+        self.assertEqual(targets['webhook'], legacy_target)
+        self.assertEqual(len(targets), 4)
+        self.assertNotEqual(targets['webhook:' + first_id], targets['webhook:' + second_id])
+        self.assertEqual([r['webhookId'] for r in visible_webhook(third)['webhookEndpoints']],
+                         ['legacy', first_id, second_id, third_id])
+        with patch('bridge.features.notifications.channels.publish_webhook') as send:
+            self.manager.scan()
+        self.assertEqual(send.call_count, 4)
+        self.assertEqual({call.args[0]['webhookUrl'] for call in send.call_args_list},
+                         {legacy_url, 'https://open.feishu.cn/open-apis/bot/v2/hook/one',
+                          'https://api.telegram.org/botprivate/sendMessage'})
+
+    def test_adding_named_webhook_does_not_replay_delivered_legacy_event(self):
+        save_settings(self.directory, {'enabled': False, 'webhookEnabled': True,
+                                       'webhookUrl': 'https://receiver.example/legacy'})
+        with patch('bridge.features.notifications.channels.publish_webhook') as send:
+            self.manager.scan()
+            self.assertEqual(send.call_count, 1)
+            old_target = channels(settings(self.directory))['webhook']
+            save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': '新增',
+                'webhookEnabled': True, 'webhookUrl': 'https://receiver.example/new'})
+            self.manager.scan()
+        self.assertEqual(send.call_count, 2)
+        self.assertEqual(send.call_args.args[0]['webhookUrl'], 'https://receiver.example/new')
+        self.assertEqual(channels(settings(self.directory))['webhook'], old_target)
+
+    def test_rotating_named_webhook_cancels_old_retry(self):
+        save_settings(self.directory, {'enabled': False})
+        _, webhook_id = save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': '轮换',
+            'webhookEnabled': True, 'webhookUrl': 'https://receiver.example/old'})
+        with patch('bridge.features.notifications.channels.publish_webhook', side_effect=OSError('offline')) as send:
+            self.manager.scan()
+            self.assertEqual(send.call_count, 1)
+        old_target = channels(settings(self.directory))['webhook:' + webhook_id]
+        config, _ = save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookId': webhook_id,
+            'webhookUrl': 'https://receiver.example/new'})
+        self.assertNotEqual(channels(config)['webhook:' + webhook_id], old_target)
+        for key, record in self.manager.ledger.items():
+            if key.startswith(old_target):
+                record['next'] = 0
+        with patch('bridge.features.notifications.channels.publish_webhook') as send:
+            self.manager.scan()
+        send.assert_called_once()
+        self.assertEqual(send.call_args.args[0]['webhookUrl'], 'https://receiver.example/new')
+
+    def test_multiple_webhook_failure_retry_and_deletion_are_isolated(self):
+        save_settings(self.directory, {'enabled': False})
+        first, first_id = save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': '坏机器人',
+            'webhookEnabled': True, 'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/fail'})
+        second, second_id = save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': '好机器人',
+            'webhookEnabled': True, 'webhookUrl': 'https://api.telegram.org/botprivate/sendMessage',
+            'webhookBodyTemplate': '{"chat_id":"123","text":"{{body}}"}'})
+        sent = []
+        def deliver(config, *args, **kwargs):
+            sent.append(config['webhookUrl'])
+            if config['webhookUrl'].endswith('/fail'):
+                raise OSError('offline')
+        with patch('bridge.features.notifications.channels.publish_webhook', side_effect=deliver):
+            self.manager.scan()
+            self.assertEqual(len(sent), 2)
+            status = read_json(self.directory/'notification-status.json', {})
+            self.assertTrue(status['webhook:' + first_id]['error'])
+            self.assertEqual(status['webhook:' + second_id]['error'], '')
+            for key, record in self.manager.ledger.items():
+                if key.startswith(channels(settings(self.directory))['webhook:' + first_id]):
+                    record['next'] = 0
+            self.manager.scan()
+            self.assertEqual(len(sent), 3)
+            save_webhook_endpoint(self.directory, {'action': 'delete', 'webhookId': first_id})
+            self.manager.scan()
+        self.assertEqual(len(sent), 3)
+        self.assertEqual(list(channels(settings(self.directory))), ['webhook:' + second_id])
+
+    def test_multiple_webhook_masking_rotation_and_legacy_delete(self):
+        save_settings(self.directory, {'webhookEnabled': True, 'webhookUrl': 'https://receiver.example/legacy-private'})
+        config, webhook_id = save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': '私有飞书',
+            'webhookEnabled': True, 'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/private',
+            'webhookSignEnabled': True, 'webhookSignSecret': 'private-sign'})
+        visible = visible_webhook(config)
+        self.assertEqual([row['webhookId'] for row in visible['webhookEndpoints']], ['legacy', webhook_id])
+        self.assertNotIn('private-sign', json.dumps(visible))
+        self.assertNotIn('legacy-private', json.dumps(visible))
+        self.assertNotIn('/private', json.dumps(visible))
+        old_target = channels(config)['webhook:' + webhook_id]
+        config, selected = save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookId': webhook_id,
+            'webhookName': '改名', 'webhookUrl': '', 'webhookSignSecret': ''})
+        self.assertEqual(selected, webhook_id)
+        self.assertEqual(channels(config)['webhook:' + webhook_id], old_target)
+        self.assertEqual(config['webhookEndpoints'][0]['webhookSignSecret'], 'private-sign')
+        with self.assertRaises(ValueError):
+            save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookId': webhook_id,
+                'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/changed'})
+        self.assertEqual(channels(settings(self.directory))['webhook:' + webhook_id], old_target)
+        config, selected = save_webhook_endpoint(self.directory, {'action': 'delete', 'webhookId': 'legacy'})
+        self.assertEqual(selected, webhook_id)
+        self.assertNotIn('webhook', channels(config))
+        self.assertEqual(config['webhookUrl'], '')
+        self.assertEqual([row['webhookId'] for row in visible_webhook(config)['webhookEndpoints']], [webhook_id])
+
+    def test_concurrent_webhook_upserts_preserve_both_targets(self):
+        names = ['并发甲', '并发乙']
+        threads = [threading.Thread(target=lambda name=name: save_webhook_endpoint(self.directory, {
+            'action': 'upsert', 'webhookName': name, 'webhookEnabled': True,
+            'webhookUrl': 'https://receiver.example/' + name})) for name in names]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual({row['webhookName'] for row in settings(self.directory)['webhookEndpoints']}, set(names))
+
     def test_account_reminder_sends_webhook_without_disrupting_existing_channel(self):
         from bridge.features.accounts.monitor import AccountMonitor
         manager = type('Manager', (), {'root': self.directory,
@@ -170,6 +292,24 @@ class NotificationTests(unittest.TestCase):
             self.assertEqual(webhook.call_args.kwargs['event'], 'account.lowQuota')
             self.assertTrue(monitor.deliver('account-1', ('lowQuota', 'window-1', '额度提醒', '请查看')))
             webhook.assert_called_once()
+
+    def test_account_reminder_fans_out_to_named_webhooks(self):
+        from bridge.features.accounts.monitor import AccountMonitor
+        manager = type('Manager', (), {'root': self.directory,
+            'bridge': type('Bridge', (), {'data_dir': self.directory})()})()
+        monitor = AccountMonitor(manager)
+        monitor.configure = lambda value: monitor.preferences.update(value)
+        monitor.preferences['lowQuota'] = True
+        save_settings(self.directory, {'enabled': False, 'webhookEnabled': True,
+                                       'webhookUrl': 'https://receiver.example/legacy'})
+        save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': '飞书',
+            'webhookEnabled': True, 'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/one'})
+        with patch('bridge.features.accounts.monitor.publish_webhook') as webhook:
+            self.assertTrue(monitor.deliver('account-1', ('lowQuota', 'window-1', '额度提醒', '请查看')))
+            self.assertEqual(webhook.call_count, 2)
+            self.assertEqual(webhook.call_args.kwargs['event'], 'account.lowQuota')
+            self.assertTrue(monitor.deliver('account-1', ('lowQuota', 'window-1', '额度提醒', '请查看')))
+            self.assertEqual(webhook.call_count, 2)
 
     def test_webhook_post_template_escaping_and_redirect_rejection(self):
         captured = []

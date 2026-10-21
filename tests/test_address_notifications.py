@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from bridge.features.notifications.addresses import AddressNotifications, ready_url, entry_urls
-from bridge.features.notifications.channels import save_settings, settings, read_json
+from bridge.features.notifications.channels import save_settings, save_webhook_endpoint, settings, read_json
 from bridge.app.desktop import Desktop
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +71,20 @@ class AddressNotificationTests(unittest.TestCase):
                              ['gateway.started', 'gateway.address_changed', 'gateway.address_changed'])
             ids = [call.kwargs['event_id'] for call in webhook.call_args_list]
             self.assertEqual(len(set(ids)), 3)
+
+    def test_address_notice_fans_out_to_named_webhooks(self):
+        save_settings(self.directory, {'enabled': False, 'webhookEnabled': True,
+                                       'webhookUrl': 'https://receiver.example/legacy'})
+        save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': '飞书',
+            'webhookEnabled': True, 'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/one'})
+        save_webhook_endpoint(self.directory, {'action': 'upsert', 'webhookName': 'Telegram',
+            'webhookEnabled': True, 'webhookUrl': 'https://api.telegram.org/botprivate/sendMessage',
+            'webhookBodyTemplate': '{"chat_id":"123","text":"{{body}}"}'})
+        with patch('bridge.features.notifications.addresses.publish_webhook') as webhook:
+            self.manager.scan()
+            self.manager.scan()
+        self.assertEqual(webhook.call_count, 3)
+        self.assertEqual(len(self.manager.state['deliveries']), 3)
 
     def test_webhook_address_retry_retains_event_id_after_restart(self):
         save_settings(self.directory, {'enabled': False, 'webhookEnabled': True,

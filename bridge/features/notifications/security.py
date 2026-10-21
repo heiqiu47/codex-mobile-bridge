@@ -3,7 +3,7 @@ import hashlib
 import time
 from pathlib import Path
 
-from bridge.features.notifications.channels import channels, publish, publish_bark, publish_pushplus, publish_webhook, read_json, settings, write_json
+from bridge.features.notifications.channels import channels, publish, publish_bark, publish_pushplus, publish_webhook, read_json, settings, write_json, webhook_channel_config
 
 
 class SecurityNotifications:
@@ -44,8 +44,8 @@ class SecurityNotifications:
                 body = (f"{current.get('addressName') or 'Codex Mobile Bridge'}：IP {event['ip']} 连续输错密码 {event['attempts']} 次，已加入黑名单。"
                         '\n关联登录已撤销。请在电脑网关 App 的“登录设备 → 自动封禁 IP”中查看或解除。')
                 try:
-                    if channel == 'webhook':
-                        publish_webhook(current, title, body, event='security.ip_blocked', event_id=hashlib.sha256(identifier.encode()).hexdigest(),
+                    if channel == 'webhook' or channel.startswith('webhook:'):
+                        publish_webhook(webhook_channel_config(current, channel), title, body, event='security.ip_blocked', event_id=hashlib.sha256(identifier.encode()).hexdigest(),
                                         host=current.get('addressName') or 'Codex Mobile Bridge', count=event['attempts'])
                     else:
                         {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[channel](current, title, body)

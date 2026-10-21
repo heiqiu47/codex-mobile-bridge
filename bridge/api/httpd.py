@@ -21,7 +21,7 @@ from bridge.features.workspace.uploads import MAX_FILE
 from bridge.features.workspace.workspace import MAX_TRANSFER, Workspace
 from bridge.features.workspace.preferences import transfer_settings
 from bridge.features.workspace.files import workspace_relative_path
-from bridge.features.notifications.channels import settings as notification_settings, save_settings as save_notification_settings, publish, publish_bark, publish_pushplus, publish_webhook, visible_webhook, WebhookDeliveryError, resolved_webhook_provider
+from bridge.features.notifications.channels import settings as notification_settings, save_settings as save_notification_settings, save_webhook_endpoint, webhook_config, publish, publish_bark, publish_pushplus, publish_webhook, visible_webhook, WebhookDeliveryError, resolved_webhook_provider
 from socketserver import TCPServer
 from urllib.parse import parse_qs, parse_qsl, urlsplit, quote
 
@@ -737,16 +737,26 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         config = notification_settings(manager.data_dir)
                     return self.output(200, {key: config[key] for key in fields})
+            if path == '/api/notifications/channels/webhook/endpoints':
+                if not write:
+                    return self.output(405, {'error': '需要 POST 请求'})
+                manager = self.server.notifications
+                if manager is None:
+                    raise ValueError('当前网关未启用通知服务')
+                with manager.lock:
+                    config, selected = save_webhook_endpoint(manager.data_dir, self.read_json())
+                    return self.output(200, {**visible_webhook(config), 'selectedWebhookId': selected})
             if path == '/api/notifications/channels/webhook/url':
                 if not write:
                     return self.output(405, {'error': '需要 POST 请求'})
                 manager = self.server.notifications
                 if manager is None:
                     raise ValueError('当前网关未启用通知服务')
-                if self.read_json() != {}:
+                body = self.read_json()
+                if not isinstance(body, dict) or set(body) - {'webhookId'}:
                     raise ValueError('Webhook 地址读取请求格式不正确')
                 with manager.lock:
-                    return self.output(200, {'webhookUrl': notification_settings(manager.data_dir).get('webhookUrl', '')})
+                    return self.output(200, {'webhookUrl': webhook_config(notification_settings(manager.data_dir), body.get('webhookId', 'legacy')).get('webhookUrl', '')})
             channel_parts = path.removeprefix('/api/notifications/channels/').split('/') if path.startswith('/api/notifications/channels/') else []
             channel = channel_parts[0] if channel_parts and channel_parts[0] in ('ntfy', 'bark', 'pushplus', 'webhook') and channel_parts[1:] in ([], ['test']) else None
             if channel or path in ('/api/notifications/pushplus', '/api/notifications/pushplus/test'):
@@ -765,11 +775,12 @@ class Handler(BaseHTTPRequestHandler):
                     if path.endswith('/test'):
                         if not write:
                             return self.output(405, {'error': '需要 POST 请求'})
-                        self.read_json()
+                        test_body = self.read_json()
                         try:
                             sender = {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus, 'webhook': publish_webhook}[selected]
                             name = {'ntfy': 'ntfy', 'bark': 'Bark', 'pushplus': 'PushPlus', 'webhook': 'Webhook'}[selected]
                             if selected == 'webhook':
+                                config = webhook_config(config, test_body.get('webhookId', 'legacy') if isinstance(test_body, dict) else 'legacy')
                                 sender(config, 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。', event='test')
                             else:
                                 sender(config, 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。')

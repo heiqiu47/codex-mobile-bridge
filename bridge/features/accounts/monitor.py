@@ -6,7 +6,7 @@ import math
 import threading
 import time
 
-from bridge.features.notifications.channels import channels, publish, publish_bark, publish_pushplus, publish_webhook, read_json, settings, write_json
+from bridge.features.notifications.channels import channels, publish, publish_bark, publish_pushplus, publish_webhook, read_json, settings, write_json, webhook_channel_config
 
 
 DEFAULTS = {'lowQuota':False, 'quotaReset':False, 'resetExpiry':False,
@@ -113,8 +113,8 @@ class AccountMonitor:
             if self.closed.is_set() or not self.preferences[kind] or channels(current).get(channel) != destination:
                 continue
             try:
-                if channel == 'webhook':
-                    publish_webhook(current, title, body, current['clickBase'], event='account.' + kind,
+                if channel == 'webhook' or channel.startswith('webhook:'):
+                    publish_webhook(webhook_channel_config(current, channel), title, body, current['clickBase'], event='account.' + kind,
                                     event_id=hashlib.sha256((identity + '|' + kind + '|' + key).encode()).hexdigest())
                 else:
                     {'ntfy':publish, 'bark':publish_bark, 'pushplus':publish_pushplus}[channel](current, title, body, current['clickBase'])

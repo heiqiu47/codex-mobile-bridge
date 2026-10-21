@@ -294,6 +294,29 @@ class DesktopTests(unittest.TestCase):
         self.assertNotIn('webhookUrl', self.desktop.read_credentials({}))
         self.assertEqual(self.desktop.snapshot()['notifications']['webhookUrl'], '')
 
+    def test_named_webhook_desktop_snapshot_test_reveal_and_log_redaction(self):
+        value = self.desktop.webhook_endpoint({'action': 'upsert', 'webhookName': '机器人',
+            'webhookEnabled': True, 'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/private-path',
+            'webhookSignEnabled': True, 'webhookSignSecret': 'private-sign',
+            'webhookHeaders': {'Authorization': 'Bearer private-header'}})
+        webhook_id = value['selectedWebhookId']
+        visible = self.desktop.snapshot()['notifications']
+        self.assertEqual(visible['webhookEndpoints'][0]['webhookId'], webhook_id)
+        self.assertNotIn('private-path', str(visible))
+        self.assertNotIn('private-sign', str(visible))
+        self.assertEqual(self.desktop.read_credentials({'channel': 'webhook', 'webhookId': webhook_id}),
+                         {'webhookUrl': 'https://open.feishu.cn/open-apis/bot/v2/hook/private-path'})
+        with patch('bridge.app.desktop.publish_webhook') as sender:
+            self.desktop.test_notification({'channel': 'webhook', 'webhookId': webhook_id})
+            self.assertEqual(sender.call_args.args[0]['webhookUrl'],
+                             'https://open.feishu.cn/open-apis/bot/v2/hook/private-path')
+        (self.directory/'gateway.log').write_text('private-path private-sign private-header')
+        text = self.desktop.logs()['text']
+        for secret in ('private-path', 'private-sign', 'private-header'):
+            self.assertNotIn(secret, text)
+        self.desktop.webhook_endpoint({'action': 'delete', 'webhookId': webhook_id})
+        self.assertEqual(self.desktop.snapshot()['notifications']['webhookEndpoints'], [])
+
     def test_running_network_settings_cannot_disconnect_phone(self):
         value = self.value()
         self.desktop.save(value)

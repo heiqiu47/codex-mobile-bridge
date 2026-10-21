@@ -34,6 +34,10 @@ WEBHOOK_TEMPLATES = {
 }
 WEBHOOK_PLACEHOLDER = re.compile(r'{{\s*([^{}]+?)\s*}}')
 UNSAFE_WEBHOOK_HEADERS = frozenset(('host', 'content-length', 'content-type', 'transfer-encoding', 'connection', 'proxy-authorization', 'proxy-authenticate', 'cookie', 'set-cookie', 'upgrade', 'te', 'trailer', 'keep-alive', 'expect'))
+WEBHOOK_CONFIG_FIELDS = ('webhookEnabled', 'webhookUrl', 'webhookHeaders', 'webhookProvider',
+                         'webhookSignEnabled', 'webhookSignSecret', 'webhookBodyTemplate')
+WEBHOOK_CLEAR_FIELDS = ('clearWebhookUrl', 'clearWebhookHeaders', 'clearWebhookSignSecret')
+SETTINGS_LOCK = threading.RLock()
 
 
 class WebhookDeliveryError(RuntimeError):
@@ -146,7 +150,7 @@ def visible_webhook(config):
     url = config.get('webhookUrl', '')
     parsed = urlsplit(url) if url else None
     origin = (parsed.scheme + '://' + parsed.netloc) if parsed else ''
-    return {'webhookEnabled': config['webhookEnabled'], 'webhookUrl': '', 'hasWebhookUrl': bool(url),
+    visible = {'webhookEnabled': config['webhookEnabled'], 'webhookUrl': '', 'hasWebhookUrl': bool(url),
             'webhookUrlDisplay': origin, 'webhookHeaders': {}, 'hasWebhookHeaders': bool(config.get('webhookHeaders')),
             'webhookProvider': config.get('webhookProvider', 'auto'),
             'webhookResolvedProvider': resolved_webhook_provider(config),
@@ -154,6 +158,14 @@ def visible_webhook(config):
             'webhookSignSecret': '', 'hasWebhookSignSecret': bool(config.get('webhookSignSecret')),
             'webhookTemplates': WEBHOOK_TEMPLATES,
             'webhookBodyTemplate': effective_webhook_template(config)}
+    if 'webhookEndpoints' in config:
+        rows = []
+        if config.get('webhookUrl') or config.get('webhookEnabled'):
+            rows.append({'webhookId': 'legacy', 'webhookName': config.get('webhookName', '默认 Webhook'), **visible})
+        rows.extend({'webhookId': row['webhookId'], 'webhookName': row['webhookName'], **visible_webhook(row)}
+                    for row in config['webhookEndpoints'])
+        visible['webhookEndpoints'] = rows
+    return visible
 
 
 def read_json(path, default):
@@ -183,52 +195,17 @@ def valid_url(value, allow_path=False):
 
 
 def settings(data_dir):
-    return {**DEFAULTS, **read_json(Path(data_dir)/'notifications.json', {})}
+    return {'webhookEndpoints': [], 'webhookName': '默认 Webhook', **DEFAULTS,
+            **read_json(Path(data_dir)/'notifications.json', {})}
 
 
-def save_settings(data_dir, value):
-    prior = settings(data_dir)
-    result = {**prior, **{k: value[k] for k in DEFAULTS if k in value}}
+def merge_webhook_config(prior, value):
+    result = {key: value.get(key, prior.get(key, DEFAULTS[key])) for key in WEBHOOK_CONFIG_FIELDS}
+    if any(not isinstance(result[key], bool) for key in ('webhookEnabled', 'webhookSignEnabled')):
+        raise ValueError('通知开关格式不正确')
     if (prior['webhookBodyTemplate'] == DEFAULTS['webhookBodyTemplate']
             and value.get('webhookBodyTemplate') == effective_webhook_template(prior)):
         result['webhookBodyTemplate'] = DEFAULTS['webhookBodyTemplate']
-    result['server'] = at_field('ntfy-server', valid_url, str(result['server']), allow_path=True)
-    result['barkServer'] = at_field('bark-server', valid_url, str(result['barkServer']), allow_path=True)
-    for key in ('enabled', 'barkEnabled', 'pushplusEnabled', 'webhookEnabled', 'webhookSignEnabled', 'includeTitle', 'addressEnabled', 'securityEnabled', 'mobileEnabled', 'mobileAppLinks'):
-        if not isinstance(result[key], bool):
-            raise ValueError('通知开关格式不正确')
-    if not isinstance(result['addressName'], str) or len(result['addressName']) > 80 or any(not c.isprintable() for c in result['addressName']):
-        raise FieldError('网关名称应为不超过 80 字的单行文本', 'address-name')
-    if not isinstance(result['topic'], str) or (result['topic'] and not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', result['topic'])):
-        raise FieldError('ntfy 主题只允许 1–64 位字母、数字、下划线和短横线', 'ntfy-topic')
-    if result['enabled'] and not result['topic']:
-        raise FieldError('开启通知前请填写 ntfy 主题', 'ntfy-topic')
-    if result['clickBase']:
-        # A link back to the existing LAN gateway may intentionally use HTTP.
-        parsed = urlsplit(result['clickBase'])
-        if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise FieldError('通知跳转地址格式不正确', 'click-base')
-        result['clickBase'] = result['clickBase'].rstrip('/')
-    if not isinstance(result['token'], str) or len(result['token']) > 2000 or '\n' in result['token'] or '\r' in result['token']:
-        raise FieldError('ntfy Token 格式不正确', 'ntfy-token')
-    # Blank fields from the UI preserve a token only for the same server.
-    if not value.get('token'):
-        result['token'] = '' if value.get('clearToken') or result['server'] != prior['server'] else prior['token']
-    if not isinstance(result['barkKey'], str) or len(result['barkKey']) > 2000 or any(not c.isprintable() or c.isspace() or c in '/?#' for c in result['barkKey']):
-        raise FieldError('Bark Device Key 格式不正确，请仅填写密钥，不要粘贴完整推送地址', 'bark-key')
-    if not value.get('barkKey'):
-        result['barkKey'] = '' if value.get('clearBarkKey') or result['barkServer'] != prior['barkServer'] else prior['barkKey']
-    if result['barkEnabled'] and not result['barkKey']:
-        raise FieldError('开启 Bark 前请填写 Device Key；更换服务地址后需重新填写', 'bark-key')
-    if 'clearPushplusToken' in value and not isinstance(value['clearPushplusToken'], bool):
-        raise ValueError('PushPlus 配置格式不正确')
-    token = result['pushplusToken']
-    if not isinstance(token, str) or len(token) > 2000 or any(not c.isprintable() or c.isspace() for c in token):
-        raise FieldError('PushPlus Token 格式不正确', 'pushplus-token')
-    if not value.get('pushplusToken'):
-        result['pushplusToken'] = '' if value.get('clearPushplusToken') else prior['pushplusToken']
-    if result['pushplusEnabled'] and not result['pushplusToken']:
-        raise FieldError('开启 PushPlus 前请填写 Token', 'pushplus-token')
     for flag in ('clearWebhookUrl', 'clearWebhookHeaders', 'clearWebhookSignSecret'):
         if flag in value and not isinstance(value[flag], bool):
             raise ValueError('Webhook 配置格式不正确')
@@ -270,8 +247,118 @@ def save_settings(data_dir, value):
             raise FieldError('签名消息不能自行设置 timestamp 或 sign', 'webhook-body-template')
     if result['webhookEnabled'] and not result['webhookUrl']:
         raise FieldError('开启 Webhook 前请填写地址', 'webhook-url')
+    return result
+
+
+def save_settings(data_dir, value):
+    with SETTINGS_LOCK:
+        return _save_settings_unlocked(data_dir, value)
+
+
+def _save_settings_unlocked(data_dir, value):
+    prior = settings(data_dir)
+    result = {**prior, **{k: value[k] for k in DEFAULTS if k in value}}
+    result['server'] = at_field('ntfy-server', valid_url, str(result['server']), allow_path=True)
+    result['barkServer'] = at_field('bark-server', valid_url, str(result['barkServer']), allow_path=True)
+    for key in ('enabled', 'barkEnabled', 'pushplusEnabled', 'webhookEnabled', 'webhookSignEnabled', 'includeTitle', 'addressEnabled', 'securityEnabled', 'mobileEnabled', 'mobileAppLinks'):
+        if not isinstance(result[key], bool):
+            raise ValueError('通知开关格式不正确')
+    if not isinstance(result['addressName'], str) or len(result['addressName']) > 80 or any(not c.isprintable() for c in result['addressName']):
+        raise FieldError('网关名称应为不超过 80 字的单行文本', 'address-name')
+    if not isinstance(result['topic'], str) or (result['topic'] and not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', result['topic'])):
+        raise FieldError('ntfy 主题只允许 1–64 位字母、数字、下划线和短横线', 'ntfy-topic')
+    if result['enabled'] and not result['topic']:
+        raise FieldError('开启通知前请填写 ntfy 主题', 'ntfy-topic')
+    if result['clickBase']:
+        # A link back to the existing LAN gateway may intentionally use HTTP.
+        parsed = urlsplit(result['clickBase'])
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise FieldError('通知跳转地址格式不正确', 'click-base')
+        result['clickBase'] = result['clickBase'].rstrip('/')
+    if not isinstance(result['token'], str) or len(result['token']) > 2000 or '\n' in result['token'] or '\r' in result['token']:
+        raise FieldError('ntfy Token 格式不正确', 'ntfy-token')
+    # Blank fields from the UI preserve a token only for the same server.
+    if not value.get('token'):
+        result['token'] = '' if value.get('clearToken') or result['server'] != prior['server'] else prior['token']
+    if not isinstance(result['barkKey'], str) or len(result['barkKey']) > 2000 or any(not c.isprintable() or c.isspace() or c in '/?#' for c in result['barkKey']):
+        raise FieldError('Bark Device Key 格式不正确，请仅填写密钥，不要粘贴完整推送地址', 'bark-key')
+    if not value.get('barkKey'):
+        result['barkKey'] = '' if value.get('clearBarkKey') or result['barkServer'] != prior['barkServer'] else prior['barkKey']
+    if result['barkEnabled'] and not result['barkKey']:
+        raise FieldError('开启 Bark 前请填写 Device Key；更换服务地址后需重新填写', 'bark-key')
+    if 'clearPushplusToken' in value and not isinstance(value['clearPushplusToken'], bool):
+        raise ValueError('PushPlus 配置格式不正确')
+    token = result['pushplusToken']
+    if not isinstance(token, str) or len(token) > 2000 or any(not c.isprintable() or c.isspace() for c in token):
+        raise FieldError('PushPlus Token 格式不正确', 'pushplus-token')
+    if not value.get('pushplusToken'):
+        result['pushplusToken'] = '' if value.get('clearPushplusToken') else prior['pushplusToken']
+    if result['pushplusEnabled'] and not result['pushplusToken']:
+        raise FieldError('开启 PushPlus 前请填写 Token', 'pushplus-token')
+    result.update(merge_webhook_config(prior, value))
     write_json(Path(data_dir)/'notifications.json', result)
     return result
+
+
+def webhook_config(config, webhook_id='legacy'):
+    if webhook_id == 'legacy':
+        return config
+    if not isinstance(webhook_id, str):
+        raise FieldError('Webhook 标识无效', 'webhook-id')
+    for row in config.get('webhookEndpoints', []):
+        if row.get('webhookId') == webhook_id:
+            return row
+    raise FieldError('Webhook 不存在，请刷新列表', 'webhook-id')
+
+
+def webhook_channel_config(config, channel):
+    return webhook_config(config, channel.split(':', 1)[1] if channel.startswith('webhook:') else 'legacy')
+
+
+def save_webhook_endpoint(data_dir, value):
+    if not isinstance(value, dict) or value.get('action') not in ('upsert', 'delete'):
+        raise ValueError('Webhook 配置格式不正确')
+    allowed = {'action', 'webhookId', 'webhookName', *WEBHOOK_CONFIG_FIELDS, *WEBHOOK_CLEAR_FIELDS}
+    if set(value) - allowed:
+        raise ValueError('Webhook 配置格式不正确')
+    with SETTINGS_LOCK:
+        config = settings(data_dir)
+        rows = list(config['webhookEndpoints'])
+        webhook_id = value.get('webhookId')
+        if value['action'] == 'delete':
+            if set(value) != {'action', 'webhookId'}:
+                raise ValueError('Webhook 删除请求格式不正确')
+            webhook_config(config, webhook_id)
+            if webhook_id == 'legacy':
+                config.update({key: DEFAULTS[key] for key in WEBHOOK_CONFIG_FIELDS})
+                config['webhookName'] = '默认 Webhook'
+            else:
+                config['webhookEndpoints'] = [row for row in rows if row['webhookId'] != webhook_id]
+        else:
+            creating = webhook_id is None
+            if creating:
+                if len(rows) >= 20:
+                    raise ValueError('最多配置 20 个额外 Webhook')
+                webhook_id = uuid.uuid4().hex
+                prior = {key: DEFAULTS[key] for key in WEBHOOK_CONFIG_FIELDS}
+            else:
+                prior = webhook_config(config, webhook_id)
+            name = value.get('webhookName', prior.get('webhookName', '默认 Webhook' if webhook_id == 'legacy' else ''))
+            if not isinstance(name, str) or not name.strip() or len(name) > 80 or any(not c.isprintable() for c in name):
+                raise FieldError('Webhook 名称应为不超过 80 字的单行文本', 'webhook-name')
+            updated = {**merge_webhook_config(prior, value), 'webhookId': webhook_id, 'webhookName': name.strip()}
+            if webhook_id == 'legacy':
+                config.update({key: updated[key] for key in WEBHOOK_CONFIG_FIELDS})
+                config['webhookName'] = updated['webhookName']
+            elif creating:
+                config['webhookEndpoints'] = rows + [updated]
+            else:
+                config['webhookEndpoints'] = [updated if row['webhookId'] == webhook_id else row for row in rows]
+        write_json(Path(data_dir)/'notifications.json', config)
+        selected = webhook_id if value['action'] == 'upsert' else (
+            'legacy' if config.get('webhookUrl') or config.get('webhookEnabled') else
+            config['webhookEndpoints'][0]['webhookId'] if config['webhookEndpoints'] else '')
+        return config, selected
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -448,6 +535,10 @@ def publish_webhook(config, title, body, click='', *, event='test', event_id='',
 
 
 def destination(config, channel):
+    if channel.startswith('webhook:'):
+        webhook_id = channel.split(':', 1)[1]
+        target = destination(webhook_config(config, webhook_id), 'webhook')
+        return channel + ':' + hashlib.sha256((webhook_id + ':' + target).encode()).hexdigest()
     if channel == 'ntfy':
         values = [config['server'].rstrip('/'), config['topic']]
     elif channel == 'bark':
@@ -464,9 +555,14 @@ def destination(config, channel):
 
 
 def channels(config):
-    return {name: destination(config, name) for name, enabled in
+    result = {name: destination(config, name) for name, enabled in
             (('ntfy', config['enabled']), ('bark', config['barkEnabled']), ('pushplus', config.get('pushplusEnabled', False)),
              ('webhook', config.get('webhookEnabled', False))) if enabled}
+    for row in config.get('webhookEndpoints', []):
+        if row['webhookEnabled']:
+            name = 'webhook:' + row['webhookId']
+            result[name] = destination(config, name)
+    return result
 
 
 class Notifications:
@@ -781,8 +877,8 @@ class Notifications:
                 self.mobile.append(pending, row, heading, body, completed)
             else:
                 click = self.click_url(config, row['id'], row['host'])
-                if channel == 'webhook':
-                    publish_webhook(config, heading, body, click,
+                if channel == 'webhook' or channel.startswith('webhook:'):
+                    publish_webhook(webhook_channel_config(config, channel), heading, body, click,
                                     event='task.completed' if completed else 'approval.required', event_id=pending[0],
                                     session_name=title[:120] if config['includeTitle'] else '', client=client,
                                     host=row['host'], count=len(pending))

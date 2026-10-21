@@ -1065,6 +1065,39 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(headers['Cache-Control'], 'no-store')
             self.assertEqual(self.request('GET', '/api/notifications/channels/webhook', headers=auth)[2]['webhookUrl'], '')
 
+    def test_multiple_webhook_api_masks_secrets_and_targets_test_reveal_delete(self):
+        from bridge.features.notifications.channels import Notifications, settings
+        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as directory:
+            self.server.notifications = Notifications(None, directory)
+            path = '/api/notifications/channels/webhook'
+            self.assertEqual(self.request('POST', path + '/endpoints', {'action': 'upsert', 'webhookName': '飞书'})[0], 401)
+            auth = self.login()
+            self.assertEqual(self.request('POST', path + '/endpoints', {'action': 'upsert', 'webhookName': '飞书'},
+                                          {'Cookie': auth['Cookie']})[0], 403)
+            self.assertEqual(self.request('GET', path + '/endpoints', headers=auth)[0], 405)
+            url = 'https://open.feishu.cn/open-apis/bot/v2/hook/private-token'
+            status, _, saved = self.request('POST', path + '/endpoints', {'action': 'upsert',
+                'webhookName': '飞书', 'webhookEnabled': True, 'webhookUrl': url,
+                'webhookSignEnabled': True, 'webhookSignSecret': 'private-sign'}, auth)
+            self.assertEqual(status, 200)
+            webhook_id = saved['selectedWebhookId']
+            self.assertEqual(saved['webhookEndpoints'][0]['webhookId'], webhook_id)
+            self.assertNotIn('private-token', json.dumps(saved))
+            self.assertNotIn('private-sign', json.dumps(saved))
+            self.assertEqual(self.request('GET', path, headers=auth)[2]['webhookEndpoints'][0]['webhookUrl'], '')
+            self.assertEqual(self.request('POST', path + '/url', {'webhookId': webhook_id},
+                                          {'Cookie': auth['Cookie']})[0], 403)
+            status, headers, revealed = self.request('POST', path + '/url', {'webhookId': webhook_id}, auth)
+            self.assertEqual((status, revealed), (200, {'webhookUrl': url}))
+            self.assertEqual(headers['Cache-Control'], 'no-store')
+            with patch('bridge.api.httpd.publish_webhook') as sender:
+                self.assertEqual(self.request('POST', path + '/test', {'webhookId': webhook_id}, auth)[0], 200)
+                self.assertEqual(sender.call_args.args[0]['webhookUrl'], url)
+            self.assertEqual(self.request('POST', path + '/endpoints', {'action': 'delete',
+                'webhookId': webhook_id}, auth)[2]['selectedWebhookId'], '')
+            self.assertEqual(settings(directory)['webhookEndpoints'], [])
+            self.assertEqual(self.request('POST', path + '/url', {'webhookId': webhook_id}, auth)[0], 400)
+
     def test_rename_route_requires_csrf_and_routes_to_selected_host(self):
         from unittest.mock import Mock
         headers = self.login()
