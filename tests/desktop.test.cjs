@@ -82,7 +82,7 @@ async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,lo
   for(const id of ['clients-start','clients-stop'])nodes.set(id,node());
   const value={loginStartup,runtime:{running:false,portOccupied:false,supportsNotifications:true},
     preferences:{port:8787,lan:true,tunnel:false,autoStart,connections:[]},
-    auth:{mode:'password',username:'admin'},notifications:{enabled:false,server:'https://ntfy.sh',topic:''},
+    auth:{mode:'password',username:'admin'},notifications:{enabled:false,server:'https://ntfy.sh',topic:'',webhookTemplates:{generic:'{"event":"{{event}}"}',feishu:JSON.stringify({msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}}),dingtalk:'{"msgtype":"text"}',discord:'{"content":"{{body}}"}',telegram:'{"chat_id":"","text":"{{body}}"}'}},
     notificationStatus:{},watches:[],origins:[],urls:[],dataDir:'/test',credentialsAvailable:false};
   let now=1000,poll;
   const calls=[];
@@ -387,7 +387,7 @@ test('desktop Feishu signing and template edits remain drafts until successful s
   for(const id of ['webhook-sign-enabled','clear-webhook-sign-secret'])ui.nodes.get(id).type='checkbox';
   ui.run("fields=()=>['webhook-provider','webhook-sign-enabled','webhook-sign-secret','clear-webhook-sign-secret','webhook-body-template'].map($);savedFields=fieldValues()");
   ui.nodes.get('webhook-provider').value='feishu';ui.nodes.get('webhook-sign-enabled').checked=true;
-  ui.nodes.get('webhook-sign-secret').value='sample-secret';ui.nodes.get('webhook-use-feishu-template').onclick();
+  ui.nodes.get('webhook-sign-secret').value='sample-secret';ui.nodes.get('webhook-use-template').onclick();
   await ui.poll();assert.equal(ui.nodes.get('webhook-sign-secret').value,'sample-secret');
   let tests=0;ui.api.testNotification=async()=>{tests++;return {message:'accepted'};};
   await ui.nodes.get('test-webhook').onclick();assert.equal(tests,0);
@@ -402,6 +402,19 @@ test('desktop Feishu signing and template edits remain drafts until successful s
   assert.deepEqual(JSON.parse(payload.notifications.webhookBodyTemplate),{msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}});
   assert.equal(ui.nodes.get('webhook-sign-secret').value,'');
   await ui.nodes.get('test-webhook').onclick();assert.equal(tests,1);
+});
+
+test('desktop saved Webhook URL is revealed only on request without becoming a draft',async()=>{
+  const ui=await renderer(),url=ui.nodes.get('webhook-url');
+  url.id='webhook-url';url.closest=()=>({dataset:{panel:'notifications'}});
+  ui.value.notifications.hasWebhookUrl=true;ui.value.notifications.webhookUrlDisplay='https://example.test';
+  await ui.poll();ui.run("activeTab='notifications';fields=()=>[$('webhook-url')];savedFields=fieldValues()");
+  let calls=0;ui.api.readCredentials=async request=>{calls++;assert.deepEqual(JSON.parse(JSON.stringify(request)),{channel:'webhook'});return {webhookUrl:'https://example.test/hook?token=private'};};
+  assert.equal(calls,0);await ui.nodes.get('webhook-url-eye').onclick();
+  assert.equal(calls,1);assert.equal(url.type,'text');assert.equal(ui.run('webhookUrlDraft()'),'');
+  assert.equal(ui.run('collect().notifications.webhookUrl'),'');
+  assert.equal(ui.run('dirty'),false);
+  await ui.nodes.get('webhook-url-eye').onclick();assert.equal(url.value,'');assert.equal(url.type,'password');
 });
 
 test('watch panel recognizes Webhook and PushPlus as enabled notification channels',async()=>{

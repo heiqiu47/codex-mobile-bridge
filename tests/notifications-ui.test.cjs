@@ -5,6 +5,7 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 // Run the actual phone handlers with an isolated DOM and notification API.
 async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=false}={}){
   const nodes=new Map(),saved=new Map(),writes=[],listRequests=[],acknowledgements=[];
+  const webhookTemplates={generic:'{"event":"{{event}}"}',feishu:JSON.stringify({msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}}),dingtalk:'{"msgtype":"text"}',discord:'{"content":"{{body}}"}',telegram:'{"chat_id":"","text":"{{body}}"}'};
   const node=(tag='')=>({tagName:tag.toUpperCase(),children:[],value:'',checked:false,disabled:false,hidden:false,open:false,textContent:'',dataset:{},options:[],style:{setProperty(k,v){this[k]=v;}},scrollTop:0,parentElement:{},listeners:{},
     setAttribute(k,v){this[k]=v;},after(child){this.nextSibling=child;},getBoundingClientRect(){return {width:390,height:844};},classList:{add(){},remove(){},toggle(){},contains(){return false;}},addEventListener(type,listener){(this.listeners[type]??=[]).push(listener);},dispatchEvent(event){for(const listener of this.listeners[event.type]||[])listener(event);},replaceChildren(...values){this.children=values;},append(...values){this.children.push(...values);},querySelectorAll(){return [];},querySelector(){return {disabled:false};},
     showModal(){this.open=true;},close(){this.open=false;this.dispatchEvent({type:'close'});}});
@@ -43,14 +44,14 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
           if(url.includes('/rename?'))return response({title:body.title});
           if(url.endsWith('/test'))return response({ok:true});
           if(url.endsWith('/common'))saved.set(url,body);
-          else if(url.endsWith('/webhook'))saved.set(url,{webhookEnabled:body.webhookEnabled,webhookProvider:body.webhookProvider,webhookSignEnabled:body.webhookSignEnabled,hasWebhookSignSecret:!!body.webhookSignSecret||!body.clearWebhookSignSecret&&!!saved.get(url)?.hasWebhookSignSecret,hasWebhookUrl:!!body.webhookUrl||!body.clearWebhookUrl&&!!saved.get(url)?.hasWebhookUrl,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:!!Object.keys(body.webhookHeaders).length||!body.clearWebhookHeaders&&!!saved.get(url)?.hasWebhookHeaders,webhookBodyTemplate:body.webhookBodyTemplate});
+          else if(url.endsWith('/webhook'))saved.set(url,{webhookEnabled:body.webhookEnabled,webhookProvider:body.webhookProvider,webhookSignEnabled:body.webhookSignEnabled,hasWebhookSignSecret:!!body.webhookSignSecret||!body.clearWebhookSignSecret&&!!saved.get(url)?.hasWebhookSignSecret,hasWebhookUrl:!!body.webhookUrl||!body.clearWebhookUrl&&!!saved.get(url)?.hasWebhookUrl,webhookUrlDisplay:'https://example.test',hasWebhookHeaders:!!Object.keys(body.webhookHeaders).length||!body.clearWebhookHeaders&&!!saved.get(url)?.hasWebhookHeaders,webhookBodyTemplate:body.webhookBodyTemplate,webhookTemplates});
           else {
             const secret=url.endsWith('/bark')?'barkKey':url.endsWith('/ntfy')?'token':'pushplusToken';
             const marker=url.endsWith('/bark')?'hasBarkKey':url.endsWith('/ntfy')?'hasToken':'hasPushplusToken';
             saved.set(url,{...body,[secret]:undefined,[marker]:!!body[secret]||!body['clear'+secret[0].toUpperCase()+secret.slice(1)]&&!!saved.get(url)?.[marker]});
           }
         }
-        return response(saved.get(url)||{pushplusEnabled:false,hasPushplusToken:false,barkServer:'https://api.day.app',server:'https://ntfy.sh'});
+        return response(saved.get(url)||{pushplusEnabled:false,hasPushplusToken:false,barkServer:'https://api.day.app',server:'https://ntfy.sh',webhookTemplates});
       }
       assert.match(url,/\/notifications\?/);
       if(options.method==='POST'){
@@ -205,7 +206,7 @@ test('Feishu preset and signing secret require save before a Webhook test',async
   const ui=await fixture();await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
   ui.nodes.get('webhook-provider').value='feishu';ui.nodes.get('webhook-sign-enabled').checked=true;
   ui.nodes.get('webhook-sign-secret').value='sample-secret';
-  ui.nodes.get('webhook-use-feishu-template').onclick();
+  ui.nodes.get('webhook-use-template').onclick();
   await ui.nodes.get('webhook-test').onclick();
   assert.equal(ui.writes.length,0);assert.match(ui.nodes.get('webhook-error').textContent,/保存/);
   ui.setPost(()=>ui.response({error:'Save failed'},400));
@@ -226,6 +227,41 @@ test('Feishu preset and signing secret require save before a Webhook test',async
   assert.equal(ui.nodes.get('webhook-clear-sign-secret').checked,false);
 });
 
+test('provider preset changes known templates but preserves custom JSON',async()=>{
+  const ui=await fixture();await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  const provider=ui.nodes.get('webhook-provider'),body=ui.nodes.get('webhook-body-template');
+  provider.value='discord';provider.onchange();assert.equal(body.value,'{"content":"{{body}}"}');
+  body.value='{"custom":"{{event_id}}"}';provider.value='telegram';provider.onchange();
+  assert.equal(body.value,'{"custom":"{{event_id}}"}');
+  ui.nodes.get('webhook-use-template').onclick();assert.equal(body.value,'{"chat_id":"","text":"{{body}}"}');
+});
+
+test('revealing a saved Webhook URL keeps the test clean and sends no URL update',async()=>{
+  const ui=await fixture(),channel='/api/notifications/channels/webhook';
+  ui.saved.set(channel,{webhookEnabled:true,hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',webhookProvider:'generic',webhookBodyTemplate:'{"event":"{{event}}"}',webhookTemplates:{generic:'{"event":"{{event}}"}'}});
+  await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  ui.setPost(()=>ui.response({webhookUrl:'https://example.test/hook?token=private'}));
+  await ui.nodes.get('webhook-url-eye').onclick();
+  assert.equal(ui.nodes.get('webhook-url').type,'text');
+  assert.equal(ui.run('webhookDirty()'),false);
+  await ui.nodes.get('webhook-test').onclick();assert.equal(ui.writes[1].url,channel+'/test');
+  await ui.nodes.get('webhook-form').onsubmit({preventDefault(){}});
+  assert.equal(ui.writes[2].body.webhookUrl,'');
+  assert.equal(ui.nodes.get('webhook-url').value,'');
+});
+
+test('late URL reveal cannot overwrite a newer Webhook draft',async()=>{
+  const ui=await fixture(),channel='/api/notifications/channels/webhook';
+  ui.saved.set(channel,{hasWebhookUrl:true,webhookUrlDisplay:'https://example.test',webhookTemplates:{generic:'{"event":"{{event}}"}'}});
+  await ui.nodes.get('pushplus-settings').onclick();await ui.channelButtons[3].onclick();
+  let complete;ui.setPost(()=>new Promise(resolve=>{complete=resolve;}));
+  const pending=ui.nodes.get('webhook-url-eye').onclick();
+  ui.nodes.get('webhook-url').value='https://other.test/hook';ui.nodes.get('webhook-url').dispatchEvent({type:'input'});
+  complete(ui.response({webhookUrl:'https://example.test/hook?token=private'}));await pending;
+  assert.equal(ui.nodes.get('webhook-url').value,'https://other.test/hook');
+  assert.equal(ui.run('webhookDirty()'),true);
+});
+
 test('Webhook form has English labels and narrow-screen scroll styling',async()=>{
   const ui=await fixture();
   ui.run("BridgeI18n.setLanguage('en')");
@@ -238,6 +274,8 @@ test('Webhook form has English labels and narrow-screen scroll styling',async()=
   assert.match(dialog,/\{\{title\}\}/);
   for(const error of ['Webhook 地址格式不正确','Webhook 请求头格式不正确','Webhook JSON 模板格式不正确','Webhook 模板包含未知占位符','开启 Webhook 前请填写地址','Webhook 测试失败，请检查服务地址、认证和网络'])assert.notEqual(ui.run(`BridgeI18n.t(${JSON.stringify(error)})`),error);
   assert.equal(ui.run("BridgeI18n.t('飞书未接受通知（19022：签名或时间无效）')"),'Feishu did not accept the notification (19022: Invalid signature or timestamp).');
+  assert.equal(ui.run("BridgeI18n.t('钉钉未接受通知（400101：访问令牌无效）')"),'DingTalk did not accept the notification (400101: Invalid access token).');
+  assert.equal(ui.run("BridgeI18n.t('Discord 未接受通知（HTTP 404）')"),'Discord did not accept the notification (HTTP 404).');
 });
 
 test('common notification controls save once outside provider detail',async()=>{

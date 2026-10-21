@@ -66,7 +66,7 @@ function clearListSnapshot(){
   for(let i=localStorage.length-1;i>=0;i--){const key=localStorage.key(i);if(key?.startsWith('codex-list-v1:')||key?.startsWith('desktop-list-v1:'))localStorage.removeItem(key);}
   listIdentity='';listFilterKey='';listHostIds=[];listRows=[];listOffset=0;listHasMore=false;listComplete=false;listReadFinished=false;availableSources=[];listRenderStamp='';listGeneration++;
 }
-function authLost(){clearListSnapshot();if(!$('app').hidden)document.dispatchEvent(new Event('bridge-auth-lost'));showLogin();}
+function authLost(){hideWebhookUrl();clearListSnapshot();if(!$('app').hidden)document.dispatchEvent(new Event('bridge-auth-lost'));showLogin();}
 async function api(path,body,signal){const options={signal,credentials:'same-origin',cache:'no-store',headers:{}};if(body!==undefined){options.method='POST';options.headers={'Content-Type':'application/json','X-CSRF-Token':csrf};options.body=JSON.stringify(body);}const response=await fetch(hostUrl(path),options);const data=await response.json();if(!response.ok){if(response.status===401)authLost();throw Object.assign(Error(data.error||t('请求失败')),{loginStatus:data.loginStatus,status:response.status,code:data.code});}return data;}
 const workbench=window.BridgeWorkbench=new Workbench({chat:$('chat'),request:api,csrf:()=>csrf,notify:toast,onUnauthorized:authLost,openChat});
 const desktopSessions=new DesktopSessionsView({root:$('app'),select:$('desktop-backend'),request:api,notify:toast,csrf:()=>csrf,onUnauthorized:authLost,onSelect:provider=>{
@@ -153,7 +153,7 @@ async function enter(authInfo){
   await clientNavigation.openChatLink(chatLink,openChat);
 }
 $('login-form').addEventListener('submit',async event=>{event.preventDefault();if(loginStatus.blocked)return;$('login-button').disabled=true;$('login-error').textContent='';try{const result=await api('/api/login',{username:$('username').value,password:$('password').value,remember:$('remember-login').checked});renderLoginStatus({attemptsRemaining:5,attemptLimit:5,blocked:false});csrf=result.csrf;$('password').value='';await enter();}catch(error){$('login-error').textContent=t(error.message);renderLoginStatus(error.loginStatus);}finally{$('login-button').disabled=loginStatus.blocked;}});
-$('logout').onclick=async()=>{await api('/api/logout',{});document.dispatchEvent(new Event('bridge-logged-out'));csrf='';state=null;currentId=null;$('messages').replaceChildren();$('approvals').replaceChildren();$('queued').replaceChildren();$('sessions').replaceChildren();$('message').value='';clearListSnapshot();sessionStorage.clear();attachments.reset();sessionActivity.clear();recentInteractions.clear();showLogin();};
+$('logout').onclick=async()=>{await api('/api/logout',{});hideWebhookUrl();document.dispatchEvent(new Event('bridge-logged-out'));csrf='';state=null;currentId=null;$('messages').replaceChildren();$('approvals').replaceChildren();$('queued').replaceChildren();$('sessions').replaceChildren();$('message').value='';clearListSnapshot();sessionStorage.clear();attachments.reset();sessionActivity.clear();recentInteractions.clear();showLogin();};
 function dateText(value){if(!value)return '';return new Date(value*1000).toLocaleDateString(BridgeI18n.locale(),{month:'numeric',day:'numeric'});}
 function listAuthIdentity(auth){return auth?.authenticated&&/^[0-9a-f]{64}$/.test(auth.listCacheIdentity||'')?auth.listCacheIdentity:'';}
 function listSnapshotKey(filter){return listIdentity?'codex-list-v1:'+listIdentity+':'+filter:'';}
@@ -978,18 +978,30 @@ $('rename-form').onsubmit=async event=>{
 };
 let notificationChannelBusy=false,selectedNotificationChannel='',notificationListRequest=0,notificationCommonLoaded=false;
 const defaultWebhookBodyTemplate=JSON.stringify({event:'{{event}}',title:'{{title}}',body:'{{body}}',session_name:'{{session_name}}',url:'{{url}}'},null,2);
-const feishuWebhookBodyTemplate=JSON.stringify({msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}},null,2);
-let savedWebhookFields=null;
+let savedWebhookFields=null,webhookTemplates={},webhookResolvedProvider='generic',revealedWebhookUrl='',webhookRevealRequest=0;
+function webhookUrlDraft(){return $('webhook-url').value===revealedWebhookUrl?'':$('webhook-url').value.trim();}
+function selectedWebhookTemplate(){return webhookTemplates[$('webhook-provider').value==='auto'?webhookResolvedProvider:$('webhook-provider').value]||webhookTemplates.generic||defaultWebhookBodyTemplate;}
+function switchWebhookTemplate(){const current=$('webhook-body-template').value;if(!current.trim()||(current===defaultWebhookBodyTemplate||Object.values(webhookTemplates).includes(current)))$('webhook-body-template').value=selectedWebhookTemplate();}
+function hideWebhookUrl(){webhookRevealRequest++;if(revealedWebhookUrl&&$('webhook-url').value===revealedWebhookUrl)$('webhook-url').value='';revealedWebhookUrl='';$('webhook-url').type='password';$('webhook-url-eye').textContent=t('显示地址');$('webhook-url-eye').setAttribute('aria-label',t('显示地址'));}
+async function toggleWebhookUrl(){
+  if($('webhook-url').type==='text'){hideWebhookUrl();return;}
+  if($('webhook-url').value||!savedWebhookHasUrl){$('webhook-url').type='text';$('webhook-url-eye').textContent=t('隐藏地址');$('webhook-url-eye').setAttribute('aria-label',t('隐藏地址'));return;}
+  const request=++webhookRevealRequest,before=$('webhook-url').value,host=currentHost,chat=currentId,token=csrf;
+  try{const result=await api('/api/notifications/channels/webhook/url',{});if(request!==webhookRevealRequest||!$('webhook-dialog').open||$('webhook-url').value!==before||currentHost!==host||currentId!==chat||csrf!==token)return;revealedWebhookUrl=result.webhookUrl||'';$('webhook-url').value=revealedWebhookUrl;$('webhook-url').type='text';$('webhook-url-eye').textContent=t('隐藏地址');$('webhook-url-eye').setAttribute('aria-label',t('隐藏地址'));}catch(error){$('webhook-error').textContent=t(error.message);}
+}
+let savedWebhookHasUrl=false;
 function webhookFields(){return {webhookEnabled:$('webhook-enabled').checked,webhookProvider:$('webhook-provider').value,webhookSignEnabled:$('webhook-sign-enabled').checked,webhookBodyTemplate:$('webhook-body-template').value,clearWebhookUrl:$('webhook-clear-url').checked,clearWebhookHeaders:$('webhook-clear-headers').checked,clearWebhookSignSecret:$('webhook-clear-sign-secret').checked};}
-function webhookDirty(){return !savedWebhookFields||JSON.stringify(webhookFields())!==JSON.stringify(savedWebhookFields)||!!($('webhook-url').value||$('webhook-headers').value||$('webhook-sign-secret').value);}
-function webhookProviderHint(config){const provider=$('webhook-provider').value;return t(provider==='auto'?(config.webhookResolvedProvider==='feishu'?'已识别为飞书机器人；默认模板自动使用飞书文本格式。':'自动识别飞书机器人地址；其他地址使用通用 Webhook。'):provider==='feishu'?'飞书机器人使用文本消息；签名校验需填写密钥。':'使用通用 JSON Webhook 格式。');}
+function webhookDirty(){return !savedWebhookFields||JSON.stringify(webhookFields())!==JSON.stringify(savedWebhookFields)||!!(webhookUrlDraft()||$('webhook-headers').value||$('webhook-sign-secret').value);}
+function webhookProviderHint(config){const provider=$('webhook-provider').value;return t(({auto:config.webhookResolvedProvider==='feishu'?'已识别飞书地址；默认模板自动使用飞书格式。':'按地址自动识别服务类型，并选择相应默认模板。',generic:'自定义 HTTPS Webhook，可编辑 JSON 正文。',feishu:'飞书群机器人地址形如 open.feishu.cn/open-apis/bot/v2/hook/…；签名可选。',dingtalk:'钉钉群机器人地址形如 oapi.dingtalk.com/robot/send?access_token=…；签名可选。',discord:'Discord 地址形如 discord.com/api/webhooks/…；content 最多 2000 字符。',telegram:'Telegram 地址形如 api.telegram.org/bot…/sendMessage；在 JSON 中填写 chat_id，text 最多 4096 字符。'})[provider]||'');}
 function renderWebhookChannel(config){
+  hideWebhookUrl();webhookTemplates=config.webhookTemplates||webhookTemplates;webhookResolvedProvider=config.webhookResolvedProvider||'generic';savedWebhookHasUrl=!!config.hasWebhookUrl;
   $('webhook-enabled').checked=!!config.webhookEnabled;
   $('webhook-provider').value=config.webhookProvider||'auto';$('webhook-sign-enabled').checked=!!config.webhookSignEnabled;
   $('webhook-url').value='';$('webhook-headers').value='';$('webhook-sign-secret').value='';
   $('webhook-clear-url').checked=false;$('webhook-clear-headers').checked=false;$('webhook-clear-sign-secret').checked=false;
   $('webhook-body-template').value=config.webhookBodyTemplate||defaultWebhookBodyTemplate;
-  $('webhook-url-saved').textContent=config.hasWebhookUrl?t('已保存地址：')+(config.webhookUrlDisplay||t('已配置')):t('尚未保存地址');
+  $('webhook-url-saved').textContent=config.hasWebhookUrl?t('地址已保存：')+(config.webhookUrlDisplay||''):t('尚未保存地址');
+  $('webhook-url').placeholder=t(config.hasWebhookUrl?'已保存，留空保留':'输入 HTTPS 地址');
   $('webhook-headers-saved').textContent=t(config.hasWebhookHeaders?'已保存请求头；留空保留':'尚未保存请求头');
   $('webhook-sign-saved').textContent=t(config.hasWebhookSignSecret?'已保存签名密钥；留空保留':'尚未保存签名密钥');
   $('webhook-provider-hint').textContent=webhookProviderHint(config);
@@ -1011,7 +1023,7 @@ async function webhookAction(test){
     if(test){const result=await api(url+'/test',{});toast(result.message||'Webhook 已接受测试请求，请检查接收服务');}
     else{
       const submittedFields=webhookFields(),submittedUrl=$('webhook-url').value,submittedHeaders=$('webhook-headers').value,submittedSecret=$('webhook-sign-secret').value;
-      const body={...submittedFields,webhookUrl:submittedUrl.trim(),webhookHeaders:webhookHeaders(),webhookSignSecret:submittedSecret};
+      const body={...submittedFields,webhookUrl:webhookUrlDraft(),webhookHeaders:webhookHeaders(),webhookSignSecret:submittedSecret};
       const saved=await api(url,body);
       const unchanged=JSON.stringify(webhookFields())===JSON.stringify(submittedFields)&&$('webhook-url').value===submittedUrl&&$('webhook-headers').value===submittedHeaders&&$('webhook-sign-secret').value===submittedSecret;
       savedWebhookFields=submittedFields;
@@ -1023,8 +1035,11 @@ async function webhookAction(test){
 }
 $('webhook-form').onsubmit=event=>{event.preventDefault();return webhookAction(false);};
 $('webhook-test').onclick=()=>webhookAction(true);
-$('webhook-provider').onchange=()=>{$('webhook-provider-hint').textContent=webhookProviderHint({});};
-$('webhook-use-feishu-template').onclick=()=>{$('webhook-body-template').value=feishuWebhookBodyTemplate;};
+$('webhook-provider').onchange=()=>{$('webhook-provider-hint').textContent=webhookProviderHint({webhookResolvedProvider});switchWebhookTemplate();};
+$('webhook-use-template').onclick=()=>{$('webhook-body-template').value=selectedWebhookTemplate();};
+$('webhook-url-eye').onclick=toggleWebhookUrl;
+$('webhook-url').addEventListener('input',()=>{if(revealedWebhookUrl&&$('webhook-url').value!==revealedWebhookUrl)revealedWebhookUrl='';webhookRevealRequest++;});
+$('webhook-dialog').addEventListener('close',hideWebhookUrl);
 $('webhook-back').onclick=()=>{$('webhook-dialog').close();$('pushplus-settings').onclick();};
 const notificationChannelDetails={
   bark:{name:'Bark',enabled:'barkEnabled',server:'barkServer',secret:'barkKey',hasSecret:'hasBarkKey',clear:'clearBarkKey',secretLabel:'Device Key',help:'在 iPhone 的 Bark 中获取 Device Key，并填写服务地址。'},
