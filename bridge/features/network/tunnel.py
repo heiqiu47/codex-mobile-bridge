@@ -42,12 +42,17 @@ class QuickTunnel:
         Quick Tunnel; the supervisor owns the replacement.
         """
         with self.lifecycle_lock:
-            if self.closed.is_set() or not self.ready.is_set():
+            if self.closed.is_set():
                 return False
             self.ready.clear()
             self.broken.set()
         self.status('reconnecting', '电脑网络已变化，正在重建临时 HTTPS；网址会变化。')
         return True
+
+    def entry_stable(self):
+        """True when entry URLs may be published without a transient rebuild."""
+        return bool(self.ready.is_set() and not self.broken.is_set() and
+                    not self.finished.is_set() and not self.closed.is_set())
 
     def start(self):
         if self.closed.is_set():

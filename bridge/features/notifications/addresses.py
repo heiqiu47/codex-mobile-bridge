@@ -50,12 +50,14 @@ def entry_urls(preferences, hosts, quick_url='', external_status=None, lan_addre
     if quick_url:
         urls.append(quick_url.rstrip('/'))
     if preferences.get('lan'):
-        selected = preferences.get('lanAddresses') if lan_addresses is None else None
-        allowed = set(lan_addresses) if lan_addresses is not None else None
-        # The caller's host list is a startup snapshot.  After DHCP or Wi-Fi
-        # changes, the monitor's allowed addresses are the live authority.
-        live_hosts = (sorted(set(lan_addresses), key=ipaddress.ip_address)
-                      if allowed is not None else hosts)
+        # hosts is only a startup snapshot; a running monitor supplies the
+        # live authority after DHCP or Wi-Fi changes.
+        if lan_addresses is None:
+            selected = set(preferences.get('lanAddresses') or [])
+            live_hosts = hosts
+        else:
+            selected = None
+            live_hosts = sorted(set(lan_addresses), key=ipaddress.ip_address)
         for host in live_hosts:
             try:
                 address = ipaddress.ip_address(host)
@@ -63,9 +65,7 @@ def entry_urls(preferences, hosts, quick_url='', external_status=None, lan_addre
                 continue
             if address.is_loopback or address.is_unspecified or address.is_multicast:
                 continue
-            if allowed is not None or selected is None or host in selected:
-                if allowed is not None and host not in allowed:
-                    continue
+            if selected is None or host in selected:
                 urls.append(f'http://{host}:{preferences["port"]}')
     return list(dict.fromkeys(urls))
 
@@ -74,7 +74,7 @@ def address_message(config, urls, first=False, test=False):
     title = 'Codex Mobile Bridge · ' + ('入口通知测试' if test else '网关已启动' if first else '访问入口已更新')
     name = config.get('addressName') or 'Codex Mobile Bridge'
     body = name + ('已启动。' if first else '的当前访问入口如下。')
-    body += '\n访问地址：\n' + '\n'.join(urls) + '\n局域网地址需在同一网络访问；固定域名需已完成部署。\n请使用原网关登录方式访问。'
+    body += '\n访问地址：\n' + '\n'.join(urls) + '\n局域网地址需在同一网络访问；固定域名需要先完成部署。\n请使用原网关登录方式访问。'
     return title, body
 
 

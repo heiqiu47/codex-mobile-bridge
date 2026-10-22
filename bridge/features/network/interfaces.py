@@ -1,17 +1,22 @@
-"""IPv4 interface identity and address snapshots used by gateway adapters.
-
-Interface identity, not an address, is the persistent selection.  Interface
-names are stable on Linux/macOS; Windows uses the adapter GUID from the OS.
-"""
-import ctypes
+"""Normalize platform adapter data and resolve publishable LAN addresses."""
+import importlib
 import ipaddress
 import json
-import os
 import platform
-import re
-import socket
-import shutil
-import subprocess
+from functools import lru_cache
+
+
+IF_TYPE_SOFTWARE_LOOPBACK = 24
+IF_TYPE_TUNNEL = 53
+VIRTUAL_PREFIXES = (
+    'bridge', 'vmenet', 'vmnet', 'veth', 'virbr', 'docker', 'utun', 'tun',
+    'tap', 'wg', 'awdl', 'llw', 'anpi', 'ap1', 'lo', 'vethernet', 'zerotier',
+)
+VIRTUAL_TOKENS = {
+    'virtual', 'vmware', 'virtualbox', 'hyper-v', 'wsl', 'docker', 'tap',
+    'tun', 'wireguard', 'vpn', 'tailscale', 'openvpn',
+}
+_VIRTUAL_IF_TYPES = {IF_TYPE_SOFTWARE_LOOPBACK, IF_TYPE_TUNNEL}
 
 
 def valid_ipv4(value):
@@ -25,9 +30,15 @@ def valid_ipv4(value):
     return str(address)
 
 
+def _is_private_lan(number):
+    value = int(number)
+    return ((value & 0xFF000000) == 0x0A000000 or
+            (value & 0xFFF00000) == 0xAC100000 or
+            (value & 0xFFFF0000) == 0xC0A80000)
+
+
 def _rows(rows):
-    result = []
-    seen = set()
+    result, seen = [], set()
     for row in rows:
         identifier = str(row.get('id', '')).strip()
         name = str(row.get('name', '')).strip() or identifier or 'unknown'
@@ -42,193 +53,73 @@ def _rows(rows):
             existing['addresses'] = list(dict.fromkeys(existing['addresses'] + addresses))
             continue
         seen.add(key)
-        result.append({'id': identifier, 'name': name,
-                       'addresses': sorted(addresses, key=lambda value: ipaddress.IPv4Address(value))})
-    return sorted(result, key=lambda row: (row['name'].lower(), row['id'], row['addresses']))
+        result.append({
+            'id': identifier, 'name': name,
+            'addresses': sorted(addresses, key=lambda value: tuple(map(int, value.split('.')))),
+            'index': row.get('index'), 'if_type': row.get('if_type'),
+            'virtual': bool(row.get('virtual')),
+        })
+    return sorted(result, key=lambda row: (row['name'].lower(), row['id'],
+                                           tuple(map(int, row['addresses'][0].split('.'))) if row['addresses'] else ()))
 
 
-def _linux_rows():
-    executable = shutil.which('ip')
-    if not executable:
-        return []
-    output = subprocess.run([executable, '-j', '-4', 'address', 'show', 'up'],
-                            capture_output=True, text=True, check=False, timeout=3)
-    if output.returncode:
-        return []
-    interfaces = json.loads(output.stdout)
-    if not isinstance(interfaces, list):
-        return []
-    rows = []
-    for item in interfaces:
-        if not isinstance(item, dict):
-            continue
-        name = item.get('ifname') or item.get('altname') or ''
-        addresses = [addr.get('local') for addr in item.get('addr_info', [])
-                     if isinstance(addr, dict) and addr.get('family') == 'inet']
-        rows.append({'id': name, 'name': name, 'addresses': addresses})
-    return _rows(rows)
-
-
-def _macos_rows():
-    if not os.path.exists('/sbin/ifconfig'):
-        return []
-    output = subprocess.run(['/sbin/ifconfig'], capture_output=True, text=True,
-                            check=False, timeout=3).stdout
-    rows, current = [], None
-    for line in output.splitlines():
-        match = re.match(r'^([A-Za-z0-9._-]+):', line)
-        if match:
-            name = match.group(1)
-            current = {'id': name, 'name': name, 'addresses': []}
-            rows.append(current)
-        elif current is not None:
-            match = re.match(r'^\s+inet\s+([0-9.]+)', line)
-            if match:
-                current['addresses'].append(match.group(1))
-    return _rows(rows)
-
-
-class _IP_ADDR_STRING(ctypes.Structure):
-    pass
-
-
-_IP_ADDR_STRING._fields_ = [
-    ('Next', ctypes.POINTER(_IP_ADDR_STRING)),
-    ('IpAddress', ctypes.c_char * 16),
-    ('IpMask', ctypes.c_char * 16),
-    ('Context', ctypes.c_ulong),
-]
-
-
-class _IP_ADAPTER_INFO(ctypes.Structure):
-    pass
-
-
-_IP_ADAPTER_INFO._fields_ = [
-    ('Next', ctypes.POINTER(_IP_ADAPTER_INFO)),
-    ('ComboIndex', ctypes.c_ulong),
-    ('AdapterName', ctypes.c_char * 260),
-    ('Description', ctypes.c_char * 132),
-    ('AddressLength', ctypes.c_uint),
-    ('Address', ctypes.c_ubyte * 8),
-    ('Index', ctypes.c_ulong),
-    ('Type', ctypes.c_uint),
-    ('DhcpEnabled', ctypes.c_uint),
-    ('CurrentIpAddress', ctypes.POINTER(_IP_ADDR_STRING)),
-    ('IpAddressList', _IP_ADDR_STRING),
-    ('GatewayList', _IP_ADDR_STRING),
-    ('DhcpServer', _IP_ADDR_STRING),
-    ('HaveWins', ctypes.c_int),
-    ('PrimaryWinsServer', _IP_ADDR_STRING),
-    ('SecondaryWinsServer', _IP_ADDR_STRING),
-    ('LeaseObtained', ctypes.c_longlong),
-    ('LeaseExpires', ctypes.c_longlong),
-]
-
-
-def _windows_rows():
-    library = ctypes.windll.iphlpapi
-    size = ctypes.c_ulong(0)
-    if library.GetAdaptersInfo(None, ctypes.byref(size)) != 111:
-        return []
-    buffer = ctypes.create_string_buffer(size.value)
-    adapter = ctypes.cast(buffer, ctypes.POINTER(_IP_ADAPTER_INFO))
-    if library.GetAdaptersInfo(adapter, ctypes.byref(size)) != 0:
-        return []
-    rows = []
-    while adapter:
-        item = adapter.contents
-        identifier = item.AdapterName.decode('utf-8', 'replace')
-        name = item.Description.decode('utf-8', 'replace') or identifier
-        addresses = []
-        candidate = ctypes.pointer(item.IpAddressList)
-        for _ in range(64):
-            if not candidate:
-                break
-            addresses.append(candidate.contents.IpAddress.value.decode('ascii', 'replace'))
-            candidate = candidate.contents.Next
-            if not candidate:
-                break
-        rows.append({'id': identifier, 'name': name, 'addresses': addresses})
-        adapter = item.Next
-    return _rows(rows)
-
-
-def _fallback_rows():
-    addresses = []
-    try:
-        for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            addresses.append(item[4][0])
-    except OSError:
-        pass
-    return _rows([{'id': '', 'name': 'unknown', 'addresses': addresses}])
+@lru_cache(maxsize=1)
+def _platform_module():
+    system = platform.system()
+    module_name = {'Linux': 'linux', 'Darwin': 'macos', 'Windows': 'windows'}.get(system)
+    if not module_name:
+        return None
+    module = importlib.import_module('bridge.platforms.' + module_name + '.interfaces')
+    return module
 
 
 def enumerate_interfaces():
-    """Return adapter identities and IPv4 addresses without DNS waits."""
-    try:
-        if platform.system() == 'Windows':
-            rows = _windows_rows()
-        elif platform.system() == 'Linux':
-            rows = _linux_rows()
-        elif platform.system() == 'Darwin':
-            rows = _macos_rows()
-        else:
-            rows = []
-        if not rows:
-            rows = _fallback_rows()
-        return rows
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
-        try:
-            return _fallback_rows()
-        except Exception:
-            return []
+    module = _platform_module()
+    return _rows(module.enumerate_interfaces()) if module else []
 
 
-def interface_addresses(rows=None):
-    rows = enumerate_interfaces() if rows is None else rows
-    return sorted({address for row in rows for address in row['addresses']})
+def default_route():
+    module = _platform_module()
+    return module.default_route() if module else {}
 
 
-VIRTUAL_MARKERS = (
-    'bridge', 'vmenet', 'vmnet', 'veth', 'virbr', 'docker', 'vEthernet',
-    'utun', 'tun', 'tap', 'wg', 'awdl', 'llw', 'anpi', 'ap1', 'loopback', 'WSL',
-)
+def _name_text(row):
+    return ' '.join((str(row.get('id', '')), str(row.get('name', '')))).lower()
 
 
 def is_virtual_interface(row):
-    text = f"{row.get('id', '')} {row.get('name', '')}".lower()
-    return any(marker.lower() in text for marker in VIRTUAL_MARKERS)
+    if row.get('virtual') is True:
+        return True
+    if row.get('if_type') in _VIRTUAL_IF_TYPES:
+        return True
+    identity = _name_text(row)
+    if any(identity.startswith(prefix) for prefix in VIRTUAL_PREFIXES):
+        return True
+    tokens = set(identity.replace('-', ' ').replace('_', ' ').split())
+    return bool(tokens.intersection(VIRTUAL_TOKENS)) or any(token in identity for token in ('vmware', 'virtualbox'))
 
 
 def eligible_lan_addresses(rows=None):
     """Addresses that may be published as same-LAN HTTP entries.
 
-    Virtual host-only and provider networks (Parallels/WSL/Docker/VPN) must not
-    become notification entries merely because the adapter has an RFC1918 IP.
-    Public addresses are also never published as LAN entries.
+    Host-only and provider networks (Parallels/WSL/Docker/VPN) must not become
+    entries merely because they have an RFC1918 address. Public and carrier NAT
+    addresses are never published as LAN entries.
     """
     rows = enumerate_interfaces() if rows is None else rows
     result = []
-    private_networks = (ipaddress.IPv4Network('10.0.0.0/8'),
-                        ipaddress.IPv4Network('172.16.0.0/12'),
-                        ipaddress.IPv4Network('192.168.0.0/16'))
     for row in rows:
         if is_virtual_interface(row):
             continue
         for value in row.get('addresses', []):
-            try:
-                address = ipaddress.IPv4Address(value)
-            except (ipaddress.AddressValueError, TypeError):
+            address = valid_ipv4(value)
+            if not address:
                 continue
-            if (address.is_loopback or address.is_unspecified or address.is_multicast or
-                    address.is_link_local or not any(address in network for network in private_networks)):
+            number = ipaddress.IPv4Address(address)
+            excluded = number.is_loopback or number.is_link_local or not _is_private_lan(number)
+            if excluded or address in result:
                 continue
-            if address in ipaddress.IPv4Network('100.64.0.0/10'):
-                continue
-            address = str(address)
-            if address not in result:
-                result.append(address)
+            result.append(address)
     return sorted(result, key=ipaddress.IPv4Address)
 
 
@@ -248,13 +139,37 @@ def selected_interfaces(value):
 
 
 def migrate_addresses_to_interfaces(rows, value):
-    """Map a legacy address-only selection to currently visible interfaces."""
+    """Map a legacy address-only selection without expanding ambiguous scope."""
     if value is None:
         return None
     selected = set(value or [])
-    return [row['id'] for row in rows if row['id'] and selected.intersection(row['addresses'])]
+    matches = [row for row in rows if row['id'] and selected.intersection(row.get('addresses', []))]
+    if len(matches) == 1:
+        return [matches[0]['id']]
+    non_virtual = [row for row in matches if not is_virtual_interface(row)]
+    return [non_virtual[0]['id']] if len(non_virtual) == 1 else []
 
 
 def addresses_for_interfaces(rows, identifiers):
     selected = set(identifiers or [])
-    return sorted({address for row in rows if row['id'] in selected for address in row['addresses']})
+    return sorted({address for row in rows if row['id'] in selected
+                   for address in row.get('addresses', [])}, key=ipaddress.IPv4Address)
+
+
+def network_signature(rows=None, route=None):
+    """Identity of the default route and its adapter, independent of LAN scope."""
+    rows = enumerate_interfaces() if rows is None else rows
+    route = default_route() if route is None else route
+    route_interface = route.get('interface')
+    route_index = route.get('index')
+    routable = [row for row in rows if not is_virtual_interface(row) and (
+        (route_interface and row['id'] == route_interface) or
+        (route_index is not None and row.get('index') == route_index))]
+    if not routable and not route_interface:
+        routable = [row for row in rows if not is_virtual_interface(row)]
+    interfaces = [{'id': row['id'], 'name': row['name'], 'addresses': row['addresses'],
+                   'if_type': row.get('if_type'), 'index': row.get('index')}
+                  for row in routable]
+    # Route fixtures may hand back a mutable dict; signatures must be snapshots.
+    return {'interfaces': interfaces,
+            'route': json.loads(json.dumps(route, sort_keys=True)) if route is not None else {}}

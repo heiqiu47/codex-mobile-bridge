@@ -1,10 +1,20 @@
-"""Runtime adaptation for LAN listeners and published gateway entries."""
-import ipaddress
+"""Runtime adaptation for LAN listeners, published entries, and Quick Tunnel."""
 import json
+import logging
+import ipaddress
 import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from bridge.features.network.interfaces import (
+    eligible_lan_addresses,
+    enumerate_interfaces,
+    network_signature,
+)
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _write_status(path, value):
@@ -16,16 +26,15 @@ def _write_status(path, value):
 
 
 class DynamicListenerManager:
-    """Own selected-address listeners; a wildcard listener is never rebuilt."""
+    """Own dynamic LAN listeners and keep their HTTP origins in sync."""
 
-    def __init__(self, root, port, bridge, config, web_dir, server_factory, wildcard=False):
+    def __init__(self, root, port, bridge, config, web_dir, server_factory):
         self.root = root
         self.port = port
         self.bridge = bridge
         self.config = config
         self.web_dir = web_dir
         self.server_factory = server_factory
-        self.wildcard = bool(wildcard)
         self.configure = lambda listener: None
         self.lock = threading.RLock()
         self.listeners = {}
@@ -49,21 +58,26 @@ class DynamicListenerManager:
             self.root.origins.discard(origin)
             self.root.hosts.discard(parsed.netloc)
 
-    def _remove_origins(self, addresses):
-        for address in addresses:
-            origin = f'http://{address}:{self.port}'
-            self.root.origins.discard(origin)
-            self.root.hosts.discard(urlsplit(origin).netloc)
-
     def _set_origins(self, addresses):
         new_origins = {f'http://{address}:{self.port}' for address in addresses}
-        old_origins = {f'http://{address}:{self.port}' for address in self.active
-                       if address not in addresses}
-        self.root.origins.update(new_origins)
-        self.root.hosts.update({urlsplit(origin).netloc for origin in new_origins})
-        for origin in old_origins:
-            self.root.origins.discard(origin)
-            self.root.hosts.discard(urlsplit(origin).netloc)
+        preserved = set()
+        for origin in self.root.origins:
+            parsed = urlsplit(origin)
+            try:
+                loopback = parsed.scheme == 'http' and (
+                    (parsed.hostname or '').lower() == 'localhost' or
+                    ipaddress.ip_address(parsed.hostname).is_loopback
+                ) and parsed.port == self.port
+            except (ValueError, TypeError):
+                loopback = False
+            if parsed.scheme == 'https' or loopback:
+                preserved.add(origin)
+        next_origins = preserved | new_origins
+        next_hosts = {urlsplit(origin).netloc for origin in next_origins}
+        self.root.origins.clear()
+        self.root.origins.update(next_origins)
+        self.root.hosts.clear()
+        self.root.hosts.update(next_hosts)
 
     def _start(self, address):
         listener = self.server_factory((address, self.port), self.bridge, self.config,
@@ -74,7 +88,7 @@ class DynamicListenerManager:
         thread.start()
         return listener, thread
 
-    def _close(self, address, entry):
+    def _close(self, entry):
         listener, thread = entry
         listener.shutdown()
         thread.join(timeout=3)
@@ -84,37 +98,49 @@ class DynamicListenerManager:
         desired = list(dict.fromkeys(addresses))
         with self.lock:
             previous = list(self.active)
-            self._set_origins(desired)
             errors = []
+            started = []
             for address in desired:
-                if self.wildcard or address in self.listeners:
+                if address in self.listeners:
                     continue
                 try:
                     entry = self._start(address)
-                    self.configure(entry[0])
                     self.listeners[address] = entry
+                    started.append(address)
+                    self.configure(entry[0])
                 except OSError as exc:
                     errors.append(f'{address}: {exc}')
             if errors:
-                # Keep the last working entry while a replacement address is
-                # unavailable. Retry happens on the next stable monitor scan.
+                # Never publish a partial replacement. Roll back listeners that
+                # were newly opened, and keep the previous working listeners.
+                for address in list(started):
+                    if address in previous:
+                        continue
+                    entry = self.listeners[address]
+                    try:
+                        self._close(entry)
+                        del self.listeners[address]
+                    except OSError:
+                        pass
                 self.active = sorted(self.listeners)
                 self.error = '; '.join(errors)
-                self._remove_origins(set(desired).difference(self.active))
                 self._set_origins(self.active)
                 return list(self.active), self.error
+            # Publish the complete replacement only after every listener is live.
+            self._set_origins(desired)
             for address in list(self.listeners):
                 if address in desired:
                     continue
+                entry = self.listeners[address]
                 try:
-                    self._close(address, self.listeners.pop(address))
+                    self._close(entry)
+                    del self.listeners[address]
                 except OSError as exc:
                     errors.append(f'{address}: {exc}')
-            if self.wildcard:
-                self.active = desired
-            else:
-                self.active = sorted(self.listeners)
+            self.active = sorted(self.listeners)
             self.error = '; '.join(errors)
+            if errors:
+                return list(self.active), self.error
             self._set_origins(self.active)
             return list(self.active), self.error
 
@@ -127,23 +153,26 @@ class DynamicListenerManager:
             return self.error
 
     def close(self):
+        failures = []
         with self.lock:
             for address in list(self.listeners):
+                entry = self.listeners[address]
                 try:
-                    self._close(address, self.listeners.pop(address))
-                except OSError:
-                    pass
-            self._set_origins([])
-            self.active = []
+                    self._close(entry)
+                    del self.listeners[address]
+                except OSError as exc:
+                    failures.append(f'{address}: {exc}')
+            self.active = sorted(self.listeners)
+            self.error = '; '.join(failures)
+            self._set_origins(self.active)
 
 
 class RuntimeNetworkMonitor:
-    """Apply only stable interface changes and publish an audit snapshot."""
+    """Apply stable network changes and publish a diagnostic snapshot."""
 
     def __init__(self, data_dir, preferences, port, manager, instance_id,
                  enumerator=None, interval=2.0, stability=6.0,
-                 clock=time.monotonic, pid=None):
-        from bridge.features.network.interfaces import enumerate_interfaces
+                 route_enumerator=None, clock=time.monotonic, pid=None):
         self.data_dir = Path(data_dir)
         self.path = self.data_dir/'network-status.json'
         self.preferences = preferences
@@ -151,6 +180,7 @@ class RuntimeNetworkMonitor:
         self.manager = manager
         self.instance_id = str(instance_id or '')
         self.enumerator = enumerator or enumerate_interfaces
+        self.route_enumerator = route_enumerator or network_signature
         self.interval = interval
         self.stability = stability
         self.clock = clock
@@ -160,22 +190,32 @@ class RuntimeNetworkMonitor:
         self.lock = threading.RLock()
         self.pending = None
         self.pending_since = None
+        self.pending_route = None
+        self.pending_route_since = None
+        self.route_signature = None
+        self.route_since = None
         self.interfaces = []
         self.active = []
         self.network_changed = None
+        self.last_status_key = None
+        self.last_status_write = 0.0
 
     def _desired(self):
         selected = self.preferences.get('lanInterfaces')
         if not self.preferences.get('lan'):
             return []
         if selected is None:
-            from bridge.features.network.interfaces import eligible_lan_addresses
             return eligible_lan_addresses(self.interfaces)
         wanted = set(selected)
         return sorted({address for row in self.interfaces if row['id'] in wanted
-                       for address in row['addresses']})
+                       for address in row.get('addresses', [])})
 
-    def _status(self, pending, pending_since, ready):
+    def _route_signature(self):
+        # Route fixtures may return a mutable dict; snapshots must not alias it.
+        value = self.route_enumerator(self.interfaces)
+        return json.loads(json.dumps(value, sort_keys=True)) if value is not None else {}
+
+    def _status(self, pending, pending_since, route_ready):
         selected = self.preferences.get('lanInterfaces')
         return {
             'pid': self.pid,
@@ -186,33 +226,55 @@ class RuntimeNetworkMonitor:
             'interfaces': self.interfaces,
             'addresses': list(self.active),
             'pendingAddresses': [] if pending is None else list(pending),
-            'stable': bool(ready),
+            'stable': bool(route_ready and pending_since is not None),
             'error': str(self.manager.error_message() or ''),
-            'updatedAt': int(time.time()),
-            '_pendingSince': pending_since,
         }
 
     def scan(self, initial=False):
         rows = self.enumerator()
         with self.lock:
-            previous = list(self.active)
+            previous_active = list(self.active)
+            previous_route = self.route_signature
             self.interfaces = rows
             desired = self._desired()
-            signature = json.dumps(desired, separators=(',', ':'))
+            changed = False
+            next_route = self._route_signature()
             now = self.clock()
-            if self.pending != signature:
-                self.pending = signature
+            if self.pending != desired:
+                self.pending = desired
                 self.pending_since = now
-            ready = initial or self.pending_since is None or now - self.pending_since >= self.stability
-            if ready:
+            if self.route_signature != next_route:
+                if self.pending_route != next_route:
+                    self.pending_route = next_route
+                    self.pending_route_since = now
+            else:
+                self.pending_route = next_route
+                self.pending_route_since = self.pending_route_since or now
+            lan_ready = initial or self.pending_since is None or now - self.pending_since >= self.stability
+            route_ready = initial or self.pending_route_since is None or now - self.pending_route_since >= self.stability
+            ready = lan_ready and route_ready
+            if route_ready:
+                if previous_route != next_route:
+                    self.route_signature = next_route
+                    changed = True
+            if lan_ready:
                 self.active, _ = self.manager.apply(desired)
             self.active = self.manager.addresses()
-            changed = ready and self.active != previous
-            status = self._status(desired, self.pending_since, ready)
-            status.pop('_pendingSince', None)
-            _write_status(self.path, status)
+            changed = ready and (changed or self.active != previous_active)
+            status = self._status(desired, self.pending_since, route_ready)
+            status_key = json.dumps(status, separators=(',', ':'), sort_keys=True)
+            should_write = status_key != self.last_status_key or now - self.last_status_write >= 30
+            if should_write:
+                status['updatedAt'] = int(time.time())
+                _write_status(self.path, status)
+                self.last_status_key = status_key
+                self.last_status_write = now
             if changed and self.network_changed:
-                self.network_changed()
+                try:
+                    self.network_changed()
+                except Exception:
+                    # Quick Tunnel's supervisor will retry; keep LAN adaptation live.
+                    LOGGER.exception('Quick Tunnel network rebuild failed')
             return list(self.active)
 
     def _run(self):
@@ -220,9 +282,8 @@ class RuntimeNetworkMonitor:
             try:
                 self.scan()
             except Exception:
-                # Interface enumeration is read-only; a transient OS error must
-                # not stop the gateway or the established listener.
-                pass
+                # Enumeration and status writes are non-fatal; preserve listeners.
+                LOGGER.exception('Network adaptation scan failed')
             self.closed.wait(self.interval)
 
     def start(self):

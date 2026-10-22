@@ -125,7 +125,8 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(self.desktop.config()['origins'], ['https://phone.example.com:8443'])
         self.assertEqual(self.desktop.config()['publicUrl'], 'https://phone.example.com:8443')
         self.assertEqual(self.desktop.preferences()['connections'][0]['proxyUpstream'], '')
-        with patch('bridge.app.desktop.socket.socket'), patch('bridge.app.desktop.subprocess.Popen') as spawn:
+        with patch('bridge.app.desktop.interfaces.enumerate_interfaces', return_value=[]), \
+                patch('bridge.app.desktop.socket.socket'), patch('bridge.app.desktop.subprocess.Popen') as spawn:
             self.assertTrue(self.desktop.start()['started'])
         self.assertEqual(spawn.return_value.stdin.write.call_args.args[0], b'{}')
         with self.assertRaisesRegex(ValueError, '自有服务器或 NAS'):
@@ -312,7 +313,8 @@ class ConcurrentRuntimeTests(unittest.TestCase):
             tunnels = [MagicMock(), MagicMock()]
             with patch.object(run.sys, 'argv', ['run.py', '--config', str(config), '--lan']), \
                  patch.object(run.sys, 'stdout', MagicMock()), patch.object(run.sys, 'stderr', MagicMock()), \
-                 patch.object(run, 'addresses', return_value=['127.0.0.1']), \
+                 patch('bridge.features.network.interfaces.enumerate_interfaces', return_value=[]), \
+                 patch('bridge.features.network.runtime.network_signature', return_value={'fixture': True}), \
                  patch.object(run, 'Bridge'), patch.object(run, 'Notifications'), \
                  patch.object(run, 'GatewayControl'), patch.object(run.signal, 'signal'), \
                  patch.object(run, 'GatewayServer', return_value=server) as make_server, \
@@ -493,3 +495,19 @@ class ConcurrentRuntimeTests(unittest.TestCase):
                 self.assertFalse(starter.is_alive())
                 old_process.terminate.assert_called_once()
                 new_process.terminate.assert_called_once()
+
+    def test_quick_tunnel_suppresses_transient_entry_updates(self):
+        tunnel = QuickTunnel(Path('.tmp')/'unused-cloudflared', 8787, Path('.tmp'), MagicMock())
+        try:
+            self.assertFalse(tunnel.entry_stable())
+            self.assertTrue(tunnel.network_changed())
+            self.assertFalse(tunnel.entry_stable())
+            tunnel.broken.clear()
+            tunnel.ready.set()
+            self.assertTrue(tunnel.entry_stable())
+            tunnel.network_changed()
+            self.assertFalse(tunnel.entry_stable())
+            tunnel.finished.set()
+            self.assertFalse(tunnel.entry_stable())
+        finally:
+            tunnel.close()

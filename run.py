@@ -28,10 +28,6 @@ from bridge.features.network.runtime import DynamicListenerManager, RuntimeNetwo
 ROOT = Path(__file__).resolve().parent
 
 
-def addresses():
-    return sorted({'127.0.0.1', 'localhost'} | set(interfaces.eligible_lan_addresses()))
-
-
 def save_config(path, config):
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding='utf-8')
@@ -111,11 +107,8 @@ def main(connections=None, connection_secrets=None):
         parsed = urlsplit(origin)
         if parsed.scheme != "https" or not parsed.hostname or parsed.path or parsed.query or parsed.fragment or parsed.username or parsed.password:
             parser.error("额外 origin 必须是完整 HTTPS 源且不能有路径")
-    if args.lan and preferences['lanInterfaces'] is None:
-        hosts = ['127.0.0.1', 'localhost'] + interfaces.eligible_lan_addresses(rows)
-    elif args.lan:
-        hosts = ['127.0.0.1', 'localhost'] + interfaces.addresses_for_interfaces(
-            rows, preferences['lanInterfaces'])
+    if args.lan:
+        hosts = ['127.0.0.1', 'localhost'] + network.bindings(preferences, rows)[1:]
     else:
         hosts = ['127.0.0.1', 'localhost']
     config["origins"] = sorted(set(origins + [f"http://{host}:{args.port}" for host in hosts]))
@@ -124,16 +117,14 @@ def main(connections=None, connection_secrets=None):
     servers = []
     tailscale_port = None
     try:
-        startup_bindings = network.bindings(preferences, rows)
-        if args.lan:
-            # Both auto-LAN and selected adapters are owned by the runtime
-            # monitor, so DHCP changes replace listeners without a restart.
-            startup_bindings = ['127.0.0.1']
+        # Auto-LAN and selected adapters are owned by the runtime monitor, so
+        # DHCP changes replace listeners without a gateway restart.
+        startup_bindings = ['127.0.0.1'] if args.lan else network.bindings(preferences, rows)
         for address in startup_bindings:
             servers.append(GatewayServer((address, args.port), bridge, config, ROOT / 'web', args.config.parent,
                                          **({'shared': servers[0]} if servers else {})))
         if any(c['enabled'] and c['accessMode'] == 'tailscale' for c in entries):
-            # A pre-existing loopback SSH forward can shadow a LAN/wildcard
+            # A pre-existing loopback SSH forward can shadow a LAN
             # listener on args.port. Give Tailscale an unambiguous local owner.
             private = GatewayServer(('127.0.0.1', 0), bridge, config, ROOT / 'web', args.config.parent, shared=servers[0])
             servers.append(private)
@@ -149,7 +140,7 @@ def main(connections=None, connection_secrets=None):
     server = servers[0]
     listener_manager = DynamicListenerManager(
         server, args.port, bridge, config, ROOT / 'web', GatewayServer,
-        wildcard=False)
+    )
     listener_threads = []
     pid_file = args.config.parent / "gateway.pid"
     pid_file.write_text(str(os.getpid()), encoding='utf-8')
@@ -168,6 +159,8 @@ def main(connections=None, connection_secrets=None):
             status = read_json(args.config.parent/('ssh-status-'+entry['id']+'.json'), {})
             if status.get('pid') == os.getpid():
                 external[entry['id']] = status
+        if tunnel and not tunnel.entry_stable():
+            return []
         return entry_urls(preferences, hosts, ready_url(tunnel, args.port, server.instance_id), external,
                           lan_addresses=monitor.addresses())
     address_notifications = AddressNotifications(args.config.parent, notification_urls, server.instance_id)
@@ -242,7 +235,16 @@ def main(connections=None, connection_secrets=None):
                 server.hosts.add(host)
                 server.secure_hosts.add(host)
             tunnel = QuickTunnel(args.cloudflared, args.port, args.config.parent, allow_origin)
-            monitor.network_changed = tunnel.network_changed
+            def rebuild_quick_tunnel():
+                nonlocal quick_origin
+                if quick_origin:
+                    server.origins.discard(quick_origin)
+                    old_host = urlsplit(quick_origin).netloc
+                    server.hosts.discard(old_host)
+                    server.secure_hosts.discard(old_host)
+                    quick_origin = None
+                tunnel.network_changed()
+            monitor.network_changed = rebuild_quick_tunnel
             def connect_tunnel():
                 try:
                     url = tunnel.start()
@@ -273,8 +275,8 @@ def main(connections=None, connection_secrets=None):
             thread.join()
         server.harness.close()
         server.desktop_sessions.close()
-        monitor.close()
         address_notifications.close()
+        monitor.close()
         bridge.accounts.monitor.close()
         notifications.close()
         if tunnel:

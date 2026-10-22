@@ -17,7 +17,7 @@ import bridge.features.network.addresses as network
 from bridge.app.desktop import Desktop
 from bridge.api.httpd import GatewayServer
 from bridge.app.lifecycle import request_stop
-import run
+import bridge.features.network.interfaces as interfaces
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -123,7 +123,7 @@ class LocalAccessTests(unittest.TestCase):
                 server.harness.close();server.desktop_sessions.close()
 
     def test_real_gateway_binds_only_selected_address_and_stops_every_listener(self):
-        lan = next((ip for ip in run.addresses() if ip not in ('127.0.0.1', 'localhost')), None)
+        lan = next((ip for ip in interfaces.eligible_lan_addresses() if ip not in ('127.0.0.1', 'localhost')), None)
         if not lan:
             self.skipTest('No non-loopback IPv4 adapter available')
         for selected in ([], [lan]):

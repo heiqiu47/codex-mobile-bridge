@@ -145,7 +145,7 @@ class Desktop:
         managed = connected and bool(record) and (not record.get('instanceId') or record['instanceId'] == instance)
         if not managed and record and record.get('instanceId'):
             # A specific loopback listener (for example an SSH forward) can
-            # shadow our wildcard listener. Verify the live owner through its
+            # shadow a LAN listener. Verify the live owner through its
             # existing authenticated local channel, never merely a saved PID.
             try:
                 reply = request_pairing(self.data_dir, {'action': 'status', 'ids': []}, timeout=1)
@@ -173,7 +173,7 @@ class Desktop:
                     value.get('instanceId') == runtime.get('instanceId') and
                     value.get('mode') == ('off' if not preferences['lan'] else
                                           'all' if selected is None else 'selected')):
-                network_status = value
+                network_status = {key: item for key, item in value.items() if key != 'updatedAt'}
                 static_addresses = interfaces.addresses_for_interfaces(
                     value.get('interfaces', []), value.get('selectedInterfaces', selected)) \
                     if selected is not None or value.get('mode') == 'selected' else \
@@ -346,17 +346,18 @@ class Desktop:
                 if entry['accessMode'] == 'server' and entry.get('sshAuth') == 'password' and not secret.get('password'):
                     raise FieldError('请先填写并保存 SSH 密码。', 'password', entry['id'])
                 temporary[entry['id']] = secret
-        rows = interfaces.enumerate_interfaces()
-        for address in network.bindings(preferences, rows):
-            probe = socket.socket()
-            if os.name != "nt":
-                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                probe.bind((address, preferences['port']))
-            except OSError as exc:
-                raise ValueError('所选网卡地址不可用或端口已被占用，请检查网卡与端口；不会自动开放其他网卡') from exc
-            finally:
-                probe.close()
+        if preferences['lan']:
+            rows = interfaces.enumerate_interfaces()
+            for address in network.bindings(preferences, rows):
+                probe = socket.socket()
+                if os.name != "nt":
+                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    probe.bind((address, preferences['port']))
+                except OSError as exc:
+                    raise ValueError('所选网卡地址不可用或端口已被占用，请检查网卡与端口；不会自动开放其他网卡') from exc
+                finally:
+                    probe.close()
         command = [sys.executable] if getattr(sys, 'frozen', False) else [sys.executable, str(project_root()/'desktop.py')]
         command += ['serve', '--data-dir', str(self.data_dir), '--connection-secrets-stdin']
         kwargs = {'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {'start_new_session': True}

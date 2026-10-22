@@ -6,6 +6,8 @@ import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+import bridge.features.network.interfaces as network_interfaces
 from bridge.app.desktop import Desktop
 from bridge.features.auth.auth import Auth, LoginRejected
 from bridge.features.notifications.channels import settings
@@ -17,20 +19,14 @@ import bridge.features.network.interfaces as network_interfaces
 class AddressTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'posix', 'POSIX interface enumeration')
     def test_interface_addresses_do_not_require_hostname_dns(self):
-        from run import addresses
-        with patch.object(network_interfaces, '_macos_rows',
-                          return_value=[{'id': 'en0', 'name': 'en0', 'addresses': ['192.168.1.5']}]), \
-                patch('bridge.features.network.interfaces.socket.getaddrinfo',
-                      side_effect=AssertionError('Hostname DNS must not block settings')):
-            self.assertEqual(addresses(), ['127.0.0.1', '192.168.1.5', 'localhost'])
+        with patch('bridge.platforms.macos.interfaces.enumerate_interfaces',
+                   return_value=[{'id': 'en0', 'name': 'en0', 'addresses': ['192.168.1.5']}]):
+            self.assertEqual(network_interfaces.eligible_lan_addresses(), ['192.168.1.5'])
 
-    def test_dns_fallback_without_interface_command(self):
-        from run import addresses
-        with patch.object(network_interfaces, '_linux_rows', return_value=[]), \
-                patch.object(network_interfaces, '_macos_rows', return_value=[]), \
-                patch('bridge.features.network.interfaces.socket.getaddrinfo') as lookup:
-            lookup.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('192.168.1.6', 0))]
-            self.assertEqual(addresses(), ['127.0.0.1', '192.168.1.6', 'localhost'])
+    def test_unresolvable_enumeration_fails_closed_without_dns_guessing(self):
+        with patch('bridge.platforms.linux.interfaces.enumerate_interfaces', return_value=[]), \
+                patch('bridge.platforms.macos.interfaces.enumerate_interfaces', return_value=[]):
+            self.assertEqual(network_interfaces.eligible_lan_addresses(), [])
 
 
 class DesktopTests(unittest.TestCase):
