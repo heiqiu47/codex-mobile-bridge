@@ -4,6 +4,14 @@
 
 **[v2.1.3 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
 
+## v2.1.4-preview.1 体验版 / Preview
+
+[预发布下载 / Prerelease downloads](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4-preview.1) · [本次说明 / Release notes](../RELEASE_NOTES.md#v214-preview1)
+
+本预览版配合新版网关改善首次加载、Cloudflare 入口与短暂资源失败恢复。Android/iOS 构建号 36；iOS 系统版本 2.1.4，更新通道版本 2.1.4-preview.1。沿用现有应用标识，覆盖安装以保留电脑列表和绑定，不要先卸载。iOS IPA 仍需自行签名；独立 Test 与发布包是不同标识，不互相覆盖。v2.1.3 仍是最新正式版。
+
+**English:** build 36 accompanies the gateway startup/cache fixes. iOS uses marketing version 2.1.4 and release-channel version 2.1.4-preview.1. Install over the matching app to retain saved computers and bindings; do not uninstall first. iOS requires your own signing. Independent Test apps and release apps use different identifiers. v2.1.3 remains stable.
+
 ## v2.1.3：通知、图表与连接恢复
 
 手机 App 与网关配合管理多个 Webhook 接收目标，提供飞书、钉钉、Discord、Telegram 和自定义模板；保存的地址与密钥默认隐藏。聊天与 Markdown 文件中的 Mermaid 图表支持源码查看、复制和全屏缩放。iOS App 修复图表子页面被导航策略拦截的问题，并在网关或隧道不可达时提供原生重试及返回电脑列表入口。手机界面也改善弹窗、焦点和补充回答输入框的键盘可见性。

@@ -5,6 +5,8 @@
 
 # Codex Mobile Bridge · A remote workbench for desktop agents
 
+> **Try v2.1.4-preview.1:** [Prerelease downloads](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4-preview.1) · [Changes](RELEASE_NOTES.md#v214-preview1). First-load, Cloudflare entry and startup recovery improvements on a separate preview branch. v2.1.3 remains the latest stable release.
+
 > **v2.1.3 (stable):** [Release page](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3) · [Full release notes](RELEASE_NOTES.md) · [Mobile installation](mobile/README.md). This release adds multiple Webhook destinations and Mermaid reading, and improves slow-link loading and iOS connection recovery.
 
 [简体中文](README.md) · [English](README_EN.md)

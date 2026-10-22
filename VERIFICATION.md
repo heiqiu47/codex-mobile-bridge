@@ -1,3 +1,23 @@
+<a id="v214-preview1"></a>
+
+# v2.1.4-preview.1 启动恢复验收（2026-10-22）
+
+预发布分支 `release/v2.1.4-preview.1` 基于 main `de7b840`，整合 `fix/issue-62-startup-recovery` 已验收修订。桌面/手机发布版本 `2.1.4-preview.1`，手机构建号 36；iOS 系统版本 2.1.4。应用标识、签名身份、数据目录与绑定格式不变。本轮不合并 main，v2.1.3 保持稳定通道。
+
+| 范围 | 已验收结果 |
+| --- | --- |
+| 启动与资源 | Node 回归覆盖资源有限重试、严格执行顺序、提前下载、不支持 preload 的回退、CSS 读取异常、超时取消及晚到结果。真实 Chromium 生产资源夹具覆盖窄/宽屏、减少动态效果、资源连续失败、外部统计脚本被 CSP 拦截、原生剪贴板时序、运行时异常和配对未知结果 |
+| Mac / Cloudflare | 独立 8788 Test 实装后通过固定 Cloudflare HTTPS 入口；该次冷加载 6.87 秒、重复打开 1.43 秒，55 个资源复用缓存。此为该次网络测量，不是蜂窝网络速度承诺 |
+| Windows x64 | 独立 Test 完整安装的 707 个文件逐项匹配（含 ConPTY），真实 GUI 和网关启动通过。旧缓存覆盖升级后 0.50 秒可用、48/54 个资源复用；再次打开 0.34 秒、54/54 复用 |
+| Ubuntu x64 | 独立 Test DEB 的 745 个应用文件及 3 个包管理文件匹配，GUI/网关启动通过。旧缓存覆盖升级后 0.79 秒、48/54 复用；重复打开 0.42 秒、54/54 复用 |
+| 缓存与保留 | Windows/Ubuntu 的 gzip、ETag 304、内容版本 immutable、旧哈希 no-cache、HTML no-store 通过，无运行时异常。正式版文件与配置不变，每端原 3 条 Test 登录记录保留；Mac Test 的原配置与绑定也保留。用户随后确认测试通过 |
+
+上述实装验收使用源码指纹 `0c1d7b6e1ca79269c02eef0b7ad36c688f40a5527fe07eb4de3121cae542fe46`，Test 内部版本当时为 2.1.3；后端/原生源码与 v2.1.3 相同，使用已核验的正式原生运行时并重新打包全部候选 Web 资源。本预发布在此基础上仅统一版本与文档，公开包另由原生 CI 完整构建，不能把此前 Test 包称为公开预览安装包。测试只重试初始只读认证，不重放未知配对或消息写入；CSP 未放宽。
+
+**English:** accepted macOS, Windows and Ubuntu Test installations verified startup, resource caching and settings/binding preservation before the preview version bump. Windows/Ubuntu old-cache upgrades reused 48/54 resources, followed by 54/54 on repeat visits. Timings describe the measured connections, not a universal mobile-network guarantee. Test artifacts and public preview artifacts are distinct; the public packages are built separately by native CI. No main merge or stable-channel replacement is part of this preview.
+
+---
+
 ## v2.1.3 发布验收（2026-10-22）
 
 本版整合已验收的缓存与 Windows 包体优化、Mermaid、PR #51/#52、PR #40 查询生命周期和多目标 Webhook，以及手机弹窗、焦点与回答卡片定位修复。桌面与手机版本统一为 2.1.3，Android/iOS build 35；沿用更新公钥、Android 签名和 iOS 正式应用标识。

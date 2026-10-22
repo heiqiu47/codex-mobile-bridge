@@ -5,6 +5,8 @@
 
 # Codex Mobile Bridge · 多客户端远程工作台
 
+> **v2.1.4-preview.1 体验版**：[预发布下载](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4-preview.1) · [本次修复](RELEASE_NOTES.md#v214-preview1)。改善首次加载、Cloudflare 固定入口与启动恢复；独立分支体验，v2.1.3 仍是最新正式版。
+
 > **v2.1.3 正式版**：[发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3) · [完整更新说明](RELEASE_NOTES.md) · [手机安装说明](mobile/README.md)。新增多目标 Webhook、Mermaid 图表阅读，改善弱网加载和 iOS 连接恢复。
 
 [简体中文](README.md) · [English](README_EN.md)
