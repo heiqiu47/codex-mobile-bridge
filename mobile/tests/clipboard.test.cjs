@@ -38,9 +38,9 @@ test('code-copy path uses the same async writer and handles deferred page script
   assert.equal(f.writes[0].text, 'a\n b\t'); assert.equal(f.button.textContent, '已复制');
 });
 test('published native shells can install after DOMContentLoaded with the eager clipboard definition', async () => {
-  assert.match(html, /<script src="\/message-actions\.js\?[^\"]+" defer><\/script>/);
+  assert.match(html, /<script src="\/message-actions\.js\?[^\"]+" defer id="bridge-clipboard-script"><\/script>/);
   assert.doesNotMatch(html, /<script data-bridge-src="\/message-actions\.js/);
-  const eager = [...html.matchAll(/<script src="([^"]+)" defer><\/script>/g)].map(match => match[1]);
+  const eager = [...html.matchAll(/<script src="([^"]+)" defer id="bridge-clipboard-script"><\/script>/g)].map(match => match[1]);
   assert.deepEqual(eager.map(url => url.split('?')[0]), ['/message-actions.js']);
   const f = fixture({ domReadyBeforeNative: true });
   f.click();

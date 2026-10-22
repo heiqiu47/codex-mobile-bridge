@@ -1,5 +1,5 @@
-/* Keep the terminal insertion cursor visible as an input indicator. */
-@media(prefers-reduced-motion:reduce){*:not(.xterm-cursor){animation:none!important}}
+/* Keep the terminal cursor and startup visibility delay; the latter has no motion. */
+@media(prefers-reduced-motion:reduce){*:not(.xterm-cursor):not(.bootstrap-status){animation:none!important}}
 .picker-head-actions{display:flex;align-items:center;gap:4px;flex:none}
 
 .artifact-image{display:block;max-width:100%;height:auto;border-radius:10px;margin:12px 0}
