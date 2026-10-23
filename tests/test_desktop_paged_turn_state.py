@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -10,9 +11,7 @@ class PagedTurnState(unittest.TestCase):
     def test_history_pages_keep_current_session_authority(self):
         root = Path(__file__).resolve().parents[1] / '.tmp'
         root.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=root) as folder:
-            manager = DesktopSessions(folder)
-            self.addCleanup(manager.close)
+        with tempfile.TemporaryDirectory(dir=root) as folder, closing(DesktopSessions(folder)) as manager:
             adapter = Mock()
             manager.adapters['deepseek'] = adapter
             current = {'id': 'one', 'status': 'active', 'turnId': 'current',
@@ -31,9 +30,7 @@ class PagedTurnState(unittest.TestCase):
     def test_legacy_full_transcript_retains_existing_turn_projection(self):
         root = Path(__file__).resolve().parents[1] / '.tmp'
         root.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=root) as folder:
-            manager = DesktopSessions(folder)
-            self.addCleanup(manager.close)
+        with tempfile.TemporaryDirectory(dir=root) as folder, closing(DesktopSessions(folder)) as manager:
             adapter = Mock()
             manager.adapters['deepseek'] = adapter
             adapter.call.return_value = {'session': {'id': 'one'}, 'messages': [],
