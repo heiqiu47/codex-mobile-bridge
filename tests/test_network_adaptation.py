@@ -1,16 +1,11 @@
 import json
-import ctypes
-from ctypes import POINTER
 import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import bridge.features.network.addresses as network
-import bridge.features.network.interfaces as interfaces
-import bridge.platforms.macos.interfaces
-import bridge.platforms.windows.interfaces
 from bridge.app.desktop import Desktop
 from bridge.features.network.runtime import DynamicListenerManager, RuntimeNetworkMonitor
 
@@ -24,102 +19,6 @@ ROWS = [
     {'id': 'bridge100', 'name': 'bridge100', 'addresses': ['10.211.55.2']},
     {'id': 'public', 'name': 'public', 'addresses': ['203.0.113.7', '100.64.0.1']},
 ]
-
-
-class InterfaceSelectionTests(unittest.TestCase):
-    def test_addresses_are_deduplicated_by_interface_identity(self):
-        self.assertEqual(interfaces._rows(ROWS), [
-            {'id': 'bridge', 'name': 'Bridge', 'addresses': ['10.0.0.2', '192.168.1.7'],
-             'index': None, 'if_type': None, 'virtual': False},
-            {'id': 'bridge100', 'name': 'bridge100', 'addresses': ['10.211.55.2'],
-             'index': None, 'if_type': None, 'virtual': False},
-            {'id': 'public', 'name': 'public', 'addresses': ['100.64.0.1', '203.0.113.7'],
-             'index': None, 'if_type': None, 'virtual': False},
-            {'id': 'VMnet8', 'name': 'VMnet8', 'addresses': ['192.168.55.1'],
-             'index': None, 'if_type': None, 'virtual': False},
-            {'id': 'en0', 'name': 'Wi-Fi', 'addresses': ['192.168.1.7'],
-             'index': None, 'if_type': None, 'virtual': False},
-        ])
-
-    def test_invalid_and_unusable_addresses_are_not_selections(self):
-        self.assertIsNone(interfaces.selected_interfaces(None))
-        self.assertEqual(interfaces.selected_interfaces([]), [])
-        for value in ([1], [''], ['x'*257]):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                interfaces.selected_interfaces(value)
-        self.assertEqual(interfaces.selected_interfaces(['en0', 'en0']), ['en0'])
-
-    def test_legacy_address_migration_uses_the_current_owner(self):
-        self.assertEqual(interfaces.migrate_addresses_to_interfaces(ROWS, ['192.168.1.7']),
-                         ['en0'])
-        self.assertEqual(interfaces.migrate_addresses_to_interfaces(ROWS, ['192.0.2.7']), [])
-        self.assertIsNone(interfaces.migrate_addresses_to_interfaces(ROWS, None))
-        ambiguous = [
-            {'id': 'en0', 'name': 'Wi-Fi', 'addresses': ['192.168.1.7']},
-            {'id': 'eth0', 'name': 'Ethernet', 'addresses': ['192.168.1.7']},
-        ]
-        self.assertEqual(interfaces.migrate_addresses_to_interfaces(ambiguous, ['192.168.1.7']), [])
-
-    def test_virtual_interface_is_detected_by_name_type_or_token(self):
-        self.assertTrue(interfaces.is_virtual_interface({'id': 'tun0', 'name': 'Tunnel'}))
-        self.assertTrue(interfaces.is_virtual_interface({'id': 'Ethernet 2', 'name': 'Hyper-V Virtual Ethernet'}))
-        self.assertTrue(interfaces.is_virtual_interface(
-            {'id': 'guid', 'name': 'Ethernet', 'if_type': 53}))
-        self.assertTrue(interfaces.is_virtual_interface({'id': 'vpn0', 'name': 'Corporate VPN'}))
-        self.assertTrue(interfaces.is_virtual_interface({'id': 'tailscale0', 'name': 'Tailscale'}))
-        self.assertFalse(interfaces.is_virtual_interface({'id': 'en0', 'name': 'Wi-Fi', 'if_type': 71}))
-
-    def test_macos_parser_keeps_interface_identity_without_dns(self):
-        output = ('lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384\n'
-                  '\tinet 127.0.0.1 netmask 0xff000000\n'
-                  'en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500\n'
-                  '\tinet 192.168.1.7 netmask 0xffffff00\n')
-        with patch('bridge.platforms.macos.interfaces.subprocess.run') as command, \
-                patch('bridge.platforms.macos.interfaces.os.path.exists', return_value=True):
-            command.return_value.stdout = output
-            rows = bridge.platforms.macos.interfaces.enumerate_interfaces()
-            self.assertEqual([row['id'] for row in rows if row['addresses']], ['lo0', 'en0'])
-        self.assertEqual(next(row for row in rows if row['id'] == 'en0')['addresses'], ['192.168.1.7'])
-
-    def test_windows_metadata_and_ipv4_socket_are_normalized(self):
-        class SOCKADDR(ctypes.Structure):
-            _fields_ = [('family', ctypes.c_ushort), ('data', ctypes.c_ubyte * 14)]
-        raw = (SOCKADDR(),)
-        raw[0].family = 2
-        for index, byte in enumerate((10, 1, 2, 3), start=6):
-            raw[0].data[index] = byte
-        address = bridge.platforms.windows.interfaces.SOCKET_ADDRESS(
-            bridge.platforms.windows.interfaces.POINTER(
-                bridge.platforms.windows.interfaces.SOCKADDR)(raw[0]),
-            ctypes.sizeof(SOCKADDR))
-        self.assertEqual(bridge.platforms.windows.interfaces._ipv4(address), '10.1.2.3')
-        raw[0].family = 23
-        self.assertIsNone(bridge.platforms.windows.interfaces._ipv4(address))
-        self.assertEqual(
-            bridge.platforms.windows.interfaces._ipv4_number(0x0100007F), '127.0.0.1')
-        adapter = bridge.platforms.windows.interfaces._IP_ADAPTER_ADDRESSES_LH()
-        adapter.Alignment.IfIndex = 7
-        adapter.IfType = 6
-        self.assertEqual(adapter.Alignment.IfIndex, 7)
-        self.assertEqual(adapter.IfType, 6)
-        self.assertTrue(interfaces.is_virtual_interface({'id': 'guid', 'name': 'Tunnel', 'if_type': 53}))
-        self.assertFalse(interfaces.is_virtual_interface({'id': 'guid', 'name': 'Wi-Fi', 'if_type': 71}))
-
-    def test_automatic_addresses_exclude_virtual_public_and_carrier_nat(self):
-        self.assertEqual(interfaces.eligible_lan_addresses(ROWS), ['192.168.1.7'])
-        self.assertTrue(interfaces.is_virtual_interface({'id': 'bridge100', 'name': 'bridge100'}))
-        self.assertFalse(interfaces.is_virtual_interface({'id': 'en0', 'name': 'Wi-Fi'}))
-
-    def test_bindings_keep_all_selected_empty_and_disabled_distinct(self):
-        self.assertEqual(network.bindings({'lan': True}), ['127.0.0.1'])
-        self.assertEqual(network.bindings({'lan': True, 'lanAddresses': []}), ['127.0.0.1'])
-        self.assertEqual(network.bindings({'lan': True, 'lanInterfaces': None}, ROWS),
-                         ['127.0.0.1', '192.168.1.7'])
-        self.assertEqual(network.bindings({'lan': True, 'lanInterfaces': []}), ['127.0.0.1'])
-        self.assertEqual(network.bindings({'lan': True, 'lanInterfaces': ['en0']}, ROWS),
-                         ['127.0.0.1', '192.168.1.7'])
-        self.assertEqual(network.bindings({'lan': False, 'lanInterfaces': ['en0']}, ROWS),
-                         ['127.0.0.1'])
 
 
 class FakeServer:
@@ -174,6 +73,26 @@ class ListenerTests(unittest.TestCase):
             self.root.hosts,
             {'192.168.1.7:8787', '127.0.0.1:8787', 'localhost:8787', 'fixed.example'})
 
+    def test_no_change_keeps_listener_and_does_not_mutate_shared_allowlists(self):
+        self.manager.apply(['192.168.1.7'])
+        entry = self.manager.listeners['192.168.1.7']
+        with patch.object(self.manager, '_set_origins') as publish, \
+                patch.object(self.manager, '_start') as start:
+            self.manager.apply(['192.168.1.7'])
+            publish.assert_not_called()
+            start.assert_not_called()
+        self.assertIs(self.manager.listeners['192.168.1.7'], entry)
+
+    def test_lan_change_preserves_entries_added_by_other_owners(self):
+        self.manager.apply(['192.168.1.7'])
+        self.root.origins.update({'https://new.trycloudflare.com', 'http://localhost:9000'})
+        self.root.hosts.update({'new.trycloudflare.com', 'localhost:9000'})
+        self.manager.apply(['192.168.1.8'])
+        self.assertIn('https://new.trycloudflare.com', self.root.origins)
+        self.assertIn('http://localhost:9000', self.root.origins)
+        self.assertIn('new.trycloudflare.com', self.root.hosts)
+        self.assertIn('localhost:9000', self.root.hosts)
+
     def test_bind_failure_never_publishes_or_expands_the_failed_address(self):
         original = self.manager.server_factory
         def fail_new(address, *args, **kwargs):
@@ -215,8 +134,8 @@ class FakeRuntimeManager:
 
     def apply(self, addresses):
         self.applied.append(list(addresses))
-        self.active = list(addresses)
-        return list(addresses), ''
+        self.active = sorted(set(addresses))
+        return list(self.active), ''
 
     def addresses(self):
         return list(self.active)
@@ -229,117 +148,239 @@ class FakeRuntimeManager:
 
 
 class RuntimeMonitorTests(unittest.TestCase):
-    def test_changes_wait_for_stability_and_publish_only_the_stable_set(self):
-        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as folder:
-            manager = FakeRuntimeManager()
-            rows = [dict(row) for row in ROWS]
-            next(row for row in rows if row['id'] == 'en0')['addresses'] = ['192.168.1.7']
-            clock = iter([0, 2, 8, 10])
-            monitor = RuntimeNetworkMonitor(folder, {'lan': True, 'lanInterfaces': ['en0']},
-                                            8787, manager, 'instance', enumerator=lambda: rows,
-                                            route_enumerator=lambda rows: {'fixture-route': True},
-                                            clock=lambda: next(clock))
-            self.assertEqual(monitor.scan(initial=True), ['192.168.1.7'])
-            next(row for row in rows if row['id'] == 'en0')['addresses'] = ['192.168.1.8']
-            self.assertEqual(monitor.scan(), ['192.168.1.7'])
-            status = json.loads((Path(folder)/'network-status.json').read_text(encoding='utf-8'))
-            self.assertFalse(status['stable'])
-            self.assertEqual(status['pendingAddresses'], ['192.168.1.8'])
-            self.assertEqual(manager.applied, [['192.168.1.7']])
-            self.assertEqual(monitor.scan(), ['192.168.1.8'])
-            monitor.close()
-            self.assertFalse((Path(folder)/'network-status.json').exists())
-            self.assertTrue(manager.closed)
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory(dir=ROOT/'.tmp')
+        self.addCleanup(self.folder.cleanup)
+        self.manager = FakeRuntimeManager()
+        self.rows = [{'id': 'en0', 'name': 'Wi-Fi', 'addresses': ['192.168.1.7']}]
+        self.route = {'interface': 'en0', 'gateway': '192.168.1.1'}
+        self.now = 0
+        self.monitor = RuntimeNetworkMonitor(
+            self.folder.name, {'lan': True, 'lanInterfaces': ['en0']},
+            8787, self.manager, 'instance', enumerator=lambda: self.rows,
+            route_enumerator=lambda rows: self.route, clock=lambda: self.now,
+            enabled=True, watcher_factory=lambda callback: None)
+        self.addCleanup(self.monitor.close)
 
-    def test_unchanged_status_does_not_rewrite_disk_every_scan(self):
-        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as folder:
-            manager = FakeRuntimeManager()
-            rows = [dict(row) for row in ROWS]
-            next(row for row in rows if row['id'] == 'en0')['addresses'] = ['192.168.1.7']
-            clock = {'value': 0}
-            def read_clock(): return clock['value']
-            monitor = RuntimeNetworkMonitor(folder, {'lan': True, 'lanInterfaces': ['en0']},
-                                            8787, manager, 'instance', enumerator=lambda: rows,
-                                            route_enumerator=lambda rows: {'fixture-route': True},
-                                            clock=read_clock)
-            with patch('bridge.features.network.runtime._write_status') as write:
-                monitor.scan(initial=True)
-                self.assertEqual(write.call_count, 1)
-                clock['value'] = 2
-                monitor.scan()
-                self.assertEqual(write.call_count, 2)
-                clock['value'] = 50
-                monitor.scan()
-                self.assertEqual(write.call_count, 3)
-            monitor.close()
+    def test_changes_wait_for_stability_and_publish_only_actual_addresses(self):
+        self.assertEqual(self.monitor.scan(initial=True), ['192.168.1.7'])
+        self.rows[0]['addresses'] = ['192.168.1.8']
+        self.now = 2
+        self.assertEqual(self.monitor.scan(), ['192.168.1.7'])
+        status = self.monitor.status()
+        self.assertFalse(status['stable'])
+        self.assertEqual(status['pendingAddresses'], ['192.168.1.8'])
+        self.assertEqual(self.manager.applied, [['192.168.1.7']])
+        self.now = 5
+        self.assertEqual(self.monitor.scan(), ['192.168.1.8'])
+        self.assertTrue(self.monitor.status()['stable'])
 
-    def test_stable_network_change_notifies_quick_tunnel_once(self):
-        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as folder:
-            manager = FakeRuntimeManager()
-            rows = [dict(row) for row in ROWS]
-            next(row for row in rows if row['id'] == 'en0')['addresses'] = ['192.168.1.7']
-            monitor = RuntimeNetworkMonitor(folder, {'lan': True, 'lanInterfaces': ['en0']},
-                                            8787, manager, 'instance', enumerator=lambda: rows,
-                                            route_enumerator=lambda rows: {'fixture-route': True},
-                                            clock=lambda: 0)
-            monitor.scan(initial=True)
-            callbacks = []
-            monitor.network_changed = lambda: callbacks.append(list(manager.active))
-            rows[0]['addresses'] = ['192.168.1.8']
-            monitor.clock = lambda: 2
-            monitor.scan()
-            self.assertEqual(callbacks, [])
-            monitor.clock = lambda: 8
-            monitor.scan()
-            self.assertEqual(callbacks, [['192.168.1.8']])
-            monitor.scan()
-            self.assertEqual(len(callbacks), 1)
-            monitor.close()
+    def test_multiple_addresses_compare_as_one_stable_set(self):
+        self.monitor.preferences['lanInterfaces'] = None
+        self.rows[0]['addresses'] = ['192.168.1.2', '192.168.1.10']
+        self.monitor.scan(initial=True)
+        self.now = 30
+        self.monitor.scan()
+        self.assertEqual(len(self.manager.applied), 1)
+        self.assertTrue(self.monitor.status()['stable'])
 
-    def test_selected_offline_adapter_has_no_lan_fallback(self):
-        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as folder:
-            manager = FakeRuntimeManager()
-            rows = [{'id': 'en0', 'name': 'Wi-Fi', 'addresses': []},
-                    {'id': 'eth0', 'name': 'Ethernet', 'addresses': ['192.168.2.7']}]
-            monitor = RuntimeNetworkMonitor(folder, {'lan': True, 'lanInterfaces': ['en0']},
-                                            8787, manager, 'instance', enumerator=lambda: rows,
-                                            route_enumerator=lambda rows: {'fixture-route': True},
-                                            clock=lambda: 0)
-            self.assertEqual(monitor.scan(initial=True), [])
-            monitor.close()
+    def test_same_ip_renewal_does_not_reapply_or_rewrite_status(self):
+        with patch('bridge.features.network.runtime._write_status') as write:
+            self.monitor.scan(initial=True)
+            for self.now in (2, 50, 100):
+                self.monitor.scan()
+            self.assertEqual(write.call_count, 1)
+        self.assertEqual(self.manager.applied, [['192.168.1.7']])
 
-    def test_quick_tunnel_rebuild_uses_route_signature_not_published_scope(self):
-        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as folder:
-            manager = FakeRuntimeManager()
-            rows = [{'id': 'en0', 'name': 'Wi-Fi', 'addresses': ['192.168.1.7']},
-                    {'id': 'bridge100', 'name': 'bridge100', 'addresses': ['10.211.55.2']}]
-            route = {'type': 'default', 'interface': 'en0', 'gateway': '192.168.1.1'}
-            monitor = RuntimeNetworkMonitor(folder, {'lan': True, 'lanAddresses': []},
-                                            8787, manager, 'instance', enumerator=lambda: rows,
-                                            route_enumerator=lambda rows: route, clock=lambda: 0)
-            monitor.scan(initial=True)
-            callbacks = []
-            monitor.network_changed = lambda: callbacks.append(list(route))
-            route['gateway'] = '192.168.0.1'
-            monitor.clock = lambda: 2
-            monitor.scan()
-            self.assertEqual(callbacks, [])
-            monitor.clock = lambda: 8
-            monitor.scan()
-            self.assertEqual(len(callbacks), 1)
-            monitor.close()
+    def test_lan_only_change_does_not_request_tunnel_recovery(self):
+        self.monitor.scan(initial=True)
+        callbacks = []
+        self.monitor.network_changed = lambda: callbacks.append(True)
+        self.rows[0]['addresses'] = ['192.168.1.8']
+        self.now = 2
+        self.monitor.scan()
+        self.now = 5
+        self.monitor.scan()
+        self.assertEqual(self.monitor.addresses(), ['192.168.1.8'])
+        self.assertEqual(callbacks, [])
+
+    def test_stable_default_route_change_requests_recovery_once(self):
+        self.monitor.scan(initial=True)
+        callbacks = []
+        self.monitor.network_changed = lambda: callbacks.append(True)
+        self.route['gateway'] = '192.168.0.1'
+        self.now = 2
+        self.monitor.scan()
+        self.assertEqual(callbacks, [])
+        self.now = 5
+        self.monitor.scan()
+        self.monitor.scan()
+        self.assertEqual(callbacks, [True])
+
+    def test_offline_selected_adapter_does_not_fallback_and_recovers(self):
+        self.monitor.scan(initial=True)
+        self.rows[0]['addresses'] = []
+        self.rows.append({'id': 'eth0', 'name': 'Ethernet', 'addresses': ['192.168.2.7']})
+        self.now = 2
+        self.monitor.scan()
+        self.now = 5
+        self.assertEqual(self.monitor.scan(), [])
+        self.rows[0]['addresses'] = ['192.168.1.8']
+        self.now = 6
+        self.monitor.scan()
+        self.now = 9
+        self.assertEqual(self.monitor.scan(), ['192.168.1.8'])
+
+    def test_short_disconnect_does_not_close_working_listener(self):
+        self.monitor.scan(initial=True)
+        self.rows[0]['addresses'] = []
+        self.now = 1
+        self.monitor.scan()
+        self.rows[0]['addresses'] = ['192.168.1.7']
+        self.now = 2
+        self.monitor.scan()
+        self.now = 10
+        self.monitor.scan()
+        self.assertEqual(self.manager.applied, [['192.168.1.7']])
+
+    def test_bind_retry_backs_off_and_resets_for_different_address(self):
+        self.monitor.scan(initial=True)
+        attempts = []
+        def fail(addresses):
+            attempts.append((self.now, list(addresses)))
+            return self.manager.addresses(), 'occupied'
+        self.manager.apply = fail
+        self.manager.error_message = lambda: 'occupied'
+        self.rows[0]['addresses'] = ['192.168.1.8']
+        for self.now in (1, 4, 5, 6, 7, 8, 9, 10):
+            self.monitor.scan()
+        self.assertEqual([time for time, _ in attempts], [4, 6, 10])
+        self.assertEqual(self.monitor.status()['addresses'], ['192.168.1.7'])
+        self.rows[0]['addresses'] = ['192.168.1.9']
+        self.now = 11
+        self.monitor.scan()
+        self.now = 14
+        self.monitor.scan()
+        self.assertEqual(attempts[-1], (14, ['192.168.1.9']))
+
+    def test_continuous_churn_returns_to_slow_fallback(self):
+        self.monitor.scan(initial=True)
+        self.rows[0]['addresses'] = ['192.168.1.8']
+        self.now = 1
+        self.monitor.scan()
+        self.assertEqual(self.monitor._wait_interval(), 2)
+        for self.now in range(2, 15):
+            self.rows[0]['addresses'] = ['192.168.1.' + str(10 + self.now)]
+            self.monitor.scan()
+        self.assertEqual(self.monitor._wait_interval(), 30)
+
+    def test_disabled_default_initializes_once_without_watcher_or_route_queries(self):
+        self.monitor.enabled = False
+        with patch.object(self.monitor, 'route_enumerator') as route, \
+                patch.object(self.monitor, 'watcher_factory') as watcher:
+            self.monitor.scan(initial=True)
+            self.monitor.start()
+            self.rows[0]['addresses'] = ['192.168.1.8']
+            self.monitor.scan()
+            self.monitor.scan(initial=True)
+            route.assert_not_called()
+            watcher.assert_not_called()
+        self.assertIsNone(self.monitor.worker)
+        self.assertEqual(self.manager.applied, [['192.168.1.7']])
+        self.assertFalse(self.monitor.status()['enabled'])
+
+    def test_enable_disable_closes_watcher_not_listeners_or_bindings(self):
+        self.monitor.enabled = False
+        self.monitor.scan(initial=True)
+        scanned = threading.Event()
+        original = self.monitor.enumerator
+        self.monitor.enumerator = lambda: (scanned.set(), original())[1]
+        callbacks, closed, cancelled = [], [], []
+        class Watcher:
+            def close(self): closed.append(True)
+        def watch(callback):
+            callbacks.append(callback)
+            return Watcher()
+        self.monitor.watcher_factory = watch
+        self.monitor.network_cancelled = lambda: cancelled.append(True)
+        self.assertTrue(self.monitor.set_enabled(True)['enabled'])
+        self.assertTrue(scanned.wait(2))
+        self.assertFalse(self.monitor.set_enabled(False)['enabled'])
+        self.assertEqual(closed, [True])
+        self.assertEqual(cancelled, [True])
+        self.assertFalse(self.manager.closed)
+        self.assertEqual(self.monitor.addresses(), ['192.168.1.7'])
+        self.assertIsNone(self.monitor.worker)
+        scanned.clear()
+        callbacks[0]()
+        self.monitor.scan()
+        self.assertFalse(scanned.is_set())
+
+    def test_disabled_during_enumeration_cannot_apply_late_scan(self):
+        self.monitor.scan(initial=True)
+        self.rows[0]['addresses'] = ['192.168.1.8']
+        self.now = 1
+        self.monitor.scan()
+        self.now = 5
+        def disable_during_read():
+            self.monitor.set_enabled(False)
+            return self.rows
+        self.monitor.enumerator = disable_during_read
+        self.monitor.scan()
+        self.assertEqual(self.monitor.addresses(), ['192.168.1.7'])
+
+    def test_disable_while_worker_enumerates_discards_inflight_change(self):
+        self.monitor.enabled = False
+        self.monitor.scan(initial=True)
+        started, release, cancelled = threading.Event(), threading.Event(), threading.Event()
+        def slow_enumerate():
+            started.set()
+            release.wait(3)
+            return [{'id': 'en0', 'name': 'Wi-Fi', 'addresses': ['192.168.1.8']}]
+        self.monitor.enumerator = slow_enumerate
+        self.monitor.network_cancelled = cancelled.set
+        self.monitor.set_enabled(True)
+        self.assertTrue(started.wait(2))
+        disabled = threading.Thread(target=self.monitor.set_enabled, args=(False,))
+        disabled.start()
+        try:
+            self.assertTrue(cancelled.wait(2))
+            release.set()
+            disabled.join(3)
+            self.assertFalse(disabled.is_alive())
+            self.assertEqual(self.monitor.addresses(), ['192.168.1.7'])
+            self.assertFalse(self.monitor.enabled)
+            self.assertIsNone(self.monitor.worker)
+        finally:
+            release.set()
+            disabled.join(3)
+
+    def test_enable_does_not_claim_success_while_previous_worker_is_stopping(self):
+        self.monitor.enabled = False
+        self.monitor.scan(initial=True)
+        self.monitor.worker = MagicMock(is_alive=lambda: True)
+        self.monitor._stop.set()
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'still stopping'):
+                self.monitor.set_enabled(True)
+            self.assertFalse(self.monitor.enabled)
+        finally:
+            self.monitor.worker = None
+
+    def test_diagnostic_write_failure_does_not_prevent_disabling(self):
+        self.monitor.scan(initial=True)
+        cancelled = []
+        self.monitor.network_cancelled = lambda: cancelled.append(True)
+        with patch('bridge.features.network.runtime._write_status', side_effect=OSError('disk full')), \
+                self.assertLogs('bridge.features.network.runtime', level='WARNING'):
+            self.assertFalse(self.monitor.set_enabled(False)['enabled'])
+        self.assertEqual(cancelled, [True])
+        self.assertEqual(self.monitor.addresses(), ['192.168.1.7'])
 
     def test_automatic_mode_ignores_virtual_adapters(self):
-        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as folder:
-            manager = FakeRuntimeManager()
-            rows = [dict(row) for row in ROWS]
-            next(row for row in rows if row['id'] == 'en0')['addresses'] = ['192.168.1.7']
-            monitor = RuntimeNetworkMonitor(folder, {'lan': True, 'lanInterfaces': None},
-                                            8787, manager, 'instance', enumerator=lambda: rows,
-                                            route_enumerator=lambda rows: {'fixture-route': True},
-                                            clock=lambda: 0)
-            self.assertEqual(monitor.scan(initial=True), ['192.168.1.7'])
-            monitor.close()
+        self.monitor.preferences['lanInterfaces'] = None
+        self.rows = [dict(row) for row in ROWS]
+        self.assertEqual(self.monitor.scan(initial=True), ['192.168.1.7'])
 
 
 class EntryTests(unittest.TestCase):

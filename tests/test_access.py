@@ -451,12 +451,13 @@ class ConcurrentRuntimeTests(unittest.TestCase):
                 old_process.terminate.assert_called_once()
                 new_process.terminate.assert_called_once()
 
-    def test_quick_tunnel_replaces_healthy_session_after_network_change(self):
+    def test_quick_tunnel_replaces_session_after_repeated_local_readiness_failure(self):
         with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as directory:
             data = Path(directory)
             executable = data/'cloudflared';executable.touch()
             old_gate, new_gate = threading.Event(), threading.Event()
             old_process = MagicMock(stdout=LineStream([
+                'Starting metrics server on 127.0.0.1:43210/metrics',
                 'https://old-network.trycloudflare.com',
                 'Registered tunnel connection',
             ], old_gate))
@@ -470,6 +471,9 @@ class ConcurrentRuntimeTests(unittest.TestCase):
             new_process.terminate.side_effect = new_gate.set
             tunnel = QuickTunnel(executable, 8787, data, MagicMock())
             tunnel.RESTART_DELAY = 0
+            tunnel.NETWORK_GRACE = 0
+            tunnel.NETWORK_RECHECK = 0
+            tunnel._local_readiness = lambda port: False
 
             old_origin = threading.Event()
             new_origin = threading.Event()
@@ -484,7 +488,6 @@ class ConcurrentRuntimeTests(unittest.TestCase):
                     self.assertTrue(old_origin.wait(5), 'First Quick Tunnel was not established')
                     self.assertTrue(tunnel.ready.wait(1))
                     self.assertTrue(tunnel.network_changed())
-                    self.assertFalse(tunnel.ready.is_set())
                     self.assertTrue(new_origin.wait(5), 'Network change did not replace Quick Tunnel')
                     starter.join(3)
                     self.assertFalse(starter.is_alive())
@@ -507,7 +510,7 @@ class ConcurrentRuntimeTests(unittest.TestCase):
             tunnel.ready.set()
             self.assertTrue(tunnel.entry_stable())
             tunnel.network_changed()
-            self.assertFalse(tunnel.entry_stable())
+            self.assertTrue(tunnel.entry_stable())
             tunnel.finished.set()
             self.assertFalse(tunnel.entry_stable())
         finally:

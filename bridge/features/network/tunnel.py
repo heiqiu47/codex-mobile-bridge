@@ -1,5 +1,8 @@
 """An opt-in Cloudflare Quick Tunnel whose lifetime follows this gateway."""
 import os
+import http.client
+import json
+import time
 import re
 import subprocess
 import threading
@@ -13,8 +16,12 @@ class QuickTunnel:
     LOST_TUNNEL = re.compile(r'Unauthorized: Tunnel not found')
     RESTART_DELAY = 2
     START_POLL = 0.5
+    NETWORK_GRACE = 15.0
+    NETWORK_RECHECK = 10.0
+    NETWORK_COOLDOWN = 120.0
+    METRICS = re.compile(r'Starting metrics server on 127\.0\.0\.1:(\d+)/metrics\b')
 
-    def __init__(self, executable, port, data_dir, on_origin):
+    def __init__(self, executable, port, data_dir, on_origin, clock=time.monotonic):
         self.executable = Path(executable)
         self.port = port
         self.data_dir = Path(data_dir)
@@ -29,28 +36,91 @@ class QuickTunnel:
         self.lifecycle_lock = threading.Lock()
         self.supervisor = None
         self.reader = None
+        self.clock = clock
+        self.metrics_port = None
+        self._network_due = None
+        self._network_epoch = 0
+        self._network_failures = 0
+        self._network_checks = 0
+        self._network_cooldown = 0.0
 
     def status(self, state, message):
         write_json(self.data_dir/'cloudflare-status.json', {'pid': os.getpid(), 'state': state, 'message': message})
 
     def network_changed(self):
-        """Replace a healthy Quick Tunnel after the local route has changed.
+        """Allow cloudflared to recover before checking its local readiness.
 
-        cloudflared often recovers by itself, but a long-lived edge session can
-        remain half-alive on the previous interface.  A stable address change
-        is the explicit signal to retire the old session and publish a fresh
-        Quick Tunnel; the supervisor owns the replacement.
+        A route change is not evidence of failure. Keep the current URL and
+        permissions while waiting; only repeated /ready failures justify a
+        replacement. LAN-only changes never call this method.
         """
         with self.lifecycle_lock:
             if self.closed.is_set():
                 return False
-            self.ready.clear()
-            self.broken.set()
-            # Wake a spawn loop parked on ready.wait(); otherwise a busy
-            # runner can delay observing broken until the poll timeout.
-            self.finished.set()
-        self.status('reconnecting', '电脑网络已变化，正在重建临时 HTTPS；网址会变化。')
+            self._network_epoch += 1
+            self._network_due = max(self.clock() + self.NETWORK_GRACE, self._network_cooldown)
+            self._network_failures = 0
+            self._network_checks = 0
         return True
+
+    def cancel_network_check(self):
+        with self.lifecycle_lock:
+            self._network_epoch += 1
+            self._network_due = None
+            self._network_failures = 0
+            self._network_checks = 0
+
+    def _local_readiness(self, port):
+        # The endpoint comes only from this child's own metrics log. Do not use
+        # proxy configuration, follow redirects, or contact a public hostname.
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=2)
+        try:
+            connection.request('GET', '/ready')
+            response = connection.getresponse()
+            body = json.loads(response.read(4096))
+            if not isinstance(body, dict):
+                return None
+            connections = body.get('readyConnections')
+            if response.status == 200 and isinstance(connections, int) and connections > 0:
+                return True
+            if response.status == 503 and connections == 0:
+                return False
+        except (OSError, ValueError, http.client.HTTPException):
+            pass
+        finally:
+            connection.close()
+        # An unavailable/unknown metrics endpoint does not prove tunnel loss.
+        return None
+
+    def _check_network_recovery(self):
+        with self.lifecycle_lock:
+            now = self.clock()
+            if self._network_due is None or now < self._network_due or self.closed.is_set():
+                return
+            process, port, epoch = self.process, self.metrics_port, self._network_epoch
+            if not process or process.poll() is not None:
+                self._network_due = None
+                return  # Existing process-exit recovery belongs to the supervisor.
+        healthy = self._local_readiness(port) if port else None
+        with self.lifecycle_lock:
+            if (self.closed.is_set() or process is not self.process or
+                    process.poll() is not None or epoch != self._network_epoch):
+                return
+            self._network_checks += 1
+            self._network_failures = self._network_failures + 1 if healthy is False else 0
+            if healthy is True:
+                self._network_due = None
+            elif self._network_failures >= 2:
+                self._network_due = None
+                self._network_cooldown = self.clock() + self.NETWORK_COOLDOWN
+                self.ready.clear()
+                self.broken.set()
+                self.finished.set()
+                self.status('reconnecting', '临时 HTTPS 在网络变化后未恢复，正在重新连接；网址会变化。')
+            elif self._network_checks >= 3:
+                self._network_due = None
+            else:
+                self._network_due = self.clock() + self.NETWORK_RECHECK
 
     def entry_stable(self):
         """True when entry URLs may be published without a transient rebuild."""
@@ -82,7 +152,7 @@ class QuickTunnel:
             delay = self.RESTART_DELAY
             if self._spawn():
                 while not (self.broken.wait(0.5) or self.finished.wait(0) or self.closed.is_set()):
-                    pass
+                    self._check_network_recovery()
                 if self.closed.is_set():
                     break
                 if self.finished.is_set():
@@ -105,6 +175,7 @@ class QuickTunnel:
             if self.closed.is_set():
                 return False
             self.url = None
+            self.metrics_port = None
             self.ready.clear()
             self.finished.clear()
             self.broken.clear()
@@ -118,6 +189,7 @@ class QuickTunnel:
                 return True
             if self.broken.is_set() or self.finished.is_set():
                 return False
+            self._check_network_recovery()
             self.ready.wait(self.START_POLL)
         return False
 
@@ -128,9 +200,12 @@ class QuickTunnel:
                     log.write(line)
                     log.flush()
                     match = self.URL.search(line)
+                    metrics = self.METRICS.search(line)
                     with self.lifecycle_lock:
-                        if self.closed.is_set():
+                        if self.closed.is_set() or self.process is not process:
                             break
+                        if metrics and 0 < int(metrics[1]) < 65536:
+                            self.metrics_port = int(metrics[1])
                         if match and not self.url:
                             self.url = match[0]
                             self.on_origin(self.url)
@@ -145,7 +220,8 @@ class QuickTunnel:
         finally:
             if not self.closed.is_set() and self.process is process and not self.broken.is_set():
                 self.status('failed', '临时 HTTPS 连接已中断，请查看 Cloudflare 日志并重启网关重试；局域网仍可使用。')
-            self.finished.set()
+            if self.process is process:
+                self.finished.set()
 
     def _retire(self):
         with self.lifecycle_lock:
@@ -153,6 +229,9 @@ class QuickTunnel:
             reader = self.reader
             self.process = None
             self.reader = None
+            self.metrics_port = None
+            self._network_epoch += 1
+            self._network_due = None
         if process and process.poll() is None:
             process.terminate()
             try:
@@ -166,6 +245,7 @@ class QuickTunnel:
     def close(self):
         # Mark closed before waiting for a concurrent spawn to finish.
         self.closed.set()
+        self.cancel_network_check()
         self._retire()
         with self.lifecycle_lock:
             path = self.data_dir / '外网地址.txt'
