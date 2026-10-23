@@ -1,3 +1,32 @@
+<a id="pr63-network-adaptation"></a>
+
+# PR #63 可选网络恢复本地验收（2026-10-23，未发布）
+
+分支 `feature/pr63-network-adaptation-opt-in` 基于 `v2.1.4-preview.1`（`4c251de`），通过合并保留 [@qybgh](https://github.com/qybgh) 的 [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63) 全部 8 个原始提交；修订另行提交。Test 包源码固定为 `11bbba74b81d88c6b6a46a29f3eaf60da953d4ca`，版本仍为 `2.1.4-preview.1`，未推送 GitHub、未合并 main、未发布更新。
+
+- 默认关闭「网络变化自动恢复」。桌面网关的「网络访问」和登录后的 Web/手机「应用管理 → 网关连接」共享即时保存的开关；关闭时不启动后台网卡/路由变化监视器。开关单独保存，普通配置表单不会覆盖手机端刚保存的值。保存结果不明时只读回查，不重放写入。
+- 开启后使用平台原生事件与 30 秒低频兜底，合并短时事件并等待地址稳定。同 IP 续期不重绑，绑定失败使用有上限的退避，仅发布实际成功监听的地址。
+- 修正 Windows 网卡结构及 IPv4 地址偏移；旧 IP 选择逐项迁移为唯一网卡身份，保留多网卡和旧字段。迁移只在明确启动时保存，不由状态读取写盘。歧义匹配不扩大访问范围。
+- Quick Tunnel 的局域网地址变化不直接触发重建；路由变化先留恢复时间，再检查当前自有进程的本机就绪端点。连续明确失败后才有限重建，且有冷却时间；未知健康结果不当成失败。固定域名隧道、Tailscale 等仍使用原有恢复机制。
+
+| 范围 | 当前证据 |
+| --- | --- |
+| 完整源码回归 | Python discovery 2,127 项：2,046 通过、81 跳过。前端 876 项：875 通过、1 跳过。最终迁移、控制与网络修订另做定向复验；首次沙箱禁止本机监听的检查在获准监听后通过，没有修改产品代码绕过测试 |
+| 原生平台 | Mac 原生路由监视器创建/关闭通过；Windows、Ubuntu 各 80 项定向测试通过，涵盖平台枚举、运行时、真实回环监听地址变化和断开恢复、鉴权控制、旧配置迁移及 Quick Tunnel 策略 |
+| 浏览器 | 真实 Chromium 中英界面，宽屏与 390px 手机视口：默认关闭、打开不写入、单次切换单次写入、设置复用、CSRF、丢响应后只读确认、未知状态冻结和无横向溢出通过 |
+| Mac arm64 Test | 新冻结后端通过 25 项回环与本机控制检查，含启停/重启持久化和合成可信手机会话保留。已覆盖并启动 8788；实际 App 确认开关未启用，固定 HTTPS 入口在真实浏览器中显示登录页。正式版进程/文件不变，原登录会话保留；仅为 Test 的旧局域网选择新增 `lanInterfaces`，原字段保留 |
+| Windows x64 Test | 新冻结后端与完整 NSIS 包已覆盖安装，706 项载荷、二维码、完整 ConPTY、F 盘数据指针和独立 Test 自启动检查通过。普通桌面会话的实际 GUI、新开关默认关闭、8788 启动及版本资源 immutable/304 通过；正式版、原配置和有效手机登录记录保留。GUI 续验仅修订窗口可见性检查脚本，未重装或修改产品源码 |
+| Ubuntu x64 Test | 新冻结后端和独立 DEB 已覆盖安装，713 项应用载荷及 3 项包管理文件匹配。实际 GUI、新开关默认关闭、8788 启动与静态资源缓存通过；保留原 `localAccess=false`，网页验收使用实际监听的局域网入口，未为测试修改配置。正式版、原配置与有效手机登录记录保留 |
+| 手机 | 使用现有 Android/iOS App 加载网关共享 Web 控件，无原生代码或应用标识变化。本轮手机布局为 Chromium 视口验收，未冒充 Android/iPhone 真机触控验收 |
+
+测试以隔离配置、回环监听和受控网卡/路由/隧道事件验证 DHCP 地址替换、同 IP 续期、断网恢复及失败退避，没有修改用户真实网卡、释放 DHCP 租约或中断正式网络。手机中保存的旧 IP 不会因网关恢复自动变为新 IP；使用新地址、重新扫码或稳定域名连接，原认证与绑定继续保留。真实物理切网和手机跨 IP 重连由本轮 Test 继续实测。
+
+Windows 构建与临时产物均在 F 盘，与 Ubuntu 虚拟机构建串行进行；复用既有依赖，未安装新软件。验收后清理 Mac 旧 Test 和重复中间产物约 841 MiB、Windows 本轮重复构建文件约 1.10 GiB（按文件逻辑大小），Ubuntu 本轮重复产物约 1.34 GiB（按已分配空间）。保留当前已安装 Test、唯一 NSIS/DEB 安装器、源码归档、清单与日志；上述口径不同，不作为三端实际释放空间的精确总和。详细本地证据位于 `.tmp/pr63-integration-20261023/`，不提交配置、凭据或编译产物。
+
+**English:** this local, unpublished integration preserves all eight original PR #63 commits and adds default-off network recovery controls shared by desktop and authenticated Web/mobile clients. Native event monitoring, bounded fallback/retries, adapter migration and conservative Quick Tunnel recovery have targeted regression coverage on Mac, Windows and Linux. All three installed Test gateways passed startup, visible GUI and preservation checks; Windows and Ubuntu also verified versioned asset caching. No real DHCP lease or physical network was changed. Mobile viewport tests are distinguished from physical-device acceptance, and saved old-IP client addresses still require an updated address or stable hostname.
+
+---
+
 <a id="v214-preview1"></a>
 
 # v2.1.4-preview.1 启动恢复验收（2026-10-22）
