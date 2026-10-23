@@ -10,9 +10,11 @@ import sys
 import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 
 from bridge.clients.claude import model
+from bridge.clients.claude.history import page as history_page
 from bridge.clients.claude.context import context_fields
 from bridge.clients.claude.session_registry import assert_session_closed
 from bridge.clients.errors import BridgeUnavailable
@@ -284,40 +286,90 @@ def _message_content(body):
 def _saved(path, origin):
     try:
         native = str(uuid.UUID(path.stem))
-        events = _events(path)
+        stat = path.stat()
     except (OSError, ValueError):
         return None
-    users = [event for event in events if event.get('type') == 'user' and not event.get('isSidechain')]
-    if not users:
-        return None
-    first = users[0]
-    cwd = next((event.get('cwd') for event in reversed(events)
-                if event.get('type') in ('user', 'assistant') and isinstance(event.get('cwd'), str)
-                and event.get('cwd')), '')
-    if not cwd:
-        return None
-    assistants = [event for event in events if event.get('type') == 'assistant'
-                  and isinstance(event.get('message'), dict)]
-    selected_model = next((event['message'].get('model') for event in reversed(assistants)
-                           if isinstance(event['message'].get('model'), str)
-                           and event['message'].get('model') != '<synthetic>'), '')
-    permission = next((event.get('mode') for event in reversed(events)
-                       if event.get('type') == 'mode' and event.get('mode') in MODES), None)
-    if permission is None:
-        permission = next((event.get('permissionMode') for event in reversed(users)
-                           if event.get('permissionMode') in MODES), None)
-    message = first.get('message') if isinstance(first.get('message'), dict) else {}
-    lines = _text(message.get('content')).strip().splitlines()
-    title = lines[0][:120] if lines else 'Claude Code 会话'
+    title, cwd, selected_model, permission = None, '', '', None
+    user_permission = None
+    recent = deque(maxlen=128)
+    context_events = deque(maxlen=3)
     try:
-        updated = path.stat().st_mtime
+        with path.open(encoding='utf-8', errors='replace') as source:
+            for line in source:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                kind = event.get('type')
+                if kind == 'user' and not event.get('isSidechain'):
+                    if title is None:
+                        message = event.get('message') if isinstance(event.get('message'), dict) else {}
+                        lines = _text(message.get('content')).strip().splitlines()
+                        title = lines[0][:120] if lines else 'Claude Code 会话'
+                    if event.get('permissionMode') in MODES:
+                        user_permission = event['permissionMode']
+                    if isinstance(event.get('uuid'), str):
+                        recent.append({'type': 'user', 'uuid': event['uuid']})
+                if kind in ('user', 'assistant') and isinstance(event.get('cwd'), str) and event['cwd']:
+                    cwd = event['cwd']
+                if kind == 'assistant' and isinstance(event.get('message'), dict):
+                    candidate = event['message'].get('model')
+                    if isinstance(candidate, str) and candidate != '<synthetic>':
+                        selected_model = candidate
+                if kind == 'mode' and event.get('mode') in MODES:
+                    permission = event['mode']
+                if (kind == 'assistant' and not any(event.get(key) for key in
+                     ('isSidechain', 'parent_tool_use_id', 'isSynthetic', 'isMeta', 'isCompactSummary'))
+                        and isinstance(event.get('message'), dict)
+                        and isinstance(event['message'].get('usage'), dict)
+                        and type(event['message']['usage'].get('input_tokens')) is int
+                        and event['message']['usage']['input_tokens'] >= 0):
+                    compacted = bool(context_events and context_events[0].get('subtype') == 'compact_boundary')
+                    context_events.clear()
+                    if compacted:
+                        context_events.append({'type': 'system', 'subtype': 'compact_boundary'})
+                    context_events.append({**{key: event[key] for key in ('type', 'isSidechain', 'parent_tool_use_id',
+                                           'isSynthetic', 'isMeta', 'isCompactSummary') if key in event},
+                                           'message': {key: event['message'][key] for key in
+                                                       ('usage', 'model', 'context_window') if key in event['message']}})
+                elif kind == 'system' and event.get('subtype') == 'compact_boundary':
+                    context_events.clear()
+                    context_events.append({'type': 'system', 'subtype': 'compact_boundary'})
+                elif (kind == 'result' and context_events and
+                      not any(event.get(key) for key in ('isSidechain', 'parent_tool_use_id',
+                              'isSyntheticResult', 'isSynthetic', 'isMeta', 'isCompactSummary'))):
+                    assistant = next((item for item in context_events if item.get('type') == 'assistant'), None)
+                    model_name = (assistant or {}).get('message', {}).get('model')
+                    models = event.get('modelUsage')
+                    details = models.get(model_name) if isinstance(models, dict) else None
+                    capacity = details.get('contextWindow') if isinstance(details, dict) else None
+                    if model_name and type(capacity) is int and capacity > 0:
+                        if context_events[-1].get('type') == 'result':
+                            context_events.pop()
+                        context_events.append({'type': 'result', 'modelUsage': {model_name: {'contextWindow': capacity}}})
     except OSError:
         return None
+    try:
+        final = path.stat()
+    except OSError:
+        return None
+    if (final.st_dev, final.st_ino, final.st_size, final.st_mtime_ns, final.st_ctime_ns) != (
+            stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns):
+        return None
+    if title is None:
+        return None
+    if not cwd:
+        return None
+    if permission is None:
+        permission = user_permission
     return {'id': model.gateway_id('cli:' + origin, native), 'nativeId': native, 'backend': 'cli', 'mode': 'cli',
             'host': 'local', 'title': title, 'cwd': cwd, 'model': selected_model,
             'permissionMode': permission or 'default', 'permissionKnown': permission is not None,
-            'updatedAt': updated, 'archived': False, 'origin': origin, 'path': path,
-            'events': events}
+            'updatedAt': stat.st_mtime, 'archived': False, 'origin': origin, 'path': path,
+            'stamp': (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns),
+            'events': list(recent), 'contextEvents': list(context_events)}
 
 
 class _Owned:
@@ -513,7 +565,7 @@ class ClaudeCli:
                 for path in project.glob('*.jsonl'):
                     if path.is_symlink():
                         continue
-                    row = _saved(path, profile['origin'])
+                    row = self._saved_cached(path, profile['origin'])
                     if row:
                         rows[row['id']] = row
         with self.lock:
@@ -522,8 +574,8 @@ class ClaudeCli:
         return {'connected': True, 'sessions': public}
 
     def _public(self, row):
-        value = {key: item for key, item in row.items() if key not in ('events', 'path', 'origin', 'permissionKnown')}
-        value.update(context_fields(row['events']))
+        value = {key: item for key, item in row.items() if key not in ('events', 'contextEvents', 'stamp', 'path', 'origin', 'permissionKnown')}
+        value.update(context_fields(row['contextEvents']))
         owned = self.owned.get(row['nativeId'])
         live = owned and owned.origin == row['origin'] and owned.process.poll() is None and not owned.error
         if live:
@@ -550,7 +602,7 @@ class ClaudeCli:
             cached = self.index.get(sid)
         row = None
         if cached and profile and cached['origin'] == profile['origin'] and not cached['path'].is_symlink():
-            row = _saved(cached['path'], profile['origin'])
+            row = self._saved_cached(cached['path'], profile['origin'])
             if row:
                 with self.lock:
                     self.index[sid] = row
@@ -561,6 +613,19 @@ class ClaudeCli:
         if row is None:
             raise ValueError('找不到 Claude Code 会话或原账号配置已切换')
         return row
+
+    def _saved_cached(self, path, origin):
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        stamp = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+        sid = model.gateway_id('cli:' + origin, path.stem)
+        with self.lock:
+            cached = self.index.get(sid)
+        if cached and cached['origin'] == origin and cached.get('stamp') == stamp and cached['path'] == path:
+            return cached
+        return _saved(path, origin)
 
     def contains(self, sid):
         profile = self.profile_resolver()
@@ -650,18 +715,26 @@ class ClaudeCli:
             public = self._public(row)
             live = owned is not None
             if action == 'detail':
+                before = body.get('historyBefore')
+                if before is not None and (not isinstance(before, str) or len(before) > 1024):
+                    raise ValueError('Claude 历史游标无效')
+                limit = body.get('historyLimit', 40)
+                history_events, cursor, has_more = history_page(
+                    row['path'], row['id'] + ':' + row['origin'], before, limit)
                 if live:
                     with owned.condition:
-                        events = row['events'] + list(owned.events)
+                        live_events = list(owned.events)
                 else:
-                    events = row['events']
-                public.update(context_fields(events))
+                    live_events = []
+                events = history_events + (live_events if before is None else [])
+                public.update(context_fields(row['contextEvents'] + live_events))
                 messages = model.transcript(events)
                 unique = {item['id']: item for item in messages}
                 can_resume = (not live and row['permissionKnown'] and self._ready(self.profile_resolver())
                               and Path(row['cwd']).is_dir())
                 return {'connected': True, 'session': public, 'messages': list(unique.values()),
                         'turns': model.turns(events),
+                        'history': {'before': cursor, 'hasMore': has_more},
                         'notice': '无法确认原会话权限模式，请在电脑端继续' if not live and not row['permissionKnown'] else '',
                         'capabilities': {
                             'resume': can_resume,

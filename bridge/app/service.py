@@ -58,10 +58,12 @@ class LiveSession:
         self.access = None
         self.discovering = False
         self.state = None
+        self.history_state = None
         self.saved_view = None
         self.history_limit = 2
         self.timeline_limit = 40
         self.timeline_source = None
+        self.timeline_source_limit = None
         self.revision = None
         self.sequence = 0
         self.connected = False
@@ -95,21 +97,50 @@ class LiveSession:
     def timeline_view(self):
         # Presentation only. Actions still call view() against current state.
         with self.condition:
-            if self.timeline_source is None:
-                self.timeline_source = self.view()
+            source = self.state if self.connected else self.history_state or self.state
+            # Preserve the actual loaded anchor across appends, rather than
+            # treating older Desktop hydration as newly appended messages.
+            anchor = self.timeline.source_anchor
+            if anchor is not None:
+                after, found = 0, False
+                for turn in ordered_turns(source or {}):
+                    occurrences = {}
+                    calls = set()
+                    for item in items_array(turn.get('items')):
+                        kind = item.get('type', 'unknown')
+                        if kind in ('function_call_output', 'custom_tool_call_output') and item.get('call_id') in calls:
+                            continue
+                        if kind in ('function_call', 'custom_tool_call'):
+                            calls.add(item.get('call_id', item.get('id')))
+                        key = ((turn.get('turnId'), item.get('call_id', item.get('id')), 'storedToolEvent')
+                               if kind in ('function_call', 'custom_tool_call') else
+                               (turn.get('turnId'), item.get('id'), kind))
+                        ordinal = occurrences.get(key, 0)
+                        occurrences[key] = ordinal + 1
+                        found = found or key + (ordinal,) == anchor
+                        after += int(found)
+                if found:
+                    self.timeline_limit = max(self.timeline_limit, after)
+            if self.timeline_source is None or self.timeline_source_limit != self.timeline_limit:
+                self.timeline_source = self.view(item_limit=self.timeline_limit)
+                self.timeline_source_limit = self.timeline_limit
             return dict(self.timeline_source)
 
     def set_history(self, state):
-        self.saved_view = normalize_state(state, False, image_cache=self.tool_image_cache)
-        if self.state is None or not self.connected:
-            self.state = state
+        self.history_state = state
+        self.saved_view = normalize_state(state, False, image_cache=self.tool_image_cache, item_limit=self.timeline_limit)
         self.changed()
 
-    def view(self):
+    def view(self, *, item_limit=None):
         with self.condition:
-            result = normalize_state(self.state or {"id": self.id}, self.connected,
-                                     image_cache=self.tool_image_cache)
-            if self.runtime == 'cli':
+            source = (self.state if self.connected else self.history_state or self.state) or {"id": self.id}
+            result = normalize_state(source, self.connected,
+                                     image_cache=self.tool_image_cache, item_limit=item_limit)
+            if not self.connected:
+                # Persisted history never grants authority to answer a request.
+                result['requests'] = []
+                result['status'] = 'notLoaded'
+            if self.runtime == 'cli' and self.connected:
                 result['permissionMode'] = linux_permissions.current_mode(self.state)
             if self.saved_view and result['contextUsage'] is None:
                 saved_usage = self.saved_view.get('contextUsage')
@@ -119,7 +150,8 @@ class LiveSession:
                 saved_labels = {turn['id']: turn for turn in self.saved_view['turns'] if turn.get('status') != 'inProgress'}
                 for turn in result['turns']:
                     saved = saved_labels.get(turn['id'])
-                    if saved is not None and (self.runtime != 'cli' or saved.get('model')):
+                    label_known = (self.history_state or {}).get('historyReadSource') != 'native-index' or saved and saved.get('model')
+                    if saved is not None and label_known and (self.runtime != 'cli' or saved.get('model')):
                         # Desktop history hydration can substitute today's model.
                         # Recorded turn_context is authoritative for past replies.
                         # Only native CLI per-turn fields can fill an unknown label.
@@ -138,7 +170,7 @@ class LiveSession:
             result["connectionError"] = self.error
             result["connecting"] = self.connecting
             result["activating"] = self.activating
-            result["loadingHistory"] = self.state is None
+            result["loadingHistory"] = self.state is None and self.history_state is None
             if self.access is not None:
                 result["access"] = dict(self.access)
             self.tool_images = {
@@ -1216,10 +1248,10 @@ class Bridge:
             return session
         if attach and not session.connected:
             self._attach(session)
-        if session.state is None or session.activity_only or (session.origin == 'cli' and session.runtime == 'desktop' and session.saved_view is None):
+        if (session.state is None and session.history_state is None) or session.activity_only or (session.origin == 'cli' and session.runtime == 'desktop' and session.saved_view is None):
             fallback = self._saved_history(session)
             with session.condition:
-                if session.state is None or session.activity_only or (session.origin == 'cli' and session.runtime == 'desktop' and session.saved_view is None):
+                if (session.state is None and session.history_state is None) or session.activity_only or (session.origin == 'cli' and session.runtime == 'desktop' and session.saved_view is None):
                     session.set_history(fallback)
                     session.activity_only = False
         return session
@@ -1238,7 +1270,7 @@ class Bridge:
             session.access = self._access(session.origin, session)
 
     def _saved_history(self, session):
-        return self.store.history(session.id, turn_limit=session.history_limit)
+        return self.store.history(session.id, turn_limit=session.history_limit, item_limit=session.timeline_limit)
 
     def _refresh_saved_async(self, session):
         # Local rollout reads are cheap enough to follow terminal writes without
@@ -1255,7 +1287,7 @@ class Bridge:
         def refresh():
             try:
                 fallback = self._saved_history(session)
-                normalized = normalize_state(fallback, False, image_cache=session.tool_image_cache)
+                normalized = normalize_state(fallback, False, image_cache=session.tool_image_cache, item_limit=session.timeline_limit)
                 with session.condition:
                     if not session.connected and session.saved_view != normalized:
                         session.set_history(fallback)
@@ -1274,28 +1306,30 @@ class Bridge:
                 return
             # A CLI origin may keep writing its rollout after the first passive
             # read. Refresh saved turns while no runtime owns this viewer.
-            needs_history = session.state is None or session.activity_only or (session.origin == 'cli' and not session.connected)
+            needs_history = session.history_state is None or session.activity_only or (session.origin == 'cli' and not session.connected)
             session.connecting = True
             session.owner_probe_inflight = True
             session.changed()
         def refresh():
-            # Owner discovery and saved-history IO progress independently.
+            # Give a fast saved read priority, without making a slow/missing
+            # remote history file a prerequisite for the original owner.
+            history_ready = threading.Event()
             def attach_owner():
+                history_ready.wait(.1)
                 try:
                     self._attach(session)
                 finally:
                     with session.condition:
                         session.owner_probe_inflight = False
                         session.changed()
-            attachment = threading.Thread(target=attach_owner, daemon=True)
-            attachment.start()
+            owner_worker = threading.Thread(target=attach_owner, daemon=True)
+            owner_worker.start()
             try:
                 if needs_history:
                     try:
                         fallback = self._saved_history(session)
                         with session.condition:
-                            if session.saved_view != normalize_state(fallback, False, image_cache=session.tool_image_cache):
-                                session.set_history(fallback)
+                            session.set_history(fallback)
                             session.history_retry_at = time.monotonic() + 2
                     except (OSError, ValueError, KeyError, RemoteUnavailable, StoreUnavailable):
                         # A missing saved rollout must not prevent a live snapshot.
@@ -1307,7 +1341,8 @@ class Bridge:
                 with session.condition:
                     session.error = "读取会话失败，请重新连接或查看网关日志。"
             finally:
-                attachment.join()
+                history_ready.set()
+                owner_worker.join()
                 with session.condition:
                     session.connecting = False
                     session.retry_at = time.monotonic() + 15
@@ -1673,7 +1708,8 @@ class Bridge:
         if linux_permissions.enabled(self.host):
             view["linuxPermissionChecks"] = True
             with session.condition:
-                view["permissionMode"] = linux_permissions.current_mode(session.state)
+                if session.connected:
+                    view["permissionMode"] = linux_permissions.current_mode(session.state)
         view["host"] = self.host
         view['draftAccountIdentity'] = self._draft_account_identity(view)
         view["hostLabel"] = "此电脑" if self.host == "local" else self.hosts.hosts().get(self.host, {}).get("displayName", self.host)
@@ -1690,7 +1726,8 @@ class Bridge:
         view["goalRuntimeAvailable"] = goal_available
         view["goalActivationIds"] = sorted(self._goal_activation_ids(thread_id))
         with session.condition:
-            artifacts = artifact_paths(session.state or {}, self.store.home) if self.host == "local" else {}
+            source = session.state if session.connected else session.history_state or session.state
+            artifacts = artifact_paths(source or {}, self.store.home) if self.host == "local" else {}
         view["files"] = [{"id": k, "name": v["name"], "reference": v["reference"], "references": v["references"], "image": v["image"]} for k, v in artifacts.items()]
         self._overlay_native_goal(session, thread_id, view)
         self._submission_meta(session, view)
@@ -1865,7 +1902,8 @@ class Bridge:
     def artifact(self, thread_id, artifact_id):
         session = self.session(thread_id, attach=False)
         with session.condition:
-            files = artifact_paths(session.state or {}, self.store.home) if self.host == "local" else {}
+            source = session.state if session.connected else session.history_state or session.state
+            files = artifact_paths(source or {}, self.store.home) if self.host == "local" else {}
         if artifact_id not in files:
             raise KeyError("文件不属于此聊天的工作目录")
         return files[artifact_id]
@@ -1912,7 +1950,8 @@ class Bridge:
                         'previewSha256': image_id, 'name': attachment['name']}, 'tool'
         paths = []
         with session.condition:
-            for turn in ordered_turns(session.state or {}):
+            source = (session.state if session.connected else session.history_state or session.state) or {}
+            for turn in ordered_turns(source):
                 for item in items_array(turn.get('items', [])):
                     if item.get('type') not in ('userMessage', 'steeringUserMessage'):
                         continue
@@ -1925,7 +1964,7 @@ class Bridge:
                         path = attachment.get('path')
                         if isinstance(path, str) and path:
                             paths.append(Path(path))
-            paths.extend(referenced_model_images(session.state or {}, image_views_only=True))
+            paths.extend(referenced_model_images(source, image_views_only=True))
         for path in paths:
             try:
                 resolved = path.resolve()
@@ -2017,11 +2056,16 @@ class Bridge:
                                       goalRuntimeAvailable=goal_available)
                 if linux_permissions.enabled(self.host):
                     result['meta']['linuxPermissionChecks'] = True
-                    result['meta']['permissionMode'] = linux_permissions.current_mode(session.state)
+                    if session.connected:
+                        result['meta']['permissionMode'] = linux_permissions.current_mode(session.state)
                 texts = [row['text'] for row in result['rows'] if row['role'] == 'assistant']
-            cwd = (session.state or {}).get('cwd')
-            media_items = [item for turn in ordered_turns(session.state or {})
-                           for item in items_array(turn.get('items')) if item.get('type') in ('ImageView', 'imageView')]
+            cwd = authoritative_view.get('cwd')
+            # Resolve only evidence in the displayed window, not the entire
+            # native snapshot on every poll.
+            media_items = [{'type': 'ImageView', 'path': attachment['path']}
+                           for turn in authoritative_view['turns'] for row in turn['messages']
+                           for attachment in row.get('attachments', [])
+                           if attachment.get('type') == 'localImage' and attachment.get('path')]
         # Resolve links in the delivered page, plus runtime ImageView evidence
         # retained separately from the paged message text.
         if mode != 'detail':
@@ -2158,14 +2202,14 @@ class Bridge:
         if session.origin != 'cli':
             session = self.session(thread_id, attach=False)
         with session.condition:
-            state = session.state or {}
+            state = session.state if session.connected else session.history_state or session.state or {}
             native = session.origin == 'cli' and session.runtime == 'cli' and session.connected
             if session.origin == 'cli' and not session.connected:
                 raise ValueError('请先继续此会话，再读取模型或 Skill')
             cwd = state.get("cwd") if session.origin != 'cli' else state.get("cwd") or session.saved_cwd
             model = state.get("latestModel")
             effort = state.get("latestReasoningEffort") or (state.get("latestThreadSettings") or {}).get("effort")
-            provider = session.view().get('provider')
+            provider = state.get('modelProvider')
         if native:
             if kind in ('models', 'skills'):
                 value = (self._native_models(thread_id, cwd, provider, refresh=refresh) if kind == 'models' else

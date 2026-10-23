@@ -160,7 +160,11 @@ class DesktopSessions:
                 if action == 'detail' and isinstance(value, dict):
                     from bridge.features.workspace.files import workspace_references
                     value['files'] = workspace_references(value.get('messages', []), value.get('session', {}).get('cwd'))
-                    if value.get('turns') and isinstance(value.get('session'), dict):
+                    # A truncated tail or any older page can start or end in
+                    # the middle of a turn. Its last turn is not current state.
+                    history = value.get('history')
+                    partial_history = body.get('historyBefore') is not None or isinstance(history, dict) and history.get('hasMore') is True
+                    if not partial_history and value.get('turns') and isinstance(value.get('session'), dict):
                         last = value['turns'][-1]
                         value['session'].update(turnId=last.get('turnId'), turnStatus=last.get('status'))
                 future.set_result(value)

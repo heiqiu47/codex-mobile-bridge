@@ -2064,6 +2064,7 @@ const en={
   "刷新日志": "Refresh logs",
   "刷新聊天列表": "Refresh chats",
   "加载完整历史": "Load full history",
+  "加载更早内容": "Load earlier messages",
   "加载更多": "Load more",
   "历史加载失败，点击重试": "Could not load history. Click to retry",
   "历史记录": "Saved history",

@@ -16,6 +16,17 @@ spec_claude.loader.exec_module(claude)
 
 
 class NativeHistoryPrototypeTests(unittest.TestCase):
+    def test_settings_probe_never_subscribes_or_exposes_settings_values(self):
+        from unittest.mock import Mock
+        ipc = probe.MeasuredIPC('unused')
+        ipc.request = Mock(return_value={'result': {'settings': {'model': 'fixture'}}})
+        ipc.follow = Mock(side_effect=AssertionError('metadata must not subscribe'))
+        value = ipc.measure_settings('thread', 'original-owner')
+        ipc.request.assert_called_once_with('thread-follower-read-model-settings',
+                                           {'conversationId': 'thread'}, target='original-owner')
+        self.assertEqual(value['resultKeys'], ['settings'])
+        self.assertNotIn('fixture', json.dumps(value))
+
     def test_write_resume_and_full_read_rejected(self):
         for method in ('thread/resume', 'turn/start', 'thread/start', 'thread/fork',
                        'thread/goal/set', 'thread-follower-load-complete-history'):

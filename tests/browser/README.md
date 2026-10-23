@@ -30,3 +30,11 @@
 - `tests/test_mermaid_renderer_security.py` 覆盖固定资源、鉴权、CSP 与中继路径；`python3 scripts/test-ios-mermaid-navigation.py` 在有 Xcode/Swift 的 macOS 上编译真实 URL 判断，验证直连及中继精确路径与导航限制。后者只验证导航规则，不代替完整 App 的显示检查。
 
 已完成的本轮检查见 [Mermaid 跨平台验收](../../VERIFICATION.md#mermaid-preview-acceptance)。
+
+## 历史分页
+
+在 `bootstrap-fixture.py` 的 `?case=success` 页面启动完成后，加载
+`desktop-history.browser.js` 并调用、等待 `runDesktopHistoryBrowserChecks()`。
+它创建独立界面，所有历史与 workspace 请求均为合成只读结果；不访问真实会话。
+分别在宽屏与 390 px 下验证首屏、旧页追加、滚动位置、文件引用、当前状态及草稿保留。
+断言使用当前消息节点，因为文件引用更新可能合法地替换旧 DOM 节点。

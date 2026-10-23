@@ -65,7 +65,7 @@ class CliBridgeFixture(unittest.TestCase):
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             session = self.bridge.live.get(self.thread_id)
-            if session and not session.connecting and session.state is not None:
+            if session and not session.connecting and session.history_state is not None:
                 return
             time.sleep(.01)
         self.fail('passive history read did not settle')

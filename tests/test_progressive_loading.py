@@ -19,10 +19,13 @@ class ProgressiveLoadingTests(unittest.TestCase):
         self.assertEqual(len(session.timeline.rows), 40)
         with patch.object(session, 'view', wraps=session.view) as normalize:
             again = self.bridge.timeline_read(THREAD)
+            normalize.assert_not_called()
             older = self.bridge.timeline_read(THREAD, before=first['before'], limit=100)
             self.assertEqual(again['rows'], first['rows'])
             self.assertEqual(len(older['rows']), 100)
-            normalize.assert_not_called()
+            # A newly requested window is normalized lazily; old bodies were
+            # deliberately not converted during the initial read.
+            normalize.assert_called_once_with(item_limit=140)
         self.fixture.publish({'type': 'patches', 'baseRevision': 1, 'revision': 2,
                               'patches': [{'op': 'replace', 'path': ['turns', 0, 'items', 9999, 'text'], 'value': 'updated'}]})
         with session.condition:

@@ -29,6 +29,7 @@ class Timeline:
         self.meta = {}
         self.limit = None
         self.window_anchor = None
+        self.source_anchor = None
         self.window_more = False
 
     def update(self, view, limit=None):
@@ -43,9 +44,9 @@ class Timeline:
                 if message.get('requestId') and message['requestId'] in activation_ids:
                     continue
                 identity = (turn['id'], message.get('id'), message.get('kind'))
-                ordinal = occurrences.get(identity, 0)
+                ordinal = message.get('_timelineOrdinal', occurrences.get(identity, 0))
                 occurrences[identity] = ordinal + 1
-                entries.append((identity + (ordinal,), turn, message, message is first_user))
+                entries.append((identity + (ordinal,), turn, message, message.get('_firstUser', message is first_user)))
             if turn.get('error'):
                 entries.append(((turn['id'], 'error'), turn, None, False))
         start = max(0, len(entries) - limit) if limit is not None else 0
@@ -56,8 +57,12 @@ class Timeline:
             if anchor is not None:
                 start = min(start, anchor)
         self.limit = limit
-        self.window_more = start > 0
+        self.window_more = start > 0 or view.get('historyWindowMore', False)
         self.window_anchor = entries[start][0] if start < len(entries) else None
+        # A tool call carried only to interpret a recent result must not expand
+        # the next source read to every intervening historical item.
+        self.source_anchor = next((entry[0] for entry in entries[start:]
+                                   if entry[2] is not None and not entry[2].get('_historyCarry')), None)
         rows, details = [], {}
         for identity, turn, message, first_user in entries[start:]:
             if message is not None:

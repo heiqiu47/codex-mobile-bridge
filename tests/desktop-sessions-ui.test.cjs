@@ -23,13 +23,34 @@ function fixture({storage=new Map(),sessionStore=new Map()}={}){
  }
  document={body:new Node('body'),documentElement:new Node('html'),hidden:false,activeElement:null,createElement:tag=>new Node(tag),createElementNS:(_,tag)=>new Node(tag),createTextNode:text=>{const n=new Node('#text');n.textContent=text;return n;},querySelectorAll:s=>document.body.querySelectorAll(s),querySelector:s=>document.body.querySelector(s),getElementById:id=>document.body.querySelector('#'+id),addEventListener:(type,fn)=>listeners[type]=fn,dispatchEvent:event=>listeners[event.type]?.(event)};
  const root=new Node('div');root.className='app';document.body.append(root);const select=new Node('select'),calls=[],notices=[];let uploadHandler=async()=>({ok:true,status:200,json:async()=>({image:true,size:16,name:'image.png'})}),handler=async(url,body)=>body?{status:'accepted'}:url.includes('/detail')?{session:{id:'a',title:'Chat',model:'model-a',effort:'high',status:'idle',capabilities:{}},messages:[]}:url.includes('/workspace')?{entries:[],total:0,project:'/project'}:{sessions:[]};
- const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},location:{pathname:'/'},history:{replaceState(){}},localStorage:{get length(){return storage.size;},key:i=>[...storage.keys()][i],getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},sessionStorage:{get length(){return sessionStore.size;},key:i=>[...sessionStore.keys()][i],getItem:k=>sessionStore.get(k),setItem:(k,v)=>sessionStore.set(k,v),removeItem:k=>sessionStore.delete(k)},crypto:{getRandomValues:array=>webcrypto.getRandomValues(array)},Uint8Array,TextEncoder,Option:class extends Node{constructor(text,value){super('option');this.textContent=text;this.value=value;}},ResizeObserver:class{observe(){}},MutationObserver:class{observe(){}},AbortController,requestAnimationFrame:fn=>fn(),cancelAnimationFrame(){},getComputedStyle:()=>({getPropertyValue:()=>8}),setTimeout(){return 1;},clearTimeout(){},fetch:async(url,options)=>{calls.push({url,upload:options});return uploadHandler(url,options);},renderMarkdown:(node,text)=>node.textContent=text,CustomEvent:class{constructor(type,options){this.type=type;Object.assign(this,options);}}});
+ const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},location:{pathname:'/'},history:{replaceState(){}},localStorage:{get length(){return storage.size;},key:i=>[...storage.keys()][i],getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},sessionStorage:{get length(){return sessionStore.size;},key:i=>[...sessionStore.keys()][i],getItem:k=>sessionStore.get(k),setItem:(k,v)=>sessionStore.set(k,v),removeItem:k=>sessionStore.delete(k)},crypto:{getRandomValues:array=>webcrypto.getRandomValues(array)},Uint8Array,TextEncoder,Option:class extends Node{constructor(text,value){super('option');this.textContent=text;this.value=value;}},ResizeObserver:class{observe(){}},MutationObserver:class{observe(){}},AbortController,URLSearchParams,requestAnimationFrame:fn=>fn(),cancelAnimationFrame(){},getComputedStyle:()=>({getPropertyValue:()=>8}),setTimeout(){return 1;},clearTimeout(){},fetch:async(url,options)=>{calls.push({url,upload:options});return uploadHandler(url,options);},renderMarkdown:(node,text)=>node.textContent=text,CustomEvent:class{constructor(type,options){this.type=type;Object.assign(this,options);}}});
  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/shell/app.js'),'utf8').match(/^function uuid\(\).*$/m)[0],context);
  for(const file of ['web/layouts/viewport.js','web/features/chat/activity.js','web/features/chat/composer-drafts.js','web/features/chat/attachments.js','web/shared/i18n.js','web/features/clients/client-lifecycle.js','web/features/chat/message-actions.js','web/features/chat/permissions.js','web/features/workspace/workbench.js','web/features/chat/list-sync.js','web/features/clients/desktop-sessions.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
  const View=vm.runInContext('DesktopSessionsView',context),view=new View({root,select,request:(url,body)=>{calls.push({url,body});return handler(url,body);},notify:text=>notices.push(text),onSelect(){},csrf:()=>'csrf-test',onUnauthorized(){}});
  return {view,root,document,calls,notices,storage,sessionStore,setHandler:fn=>handler=fn,setUploadHandler:fn=>uploadHandler=fn,run:s=>vm.runInContext(s,context),text:n=>n.textContent};
 }
 async function opened(){const ui=fixture();await ui.view.choose('claude');await ui.view.open('a');return ui;}
+
+test('older history prepends messages without adopting old approvals or access',async()=>{
+ const ui=await opened(),message=i=>({id:String(i),role:'assistant',text:'Row '+i});
+ const current={session:{id:'a',title:'Current',status:'active',requests:[]},capabilities:{send:true},files:[{id:'recent',path:'recent.md',reference:'recent.md'}],messages:[message(3),message(4)],history:{before:'page-a',hasMore:true}};
+ ui.view.applyDetail(current);ui.setHandler(async()=>({session:{id:'a',title:'Old',status:'idle',requests:[{id:'expired'}]},capabilities:{send:false},files:[{id:'older',path:'older.md',reference:'older.md'}],messages:[message(1),message(2),message(3)],history:{before:null,hasMore:false}}));
+ await ui.view.loadOlderHistory();
+ assert.deepEqual(Array.from(ui.view.lastMessages,m=>m.id),['1','2','3','4']);
+ assert.equal(ui.view.state.title,'Current');assert.equal(ui.view.state.status,'active');assert.equal(ui.view.state.requests.length,0);assert.equal(ui.view.state.capabilities.send,true);
+ ui.view.applyDetail({...current,messages:[message(3),message(4),message(5)]});
+ assert.deepEqual(Array.from(ui.view.lastMessages,m=>m.id),['1','2','3','4','5']);
+ assert.equal(ui.view.historyPage.hasMore,false);
+ assert.deepEqual(Array.from(ui.view.sessionFiles,f=>f.id).sort(),['older','recent']);
+});
+
+test('late older history is discarded after switching sessions',async()=>{
+ const ui=await opened();ui.view.applyDetail({session:{id:'a',title:'A'},messages:[{id:'new',text:'New'}],history:{before:'a',hasMore:true}});
+ let finish;ui.setHandler(()=>new Promise(resolve=>finish=resolve));const older=ui.view.loadOlderHistory();
+ ui.view.sid='b';ui.view.detailRevision++;ui.view.historyMessages=[{id:'b',text:'B'}];
+ finish({session:{id:'a'},messages:[{id:'old',text:'Private A'}],history:{hasMore:false}});await older;
+ assert.deepEqual(Array.from(ui.view.historyMessages,m=>m.id),['b']);
+});
 
 test('Claude list reentry paints a bounded identity-scoped snapshot before the live read',async()=>{
  const storage=new Map(),identity='a'.repeat(64),first=fixture({storage});first.view.bindListCache(identity,'gateway.test');

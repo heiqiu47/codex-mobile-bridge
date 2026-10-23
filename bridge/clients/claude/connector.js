@@ -113,6 +113,7 @@
     capabilities[kind].push('mobileCatalog', 'mobileProgress', 'mobileAccount');
     if(kind==='code')capabilities[kind].push('mobileList');
     if(typeof api[surface]?.getSession==='function'&&typeof api[surface]?.getTranscript==='function')capabilities[kind].push('mobileDetail');
+    if(kind==='code'&&typeof api[surface]?.getTranscriptTail==='function'&&typeof api[surface]?.getTranscriptPage==='function')capabilities[kind].push('mobileHistory');
   }
   function installObservers() {
     for (const surface of Object.values(surfaces)) {
@@ -282,9 +283,19 @@
     }));
     return Object.fromEntries(rows);
   }
-  async function mobileDetail(target,id){
-    const [session,transcript,context]=await Promise.all([target.getSession(id),target.getTranscript(id),mobileContextUsage(target,id)]);
-    return {session:sanitize('getSession',session),transcript:sanitize('getTranscript',transcript),...context};
+  async function mobileDetail(target,id,options={}){
+    const paged=target===api.LocalSessions&&capabilities.code.includes('mobileHistory');
+    const limit=Number.isInteger(options.historyLimit)&&options.historyLimit>=1&&options.historyLimit<=100?options.historyLimit:40;
+    const before=options.historyBefore;
+    if(before!=null&&(typeof before!=='string'||!before||!paged))throw Error('历史游标无效');
+    const transcriptPromise=paged?(before?target.getTranscriptPage(id,before,limit):target.getTranscriptTail(id,limit)):target.getTranscript(id);
+    const [session,page,context]=await Promise.all([target.getSession(id),transcriptPromise,mobileContextUsage(target,id)]);
+    if(paged&&(!Array.isArray(page?.messages)||typeof page.hasMore!=='boolean'||before&&page.found!==true))throw Error('历史分页响应无效');
+    const rows=paged?page.messages:page;
+    const boundary=rows?.[0]?.uuid;
+    if(paged&&page.hasMore&&(typeof boundary!=='string'||!boundary||boundary===before))throw Error('历史游标未前进');
+    return {session:sanitize('getSession',session),transcript:sanitize('getTranscript',rows),
+      history:{before:paged&&page.hasMore?boundary:null,hasMore:paged?page.hasMore:false},...context};
   }
   async function mobileContextUsage(target,id){
     const methods=['getContextUsageSummary','getContextUsage'].filter(method=>typeof target[method]==='function');
@@ -321,8 +332,8 @@
           if (msg.method === 'mobileCatalog') return {result:await mobileCatalog(target,msg.surface,msg.args[0])};
           if (msg.method === 'mobileAccount') return {result:await mobileAccount()};
           if (msg.method === 'mobileList') return {result:await bounded(mobileList(),30000,'读取会话超时')};
-          if (msg.method === 'mobileDetail' && capabilities[msg.surface].includes('mobileDetail')) return {result:await bounded(mobileDetail(target,msg.args[0]),30000,'读取会话超时')};
-          if (msg.method === 'mobileProgress') { const rows=await target.getTranscript(msg.args[0]); return {result:sanitize('getTranscript',Array.isArray(rows)?rows.slice(-24):[])}; }
+          if (msg.method === 'mobileDetail' && capabilities[msg.surface].includes('mobileDetail')) return {result:await bounded(mobileDetail(target,msg.args[0],msg.args[1]),30000,'读取会话超时')};
+          if (msg.method === 'mobileProgress') { const page=msg.surface==='code'&&capabilities.code.includes('mobileHistory')?await target.getTranscriptTail(msg.args[0],24):await target.getTranscript(msg.args[0]); const rows=Array.isArray(page)?page:page?.messages; return {result:sanitize('getTranscript',Array.isArray(rows)?rows.slice(-24):[])}; }
           if (!allowed.has(msg.method) || typeof target[msg.method] !== 'function') throw new Error('不支持的桌面操作');
           return {result:sanitize(msg.method, await target[msg.method](...callArgs(msg.method,msg.args)))};
         } catch (error) { return {error:String(error.message || error)}; }
@@ -461,8 +472,8 @@
             if (target && msg.method === 'mobileCatalog') return mobileCatalog(target,msg.surface,msg.args[0]);
             if (target && msg.method === 'mobileAccount') return mobileAccount();
             if (target && msg.method === 'mobileList') return mobileList();
-            if (target && msg.method === 'mobileDetail' && capabilities[msg.surface].includes('mobileDetail')) return mobileDetail(target,msg.args[0]);
-            if (target && msg.method === 'mobileProgress') { const rows=await target.getTranscript(msg.args[0]); return sanitize('getTranscript',Array.isArray(rows)?rows.slice(-24):[]); }
+            if (target && msg.method === 'mobileDetail' && capabilities[msg.surface].includes('mobileDetail')) return mobileDetail(target,msg.args[0],msg.args[1]);
+            if (target && msg.method === 'mobileProgress') { const page=msg.surface==='code'&&capabilities.code.includes('mobileHistory')?await target.getTranscriptTail(msg.args[0],24):await target.getTranscript(msg.args[0]); const rows=Array.isArray(page)?page:page?.messages; return sanitize('getTranscript',Array.isArray(rows)?rows.slice(-24):[]); }
             if (!target || !allowed.has(msg.method) || typeof target[msg.method] !== 'function' || !Array.isArray(msg.args)) {
               throw new Error('不支持的桌面操作');
             }

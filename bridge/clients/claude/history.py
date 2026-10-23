@@ -1,0 +1,97 @@
+"""Bounded, read-only pages of a Claude Code JSONL transcript."""
+
+import base64
+import json
+import os
+from pathlib import Path
+
+
+MAX_PAGE_BYTES = 4 * 1024 * 1024
+
+
+def _stamp(stat):
+    return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+
+
+def _cursor(identity, stamp, offset):
+    data = json.dumps([identity, stamp, offset], separators=(',', ':')).encode()
+    return base64.urlsafe_b64encode(data).decode().rstrip('=')
+
+
+def page(path, identity, before=None, limit=40):
+    """Return chronological native events and a cursor to older complete records.
+
+    A cursor is tied to a precise file version; append, replacement and rollback
+    require a new recent page. No partial page is returned after the byte cap.
+    """
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError('Claude 历史分页大小无效')
+    path = Path(path)
+    with path.open('rb') as stream:
+        stamp = _stamp(os.fstat(stream.fileno()))
+        end = stamp[2]
+        if before is not None:
+            try:
+                raw = base64.urlsafe_b64decode(before + '=' * (-len(before) % 4))
+                source, version, end = json.loads(raw)
+            except (ValueError, TypeError, UnicodeError) as exc:
+                raise ValueError('Claude 历史游标无效') from exc
+            if source != identity or version != stamp or type(end) is not int or not 0 <= end <= stamp[2]:
+                raise ValueError('Claude 历史已变化，请重新加载最近记录')
+            if end:
+                stream.seek(end - 1)
+                if stream.read(1) != b'\n':
+                    raise ValueError('Claude 历史游标无效')
+        pos, pending, consumed, events, boundary, visible = end, b'', 0, [], end, 0
+        has_more = False
+        while pos or pending:
+            if pos:
+                size = min(65536, pos, MAX_PAGE_BYTES - consumed)
+                if size <= 0:
+                    raise ValueError('Claude 历史单页扫描超过限制，请缩小分页范围')
+                pos -= size
+                stream.seek(pos)
+                block = stream.read(size)
+                if len(block) != size:
+                    raise ValueError('Claude 历史读取期间发生变化')
+                consumed += size
+                pending = block + pending
+            lines = pending.splitlines(keepends=True)
+            keep = lines.pop(0) if pos else b''
+            offset = pos + len(keep) + sum(map(len, lines))
+            for line in reversed(lines):
+                offset -= len(line)
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                kind = event.get('type')
+                if kind not in ('user', 'assistant', 'result', 'system'):
+                    continue
+                if kind in ('user', 'assistant') and not event.get('isSynthetic') and not event.get('isMeta'):
+                    visible += 1
+                    # Native records without IDs need a stable ID across pages.
+                    if not event.get('uuid') and not (isinstance(event.get('message'), dict)
+                                                      and event['message'].get('id')):
+                        event = {**event, 'uuid': 'file:' + str(offset)}
+                events.append(event)
+                boundary = offset
+                if visible >= limit:
+                    has_more = boundary > 0
+                    break
+            pending = keep
+            if has_more:
+                break
+        if _stamp(os.fstat(stream.fileno())) != stamp:
+            raise ValueError('Claude 历史读取期间发生变化')
+        try:
+            current = _stamp(path.stat())
+        except OSError as exc:
+            raise ValueError('Claude 历史读取期间发生变化') from exc
+        if current != stamp:
+            raise ValueError('Claude 历史读取期间发生变化')
+        return list(reversed(events)), (_cursor(identity, stamp, boundary) if has_more else None), has_more

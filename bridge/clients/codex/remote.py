@@ -116,8 +116,8 @@ class RemoteStore:
     def get(self, thread_id):
         return self.call('get', {'thread_id': thread_id})
 
-    def history(self, thread_id, turn_limit=None):
-        return self.call('history', {'thread_id': thread_id, 'turn_limit': turn_limit})
+    def history(self, thread_id, turn_limit=None, item_limit=None):
+        return self.call('history', {'thread_id': thread_id, 'turn_limit': turn_limit, 'item_limit': item_limit})
 
     def subagents(self, thread_id):
         return self.call('subagents', {'thread_id': thread_id})

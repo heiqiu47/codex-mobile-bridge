@@ -577,6 +577,13 @@ class Handler(BaseHTTPRequestHandler):
                                                         if parts[3] == 'catalog' else
                                                         {'refresh': query.get('refresh') == ['true']} if parts[3] == 'account' else {})
                 sid = body.pop('sessionId', None) if write else query.get('sessionId', [None])[0]
+                if not write and parts[3] == 'detail':
+                    body['historyLimit'] = max(1, min(100, int(query.get('historyLimit', ['40'])[0])))
+                    if query.get('historyBefore'):
+                        before = query['historyBefore'][0]
+                        if len(before) > 16384:
+                            raise ValueError('历史游标过长')
+                        body['historyBefore'] = before
                 if write and any(key in body for key in ('resolvedImages', 'resolvedFiles')):
                     raise ValueError('附件格式无效')
                 if write and parts[3] == 'send' and 'attachments' in body:

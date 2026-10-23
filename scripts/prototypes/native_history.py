@@ -52,6 +52,7 @@ class MeasuredIPC(DesktopIPC):
     # A rejection is recorded; it does not enable a complete-history fallback.
     VERSIONS = {k: DesktopIPC.VERSIONS[k] for k in ('initialize', 'thread-owner-discovery')}
     VERSIONS.update({k: 0 for k in PAGE_METHODS})
+    VERSIONS['thread-follower-read-model-settings'] = 1
 
     def __init__(self, path):
         self.frames = []
@@ -67,6 +68,9 @@ class MeasuredIPC(DesktopIPC):
         method = message.get('method')
         if method in PAGE_METHODS:
             read_params(method, message['params'])
+        elif method == 'thread-follower-read-model-settings':
+            if set(message.get('params') or {}) != {'conversationId'} or not message['params']['conversationId']:
+                raise ValueError('A single conversation identity is required')
         elif method not in ('initialize', 'thread-owner-discovery',
                             'thread-stream-following-changed') and message.get('type') != 'client-discovery-response':
             raise ValueError('IPC operation is outside the read-only experiment')
@@ -111,6 +115,13 @@ class MeasuredIPC(DesktopIPC):
         finally:
             self.follow(thread_id, owner, False)
             self.target = None
+
+    def measure_settings(self, thread_id, owner):
+        """A separate owner metadata probe, never a substitute for live approvals."""
+        start = time.perf_counter()
+        reply = self.request('thread-follower-read-model-settings', {'conversationId': thread_id}, target=owner)
+        return {'seconds': time.perf_counter() - start, 'bytes': len(json.dumps(reply).encode()),
+                'resultKeys': sorted((reply.get('result') or {}).keys())}
 
 
 class StoredReader:
@@ -228,7 +239,7 @@ def stored_pages(reader, thread_id):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('ipc', 'stored'))
+    parser.add_argument('mode', choices=('ipc', 'stored', 'settings'))
     parser.add_argument('--thread', action='append', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--ipc', type=Path)
@@ -238,7 +249,7 @@ def main():
     if not args.output.resolve().is_relative_to(ROOT / '.tmp'):
         parser.error('Evidence must be stored under project .tmp')
     result = {'mode': args.mode, 'readOnly': True, 'threads': []}
-    if args.mode == 'ipc':
+    if args.mode in ('ipc', 'settings'):
         client = MeasuredIPC(args.ipc)
         try:
             client.connect()
@@ -246,6 +257,10 @@ def main():
                 owner = client.owner(thread_id)
                 record = {'threadId': thread_id, 'ownerHash': hashlib.sha256(owner.encode()).hexdigest()}
                 result['threads'].append(record)
+                if args.mode == 'settings':
+                    record['settings'] = client.measure_settings(thread_id, owner)
+                    record['ownerUnchanged'] = client.owner(thread_id) == owner
+                    continue
                 record['snapshot'] = client.measure(thread_id, owner)
                 record['pages'] = []
                 for method in sorted(PAGE_METHODS):

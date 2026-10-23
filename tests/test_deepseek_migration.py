@@ -167,15 +167,32 @@ class DeepSeekMigrationTests(unittest.TestCase):
         self.assertEqual(self.new.directory, self.old.directory)
         self.assertEqual(before, {path: path.read_bytes() for path in before})
 
+    def test_previous_history_source_is_recognized_for_reuse(self):
+        from bridge.clients.deepseek import setup
+        original_sha = hashlib.sha256
+        source = self.old.directory/'mobile-host.mjs'
+        content = b'// fixture for the prior revision 4 source'
+        source.write_bytes(content)
+        before = {path: path.read_bytes() for path in self.old.directory.iterdir()}
+        def digest(value):
+            if value == content:
+                return Mock(hexdigest=lambda: setup.PREVIOUS_HISTORY_SOURCES[0])
+            return original_sha(value)
+        with patch.object(setup.hashlib, 'sha256', side_effect=digest):
+            result = self.new.discover_existing()
+        self.assertTrue(result['reused'])
+        self.assertTrue(result['updateRequired'])
+        self.assertEqual(before, {path: path.read_bytes() for path in before})
+
     def test_current_source_lf_and_crlf_are_reused_as_current_without_writes(self):
         source = self.old.directory/'mobile-host.mjs'
         current = Path(__file__).resolve().parents[1]/'bridge/clients/deepseek/host.mjs'
         lf = current.read_bytes().replace(b'\r\n', b'\n')
         self.assertIn(b'\n', lf)
         self.assertEqual(hashlib.sha256(lf).hexdigest(),
-                         '7ff9ce99e26c3b1b9e54ade4db4a634976096f3a429b6f4d81e7401d3e067f8f')
+                         '2f71a8c64cdf798843386310c359e41b57c3b2b26130f448f97c6603b4fa5762')
         self.assertEqual(hashlib.sha256(lf.replace(b'\n', b'\r\n')).hexdigest(),
-                         '2bd8e0711db16fe5c2d2a39f473f8e0f747e5f9067dae64572129c56ff0e7136')
+                         '2ad4a7923d1d124d2c2c94a9f46e15ab45ef4e2b91a937abe45e0bdf0616831a')
         for content in (lf, lf.replace(b'\n', b'\r\n')):
             with self.subTest(line_ending='CRLF' if b'\r\n' in content else 'LF'):
                 source.write_bytes(content)

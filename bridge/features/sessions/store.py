@@ -282,8 +282,81 @@ class SessionStore:
                             return b''.join(reversed(parts)), position == 0 and len(parts) == len(lines)
             return b''.join(reversed(parts)), True
 
-    def history(self, thread_id, turn_limit=None):
-        return self._history(thread_id, self.get(thread_id), turn_limit)
+    def history(self, thread_id, turn_limit=None, item_limit=None):
+        meta = self.get(thread_id)
+        if item_limit is not None:
+            indexed = self._indexed_history(thread_id, meta, max(1, int(item_limit)))
+            if indexed is not None:
+                return indexed
+        return self._history(thread_id, meta, turn_limit)
+
+    def _indexed_history(self, thread_id, meta, item_limit):
+        """Read the native persisted projection, without starting/resuming Codex.
+
+        Internal schema support is optional. Missing/incompatible/empty indexes
+        retain the rollout reader. The projection is display history only: it
+        cannot establish live status, permissions, pending approvals or ownership.
+        """
+        database = self.home / 'thread_history_1.sqlite'
+        try:
+            rollout = Path(meta['rollout_path']).resolve()
+            if not self._rollout_in_home(rollout):
+                return None
+            rollout_stat = rollout.stat()
+            with database.open('rb') as stream:
+                wal_mode = stream.read(20)[18:20] == b'\x02\x02'
+            # Never initialize WAL sidecars in the user's native history store.
+            if wal_mode and not all(Path(str(database) + suffix).exists() for suffix in ('-wal', '-shm')):
+                return None
+            with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=.2)) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute('BEGIN')
+                projection = conn.execute('SELECT next_rollout_byte_offset FROM thread_history_projection_state '
+                                          'WHERE thread_id=?', (thread_id,)).fetchone()
+                # A fork may point at another rollout with the same thread ID;
+                # an index behind (or ahead of) that file is not a recent page.
+                if projection is None or projection[0] != rollout_stat.st_size:
+                    return None
+                rows = conn.execute('SELECT turn_id, item_json FROM thread_items WHERE thread_id=? '
+                                    'ORDER BY rollout_ordinal DESC LIMIT ?', (thread_id, item_limit + 1)).fetchall()
+                if not rows:
+                    return None
+                more = len(rows) > item_limit
+                selected = list(reversed(rows[:item_limit]))
+                turns = {}
+                for row in selected:
+                    if row['turn_id'] not in turns:
+                        header = conn.execute('SELECT turn_id, status, error_json, started_at, first_user_item_id '
+                                              'FROM thread_turns WHERE thread_id=? AND turn_id=?',
+                                              (thread_id, row['turn_id'])).fetchone()
+                        if header is None:
+                            return None
+                        turns[row['turn_id']] = {'turnId': row['turn_id'], 'status': header['status'],
+                                                'turnStartedAtMs': header['started_at'],
+                                                '_firstUserItemId': header['first_user_item_id'],
+                                                'error': json.loads(header['error_json']) if header['error_json'] else None,
+                                                'items': []}
+                    item = json.loads(row['item_json'])
+                    if not isinstance(item, dict) or not isinstance(item.get('type'), str):
+                        return None
+                    turns[row['turn_id']]['items'].append(item)
+                for turn in turns.values():
+                    calls = {item.get('call_id', item.get('id')) for item in turn['items']
+                             if item.get('type') in ('function_call', 'custom_tool_call')}
+                    if any(item.get('type') in ('function_call_output', 'custom_tool_call_output')
+                           and item.get('call_id') not in calls for item in turn['items']):
+                        # Legacy raw items need their call to keep row identities
+                        # stable. Fall back to a complete-turn tail at this edge.
+                        return None
+            latest = rollout.stat()
+            if (latest.st_ino, latest.st_size, latest.st_mtime_ns) != (rollout_stat.st_ino, rollout_stat.st_size, rollout_stat.st_mtime_ns):
+                return None
+            return {'id': thread_id, 'title': meta.get('name') or meta.get('title'), 'cwd': meta['cwd'],
+                    'modelProvider': meta.get('model_provider'), 'latestModel': meta.get('model'),
+                    'turns': list(turns.values()), 'turnsPagination': {'hasLoadedOldest': not more},
+                    'requests': [], 'threadRuntimeStatus': {'type': 'notLoaded'}, 'historyReadSource': 'native-index'}
+        except (OSError, sqlite3.Error, ValueError, TypeError, KeyError):
+            return None
 
     @staticmethod
     def _agent_source(meta):
