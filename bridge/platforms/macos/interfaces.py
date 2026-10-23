@@ -1,6 +1,8 @@
 """macOS interface and default-route enumeration."""
 import os
 import re
+import socket
+import struct
 import subprocess
 
 
@@ -39,3 +41,35 @@ def default_route():
         elif key == 'gateway':
             route['gateway'] = value
     return route
+
+
+def _network_event(data):
+    # Darwin route.h uses a common msglen/version/type prelude. Ignore route
+    # queries (including our own route -n get) and ARP/neighbor chatter.
+    offset = 0
+    while len(data) - offset >= 4:
+        length, version, kind = struct.unpack_from('=HBB', data, offset)
+        if length < 4 or offset + length > len(data):
+            return False
+        if version == 5:
+            if kind in (0xC, 0xD, 0xE, 0x12):  # address/link state
+                return True
+            if kind in (1, 2, 3, 6) and length >= 12:
+                flags = struct.unpack_from('=I', data, offset + 8)[0]
+                if not flags & 0x400:  # RTF_LLINFO: neighbor resolution
+                    return True
+        offset += length
+    return False
+
+
+def watch_changes(callback):
+    """Read kernel route notifications; never run periodic helper processes."""
+    from bridge.platforms.posix.network_events import SocketNetworkWatcher
+    source = None
+    try:
+        source = socket.socket(socket.AF_ROUTE, socket.SOCK_RAW, 0)
+        return SocketNetworkWatcher(source, callback, _network_event)
+    except (OSError, AttributeError, RuntimeError):
+        if source is not None:
+            source.close()
+        return None

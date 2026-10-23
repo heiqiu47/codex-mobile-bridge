@@ -7,7 +7,7 @@ from functools import lru_cache
 
 
 IF_TYPE_SOFTWARE_LOOPBACK = 24
-IF_TYPE_TUNNEL = 53
+IF_TYPE_TUNNEL = 131
 VIRTUAL_PREFIXES = (
     'bridge', 'vmenet', 'vmnet', 'veth', 'virbr', 'docker', 'utun', 'tun',
     'tap', 'wg', 'awdl', 'llw', 'anpi', 'ap1', 'lo', 'vethernet', 'zerotier',
@@ -83,6 +83,23 @@ def default_route():
     return module.default_route() if module else {}
 
 
+def watch_changes(callback):
+    """Watch native network events, or return None for polling-only fallback.
+
+    The callback is a quick, argument-free wake-up signal. It must not close
+    the watcher from inside the callback. close() releases native resources
+    and finishes outstanding callbacks before returning.
+    """
+    module = _platform_module()
+    watcher = getattr(module, 'watch_changes', None)
+    if watcher is None:
+        return None
+    try:
+        return watcher(callback)
+    except (OSError, AttributeError, NotImplementedError):
+        return None
+
+
 def _name_text(row):
     return ' '.join((str(row.get('id', '')), str(row.get('name', '')))).lower()
 
@@ -139,15 +156,27 @@ def selected_interfaces(value):
 
 
 def migrate_addresses_to_interfaces(rows, value):
-    """Map a legacy address-only selection without expanding ambiguous scope."""
+    """Resolve every selected legacy IP, without selecting unrelated adapters.
+
+    A physical adapter may share its IP with a virtual bridge. Prefer the sole
+    physical owner in that case; genuinely ambiguous or missing owners fail
+    closed instead of falling back to automatic LAN access.
+    """
     if value is None:
         return None
-    selected = set(value or [])
-    matches = [row for row in rows if row['id'] and selected.intersection(row.get('addresses', []))]
-    if len(matches) == 1:
-        return [matches[0]['id']]
-    non_virtual = [row for row in matches if not is_virtual_interface(row)]
-    return [non_virtual[0]['id']] if len(non_virtual) == 1 else []
+    result = []
+    for address in dict.fromkeys(value):
+        matches = [row for row in rows if row.get('id') and
+                   address in row.get('addresses', [])]
+        identifiers = {row['id'] for row in matches}
+        if len(identifiers) != 1:
+            identifiers = {row['id'] for row in matches if not is_virtual_interface(row)}
+        if len(identifiers) != 1:
+            return []
+        identifier = next(iter(identifiers))
+        if identifier not in result:
+            result.append(identifier)
+    return result
 
 
 def addresses_for_interfaces(rows, identifiers):
@@ -165,8 +194,6 @@ def network_signature(rows=None, route=None):
     routable = [row for row in rows if not is_virtual_interface(row) and (
         (route_interface and row['id'] == route_interface) or
         (route_index is not None and row.get('index') == route_index))]
-    if not routable and not route_interface:
-        routable = [row for row in rows if not is_virtual_interface(row)]
     interfaces = [{'id': row['id'], 'name': row['name'], 'addresses': row['addresses'],
                    'if_type': row.get('if_type'), 'index': row.get('index')}
                   for row in routable]
