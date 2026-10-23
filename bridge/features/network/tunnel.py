@@ -46,6 +46,9 @@ class QuickTunnel:
                 return False
             self.ready.clear()
             self.broken.set()
+            # Wake a spawn loop parked on ready.wait(); otherwise a busy
+            # runner can delay observing broken until the poll timeout.
+            self.finished.set()
         self.status('reconnecting', '电脑网络已变化，正在重建临时 HTTPS；网址会变化。')
         return True
 

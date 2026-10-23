@@ -503,6 +503,7 @@ class ConcurrentRuntimeTests(unittest.TestCase):
             self.assertTrue(tunnel.network_changed())
             self.assertFalse(tunnel.entry_stable())
             tunnel.broken.clear()
+            tunnel.finished.clear()
             tunnel.ready.set()
             self.assertTrue(tunnel.entry_stable())
             tunnel.network_changed()
