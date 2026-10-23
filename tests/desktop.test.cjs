@@ -900,6 +900,9 @@ test('desktop network recovery reconciles an uncertain write exactly once',async
   ui.api.networkAdaptation=async payload=>{calls.push(payload);if(payload.action==='set')throw Error('timeout');return {enabled:true};};await ui.poll();
   const box=ui.nodes.get('network-adaptation-enabled');box.checked=true;await box.onchange();
   assert.deepEqual(calls.map(row=>row.action),['set','status']);assert.equal(box.checked,true);assert.equal(box.disabled,false);
+  assert.doesNotMatch(ui.nodes.get('toast-message').textContent,/timeout/);
+  ui.api.networkAdaptation=async payload=>{if(payload.action==='set')throw Error('save rejected');return {enabled:true};};
+  box.checked=false;await box.onchange();assert.equal(box.checked,true);assert.match(ui.nodes.get('toast-message').textContent,/save rejected/);
 });
 
 test('a snapshot started before the live network save cannot undo its result',async()=>{
@@ -990,6 +993,12 @@ test('native window title and local target copy respect their fixed origins',asy
   let prevented=0;events['page-title-updated']({preventDefault(){prevented++;}},'Different page title');
   assert.equal(prevented,1);assert.equal(instance.title,'Codex 手机网关');
   const event={sender:instance.webContents,senderFrame:instance.webContents.mainFrame};
+  const originalWorker=context.worker,networkCalls=[];
+  context.worker=async(action,payload)=>{networkCalls.push({action,payload});return {enabled:payload.enabled===true};};
+  assert.equal((await handlers['bridge:network-adaptation'](event,{action:'set',enabled:true})).enabled,true);
+  assert.deepEqual(networkCalls,[{action:'network-adaptation',payload:{action:'set',enabled:true}}]);
+  await assert.rejects(handlers['bridge:network-adaptation']({...event,senderFrame:{}},{action:'set',enabled:false}),/不允许的界面来源/);
+  assert.equal(networkCalls.length,1);context.worker=originalWorker;
   handlers['bridge:set-language'](event,'zh-CN');assert.equal(changes,0);
   handlers['bridge:set-language'](event,'en');assert.equal(changes,1);
   handlers['bridge:set-language'](event,'en');assert.equal(changes,1);

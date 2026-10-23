@@ -161,10 +161,10 @@ $('network-adaptation-enabled').onchange=async event=>{
   networkAdaptationBusy=true;networkAdaptationRevision++;networkAdaptationError='';renderNetworkAdaptation();
   try{networkAdaptationState=unwrapValidation(await api.networkAdaptation({action:'set',enabled}));}
   catch(error){
-    feedback(error.message,true);
     // A timeout may follow a successful save. Read the result; never replay it.
     try{networkAdaptationState=await api.networkAdaptation({action:'status'});}
     catch{networkAdaptationState=undefined;networkAdaptationError='网络恢复设置尚未确认，请刷新状态后重试。';}
+    if(networkAdaptationState?.enabled!==enabled)feedback(error.message,true);
   }finally{
     networkAdaptationBusy=false;networkAdaptationRevision++;
     if(snapshot)snapshot.networkAdaptation=networkAdaptationState;
