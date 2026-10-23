@@ -1,14 +1,17 @@
-## 尚未发布 · 网络恢复与 Web 复制 / Unreleased · Network recovery and Web copying
+## 尚未发布 · 网络恢复、Web 复制与会话连接 / Unreleased · Network recovery, Web copying and session connections
 
 - 整合 [@qybgh](https://github.com/qybgh) 的 [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63)，保留原始提交，按网卡管理局域网入口与地址通知。
 - 新增默认关闭的「网络变化自动恢复」，桌面网关及登录后的 Web/手机 App 均可即时调整；系统事件与低频兜底检测减少空转，同 IP 续期不重建入口。
 - 修复 Windows 网卡地址读取、多网卡旧配置迁移及监听失败时错误展示新地址的问题。Quick Tunnel 优先自行恢复，仅在连续健康检查确认失败后有限重建。
 
 - Web 回复、代码和 Mermaid 源码支持点击后直接复制，补齐局域网 HTTP 兼容路径，改善读取长正文后的复制；浏览器拒绝时保留重试和手动复制入口。
+- 修复 Codex 长会话的大型历史快照导致共享连接断开、其他会话也无法保持连接的问题；手机和 Web 仍分页读取内容。
 
 Integrates [@qybgh](https://github.com/qybgh)'s [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63), retaining the original commits. Adds default-off network recovery controls to desktop and signed-in Web/mobile clients, with native event notifications and infrequent fallback checks. Fixes Windows adapter addresses, migration of multiple selected adapters and publication of addresses that failed to bind. Quick Tunnel first attempts recovery and is replaced only after repeated health checks confirm failure.
 
 Web replies, code blocks and Mermaid source now copy with one click, with a LAN HTTP compatibility path and improved copying after full-text retrieval. Retry and manual copying remain available when the browser blocks clipboard access.
+
+Fix large Codex history snapshots disconnecting the shared desktop connection and disrupting other chats. Mobile and Web content remains paginated.
 
 ---
 

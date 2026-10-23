@@ -1,5 +1,6 @@
 """The desktop's local, length-prefixed IPC. No agent process is launched here."""
 import json
+import logging
 import socket
 import struct
 import threading
@@ -14,7 +15,11 @@ class IPCError(Exception):
 
 
 class DesktopIPC:
-    MAX_FRAME = 64 * 1024 * 1024
+    # Desktop snapshots include the loaded history and can exceed 64 MiB.
+    # Keep a bounded receive budget without enlarging outbound operations.
+    MAX_FRAME = 256 * 1024 * 1024
+    MAX_REQUEST = 64 * 1024 * 1024
+    READ_CHUNK = 1024 * 1024
     VERSIONS = {
         "initialize": 0,
         "thread-owner-discovery": 1,
@@ -62,7 +67,7 @@ class DesktopIPC:
 
     def _send(self, message):
         data = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode()
-        if len(data) > self.MAX_FRAME:
+        if len(data) > self.MAX_REQUEST:
             raise IPCError("消息过大")
         with self.write_lock:
             sock = self.socket
@@ -122,7 +127,7 @@ class DesktopIPC:
     def _exact(sock, length):
         chunks = bytearray()
         while len(chunks) < length:
-            chunk = sock.recv(length - len(chunks))
+            chunk = sock.recv(min(length - len(chunks), DesktopIPC.READ_CHUNK))
             if not chunk:
                 raise EOFError()
             chunks.extend(chunk)
@@ -133,6 +138,8 @@ class DesktopIPC:
             while True:
                 length = struct.unpack("<I", self._exact(sock, 4))[0]
                 if not 0 < length <= self.MAX_FRAME:
+                    logging.getLogger(__name__).warning(
+                        "Codex desktop IPC frame rejected: bytes=%s limit=%s", length, self.MAX_FRAME)
                     raise IPCError("桌面 IPC 帧长度不兼容")
                 message = json.loads(self._exact(sock, length))
                 if message.get("type") == "response":
