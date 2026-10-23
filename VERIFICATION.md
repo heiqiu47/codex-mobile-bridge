@@ -9,17 +9,22 @@
 | 范围 | 本轮证据 |
 | --- | --- |
 | 回归 | 新增 4 项：超过 64 MiB 的快照、Unicode、两个会话后续增量、分页体积、分片读取、非法长度拒绝及出站限制。定向 Bridge 85 项中 83 通过、2 跳过；CLI 41/41；平台 14 项中 11 通过、3 跳过；Web/原生复制 8/8 |
-| 真实 A/B | 源码和已安装 Mac 包中的编译 IPC/服务模块均完成原生只读连接。后者 A 1.57 秒、B 6.47 秒，两者保持连接，B 最近 20 行约 12 KB；原会话 id/owner 匹配。仅使用隔离网关数据目录，没有发送消息、改变草稿或调用模型。此为当前机器和会话的一次测量，不是通用耗时承诺 |
-| Mac arm64 Test | 完整构建及签名检查通过，360 个 Web 文件匹配。已安装编译模块的 4 项回归及上述真实 A/B 通过；8788 服务启动等待本机钥匙串确认，不能把模块验收写成已安装服务启动成功。旧 Test 包暂保留用于回退 |
+| 真实 A/B | 源码和已安装 Mac 包中的编译 IPC/服务模块均完成原生只读连接。后者 A 1.57 秒、B 6.47 秒，两者保持连接，B 最近 20 行约 12 KB；原会话 id/owner 匹配。随后通过实际运行的 Mac 8788 HTTP 接口复验：B 首次分页约 7.05 秒，后续 A/B 均为 connected、原 id 匹配、无恢复动作，分别返回 20 行约 12/94 KB。分页体积随最新聊天内容变化；没有把约 89 MB 原始快照传给浏览器，也没有发送消息、改变草稿或调用模型。耗时仅为当前机器和会话测量 |
+| Mac arm64 Test | 完整构建及签名检查通过，360 个 Web 文件匹配。已安装编译模块 4/4；本机钥匙串确认后，经正常 App 入口启动 8788，通过实际服务 A/B 与 HTTP/HTTPS 一键复制验收。正式版进程和文件、认证及全部 14 条原有效绑定保留。人工操作阶段界面语言由前序基线变为英文，保留当前选择；其余受保护设置不变 |
 | Windows x64 Test | F 盘完整原生构建、NSIS 覆盖安装，706 个安装文件匹配；二维码、完整 ConPTY、独立 Test 数据与自启动检查通过。已安装编译模块 4/4；普通桌面 GUI、8788 启动和版本资源 304 通过。正式版、原配置、有效手机绑定和用户已启用的网络变化检测选项保留；GUI 旧夹具的“必须关闭”前提已修正，仅续验、未重复安装 |
 | Windows 网关 Web | 实际安装服务提供脚本，macOS 上真实 Chromium 访问 Windows 的局域网 HTTP 地址，点击 → 系统粘贴逐字验证中文、emoji、多行文本、延迟 600ms 的 30,010 字符正文及弹窗内源码；无原生手机桥接，`isSecureContext=false`、现代 Clipboard API 不存在，未出现手动复制窗口，草稿不变。此项明确为浏览器客户端访问 Windows 网关，不冒充 Windows 本机 Edge 或手机真机验收 |
-| Ubuntu x64 Test | 原生 DEB 构建、4 项 IPC 与 8 项复制测试、冻结运行时检查通过。713 项应用文件及独立 Test 包身份核验，模拟安装仅更新 Test。旧 Test 已安全停止，正式版与原配置绑定保留；等待本机 sudo 覆盖安装，安装后启动与浏览器验收尚未完成 |
+| Ubuntu x64 Test | 原生 DEB 已由用户 sudo 覆盖安装，713 项应用文件及 3 项包管理文件逐项匹配。已安装编译 IPC 4/4、实际桌面 GUI、8788 启动、资源 immutable/304 及原配置绑定保留通过。保留原 `localAccess=false`，以虚拟机局域网入口验收；未为测试开放本机网页访问 |
+| Ubuntu 网关 Web | Ubuntu 真实桌面中使用既有 Electron Chromium，保持沙箱和网页安全设置、关闭 Node 集成，无原生剪贴板桥接及权限自动批准。访问已安装服务的 HTTP 入口，原生鼠标点击 → 系统粘贴验证中文、多行、延迟长正文和弹窗源码逐字一致；草稿不变，无手动复制框。验收用浏览器已退出，Test App 与网关保持运行 |
 
-Windows 验收后清理上一轮 Test 安装包及本轮重复构建副本，逻辑大小 1,271,041,272 字节；当前已安装 Test、最新安装包、配置绑定与验收记录保留。Ubuntu 和 Mac 的旧包在各自安装后启动通过前暂不清理。
+三端各完成原生接收大快照回归；真实 A/B 原会话位于 Mac，因此 Windows/Ubuntu 的原生 IPC 合成大快照验收不冒充原会话实测。手机原生包未更新，手机真机点击复制仍由用户继续实测。
+
+收尾发现 Mac 和 Ubuntu Test 均启用同一个 Cloudflare 域名，实际 HTTPS 请求曾返回 Ubuntu 实例，导致 Mac 的短期配对授权不匹配。用户明确选择域名保留给 Mac：仅通过正常控制接口关闭 Ubuntu Test 的该入口并重启该 Test 网关，保留局域网、凭据、其他配置和原绑定；正常保存将缺省网卡选择显式记为 `null`，仍为自动选择。固定域名随后连续核对为 Mac 实例，HTTPS 一键复制复验通过。没有修改 DNS、正式版或 Mac 入口配置。
+
+安装后验收通过再清理旧 Test 与重复产物：Windows 1,271,041,272 字节、Ubuntu 1,485,982,308 字节、Mac 660,562,967 字节（均为文件逻辑大小，不是磁盘实际释放量）。保留当前已安装 Test、Windows/Ubuntu 最新安装包、源码归档、配置绑定及必要验收记录。Windows 产物始终在 F 盘，构建与 Ubuntu 串行进行；清理后再次核对正式版和原绑定。
 
 本地构建和验收证据保存在 `.tmp/issue65-20261023/`，Windows 对应文件全部位于 F 盘。本轮没有更新手机原生包；Web 复制沿用上一轮已验证的共享实现与原生 App 适配。操作系统或浏览器明确拒绝剪贴板写入时仍保留手动兜底，不宣称绕过权限。
 
-**English:** Issue #65 was reproduced as an oversized Desktop snapshot closing the shared IPC stream. The bounded receive budget is now 256 MiB with 1 MiB reads; outbound limits remain unchanged. Real A/B sessions connected through both source and installed compiled modules without sending or activating turns. Windows Test installation, startup, preservation and real browser copy/paste against its HTTP service passed. Ubuntu's package is built and verified, awaiting sudo installation; Mac service startup awaits the user's Keychain confirmation. These pending steps are not reported as passed.
+**English:** Issue #65 was reproduced as an oversized Desktop snapshot closing the shared IPC stream. The bounded receive budget is now 256 MiB with 1 MiB reads; outbound limits remain unchanged. All three Test installations passed native IPC, startup and preservation checks. Actual A/B sessions were verified through the running Mac gateway without sending or activating turns; Windows/Linux used native synthetic large-snapshot regressions. Browser copy/paste passed against Mac HTTP/HTTPS, Windows HTTP from macOS Chromium, and Ubuntu HTTP in a sandboxed native Electron browser. The user's shared Cloudflare hostname was isolated to Mac by disabling only the Ubuntu Test entry as explicitly authorized. Original bindings remain valid, redundant Test artifacts were removed, and no code was pushed or released.
 
 ---
 
