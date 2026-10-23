@@ -138,7 +138,7 @@ def enumerate_interfaces():
         if key not in seen:
             seen.add(key)
             rows.append({'id': identifier, 'name': name, 'addresses': addresses,
-                         'index': item.IfIndex, 'if_type': item.IfType})
+                         'index': item.Alignment.IfIndex, 'if_type': item.IfType})
         adapter = item.Next
     return rows
 

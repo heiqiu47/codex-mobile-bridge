@@ -97,6 +97,11 @@ class InterfaceSelectionTests(unittest.TestCase):
         self.assertIsNone(bridge.platforms.windows.interfaces._ipv4(address))
         self.assertEqual(
             bridge.platforms.windows.interfaces._ipv4_number(0x0100007F), '127.0.0.1')
+        adapter = bridge.platforms.windows.interfaces._IP_ADAPTER_ADDRESSES_LH()
+        adapter.Alignment.IfIndex = 7
+        adapter.IfType = 6
+        self.assertEqual(adapter.Alignment.IfIndex, 7)
+        self.assertEqual(adapter.IfType, 6)
         self.assertTrue(interfaces.is_virtual_interface({'id': 'guid', 'name': 'Tunnel', 'if_type': 53}))
         self.assertFalse(interfaces.is_virtual_interface({'id': 'guid', 'name': 'Wi-Fi', 'if_type': 71}))
 

@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import bridge.features.network.interfaces as network_interfaces
@@ -17,15 +18,15 @@ import bridge.features.network.interfaces as network_interfaces
 
 
 class AddressTests(unittest.TestCase):
-    @unittest.skipUnless(os.name == 'posix', 'POSIX interface enumeration')
     def test_interface_addresses_do_not_require_hostname_dns(self):
-        with patch('bridge.platforms.macos.interfaces.enumerate_interfaces',
-                   return_value=[{'id': 'en0', 'name': 'en0', 'addresses': ['192.168.1.5']}]):
+        rows = [{'id': 'en0', 'name': 'en0', 'addresses': ['192.168.1.5']}]
+        platform = SimpleNamespace(enumerate_interfaces=lambda: rows)
+        with patch.object(network_interfaces, '_platform_module', return_value=platform):
             self.assertEqual(network_interfaces.eligible_lan_addresses(), ['192.168.1.5'])
 
     def test_unresolvable_enumeration_fails_closed_without_dns_guessing(self):
-        with patch('bridge.platforms.linux.interfaces.enumerate_interfaces', return_value=[]), \
-                patch('bridge.platforms.macos.interfaces.enumerate_interfaces', return_value=[]):
+        platform = SimpleNamespace(enumerate_interfaces=lambda: [])
+        with patch.object(network_interfaces, '_platform_module', return_value=platform):
             self.assertEqual(network_interfaces.eligible_lan_addresses(), [])
 
 

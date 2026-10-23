@@ -12,7 +12,10 @@ def enumerate_interfaces():
                             capture_output=True, text=True, check=False, timeout=3)
     if output.returncode:
         return []
-    interfaces = json.loads(output.stdout)
+    try:
+        interfaces = json.loads(output.stdout)
+    except (ValueError, TypeError):
+        return []
     if not isinstance(interfaces, list):
         return []
     rows = []
