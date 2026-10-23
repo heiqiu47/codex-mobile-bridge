@@ -18,7 +18,7 @@ test('copy loads all detail pages and rejects version/offset changes',async()=>{
  await assert.rejects(ui.read(),/已变化/);
 });
 test('copy of short text needs no fetch and switching chat cancels full-text result',async()=>{
- const ui=timeline();ui.row.truncated=false;ui.stub.read=()=>assert.fail('no request expected');assert.equal(await ui.read(),'preview');
+ const ui=timeline();ui.row.truncated=false;ui.stub.read=()=>assert.fail('no request expected');assert.equal(ui.read(),'preview');
  ui.row.truncated=true;ui.stub.read=async()=>{ui.stub.abort.signal.aborted=true;return {key:'row',version:'v',offset:0,text:'old',next:null};};
  await assert.rejects(ui.read(),/已变化/);
 });

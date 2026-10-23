@@ -9,7 +9,7 @@
   const scope=BridgeMermaidCards.createScope();
   let calls=0, copied='', copyDone;
   window.BridgeMermaidRenderer={version:'test',render:async()=>{calls++;return {url:'data:image/svg+xml,%3Csvg%3E%3C/svg%3E',width:120,height:80};}};
-  window.BridgeClipboard={copy:getSource=>copyDone=getSource().then(value=>{copied=value;})};
+  window.BridgeClipboard={copy:getSource=>copyDone=Promise.resolve(getSource()).then(value=>{copied=value;})};
   const render=(value,options={})=>{
     const owner=document.createElement('div');owner.__mermaidScope=scope;owner.__mermaidIdentity='row-1';
     renderMarkdown(owner,value,[],()=>'',options);fixture.append(owner);return owner;

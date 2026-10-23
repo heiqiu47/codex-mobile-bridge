@@ -5,29 +5,29 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+
+import bridge.features.network.interfaces as network_interfaces
 from bridge.app.desktop import Desktop
 from bridge.features.auth.auth import Auth, LoginRejected
 from bridge.features.notifications.channels import settings
 
 ROOT = Path(__file__).resolve().parents[1]
+import bridge.features.network.interfaces as network_interfaces
 
 
 class AddressTests(unittest.TestCase):
-    @unittest.skipUnless(os.name == 'posix', 'POSIX interface enumeration')
     def test_interface_addresses_do_not_require_hostname_dns(self):
-        from run import addresses
-        with patch('run.Path.exists', return_value=True), patch('run.subprocess.run') as command, \
-                patch('run.socket.getaddrinfo', side_effect=AssertionError('Hostname DNS must not block settings')):
-            command.return_value.stdout = 'lo0:\n\tinet 127.0.0.1 netmask 0xff000000\nen0:\n\tinet 192.168.1.5 netmask 0xffffff00\n'
-            self.assertEqual(addresses(), ['127.0.0.1', '192.168.1.5', 'localhost'])
+        rows = [{'id': 'en0', 'name': 'en0', 'addresses': ['192.168.1.5']}]
+        platform = SimpleNamespace(enumerate_interfaces=lambda: rows)
+        with patch.object(network_interfaces, '_platform_module', return_value=platform):
+            self.assertEqual(network_interfaces.eligible_lan_addresses(), ['192.168.1.5'])
 
-    def test_dns_fallback_without_interface_command(self):
-        from run import addresses
-        with patch('run.Path.exists', return_value=False), patch('run.shutil.which', return_value=None), \
-                patch('run.socket.getaddrinfo') as lookup:
-            lookup.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('192.168.1.6', 0))]
-            self.assertEqual(addresses(), ['127.0.0.1', '192.168.1.6', 'localhost'])
+    def test_unresolvable_enumeration_fails_closed_without_dns_guessing(self):
+        platform = SimpleNamespace(enumerate_interfaces=lambda: [])
+        with patch.object(network_interfaces, '_platform_module', return_value=platform):
+            self.assertEqual(network_interfaces.eligible_lan_addresses(), [])
 
 
 class DesktopTests(unittest.TestCase):

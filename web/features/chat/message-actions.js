@@ -1,30 +1,84 @@
 'use strict';
 const actionText=source=>typeof BridgeI18n==='undefined'?source:BridgeI18n.t(source);
-window.BridgeClipboard={
-  async copy(getText,button){
-    if(button.disabled)return;
-    const label=button.textContent;button.disabled=true;button.textContent=actionText('正在读取…');
+window.BridgeClipboard=(()=>{
+  function modernCopy(value){
     try{
-      const text=await getText();
-      try{
-        if(!navigator.clipboard?.writeText)throw Error('Clipboard unavailable');
-        await navigator.clipboard.writeText(text);
-        button.textContent=actionText('已复制');
-        setTimeout(()=>{button.textContent=label;},1500);
-      }catch{
-        const dialog=document.createElement('dialog');dialog.className='picker copy-dialog';
-        const heading=document.createElement('h2');heading.textContent=actionText('复制内容');
-        const help=document.createElement('p');help.className='muted';help.textContent=actionText('浏览器限制自动复制，请长按选中文本复制，或使用系统复制快捷键。');
-        const input=document.createElement('textarea');input.readOnly=true;input.value=text;input.setAttribute('aria-label',actionText('复制内容'));
-        const close=document.createElement('button');close.className='primary';close.textContent=actionText('完成');close.onclick=()=>dialog.close();
-        dialog.append(heading,help,input,close);document.body.append(dialog);
-        dialog.onclose=()=>{dialog.remove();button.focus();};dialog.showModal();input.focus();input.select();input.setSelectionRange(0,text.length);
-        button.textContent=label;
-      }
-    }catch(error){button.textContent=label;document.dispatchEvent(new CustomEvent('bridge-message-error',{detail:error.message}));}
-    finally{button.disabled=false;}
+      let pending;
+      if(typeof value==='string'&&navigator.clipboard?.writeText)pending=navigator.clipboard.writeText(value);
+      else if(value?.then&&navigator.clipboard?.write&&typeof ClipboardItem==='function'){
+        // Reserve the write during the click, before full-message retrieval awaits
+        // the network. WebKit requires this user gesture even for already-read text.
+        const data=Promise.resolve(value).then(text=>{
+          if(typeof text!=='string')throw Error(actionText('复制失败，请重试'));
+          return new Blob([text],{type:'text/plain'});
+        });
+        data.catch(()=>{}); // The constructor/write may reject before consuming data.
+        pending=navigator.clipboard.write([new ClipboardItem({'text/plain':data})]);
+      }else return null;
+      return Promise.resolve(pending).then(()=>true,()=>false);
+    }catch{return null;}
   }
-};
+  function selectionCopy(text,button){
+    if(!document.execCommand)return false;
+    const active=document.activeElement,selection=document.getSelection?.(),ranges=[];
+    for(let i=0;i<(selection?.rangeCount||0);i++)ranges.push(selection.getRangeAt(i).cloneRange());
+    const start=active?.selectionStart,end=active?.selectionEnd,direction=active?.selectionDirection;
+    const input=document.createElement('textarea');input.value=text;input.readOnly=true;input.tabIndex=-1;
+    input.className='clipboard-selection';
+    // A textarea outside an open modal is inert, so keep it in the same layer.
+    (button.closest('dialog[open]')||document.body).append(input);
+    try{input.focus({preventScroll:true});input.select();input.setSelectionRange(0,text.length);return document.execCommand('copy')===true;}
+    catch{return false;}
+    finally{
+      input.remove();
+      if(active?.isConnected)active.focus({preventScroll:true});
+      if(typeof start==='number')active.setSelectionRange(start,end,direction);
+      if(selection){selection.removeAllRanges();for(const range of ranges)selection.addRange(range);}
+    }
+  }
+  return {
+    async copy(getText,button){
+      if(button.disabled)return;
+      const label=button.textContent;button.disabled=true;button.textContent=actionText('正在读取…');
+      try{
+        const value=getText();
+        let pending=modernCopy(value),selectionTried=false;
+        if(pending===null&&typeof value==='string'){pending=selectionCopy(value,button);selectionTried=true;}
+        const text=await value;
+        if(typeof text!=='string')throw Error(actionText('复制失败，请重试'));
+        if(pending===null)pending=modernCopy(text);
+        const copied=(await pending)||(!selectionTried&&selectionCopy(text,button));
+        const done=()=>{
+          button.textContent=actionText('已复制');
+          setTimeout(()=>{button.textContent=label;},1500);
+        };
+        if(copied)done();
+        else{
+          const dialog=document.createElement('dialog');dialog.className='picker copy-dialog';
+          const heading=document.createElement('h2');heading.textContent=actionText('复制内容');
+          const help=document.createElement('p');help.className='muted';help.textContent=actionText('浏览器限制自动复制，请长按选中文本复制，或使用系统复制快捷键。');
+          const input=document.createElement('textarea');input.readOnly=true;input.value=text;input.setAttribute('aria-label',actionText('复制内容'));
+          const actions=document.createElement('div');actions.className='copy-dialog-actions';
+          const retry=document.createElement('button');retry.type='button';retry.className='primary';retry.textContent=actionText('复制');
+          retry.onclick=async()=>{
+            retry.disabled=true;
+            try{
+              const pending=modernCopy(text);
+              const copied=pending===null?selectionCopy(text,retry):(await pending)||selectionCopy(text,retry);
+              if(copied){dialog.close();done();}else{input.focus();input.select();}
+            }
+            finally{retry.disabled=false;}
+          };
+          const close=document.createElement('button');close.type='button';close.textContent=actionText('完成');close.onclick=()=>dialog.close();
+          actions.append(retry,close);dialog.append(heading,help,input,actions);document.body.append(dialog);
+          dialog.onclose=()=>{dialog.remove();button.focus({preventScroll:true});};dialog.showModal();input.focus();input.select();input.setSelectionRange(0,text.length);
+          button.textContent=label;
+        }
+      }catch(error){button.textContent=label;document.dispatchEvent(new CustomEvent('bridge-message-error',{detail:error.message}));}
+      finally{button.disabled=false;}
+    }
+  };
+})();
 
 class MessageActions {
   constructor({request,openChat,refresh,uuid,notify,busy}){

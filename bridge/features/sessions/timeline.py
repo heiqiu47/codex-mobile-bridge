@@ -27,22 +27,47 @@ class Timeline:
         self.positions = {}
         self.versions = OrderedDict()
         self.meta = {}
+        self.limit = None
+        self.window_anchor = None
+        self.source_anchor = None
+        self.window_more = False
 
-    def update(self, view):
-        if self.sequence == view['sequence']:
+    def update(self, view, limit=None):
+        if self.sequence == view['sequence'] and self.limit == limit:
             return
         activation_ids = set(view.get('goalActivationIds') or ())
-        rows, details = [], {}
+        entries = []
         for turn in view['turns']:
             occurrences = {}
             first_user = next((m for m in turn['messages'] if m['role'] == 'user'), None)
             for message in turn['messages']:
                 if message.get('requestId') and message['requestId'] in activation_ids:
                     continue
-                identity = [turn['id'], message.get('id'), message.get('kind')]
-                base = hashlib.sha256(encoded(identity)).hexdigest()[:24]
-                ordinal = occurrences.get(base, 0)
-                occurrences[base] = ordinal + 1
+                identity = (turn['id'], message.get('id'), message.get('kind'))
+                ordinal = message.get('_timelineOrdinal', occurrences.get(identity, 0))
+                occurrences[identity] = ordinal + 1
+                entries.append((identity + (ordinal,), turn, message, message.get('_firstUser', message is first_user)))
+            if turn.get('error'):
+                entries.append(((turn['id'], 'error'), turn, None, False))
+        start = max(0, len(entries) - limit) if limit is not None else 0
+        # Keep the loaded prefix while new replies arrive. Expanding history
+        # must not hash/copy bodies outside the requested presentation window.
+        if self.window_anchor is not None and limit is not None:
+            anchor = next((i for i, entry in enumerate(entries) if entry[0] == self.window_anchor), None)
+            if anchor is not None:
+                start = min(start, anchor)
+        self.limit = limit
+        self.window_more = start > 0 or view.get('historyWindowMore', False)
+        self.window_anchor = entries[start][0] if start < len(entries) else None
+        # A tool call carried only to interpret a recent result must not expand
+        # the next source read to every intervening historical item.
+        self.source_anchor = next((entry[0] for entry in entries[start:]
+                                   if entry[2] is not None and not entry[2].get('_historyCarry')), None)
+        rows, details = [], {}
+        for identity, turn, message, first_user in entries[start:]:
+            if message is not None:
+                base = hashlib.sha256(encoded(identity[:3])).hexdigest()[:24]
+                ordinal = identity[3]
                 key = base + '-' + str(ordinal)
                 text = message.get('text') or ''
                 if message.get('output'):
@@ -55,7 +80,7 @@ class Timeline:
                 row.update(key=key, turnId=turn['id'], order=len(rows), version=version,
                            text=text[:180 if activity else TEXT_PREVIEW],
                            truncated=(activity and bool(text)) or len(text) > TEXT_PREVIEW, turnStatus=turn.get('status'),
-                           editable=turn.get('actionable', True) and message is first_user and message.get('kind') == 'userMessage',
+                           editable=turn.get('actionable', True) and first_user and message.get('kind') == 'userMessage',
                            forkable=turn.get('actionable', True) and message['role'] == 'assistant' and message.get('phase') != 'commentary' and turn.get('status') == 'completed')
                 if message['role'] == 'assistant':
                     row.update({k:turn[k] for k in ('model','effort') if turn.get(k)})
@@ -63,7 +88,7 @@ class Timeline:
                     row['attachments'] = attachments
                 rows.append(row)
                 details[key] = text
-            if turn.get('error'):
+            else:
                 key = hashlib.sha256(encoded([turn['id'], 'error'])).hexdigest()[:24] + '-error'
                 text = turn['error'] if isinstance(turn['error'], str) else json.dumps(turn['error'], ensure_ascii=False)
                 rows.append(dict(key=key, turnId=turn['id'], order=len(rows), role='error', text=text[:TEXT_PREVIEW],
@@ -118,7 +143,7 @@ class Timeline:
         start = end - len(selected)
         return {'epoch': self.epoch, 'sequence': self.sequence, 'rows': selected,
                 'before': self.cursor(selected[0]['key']) if selected else None,
-                'hasMore': start > 0 or self.meta.get('savedHistoryMore', False), 'meta': self.meta}
+                'hasMore': start > 0 or self.window_more or self.meta.get('savedHistoryMore', False), 'meta': self.meta}
 
     def changes(self, after, epoch, start):
         first = self.position(start) if start else None

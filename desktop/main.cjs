@@ -50,12 +50,12 @@ function worker(action,payload){
   if(action==='snapshot'&&updateQuitting)return Promise.resolve({...lastSnapshot,update:updater.status()});
   if(setupPending&&['save','start','stop'].includes(action))return Promise.reject(Error('请等待服务器操作完成。'));
   if(action==='start')payload={...payload,connectionSecrets};
-  const writes=(action==='cli-access'&&payload?.action!=='list')||(['harness','desktop-sessions'].includes(action)&&!['status','clients','detect'].includes(payload?.action))||['server-setup','connection-credentials','save','start','stop','devices','notification-watches','webhook-endpoint', 'transfer-settings'].includes(action);
+  const writes=(action==='cli-access'&&payload?.action!=='list')||(action==='network-adaptation'&&payload?.action!=='status')||(['harness','desktop-sessions'].includes(action)&&!['status','clients','detect'].includes(payload?.action))||['server-setup','connection-credentials','save','start','stop','devices','notification-watches','webhook-endpoint', 'transfer-settings'].includes(action);
   if(writes&&updater?.busy)return Promise.reject(Error('正在更新应用，请稍候。'));
   if(writes)workerWrites++;
   if(action==='snapshot'&&snapshotPending)return snapshotPending;
   const options=workerFor({packaged:app.isPackaged,resources:process.resourcesPath,root,dataDir});
-  const result=(action==='snapshot'&&!updater?.busy?snapshotWorker.read(options):['accounts','account','cli-access','desktop-sessions','start','stop','save'].includes(action)?managementWorker.call(options,action,payload):runWorker(options,action,payload)).then(value=>['snapshot','save'].includes(action)?{...value,networkInterfaces:interfaces(),cloudflaredInstall:installStatus,update:updater?.status(),updateResult:updateResult(),updateManaged:updateManaged(),loginStartup:loginStartup.status()}:value).finally(()=>{if(writes)workerWrites--;});
+  const result=(action==='snapshot'&&!updater?.busy?snapshotWorker.read(options):['accounts','account','cli-access','desktop-sessions','start','stop','save'].includes(action)?managementWorker.call(options,action,payload):runWorker(options,action,payload)).then(value=>['snapshot','save'].includes(action)?{...value,networkInterfaces:value.networkInterfaces??interfaces(),cloudflaredInstall:installStatus,update:updater?.status(),updateResult:updateResult(),updateManaged:updateManaged(),loginStartup:loginStartup.status()}:value).finally(()=>{if(writes)workerWrites--;});
   if(action==='snapshot')snapshotPending=result.then(value=>{lastSnapshot=value;return value;}).finally(()=>{snapshotPending=null;});
   return action==='snapshot'?snapshotPending:result;
 }
@@ -122,7 +122,7 @@ function register(){
     fs.writeFileSync(path.join(directory,'language.json'),JSON.stringify({language:value}));
     language=value;const title=t('Codex 手机网关');if(window.getTitle()!==title)window.setTitle(title);tray?.relabel();return language;
   });
-  for(const action of ['snapshot','save','start','stop','logs','test-notification','webhook-endpoint','check-entry','tailscale-setup','devices','account', 'accounts', 'cli-access', 'harness', 'desktop-sessions','notification-watches', 'transfer-settings'])ipcMain.handle('bridge:'+action,async(event,payload)=>{
+  for(const action of ['snapshot','save','start','stop','logs','test-notification','webhook-endpoint','network-adaptation','check-entry','tailscale-setup','devices','account', 'accounts', 'cli-access', 'harness', 'desktop-sessions','notification-watches', 'transfer-settings'])ipcMain.handle('bridge:'+action,async(event,payload)=>{
     authorize(event);
     if(action==='accounts'){
       if(updater?.busy&&payload?.action!=='list')throw Error('正在更新应用，请稍候。');

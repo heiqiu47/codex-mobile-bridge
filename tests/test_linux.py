@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import run
+import bridge.features.network.interfaces as interfaces
+import bridge.platforms.linux.interfaces as linux_interfaces
 from bridge.clients.codex.catalog import Catalog
 from bridge.features.sessions.create import CreationError, open_in_desktop
 
@@ -84,18 +85,17 @@ class LinuxTests(unittest.TestCase):
     def test_linux_interfaces_do_not_depend_on_hostname_dns(self):
         data = [{'addr_info': [{'family': 'inet', 'local': ip} for ip in
                               ('127.0.0.1', '192.168.1.7', '172.16.1.2', '192.168.1.7', '0.0.0.0')]}]
-        with patch('run.sys.platform', 'linux'), patch('run.shutil.which', return_value='/usr/sbin/ip'), \
-                patch('run.subprocess.run', return_value=subprocess.CompletedProcess([], 0, json.dumps(data))) as command, \
-                patch('run.socket.getaddrinfo') as dns:
-            self.assertEqual(run.addresses(), ['127.0.0.1', '172.16.1.2', '192.168.1.7', 'localhost'])
+        with patch.object(linux_interfaces.shutil, 'which', return_value='/usr/sbin/ip'), \
+                patch.object(linux_interfaces.subprocess, 'run',
+                             return_value=subprocess.CompletedProcess([], 0, json.dumps(data))) as command:
+            rows = linux_interfaces.enumerate_interfaces()
+            self.assertEqual(interfaces.eligible_lan_addresses(rows), ['172.16.1.2', '192.168.1.7'])
             self.assertEqual(command.call_args.args[0], ['/usr/sbin/ip', '-j', '-4', 'address', 'show', 'up'])
-            dns.assert_not_called()
 
-    def test_ip_failures_fall_back_without_breaking_startup(self):
+
+    def test_ip_failures_fail_closed_without_dns_guessing(self):
         for value in ('invalid json', '{}', '[null]'):
-            with self.subTest(value=value), patch('run.sys.platform', 'linux'), \
-                    patch('run.shutil.which', return_value='/usr/sbin/ip'), \
-                    patch('run.subprocess.run', return_value=subprocess.CompletedProcess([], 0, value)), \
-                    patch.object(Path, 'exists', return_value=False), \
-                    patch('run.socket.getaddrinfo', return_value=[(None, None, None, None, ('192.168.1.9', 0))]):
-                self.assertIn('192.168.1.9', run.addresses())
+            with self.subTest(value=value), \
+                    patch.object(linux_interfaces.subprocess, 'run',
+                                 return_value=subprocess.CompletedProcess([], 0, value)):
+                self.assertEqual(interfaces.eligible_lan_addresses(linux_interfaces.enumerate_interfaces()), [])

@@ -289,6 +289,7 @@ class ClientNavigation {
   }
   renderManager(){
     const manager=this.manager;if(!manager?.dialog.open)return;
+    this.renderNetworkAdaptation();
     const {list,note}=manager;list.replaceChildren();
     for(const client of this.clients){
       const row=document.createElement('div');row.className='client-management-row';row.dataset.clientId=client.id;
@@ -312,7 +313,48 @@ class ClientNavigation {
     if(this.manager?.dialog.open)return;
     const dialog=this.view.dialog('应用管理'),list=document.createElement('div'),note=document.createElement('p');note.className='muted';
     const title=dialog.querySelector('.picker-head h2');title.classList.add('dialog-content-start');title.tabIndex=-1;title.autofocus=true;dialog.append(list,note);this.manager={dialog,list,note};
-    dialog.addEventListener('close',()=>{if(this.manager?.dialog===dialog)this.manager=null;});dialog.showModal();this.renderManager();this.refresh();
+    this.createNetworkAdaptation();
+    dialog.addEventListener('close',()=>{if(this.manager?.dialog===dialog)this.manager=null;});dialog.showModal();this.renderManager();this.refresh();this.readNetworkAdaptation();
+  }
+
+  createNetworkAdaptation(){
+    if(window.BridgeSharedRelay)return;
+    const section=document.createElement('section'),heading=document.createElement('div'),title=document.createElement('h3'),refresh=document.createElement('button'),label=document.createElement('label'),caption=document.createElement('span'),box=document.createElement('input'),hint=document.createElement('p'),status=document.createElement('p');
+    section.className='gateway-network-settings';heading.className='gateway-network-heading';title.dataset.i18n='网关连接';title.textContent=BridgeI18n.t('网关连接');
+    refresh.type='button';refresh.className='plain';refresh.dataset.i18n='刷新状态';refresh.textContent=BridgeI18n.t('刷新状态');refresh.onclick=()=>this.readNetworkAdaptation();heading.append(title,refresh);
+    label.className='display-option';caption.dataset.i18n='网络变化自动恢复';caption.textContent=BridgeI18n.t('网络变化自动恢复');box.type='checkbox';box.disabled=true;box.setAttribute('aria-describedby','network-adaptation-help');label.append(caption,box);
+    hint.id='network-adaptation-help';hint.className='muted';hint.dataset.i18n='默认关闭。开启后检测网络变化，更新所选网卡的 IP 入口，并恢复失效的临时 HTTPS 连接。开关即时保存，无需重启网关。';hint.textContent=BridgeI18n.t(hint.dataset.i18n);status.className='muted';status.setAttribute('role','status');
+    box.onchange=()=>this.setNetworkAdaptation(box.checked);
+    section.append(heading,label,hint,status);this.manager.dialog.append(section);this.manager.networkAdaptation={section,box,status,refresh};
+  }
+  renderNetworkAdaptation(){
+    const panel=this.manager?.networkAdaptation;if(!panel)return;
+    const state=this.networkAdaptationState,known=typeof state?.enabled==='boolean',busy=!!this.networkAdaptationBusy;
+    panel.section.hidden=!!window.BridgeSharedRelay;
+    panel.box.checked=state?.enabled===true;panel.box.disabled=busy||!known||state?.canEdit===false;
+    panel.box.setAttribute('aria-busy',String(busy));panel.refresh.disabled=busy;
+    panel.status.textContent=BridgeI18n.t(busy?(this.networkAdaptationBusy==='write'?'正在保存…':'正在读取网络恢复设置…'):this.networkAdaptationError||(state?.canEdit===false?'免密访问下不能远程修改此设置，请在网关 App 中调整。':known?(state.enabled?'已启用':'未启用'):'正在读取网络恢复设置…'));
+  }
+  async readNetworkAdaptation(){
+    if(window.BridgeSharedRelay||this.networkAdaptationBusy)return;
+    this.networkAdaptationBusy='read';this.networkAdaptationError='';this.renderNetworkAdaptation();
+    try{this.networkAdaptationState=await this.networkAdaptationRequest();}
+    catch(error){this.networkAdaptationState=null;this.networkAdaptationError=error.status===404?'请更新网关以使用网络变化自动恢复。':'网络恢复设置读取失败，请刷新状态。';}
+    finally{this.networkAdaptationBusy=false;this.renderNetworkAdaptation();}
+  }
+  networkAdaptationRequest(body){
+    return ClientLifecycle.request(signal=>this.request('/api/network-adaptation',body,signal),{timeout:10000,uncertain:body!==undefined,message:'网络恢复设置尚未确认，请刷新状态后重试。'}).then(state=>{if(typeof state?.enabled!=='boolean')throw Error('网络恢复设置读取失败，请刷新状态。');return state;});
+  }
+  async setNetworkAdaptation(enabled){
+    if(window.BridgeSharedRelay||this.networkAdaptationBusy||typeof this.networkAdaptationState?.enabled!=='boolean'||this.networkAdaptationState.canEdit===false)return;
+    this.networkAdaptationBusy='write';this.networkAdaptationError='';this.renderNetworkAdaptation();
+    try{this.networkAdaptationState=await this.networkAdaptationRequest({enabled});}
+    catch(error){
+      this.networkAdaptationError=error.status>=400&&error.status<500?error.message:'网络恢复设置尚未确认，请刷新状态后重试。';
+      // A lost response is not permission to replay a state-changing request.
+      try{this.networkAdaptationState=await this.networkAdaptationRequest();if(this.networkAdaptationState.enabled===enabled)this.networkAdaptationError='';}
+      catch{this.networkAdaptationState=null;}
+    }finally{this.networkAdaptationBusy=false;this.renderNetworkAdaptation();}
   }
 
   homeDialog(){

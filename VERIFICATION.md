@@ -1,3 +1,156 @@
+<a id="v214"></a>
+
+# v2.1.4 正式发布验收（2026-10-24）
+
+发布产品提交 `0f1934a`（标签 `v2.1.4`），承接已验收的历史读取与控制分离改动；桌面与手机版本统一为 2.1.4，Android/iOS 构建号 37。PR #63 作者的全部 8 个原提交保留。正式应用标识、安装身份、Android 签名与桌面更新验证公钥沿用原版本。
+
+| 范围 | 结果与边界 |
+| --- | --- |
+| 完整 CI | Windows、Ubuntu 的 Python 3.9/3.13，macOS Python 3.13，以及桌面、更新器、手机发布与下载检查通过。源码与 PR 工作流均通过；构建工作流在各原生平台再次执行测试。修复 Windows Claude 历史元数据中 path stat/fstat 差异，并隔离 DSH 退出测试的时间模拟，补齐回归 |
+| 正式桌面包 | Mac arm64/x64 DMG、ZIP；Windows x64 NSIS、ZIP；Linux x64/arm64 DEB、AppImage 完成原生构建、包内运行时与安装启动检查。Windows 带齐六项 ConPTY 文件；Mac 验证嵌套签名。五种桌面架构的关键启动资源与已验收源码一致 |
+| Mac 正式升级 | 在本机隔离目录以正式 2.1.3 签名包执行真实更新助手、Electron 重启及原网关重启，升级到 2.1.4 通过；注入暂存可执行文件缺失后自动恢复 2.1.3。原配置值、通知配置和旧 QR 手机 cookie 均保留；日常正式版进程、包文件与 Test 配置绑定摘要前后一致 |
+| Windows 正式升级 | 在真实 Windows 设备的 F 盘隔离目录，用已发布 2.1.3 ZIP 和本次 2.1.4 ZIP 执行真实更新助手与 Electron 重启。正常升级通过；移除仅属于测试事务的暂存可执行文件后，失败更新自动恢复 2.1.3。原 QR 配对 cookie 持续通过 trusted 认证，配置和通知设置保留 |
+| Linux 升级与回退 | 真实 Ubuntu 虚拟机中，正式 DEB 解包载荷 2.1.3 → 2.1.4 → 2.1.3 切换、启动和原 QR 绑定认证通过。此项为隔离载荷切换，不是对用户正式安装执行 sudo 包管理回滚；两种架构的 DEB 安装与 GUI/AppImage 启动另由原生 CI 验证 |
+| 配置迁移 | 新版仅为旧局域网 IP 选择补充对应网卡 `lanInterfaces`；验收逐字段确认全部旧值不变，新增选择与系统实际网卡一致。回退保留旧 IP 字段并正常启动；通知配置字节不变，原绑定命名空间与有效会话保留。现有正式版与 Test 包及持久配置的前后摘要一致 |
+| Android / iOS | Android 正式签名 APK 在独立 API 35 模拟器完成 2.1.3/build35 → 2.1.4/build37 → 2.1.3，首次安装身份、电脑列表、设置及原生/WebView 认证保留。iOS 用正式应用及扩展标识完成设备构建，并在独立 iOS 18.2 模拟器完成同样升级/回退，电脑列表、设置与原生/WebView cookie 认证保留；不是重新签名安装用户真机的验收 |
+| 手机长会话 | 用户在 Mac 8788 Test 原固定 HTTPS 入口，确认 A/B 两个长会话进入先显示最近内容、上翻读取旧记录且位置稳定、返回列表再进入复用均通过；无需发送消息或审批 |
+| 下载与更新身份 | 14 个分发资产（含已签名更新清单）与 SHA256SUMS 核对通过，共 15 个 Release 文件。桌面更新清单签名及三种自动更新 ZIP 的大小和 SHA-256 通过原公钥验证；GitHub 草稿资产摘要与本地对应。iOS 三个正式标识和 Android 原签名核对通过 |
+
+三平台 Test 安装、启动、原生分页与配置绑定保留证据见[历史与控制拆分](docs/architecture/history-control-separation.md#test-安装验收2026-10-24)。真实 A/B 会话位于 Mac，Windows/Ubuntu 的原生合成回归不冒充这两条会话的实际运行环境。历史首屏不等待完整控制快照，但 Desktop → 网关首次控制订阅仍可能传输全量；网络恢复默认关闭，受控换址测试不等同于真实 DHCP 租约切换。
+
+本机记录位于 `.tmp/release-v214-20261024/`。Windows 临时文件与验收产物仅放 F 盘，Windows/Ubuntu 重型操作串行；测试只使用隔离配置与本地认证夹具，不发送聊天消息或调用模型。保留现有正式版、原会话、账号、配置和手机绑定；结束后移除本轮重复 App 载荷，保留结果、哈希和日志。
+
+**English:** The product tag is fixed at `0f1934a`. Native CI covers macOS arm64/x64, Windows x64 and Linux x64/arm64, with official mobile identities and the existing Android/update signing keys. Isolated desktop upgrade/recovery and mobile simulator upgrade/downgrade checks verify original configuration values and trusted cookies. Linux rollback coverage is an extracted-DEB payload switch, not a system package-manager rollback. A/B long-chat reading was accepted by the user on the existing Mac Test HTTPS entry. Original desktop ownership and bindings remain intact; initial control subscription can still carry a full snapshot.
+
+---
+
+<a id="long-session-progressive-loading"></a>
+
+# 长会话渐进式加载验收（2026-10-23，未发布）
+
+独立分支 `perf/long-session-progressive-loading`，产品候选 `898549c4054a48db8ce685df98f9fca1502e594c`，承接已验收的 PR #63、Web 复制与 Issue #65 修复；版本仍为 `2.1.4-preview.1`，不推送、不合并 main、不发布。
+
+- 首屏仍取最近 20 条展示记录；移除打开后自动补足 100 条的请求。上翻接近已加载记录顶部或点击“查看更早内容”才补页，保留阅读位置；展开长正文、工具详情仍单独读取。
+- 网关最初读取最近 2 个保存回合，必要时按 5 个回合补读；展示投影初始窗口为最近 40 条，随上翻扩展。未变化的状态复用归一化与投影，写操作依旧读取实时授权状态。
+- Web 页面存活期间保留最近 8 个会话、每个最近 20 条的内存缓存，按网关登录身份、主机和会话隔离。重新进入先显示已有文本；未完成的后台加载不会清空缓存，真实结果随后替换。退出登录、账号切换或网关身份变化时清理。缓存不恢复审批、编辑权限或草稿，也不是离线数据库。
+
+| 验收范围 | 结果与证据 |
+| --- | --- |
+| 后端源码 | `scripts/test-backend.py --source-only`：2,147 项，2,065 通过、82 跳过。包含近期投影不处理旧正文、稳定游标、增量失效、重复读取复用、原始权威状态不裁剪及并发会话的大快照回归 |
+| 前端源码 | Node 884 项，883 通过、1 跳过；浏览器合成测试 43 项通过，覆盖首屏 20 条、按需补页、稳定位置、流式替换、过期响应丢弃和缓存身份边界 |
+| Mac 原生与安装包 | arm64 Test 完整构建、包内编译模块 18 项原生检查通过，覆盖安装及启动通过。原 14 个有效绑定、网络配置和正式版进程保持；固定 HTTPS 实际资源完成 390px 窄屏 30 项合成浏览器检查 |
+| Windows 原生与安装包 | x64 Test 在 F 盘低并发离线构建；完整安装 706 文件哈希、二维码依赖、GUI、包内编译模块 18 项及 8788 HTTP 缓存检查通过。原 4 个 Test 绑定和 1 个正式版绑定保留。通过现有普通 Explorer 会话安装，无新增计划任务 |
+| Linux / Ubuntu | x64 DEB 713 个应用文件与独立自启动标识核对、模拟仅更新 Test；包内编译模块 18 项在真实 Ubuntu 执行通过。安装后 716 个包文件（含桌面入口）与 DEB 逐项一致；真实图形窗口、8788 启动、静态资源缓存和绑定保留检查通过，原禁用本机访问与 Cloudflare 配置保持 |
+| 弱网 | Windows Test 实际加载的页面脚本，800 ms 网络延迟、约 1 Mbps 下载条件；合成消息缓存约 0.4 ms 展示，实际只读 `/api/auth` 请求约 815 ms 返回后更新。不是聊天内容的端到端耗时基准 |
+
+真实 Mac A/B 验收均为被动读取，没有调用模型、发送、恢复或切换会话。源码基线中 B 的 27,810 条展示投影约 2.92 秒；同机修订样本的初始 40 条约 0.03 秒，未变化时不再次归一化。安装包再次读取 B 时先得到已保存的最近 20 条，再接收原生状态；实际运行的 8788 HTTP 并行读取中 A 约 0.07–0.19 秒、B 约 0.39–0.81 秒，B 上翻 100 条约 0.13 秒，旧页与首屏无重叠且游标保持。此会话持续产生新内容，记录是当次测量，不代表固定网络延迟或所有用户的首屏承诺。临时 HTTP 验收登录已退出，原手机绑定保留。
+
+**Desktop 分页能力边界：**核验本机已安装 Desktop 代码，内部 `thread/turns/list` 与 `thread/items/list` 有游标分页；目前网关跟随通道暴露的是完整历史请求与快照广播，未发现可用的分页参数。本次没有猜测调用、触发完整历史请求或改用 CLI 接管原会话。原生传输仍可能接收完整快照；本次减少首屏等待、展示投影及重复处理开销，并不声称已将 Desktop 原生传输改成分页。共享连接仍保留 Issue #65 的有界接收保护。
+
+额外的 Python 公共 HTTPS 探针被 Cloudflare 以 403/1010 拒绝；该项未计为通过。固定域名的浏览器加载及窄屏回归已通过，访问安全设置未放宽。
+
+原始证据保留于忽略目录 `.tmp/long-session-20261023/`：协议核验、性能样本、浏览器结果、各平台构建清单及配置绑定哈希。仅保留当前 Test 安装包和必要记录，替代旧包与重复构建产物完成验收后清理。手机共享页面由网关更新，未改原生壳或重新安装手机 App；真实手机体验留给用户复测。
+
+---
+
+<a id="issue65-large-desktop-snapshot"></a>
+
+# Issue #65 与跨平台 Web 复制验收（2026-10-23，未发布）
+
+分支 `fix/issue-65-desktop-ipc-session` 保留已验收的 PR #63 与 Web 一键复制改动，产品提交 `16d6ef51ca42f3fe1da966db23c1f01833a1c35a`。桌面与手机版本仍为 `2.1.4-preview.1`，未推送 GitHub、未合并 main、未发布更新。
+
+根因由只读原生 IPC 探针确认：用户指定的 B 会话快照约 89 MB，超过旧客户端 64 MiB 接收上限，触发共享连接断开，连带影响同一连接上的 A 会话。没有发现“会话链接导致 A 占用 B 连接”的证据。接收上限改为有界的 256 MiB，并以最多 1 MiB 分块读取；出站请求仍维持 64 MiB 限制。不会因此发送、恢复或切换原会话，也不会把完整原始快照传给手机。
+
+| 范围 | 本轮证据 |
+| --- | --- |
+| 回归 | 新增 4 项：超过 64 MiB 的快照、Unicode、两个会话后续增量、分页体积、分片读取、非法长度拒绝及出站限制。定向 Bridge 85 项中 83 通过、2 跳过；CLI 41/41；平台 14 项中 11 通过、3 跳过；Web/原生复制 8/8 |
+| 真实 A/B | 源码和已安装 Mac 包中的编译 IPC/服务模块均完成原生只读连接。后者 A 1.57 秒、B 6.47 秒，两者保持连接，B 最近 20 行约 12 KB；原会话 id/owner 匹配。随后通过实际运行的 Mac 8788 HTTP 接口复验：B 首次分页约 7.05 秒，后续 A/B 均为 connected、原 id 匹配、无恢复动作，分别返回 20 行约 12/94 KB。分页体积随最新聊天内容变化；没有把约 89 MB 原始快照传给浏览器，也没有发送消息、改变草稿或调用模型。耗时仅为当前机器和会话测量 |
+| Mac arm64 Test | 完整构建及签名检查通过，360 个 Web 文件匹配。已安装编译模块 4/4；本机钥匙串确认后，经正常 App 入口启动 8788，通过实际服务 A/B 与 HTTP/HTTPS 一键复制验收。正式版进程和文件、认证及全部 14 条原有效绑定保留。人工操作阶段界面语言由前序基线变为英文，保留当前选择；其余受保护设置不变 |
+| Windows x64 Test | F 盘完整原生构建、NSIS 覆盖安装，706 个安装文件匹配；二维码、完整 ConPTY、独立 Test 数据与自启动检查通过。已安装编译模块 4/4；普通桌面 GUI、8788 启动和版本资源 304 通过。正式版、原配置、有效手机绑定和用户已启用的网络变化检测选项保留；GUI 旧夹具的“必须关闭”前提已修正，仅续验、未重复安装 |
+| Windows 网关 Web | 实际安装服务提供脚本，macOS 上真实 Chromium 访问 Windows 的局域网 HTTP 地址，点击 → 系统粘贴逐字验证中文、emoji、多行文本、延迟 600ms 的 30,010 字符正文及弹窗内源码；无原生手机桥接，`isSecureContext=false`、现代 Clipboard API 不存在，未出现手动复制窗口，草稿不变。此项明确为浏览器客户端访问 Windows 网关，不冒充 Windows 本机 Edge 或手机真机验收 |
+| Ubuntu x64 Test | 原生 DEB 已由用户 sudo 覆盖安装，713 项应用文件及 3 项包管理文件逐项匹配。已安装编译 IPC 4/4、实际桌面 GUI、8788 启动、资源 immutable/304 及原配置绑定保留通过。保留原 `localAccess=false`，以虚拟机局域网入口验收；未为测试开放本机网页访问 |
+| Ubuntu 网关 Web | Ubuntu 真实桌面中使用既有 Electron Chromium，保持沙箱和网页安全设置、关闭 Node 集成，无原生剪贴板桥接及权限自动批准。访问已安装服务的 HTTP 入口，原生鼠标点击 → 系统粘贴验证中文、多行、延迟长正文和弹窗源码逐字一致；草稿不变，无手动复制框。验收用浏览器已退出，Test App 与网关保持运行 |
+
+三端各完成原生接收大快照回归；真实 A/B 原会话位于 Mac，因此 Windows/Ubuntu 的原生 IPC 合成大快照验收不冒充原会话实测。手机原生包未更新，手机真机点击复制仍由用户继续实测。
+
+收尾发现 Mac 和 Ubuntu Test 均启用同一个 Cloudflare 域名，实际 HTTPS 请求曾返回 Ubuntu 实例，导致 Mac 的短期配对授权不匹配。用户明确选择域名保留给 Mac：仅通过正常控制接口关闭 Ubuntu Test 的该入口并重启该 Test 网关，保留局域网、凭据、其他配置和原绑定；正常保存将缺省网卡选择显式记为 `null`，仍为自动选择。固定域名随后连续核对为 Mac 实例，HTTPS 一键复制复验通过。没有修改 DNS、正式版或 Mac 入口配置。
+
+安装后验收通过再清理旧 Test 与重复产物：Windows 1,271,041,272 字节、Ubuntu 1,485,982,308 字节、Mac 660,562,967 字节（均为文件逻辑大小，不是磁盘实际释放量）。保留当前已安装 Test、Windows/Ubuntu 最新安装包、源码归档、配置绑定及必要验收记录。Windows 产物始终在 F 盘，构建与 Ubuntu 串行进行；清理后再次核对正式版和原绑定。
+
+本地构建和验收证据保存在 `.tmp/issue65-20261023/`，Windows 对应文件全部位于 F 盘。本轮没有更新手机原生包；Web 复制沿用上一轮已验证的共享实现与原生 App 适配。操作系统或浏览器明确拒绝剪贴板写入时仍保留手动兜底，不宣称绕过权限。
+
+**English:** Issue #65 was reproduced as an oversized Desktop snapshot closing the shared IPC stream. The bounded receive budget is now 256 MiB with 1 MiB reads; outbound limits remain unchanged. All three Test installations passed native IPC, startup and preservation checks. Actual A/B sessions were verified through the running Mac gateway without sending or activating turns; Windows/Linux used native synthetic large-snapshot regressions. Browser copy/paste passed against Mac HTTP/HTTPS, Windows HTTP from macOS Chromium, and Ubuntu HTTP in a sandboxed native Electron browser. The user's shared Cloudflare hostname was isolated to Mac by disabling only the Ubuntu Test entry as explicitly authorized. Original bindings remain valid, redundant Test artifacts were removed, and no code was pushed or released.
+
+---
+
+<a id="web-clipboard-one-click"></a>
+
+# Web 一键复制本地验收（2026-10-23，未发布）
+
+分支 `fix/web-clipboard-one-click` 从已验收的 PR #63 集成提交 `f0bbdad` 新建，保留该轮网络恢复功能。产品提交 `76ef57e`、`4680695`；本机最终 Test 包源码为 `46806959d8940470ebfff5051cb507d7542a7c8e`，版本仍为 `2.1.4-preview.1`。未推送 GitHub、未合并 main、未发布更新。
+
+- 复现并修复普通 Web 只尝试 Clipboard API、局域网 HTTP 直接进入手动复制窗口的问题；已读取文本在点击内立即复制，完整正文通过 Promise ClipboardItem 保留原始手势，兼容路径恢复原焦点和选择。读取失败或浏览器拒绝不能显示成功；兜底窗口提供新点击重试。
+- Node 定向回归 **158 项全部通过**，包括 8 项复制用例、分页正文与版本校验、Claude/DSH 的原生可信点击桥接、资源白名单及启动恢复。原生剪贴板脚本没有变更。
+- 真实 Chromium 的安全 loopback、普通局域网 HTTP、固定 HTTPS 入口完成按钮点击 → 系统粘贴检查。消息、延迟完整正文、代码、全屏 Mermaid 源码保留中文、emoji 和换行；HTTP 明确验证 `isSecureContext=false`、`navigator.clipboard` 不存在时仍能复制。草稿内容保持不变。
+- 390px 窄屏完成普通消息、延迟正文、代码复制；1280×800 浏览器完成 Markdown 15 项、Mermaid 全屏 22 项检查。初次超大窗口下，全屏夹具未满足缩放后必须可平移的前提；限定标准窗口后通过，未因此改动缩放或拖动逻辑。
+- Mac arm64 独立 Test 已构建、覆盖并启动 8788。360 个打包 Web 文件与源码归档匹配，签名和包内二维码验证通过；固定 HTTPS 刷新后确实加载最终脚本。正式版进程/文件、网络设置、原 Test 配置及 **12 个有效登录绑定记录**保持不变。
+- Mac、Windows、Linux 网关共用此次 Web 源码；本轮只更新 Mac Test。Windows/Ubuntu 安装包、Android/iPhone 原生 App 未重装；Chromium 窄屏不等同于 iPhone Safari 或 Android 浏览器真机验收。浏览器或系统明确禁止自动复制时仍需使用兜底操作。
+
+本地日志与构建清单位于 `.tmp/web-clipboard-20261023/`、`.tmp/web-clipboard-final-20261023/`，不提交临时文件或任何配置、凭据和绑定数据。
+
+**English:** local one-click Web clipboard support covers direct and delayed text, LAN HTTP compatibility, modal source copying and a fresh-click retry. All 158 targeted tests passed, with real Chromium copy/paste checks over loopback, LAN HTTP and the fixed HTTPS entry. The Mac 8788 Test was rebuilt and started with configuration, binding records and the formal app preserved. Other native packages were not rebuilt, and physical Safari/Android-browser acceptance remains separate.
+
+---
+
+<a id="pr63-network-adaptation"></a>
+
+# PR #63 可选网络恢复本地验收（2026-10-23，未发布）
+
+分支 `feature/pr63-network-adaptation-opt-in` 基于 `v2.1.4-preview.1`（`4c251de`），通过合并保留 [@qybgh](https://github.com/qybgh) 的 [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63) 全部 8 个原始提交；修订另行提交。Test 包源码固定为 `11bbba74b81d88c6b6a46a29f3eaf60da953d4ca`，版本仍为 `2.1.4-preview.1`，未推送 GitHub、未合并 main、未发布更新。
+
+- 默认关闭「网络变化自动恢复」。桌面网关的「网络访问」和登录后的 Web/手机「应用管理 → 网关连接」共享即时保存的开关；关闭时不启动后台网卡/路由变化监视器。开关单独保存，普通配置表单不会覆盖手机端刚保存的值。保存结果不明时只读回查，不重放写入。
+- 开启后使用平台原生事件与 30 秒低频兜底，合并短时事件并等待地址稳定。同 IP 续期不重绑，绑定失败使用有上限的退避，仅发布实际成功监听的地址。
+- 修正 Windows 网卡结构及 IPv4 地址偏移；旧 IP 选择逐项迁移为唯一网卡身份，保留多网卡和旧字段。迁移只在明确启动时保存，不由状态读取写盘。歧义匹配不扩大访问范围。
+- Quick Tunnel 的局域网地址变化不直接触发重建；路由变化先留恢复时间，再检查当前自有进程的本机就绪端点。连续明确失败后才有限重建，且有冷却时间；未知健康结果不当成失败。固定域名隧道、Tailscale 等仍使用原有恢复机制。
+
+| 范围 | 当前证据 |
+| --- | --- |
+| 完整源码回归 | Python discovery 2,127 项：2,046 通过、81 跳过。前端 876 项：875 通过、1 跳过。最终迁移、控制与网络修订另做定向复验；首次沙箱禁止本机监听的检查在获准监听后通过，没有修改产品代码绕过测试 |
+| 原生平台 | Mac 原生路由监视器创建/关闭通过；Windows、Ubuntu 各 80 项定向测试通过，涵盖平台枚举、运行时、真实回环监听地址变化和断开恢复、鉴权控制、旧配置迁移及 Quick Tunnel 策略 |
+| 浏览器 | 真实 Chromium 中英界面，宽屏与 390px 手机视口：默认关闭、打开不写入、单次切换单次写入、设置复用、CSRF、丢响应后只读确认、未知状态冻结和无横向溢出通过 |
+| Mac arm64 Test | 新冻结后端通过 25 项回环与本机控制检查，含启停/重启持久化和合成可信手机会话保留。已覆盖并启动 8788；实际 App 确认开关未启用，固定 HTTPS 入口在真实浏览器中显示登录页。正式版进程/文件不变，原登录会话保留；仅为 Test 的旧局域网选择新增 `lanInterfaces`，原字段保留 |
+| Windows x64 Test | 新冻结后端与完整 NSIS 包已覆盖安装，706 项载荷、二维码、完整 ConPTY、F 盘数据指针和独立 Test 自启动检查通过。普通桌面会话的实际 GUI、新开关默认关闭、8788 启动及版本资源 immutable/304 通过；正式版、原配置和有效手机登录记录保留。GUI 续验仅修订窗口可见性检查脚本，未重装或修改产品源码 |
+| Ubuntu x64 Test | 新冻结后端和独立 DEB 已覆盖安装，713 项应用载荷及 3 项包管理文件匹配。实际 GUI、新开关默认关闭、8788 启动与静态资源缓存通过；保留原 `localAccess=false`，网页验收使用实际监听的局域网入口，未为测试修改配置。正式版、原配置与有效手机登录记录保留 |
+| 手机 | 使用现有 Android/iOS App 加载网关共享 Web 控件，无原生代码或应用标识变化。本轮手机布局为 Chromium 视口验收，未冒充 Android/iPhone 真机触控验收 |
+
+测试以隔离配置、回环监听和受控网卡/路由/隧道事件验证 DHCP 地址替换、同 IP 续期、断网恢复及失败退避，没有修改用户真实网卡、释放 DHCP 租约或中断正式网络。手机中保存的旧 IP 不会因网关恢复自动变为新 IP；使用新地址、重新扫码或稳定域名连接，原认证与绑定继续保留。真实物理切网和手机跨 IP 重连由本轮 Test 继续实测。
+
+Windows 构建与临时产物均在 F 盘，与 Ubuntu 虚拟机构建串行进行；复用既有依赖，未安装新软件。验收后清理 Mac 旧 Test 和重复中间产物约 841 MiB、Windows 本轮重复构建文件约 1.10 GiB（按文件逻辑大小），Ubuntu 本轮重复产物约 1.34 GiB（按已分配空间）。保留当前已安装 Test、唯一 NSIS/DEB 安装器、源码归档、清单与日志；上述口径不同，不作为三端实际释放空间的精确总和。详细本地证据位于 `.tmp/pr63-integration-20261023/`，不提交配置、凭据或编译产物。
+
+**English:** this local, unpublished integration preserves all eight original PR #63 commits and adds default-off network recovery controls shared by desktop and authenticated Web/mobile clients. Native event monitoring, bounded fallback/retries, adapter migration and conservative Quick Tunnel recovery have targeted regression coverage on Mac, Windows and Linux. All three installed Test gateways passed startup, visible GUI and preservation checks; Windows and Ubuntu also verified versioned asset caching. No real DHCP lease or physical network was changed. Mobile viewport tests are distinguished from physical-device acceptance, and saved old-IP client addresses still require an updated address or stable hostname.
+
+---
+
+<a id="v214-preview1"></a>
+
+# v2.1.4-preview.1 启动恢复验收（2026-10-22）
+
+预发布分支 `release/v2.1.4-preview.1` 基于 main `de7b840`，整合 `fix/issue-62-startup-recovery` 已验收修订。桌面/手机发布版本 `2.1.4-preview.1`，手机构建号 36；iOS 系统版本 2.1.4。应用标识、签名身份、数据目录与绑定格式不变。本轮不合并 main，v2.1.3 保持稳定通道。
+
+| 范围 | 已验收结果 |
+| --- | --- |
+| 启动与资源 | Node 回归覆盖资源有限重试、严格执行顺序、提前下载、不支持 preload 的回退、CSS 读取异常、超时取消及晚到结果。真实 Chromium 生产资源夹具覆盖窄/宽屏、减少动态效果、资源连续失败、外部统计脚本被 CSP 拦截、原生剪贴板时序、运行时异常和配对未知结果 |
+| Mac / Cloudflare | 独立 8788 Test 实装后通过固定 Cloudflare HTTPS 入口；该次冷加载 6.87 秒、重复打开 1.43 秒，55 个资源复用缓存。此为该次网络测量，不是蜂窝网络速度承诺 |
+| Windows x64 | 独立 Test 完整安装的 707 个文件逐项匹配（含 ConPTY），真实 GUI 和网关启动通过。旧缓存覆盖升级后 0.50 秒可用、48/54 个资源复用；再次打开 0.34 秒、54/54 复用 |
+| Ubuntu x64 | 独立 Test DEB 的 745 个应用文件及 3 个包管理文件匹配，GUI/网关启动通过。旧缓存覆盖升级后 0.79 秒、48/54 复用；重复打开 0.42 秒、54/54 复用 |
+| 缓存与保留 | Windows/Ubuntu 的 gzip、ETag 304、内容版本 immutable、旧哈希 no-cache、HTML no-store 通过，无运行时异常。正式版文件与配置不变，每端原 3 条 Test 登录记录保留；Mac Test 的原配置与绑定也保留。用户随后确认测试通过 |
+
+上述实装验收使用源码指纹 `0c1d7b6e1ca79269c02eef0b7ad36c688f40a5527fe07eb4de3121cae542fe46`，Test 内部版本当时为 2.1.3；后端/原生源码与 v2.1.3 相同，使用已核验的正式原生运行时并重新打包全部候选 Web 资源。本预发布在此基础上仅统一版本与文档，公开包另由原生 CI 完整构建，不能把此前 Test 包称为公开预览安装包。测试只重试初始只读认证，不重放未知配对或消息写入；CSP 未放宽。
+
+**English:** accepted macOS, Windows and Ubuntu Test installations verified startup, resource caching and settings/binding preservation before the preview version bump. Windows/Ubuntu old-cache upgrades reused 48/54 resources, followed by 54/54 on repeat visits. Timings describe the measured connections, not a universal mobile-network guarantee. Test artifacts and public preview artifacts are distinct; the public packages are built separately by native CI. No main merge or stable-channel replacement is part of this preview.
+
+---
+
 ## v2.1.3 发布验收（2026-10-22）
 
 本版整合已验收的缓存与 Windows 包体优化、Mermaid、PR #51/#52、PR #40 查询生命周期和多目标 Webhook，以及手机弹窗、焦点与回答卡片定位修复。桌面与手机版本统一为 2.1.3，Android/iOS build 35；沿用更新公钥、Android 签名和 iOS 正式应用标识。

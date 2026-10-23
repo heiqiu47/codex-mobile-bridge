@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 function fixture(){
-  let mobile=false,choice=true,finishChoice;const choices=[],preferences=new Map();const context=vm.createContext({ClientLifecycle:{...require('../web/features/clients/client-lifecycle.js'),chooseDisable(client){choices.push(client.id);return choice==='pending'?new Promise(resolve=>finishChoice=resolve):choice;}},document:{documentElement:{classList:{contains:()=>mobile}},getElementById:()=>({hidden:false})},localStorage:{setItem:(key,value)=>preferences.set(key,value),getItem:key=>preferences.get(key)},Event:class{},window:{}});
+  let mobile=false,choice=true,finishChoice;const choices=[],preferences=new Map();const context=vm.createContext({ClientLifecycle:{...require('../web/features/clients/client-lifecycle.js'),chooseDisable(client){choices.push(client.id);return choice==='pending'?new Promise(resolve=>finishChoice=resolve):choice;}},document:{documentElement:{classList:{contains:()=>mobile}},getElementById:()=>({hidden:false})},setTimeout,clearTimeout,AbortController,localStorage:{setItem:(key,value)=>preferences.set(key,value),getItem:key=>preferences.get(key)},Event:class{},window:{}});
   context.BridgeI18n={t:value=>value};
   vm.runInContext(fs.readFileSync('web/hosts/environment.js','utf8'),context);
   vm.runInContext(fs.readFileSync('web/features/clients/client-navigation.js','utf8'),context);
@@ -10,6 +10,44 @@ function fixture(){
   Object.assign(nav,{clients:[{id:'codex',enabled:true,configured:true},{id:'claude',enabled:true,configured:true},{id:'deepseek',enabled:true,configured:true}],provider:'claude',revision:0,pending:new Set(),notify(){},rememberSwipeList(){},paint(){painted.push(this.clients.filter(c=>c.enabled).map(c=>c.id));},view:{provider:'claude',choose(id){this.provider=id;return Promise.resolve();}}});
   return {nav,painted,choices,document:context.document,window:context.window,setChoice:value=>choice=value,decide:value=>finishChoice(value),mobile:value=>mobile=value,initializations,setInitializeChoice:value=>initializeChoice=value,decideInitialize:value=>finishInitialize(value)};
 }
+function networkPanel(nav){
+  const panel={section:{},box:{setAttribute(){}},status:{},refresh:{}};
+  nav.manager={networkAdaptation:panel};return panel;
+}
+test('network recovery status reads do not enable the option, and relay does not query it',async()=>{
+  const ui=fixture(),panel=networkPanel(ui.nav),calls=[];
+  ui.nav.request=async(path,body)=>{calls.push({path,body});return {enabled:false};};
+  await ui.nav.readNetworkAdaptation();assert.equal(panel.box.checked,false);assert.equal(panel.box.disabled,false);
+  assert.deepEqual(calls,[{path:'/api/network-adaptation',body:undefined}]);
+  ui.window.BridgeSharedRelay=true;await ui.nav.readNetworkAdaptation();await ui.nav.setNetworkAdaptation(true);assert.equal(calls.length,1);
+});
+test('network recovery changes once and refreshes a lost write response without replay',async()=>{
+  const {nav}=fixture(),panel=networkPanel(nav),calls=[];nav.networkAdaptationState={enabled:false};
+  nav.request=async(path,body)=>{calls.push({path,body});if(body)throw Error('lost response');return {enabled:true};};
+  await nav.setNetworkAdaptation(true);
+  assert.equal(calls.length,2);assert.equal(calls[0].body.enabled,true);assert.equal(calls[1].body,undefined);
+  assert.equal(panel.box.checked,true);assert.equal(panel.box.disabled,false);assert.equal(nav.networkAdaptationError,'');
+});
+test('failed recovery reconciliation disables writes until a successful explicit read',async()=>{
+  const {nav}=fixture(),panel=networkPanel(nav),calls=[];nav.networkAdaptationState={enabled:false};
+  nav.request=async(path,body)=>{calls.push(body);throw Error('disconnected');};await nav.setNetworkAdaptation(true);
+  assert.equal(calls.length,2);assert.equal(panel.box.disabled,true);assert.match(panel.status.textContent,/尚未确认/);
+  await nav.setNetworkAdaptation(true);assert.equal(calls.length,2);
+  nav.request=async()=>({enabled:true});await nav.readNetworkAdaptation();assert.equal(panel.box.checked,true);assert.equal(panel.box.disabled,false);
+});
+test('network recovery prevents overlapping operations and leaves closed dialogs untouched',async()=>{
+  const {nav}=fixture();networkPanel(nav);nav.networkAdaptationState={enabled:false};let finish,count=0;
+  nav.request=()=>{count++;return new Promise(resolve=>finish=resolve);};
+  const change=nav.setNetworkAdaptation(true);await nav.setNetworkAdaptation(false);await nav.readNetworkAdaptation();assert.equal(count,1);
+  nav.manager=null;finish({enabled:true});await change;assert.equal(nav.networkAdaptationState.enabled,true);assert.equal(nav.networkAdaptationBusy,false);
+});
+test('older, malformed and password-free gateway responses do not leave active recovery controls',async()=>{
+  const {nav}=fixture(),panel=networkPanel(nav);
+  nav.request=async()=>{throw Object.assign(Error('Not found'),{status:404});};await nav.readNetworkAdaptation();assert.equal(panel.box.disabled,true);assert.match(panel.status.textContent,/更新网关/);
+  nav.request=async()=>({});await nav.readNetworkAdaptation();assert.equal(panel.box.disabled,true);assert.match(panel.status.textContent,/读取失败/);
+  nav.request=async()=>({enabled:false,canEdit:false});await nav.readNetworkAdaptation();assert.equal(panel.box.disabled,true);assert.match(panel.status.textContent,/免密访问/);
+  nav.request=()=>{throw Error('must not write');};await nav.setNetworkAdaptation(true);
+});
 test('notification settings stay hidden on shared relay while remaining actions use all columns',()=>{
   const ui=fixture(),classes=new Set();
   ui.nav.switchToggle={hidden:false};ui.nav.settingsNotifications={hidden:false};

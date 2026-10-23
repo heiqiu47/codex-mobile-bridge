@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('bridgeDesktop',{
   connectionCredentials:value=>ipcRenderer.invoke('bridge:connection-credentials',value),
   readCredentials:value=>ipcRenderer.invoke('bridge:read-credentials',value),
   webhookEndpoint:value=>ipcRenderer.invoke('bridge:webhook-endpoint',value),
+  networkAdaptation:value=>ipcRenderer.invoke('bridge:network-adaptation',value),
   snapshot:()=>ipcRenderer.invoke('bridge:snapshot'),
   accounts:value=>ipcRenderer.invoke('bridge:accounts',value),
   cliAccess:value=>ipcRenderer.invoke('bridge:cli-access',value),

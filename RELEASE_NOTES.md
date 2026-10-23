@@ -1,3 +1,82 @@
+<a id="v214"></a>
+
+## v2.1.4 · 公网启动、长会话与网络恢复
+
+本版改善公网与弱网下的工作台启动，修复超长会话断开连接的问题，并补齐 Web 一键复制和可选的网络变化自动恢复。桌面与手机 App 版本为 **2.1.4**，Android/iOS 构建号为 **37**。
+
+### 修复与改进
+
+- **公网启动与缓存复用（#62）**：修复 Cloudflare 固定入口因附加统计脚本被拦截而停在错误页的问题。必需资源提前下载、按依赖顺序执行；短暂下载失败或初始登录状态读取超时有限重试，重复打开复用未变化的缓存资源。
+- **长会话连接与阅读（#65）**：修复超大 Desktop 历史快照超过接收上限，导致当前及其他会话断开的问题。进入时先展示缓存和最近内容，上翻才加载更早记录，保留阅读位置；历史读取与原会话实时控制分离，发送和审批继续由原连接处理。
+- **多客户端历史**：为 Codex Desktop/CLI、Claude Code Desktop/CLI 和 DeepSeek Harness 接入各自支持的历史读取方式。改善跨页工具记录、过期响应处理和 Windows Claude 历史文件变化识别，保留账号、工作目录和权限边界。
+- **Web 一键复制（#66）**：回复、代码和 Mermaid 源码支持点击复制，补齐局域网 HTTP 与延迟获取长正文的兼容路径；浏览器拒绝时提供重新复制和手动入口。
+- **可选网络变化恢复（PR #63）**：默认关闭，可在桌面网关或登录后的手机/Web 中即时启停。使用系统网络事件和 30 秒兜底检查，稳定后更新实际可用的局域网入口；同 IP 续期不重建。修复 Windows 网卡地址读取、多网卡旧配置迁移和失败监听地址误报；Quick Tunnel 先自行恢复，连续明确失败后才有限重建。
+
+### 升级
+
+覆盖安装对应平台的原应用，不要先卸载或清除数据，以保留配置、电脑列表和有效手机绑定。Android 沿用原签名；iOS 沿用正式应用标识，仍需使用自己的签名身份安装。独立 Test 与正式版互不覆盖。浏览器及现有手机 App 可在网关更新后刷新共享页面。
+
+网络恢复不会自动改写手机中保存的旧 IP；地址变化后请使用稳定域名、其他有效入口或重新扫码。各平台与升级验收范围见[验证记录](VERIFICATION.md#v214)。
+
+### 贡献与反馈
+
+- [@qybgh](https://github.com/qybgh) 在 [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63) 中贡献按网卡管理入口、地址变化通知和网络恢复基础；全部 8 个原始提交保留，默认关闭、监听与恢复策略修订另行提交。
+- 感谢 [@P2pfans2000](https://github.com/P2pfans2000) 在 [Issue #62](https://github.com/try2love/codex-mobile-bridge/issues/62) 中报告并复测公网启动问题，以及参与跨平台和手机实测的用户。
+
+### English
+
+**v2.1.4 improves public-entry startup, long-chat connections and reading, Web copying, and optional network recovery.** Desktop/mobile version: **2.1.4**, Android/iOS build **37**.
+
+- **Startup and caching (#62):** fix Cloudflare entries remaining on the error page when an optional injected script is blocked. Preload required resources while preserving execution order, retry transient resource/auth-state reads within limits, and reuse unchanged cached assets.
+- **Long chats (#65):** fix oversized Desktop snapshots closing the shared connection. Display cached/recent messages first, load older history on demand and preserve reading position. History display is separate from the original connection used for sending and approvals.
+- **Client history:** use supported history sources for Codex Desktop/CLI, Claude Code Desktop/CLI and DeepSeek Harness. Improve cross-page tool records, stale-response handling and Windows Claude history-change detection without changing account, workspace or permission boundaries.
+- **One-click Web copying (#66):** copy replies, code and Mermaid source, including LAN HTTP and delayed full-text retrieval. Retry and manual copying remain available if the browser refuses clipboard access.
+- **Optional network recovery (PR #63):** off by default; toggle from desktop or signed-in mobile/Web. Native events and a 30-second fallback update working LAN entries after addresses stabilize. Same-address renewals do not rebuild entries. Fix Windows adapter addresses, legacy multi-adapter migration and failed-listener reporting. Quick Tunnel reconnects first and is replaced only after repeated confirmed failures.
+
+Install over the matching existing app without uninstalling or clearing data. Android retains its signing identity; iOS retains official identifiers and requires your own signing. Independent Test apps do not replace release apps. Network recovery does not rewrite old IP addresses saved on phones; use a stable hostname, another working entry or a new pairing QR code.
+
+Thanks to [@qybgh](https://github.com/qybgh) for [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63), with all eight original commits preserved, and [@P2pfans2000](https://github.com/P2pfans2000) for reporting and retesting [#62](https://github.com/try2love/codex-mobile-bridge/issues/62). See the [verification record](VERIFICATION.md#v214) for platform and upgrade coverage.
+
+---
+
+<a id="v214-preview1"></a>
+
+## v2.1.4-preview.1 · 启动恢复与首次加载优化
+
+这是面向体验用户的预发布版本，重点修复 Issue #62 的工作台启动问题。**v2.1.3 仍是最新正式版**，正式版更新检查不会自动安装本预览版；本轮代码保留在独立预发布分支，尚未合并 main。
+
+### 修复与改进
+
+- **Cloudflare 固定入口**：修复部分 Cloudflare Tunnel 页面因附加统计脚本被浏览器安全策略拦截，而一直停留在“工作台尚未加载完成”的问题。保留原有访问安全限制。
+- **首次加载更快**：页面样式加载时提前下载必需脚本，减少弱网和公网入口下的多轮等待；脚本仍按依赖顺序执行。
+- **缓存复用**：重复打开继续复用内容版本相同的资源；升级后仅更新发生变化的资源，首页及时读取当前版本。
+- **启动自动恢复**：短暂的资源下载失败或初始登录状态读取超时会有限重试；持续失败时显示恢复状态、可展开的详情和重新加载入口，不再只有空白页面。
+- **手机与无障碍显示**：改善早期原生剪贴板脚本加载失败后的恢复，以及减少动态效果设置下的启动提示。配对和消息等写入不会自动重发。
+
+### 下载与升级
+
+桌面及手机发布版本为 **2.1.4-preview.1**，Android/iOS 构建号为 **36**（iOS 系统版本字段为 2.1.4）。提供 macOS Apple Silicon/Intel、Windows x64、Linux x64/arm64、Android APK、iOS 未签名 IPA 与 Xcode 源码包。
+
+选择对应安装包覆盖原安装，保留原数据目录；Android 使用原签名，iOS 沿用原应用标识并需自行签名。不要先卸载或清空数据。仅更新 Web 网关也可使用本次共享页面修复。反馈时请注明平台、浏览器或 App、访问方式，以及首次/重复打开的表现；可附启动页展开的详情，请勿包含登录链接或凭据。
+
+感谢 [Issue #62](https://github.com/try2love/codex-mobile-bridge/issues/62) 的问题反馈与参与跨平台实测的用户。验收范围见 [验证记录](VERIFICATION.md#v214-preview1)。
+
+### English
+
+**v2.1.4-preview.1 is an opt-in prerelease focused on Issue #62 startup recovery and first-load performance.** v2.1.3 remains the latest stable release. Stable update checks do not install this preview automatically, and these changes remain on a separate branch pending wider feedback.
+
+- Fix workspaces getting stuck behind “The workspace has not finished loading” when an optional script added by Cloudflare is blocked. Existing security restrictions remain in place.
+- Start downloading required scripts while styles load to reduce sequential waits on slow or public connections, while preserving execution order.
+- Reuse unchanged, content-versioned resources on repeat visits and after upgrades; the entry page continues to fetch the current version.
+- Retry transient resource failures and the initial sign-in-state read within fixed limits. Persistent failures show recovery status, expandable details and a reload action instead of leaving an empty page.
+- Improve early native clipboard recovery and startup indicators with reduced motion. Pairing, messages and other writes are not automatically replayed.
+
+Desktop/mobile release version: **2.1.4-preview.1**, Android/iOS build **36** (iOS marketing version 2.1.4). Downloads include macOS Apple Silicon/Intel, Windows x64, Linux x64/arm64, Android APK and unsigned iOS IPA/Xcode sources. Install over the matching existing app without uninstalling or clearing data; Android retains its signing identity and iOS retains its app identifiers but requires your own signing. Updating the gateway also delivers these shared Web fixes to existing mobile apps.
+
+Thanks to the [Issue #62](https://github.com/try2love/codex-mobile-bridge/issues/62) reporter and cross-platform testers. Please report your platform, browser/app, connection type and first/repeat-load behavior. See the [verification record](VERIFICATION.md#v214-preview1) for coverage.
+
+---
+
 <a id="v213"></a>
 <a id="unreleased-webhook"></a>
 <a id="unreleased-mermaid"></a>

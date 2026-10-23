@@ -4,11 +4,27 @@ import {createServer} from 'node:http';
 import {readFile,writeFile,rename,unlink} from 'node:fs/promises';
 import {timingSafeEqual,randomUUID} from 'node:crypto';
 export const inject=['sessionController','sessionSkillCatalog','permissionPresets','agents','workspaceRegistry'];
+export async function readHistoryPage(controller,row,body={},signal=new AbortController().signal){
+  const limit=body.historyLimit??40;
+  if(!Number.isInteger(limit)||limit<1||limit>100)throw Error('历史页大小无效');
+  let cursor;
+  if(body.historyBefore!=null){
+    try{cursor=JSON.parse(Buffer.from(body.historyBefore,'base64url').toString('utf8'));}catch{throw Error('历史游标无效');}
+    if(cursor?.sid!==row.sessionId||!Number.isSafeInteger(cursor.seq)||cursor.seq<0||!Number.isSafeInteger(cursor.before)||cursor.before<0)throw Error('历史游标无效');
+  }
+  const projection=cursor?null:await controller.projections({sessionId:row.sessionId},signal);
+  const seq=cursor?.seq??projection?.asOfSeq??row.projections?.asOfSeq;
+  if(!Number.isSafeInteger(seq)||seq<0)throw Error('历史版本无效');
+  const page=await controller.page({address:{kind:'session',sessionId:row.sessionId},throughSeq:seq,...cursor?{beforeSeq:cursor.before}:{},maxMessages:limit},signal);
+  const rows=page.records||[],boundary=rows[0]?.event?.seq;
+  if(!Array.isArray(rows)||typeof page.hasMore!=='boolean'||page.hasMore&&(!Number.isSafeInteger(boundary)||cursor&&boundary>=cursor.before))throw Error('历史分页响应无效');
+  return {rows,history:{before:page.hasMore?Buffer.from(JSON.stringify({sid:row.sessionId,seq,before:boundary})).toString('base64url'):null,hasMore:page.hasMore}};
+}
 export async function apply(ctx,config){
   const {token,endpoint}=JSON.parse(await readFile(config.configPath,'utf8'));
   // The gateway accepts at most 100 MiB of decoded images plus small JSON fields.
   const maxRequestBytes=Math.ceil(100*1024*1024*4/3)+1024*1024;
-  const questions=new Map(),history=new Map();
+  const questions=new Map();
   let quitting=false,activeMutations=0;
   const signal=()=>new AbortController().signal;
   const list=async()=> (await ctx.sessionController.list({},signal())).items;
@@ -22,19 +38,6 @@ export async function apply(ctx,config){
   };
   const permissionState=row=>{const catalog=ctx.permissionPresets.catalog(),mode=values(row).permissions?.currentValue||catalog.defaultPreset,option=catalog.options.find(o=>o.value===mode);return {permissionMode:mode,permissionLabel:localized(option?.label||option?.name)||mode};};
   const normalize=row=>{const v=values(row),m=v.modelSelection?.next||v.modelSelection?.lastUsed||ctx.get?.('agentDefaultModel')?.currentSelection()||{};return {id:row.sessionId,title:v.title||'新会话',cwd:row.cwd||'',backend:'deepseek',mode:'desktop',status:typeof row.running==='boolean'?(row.running?'active':'idle'):'unknown',runtimeKnown:typeof row.running==='boolean',updatedAt:row.updatedAt,model:m.provider&&m.model?m.provider+'/'+m.model:'',effort:m.reasoningEffort||'',...permissionState(row),contextUsage:contextUsage(row),requests:[...questions.values()].filter(q=>q.sid===row.sessionId).map(q=>q.public)};};
-  const records=async row=>{
-    const projection=await ctx.sessionController.projections({sessionId:row.sessionId},signal());
-    const seq=projection.asOfSeq??row.projections?.asOfSeq??0;
-    const old=history.get(row.sessionId);if(old?.seq===seq)return old.records;
-    let before,all=[],last=old?.records.at(-1)?.event.seq??-1;
-    for(let page=0;page<100;page++){
-      const got=await ctx.sessionController.page({address:{kind:'session',sessionId:row.sessionId},throughSeq:seq,...before===undefined?{}:{beforeSeq:before},maxMessages:150},signal());
-      const batch=got.records||[];all.unshift(...batch.filter(r=>r.event.seq>last));
-      if(!got.hasMore||!batch.length||batch[0].event.seq<=last)break;
-      before=batch[0].event.seq;
-    }
-    all=[...(old?.records||[]),...all];history.set(row.sessionId,{seq,records:all});if(history.size>8)history.delete(history.keys().next().value);return all;
-  };
   const bounded=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('插件目录读取超时，请重试')),6000);})]);}finally{clearTimeout(timer);}};
   const localized=value=>typeof value==='string'?value:value?.['zh-CN']||value?.zh||value?.en||'';
   const catalog=async(sid,section='all')=>{
@@ -141,7 +144,7 @@ export async function apply(ctx,config){
     if(action==='rename'){const title=String(body.title||'').trim();if(!title||title.length>120)throw Error('标题为 1–120 字');await ctx.sessionController.rename({sessionId:sid,title});return {status:'accepted'};}
     if(action==='archive'){if(body.confirmed!==true)throw Error('请确认归档');await ctx.workspaceRegistry.archiveSession(sid,{stopActivity:true});return {status:'accepted'};}
     if(action==='open')return {ok:true};
-    if(action==='detail')return {session:normalize(row),capabilities:capabilities(),records:(await records(row)).filter(r=>['user/message','assistant/message','tool/call','tool/result','todo/write','turn/start','turn/end'].includes(r.event.type)),steps:values(row).todos||[],connected:true};
+    if(action==='detail'){const page=await readHistoryPage(ctx.sessionController,row,body,signal());return {session:normalize(row),capabilities:capabilities(),records:page.rows.filter(r=>['user/message','assistant/message','tool/call','tool/result','todo/write','turn/start','turn/end'].includes(r.event.type)),history:page.history,steps:values(row).todos||[],connected:true};}
     if(action==='catalog')return catalog(sid,body.section||'all');
     if(action==='access'){const presets=ctx.permissionPresets.catalog(),options=presets.options;if(body.mode){if(!options.some(o=>o.value===body.mode))throw Error('权限选项无效');await ctx.sessionController.create({sessionId:sid,cwd:row.cwd});const agent=ctx.agents.get(sid);if(!agent)throw Error('当前会话没有活动智能体');ctx.permissionPresets.set(agent.session,body.mode);}return {status:'accepted',mode:body.mode||values(row).permissions?.currentValue||presets.defaultPreset,modes:options.map(o=>o.value),options};}
     if(action==='settings'){const c=await catalog(sid,'models'),selected=body.model||c.currentModel,m=c.models.find(m=>m.id===selected);if(!m)throw Error('请选择可用模型');const effort=body.effort??(selected===c.currentModel?c.currentEffort:m.defaultEffort);if(effort&&!m.efforts.includes(effort))throw Error('该模型不支持所选思考强度');const slash=selected.indexOf('/'),result=await ctx.sessionController.selectModel({sessionId:sid,provider:selected.slice(0,slash),model:selected.slice(slash+1),reasoningEffort:effort||undefined}),actual=result.selected;return {status:'accepted',model:actual.provider+'/'+actual.model,effort:actual.reasoningEffort||''};}

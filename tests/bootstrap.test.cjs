@@ -12,6 +12,7 @@ async function fixture({missing='',auth='anonymous',hash='',language='zh',pairPe
   for(const match of html.matchAll(/<([a-z][a-z0-9]*)\b([^>]*\bid="([^"]+)"[^>]*)>/g)){
     const n=node(match[1]);n.hidden=/\bhidden\b/.test(match[2]);nodes.set(match[3],n);
   }
+  nodes.get('bridge-shell-style').sheet={cssRules:[{}]};
   let current=new URL('https://gateway.test/?view=phone'+hash);
   const location={get href(){return current.href;},get hash(){return current.hash;},get pathname(){return current.pathname;},get search(){return current.search;},host:current.host,reload(){reloads++;}};
   const cacheIdentity='a'.repeat(64),cachedRow={id:'cached',title:'Cached chat',backend:'code',cwd:'/work',updatedAt:9};
@@ -21,7 +22,7 @@ async function fixture({missing='',auth='anonymous',hash='',language='zh',pairPe
   const response=data=>({ok:true,status:200,json:async()=>data});
   const context=vm.createContext({window,location,history:{replaceState(_a,_b,url){current=new URL(url,current);}},localStorage:storage,sessionStorage:storage,navigator:{userAgent:'fixture'},
     document:{documentElement:{},getElementById:id=>nodes.get(id),addEventListener(){},dispatchEvent(){},querySelectorAll(){return [];},querySelector(){return {classList:{toggle(){}}};},createElement:node},
-    Event:class{},CustomEvent:class{},Option:function(text,value){return {...node('option'),textContent:text,value};},
+    AbortController,Event:class{},CustomEvent:class{},Option:function(text,value){return {...node('option'),textContent:text,value};},
     Workbench:class{constructor(){this.current=null;this.panel={querySelector(){return null;}};this.backCalls=0;this.locateCancels=0;}get splitMode(){return false;}get isFileVisible(){return !!this.current&&this.current.active!=='chat';}back(){this.backCalls++;return workbenchBack.call(this);}cancelLocate(){this.locateCancels++;}directory(session,_tab,dir){session.directory=dir;}select(id){this.current.active=id;}rememberScroll(){}stopThumbnails(){}reset(){}relabel(){}},DesktopSessionsView:class{bindListCache(identity,host){this.snapshot=storage.getItem(`desktop-list-v1:${identity}:${host}:${cachedProvider}`);}previewCachedList(provider){if(provider!==cachedProvider||!this.snapshot)return false;const row=node('button');row.textContent=JSON.parse(this.snapshot).rows[0].title;row.disabled=true;row.dataset.provider=provider;nodes.get('app').append(row);navigation.push('preview');return true;}refresh(){}clear(){}},ClientNavigation:class{constructor(){this.provider=storage.getItem('bridge-client')||'codex';}paint(){navigation.push('paint');}refresh(){navigation.push('refresh');if(navigationPending)return new Promise(resolve=>{releaseNavigation=()=>{if(allDisabled)this.provider=null;resolve();};});if(allDisabled)this.provider=null;}async openChatLink(){navigation.push('open');}acknowledgeList(){}},
     setTimeout(fn,delay){timers.set(++clock,{fn,delay});return clock;},clearTimeout(id){timers.delete(id);},setInterval(){},clearInterval(){},
     fetch:async(url,options={})=>{
@@ -43,7 +44,7 @@ async function fixture({missing='',auth='anonymous',hash='',language='zh',pairPe
   try{run('web/shell/app.js');}catch(e){error=e;dispatch('error',{target:window,message:e.message});}
   await new Promise(setImmediate);
   return {nodes,requests,writes,location,error,timers,listeners,dispatch,window,navigation,releaseNavigation(){releaseNavigation?.();},
-    get reloads(){return reloads;},timeout(){for(const [id,timer] of timers)if(timer.delay===12000){timers.delete(id);timer.fn();break;}}};
+    get reloads(){return reloads;},timeout(){for(const [id,timer] of timers)if(timer.delay===30000){timers.delete(id);timer.fn();break;}}};
 }
 
 test('HTML provides visible status before the independent CSP-safe bootstrap, without revealing login',()=>{
@@ -55,51 +56,6 @@ test('HTML provides visible status before the independent CSP-safe bootstrap, wi
   assert.doesNotMatch(html,/<script[^>]*>\s*[^<\s]|\son(?:click|error|load)=/);
 });
 
-function resourceFixture(){
-  const started=[],pending=[],listeners=new Map(),nodes=new Map(),timers=[];let domReady,peak=0;
-  for(const id of ['bootstrap-status','bootstrap-title','bootstrap-message','bootstrap-retry'])nodes.set(id,{style:{},setAttribute(){}});
-  function record(node,url,kind){started.push({url,kind,async:node.async});pending.push(node);peak=Math.max(peak,pending.length);}
-  const styles=[...html.matchAll(/<link[^>]*data-bridge-href="([^"]+)"/g)].map(([,url])=>({getAttribute(){return url;},removeAttribute(){},set href(value){record(this,value,'style');}}));
-  const scripts=[...html.matchAll(/<script[^>]*data-bridge-src="([^"]+)"/g)].map(([,url])=>({getAttribute(){return url;},parentNode:{replaceChild(node){record(node,node.src,'script');}}}));
-  const window={addEventListener(name,fn){listeners.set(name,fn);},removeEventListener(){}};
-  const context=vm.createContext({window,navigator:{userAgent:'resource-fixture'},location:{href:'https://gateway.test/',hash:'',search:''},
-    localStorage:{getItem(){return null;}},setTimeout(fn,delay){timers.push({fn,delay});return timers.length;},clearTimeout(){},
-    document:{readyState:'loading',getElementById:id=>nodes.get(id),createElement(){return {};},
-      querySelectorAll:selector=>selector.startsWith('link')?styles:scripts,addEventListener(name,fn){if(name==='DOMContentLoaded')domReady=fn;}}});
-  vm.runInContext(fs.readFileSync(path.join(root,'web/shared/bootstrap.js'),'utf8'),context);
-  return {started,pending,nodes,styles,scripts,ready(){domReady();},get peak(){return peak;},
-    timeout(){timers.find(timer=>timer.delay===12000).fn();},
-    finish(index=0,failed=false){const node=pending.splice(index,1)[0];node[failed?'onerror':'onload']();}};
-}
-
-test('startup bounds resource concurrency and preserves style and classic-script order',()=>{
-  const ui=resourceFixture();assert.equal(ui.started.length,0);ui.ready();
-  assert.equal(ui.pending.length,4);assert.ok(ui.started.every(row=>row.kind==='style'));
-  while(ui.started.length<ui.styles.length||ui.pending.some(node=>'href' in node))ui.finish(ui.pending.length-1);
-  assert.deepEqual(ui.started.filter(row=>row.kind==='style').map(row=>row.url),[...html.matchAll(/data-bridge-href="([^"]+)"/g)].map(match=>match[1]));
-  while(ui.pending.length)ui.finish(ui.pending.length-1);
-  const loadedScripts=ui.started.filter(row=>row.kind==='script');
-  assert.equal(ui.peak,4);assert.equal(ui.styles.length,9);assert.equal(loadedScripts.length,39);
-  assert.ok(loadedScripts.every(row=>row.async===false));
-  assert.deepEqual(loadedScripts.map(row=>row.url),[...html.matchAll(/data-bridge-src="([^"]+)"/g)].map(match=>match[1]));
-  assert.equal([...html.matchAll(/<script\s+src=/g)].length,2);
-  assert.equal([...html.matchAll(/<link rel="stylesheet" href=/g)].length,1);
-});
-
-test('a failed queued resource is reported once and does not stall or replay the queue',()=>{
-  const ui=resourceFixture();ui.ready();ui.finish(0,true);
-  while(ui.pending.length)ui.finish();
-  assert.equal(ui.started.length,48);assert.equal(new Set(ui.started.map(row=>row.url)).size,48);
-  assert.match(ui.nodes.get('bootstrap-message').textContent,/resource @ \/vendor\/katex\/katex\.min\.css/);
-});
-
-test('a hanging resource timeout names only pending resource paths',()=>{
-  const ui=resourceFixture();ui.ready();ui.finish();ui.timeout();
-  const diagnostic=ui.nodes.get('bootstrap-message').textContent;
-  assert.match(diagnostic,/等待资源：\/account\.css, \/client-lifecycle\.css/);
-  assert.doesNotMatch(diagnostic,/gateway\.test|\?/);
-});
-
 test('missing dependency fails in the real synchronous app chain before auth and produces a visible error',async()=>{
   for(const missing of ['i18n','activity']){
     const ui=await fixture({missing});assert.ok(ui.error);assert.equal(ui.requests.length,0);
@@ -108,7 +64,7 @@ test('missing dependency fails in the real synchronous app chain before auth and
   }
 });
 
-test('stalled auth gets bounded visible feedback with no automatic request retry or writes',async()=>{
+test('auth hard deadline reports failure without submitting writes',async()=>{
   const ui=await fixture({auth:'pending'});ui.timeout();ui.timeout();
   assert.deepEqual(ui.requests,['/api/auth']);assert.equal(ui.writes.length,0);assert.equal(ui.nodes.get('login').hidden,true);
   assert.match(ui.nodes.get('bootstrap-message').textContent,/等待网关/);
@@ -126,24 +82,26 @@ test('startup diagnostics show script path and error type without URL secrets or
   const ui=await fixture({auth:'pending',hash:'#pair=private-pairing-token'});
   ui.dispatch('error',{target:ui.window,filename:'https://gateway.test/app.js?token=private-query#private-fragment',lineno:17,
     error:{name:'TypeError',message:'private-exception-text'},message:'private-event-text'});
-  const text=ui.nodes.get('bootstrap-message').textContent;
+  const text=ui.nodes.get('bootstrap-diagnostics').textContent;
   assert.match(text,/启动诊断/);assert.match(text,/TypeError @ \/app\.js:17/);assert.match(text,/auth/);
   assert.doesNotMatch(text,/private-|gateway\.test/);
 });
 
-test('startup resource and rejection diagnostics do not print untrusted failure messages',async()=>{
+test('unmanaged resource failures are ignored and rejection diagnostics redact untrusted messages',async()=>{
   const ui=await fixture({auth:'pending'});
   ui.dispatch('error',{target:{tagName:'SCRIPT',src:'https://gateway.test/i18n.js?private-query'}});
-  assert.match(ui.nodes.get('bootstrap-message').textContent,/resource @ \/i18n\.js/);
+  assert.equal(ui.nodes.get('bootstrap-diagnostics').textContent,'');
   ui.dispatch('unhandledrejection',{reason:{name:'private-error-name',message:'private-rejection'}});
+  assert.match(ui.nodes.get('bootstrap-diagnostics').textContent,/Error/);
   assert.doesNotMatch(ui.nodes.get('bootstrap-message').textContent,/private-/);
+  assert.doesNotMatch(ui.nodes.get('bootstrap-diagnostics').textContent,/private-/);
 });
 
 test('normal login and authenticated workspace hide startup status and cancel its error listeners',async()=>{
   for(const auth of ['anonymous','signed-in']){
     const ui=await fixture({auth});assert.equal(ui.error,null);assert.equal(ui.nodes.get('bootstrap-status').hidden,true);
     assert.equal(ui.nodes.get(auth==='anonymous'?'login':'app').hidden,false);
-    assert.equal([...ui.timers.values()].some(timer=>timer.delay===12000),false);
+    assert.equal([...ui.timers.values()].some(timer=>timer.delay===30000),false);
     assert.equal(ui.listeners.get('error').size,0);ui.dispatch('error',{target:{tagName:'SCRIPT'},message:'late error'});
     assert.equal(ui.nodes.get('bootstrap-status').hidden,true);
   }

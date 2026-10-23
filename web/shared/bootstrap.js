@@ -5,9 +5,14 @@
   var title = document.getElementById('bootstrap-title');
   var message = document.getElementById('bootstrap-message');
   var retry = document.getElementById('bootstrap-retry');
+  var details = document.getElementById('bootstrap-details');
+  var diagnosticText = document.getElementById('bootstrap-diagnostics');
   var originalUrl = location.href;
   var originalPairing = location.hash.indexOf('#pair=') === 0;
-  var complete = false, timer = null, phase = 'loading';
+  var complete = false, stopped = false, readyRequested = false, resourcesDone = false;
+  var timer = null, deadline = null, phase = 'loading', failureKind = null, cancelRead = null;
+  var retryTimers = [], preloads = [];
+  var eagerPending = false, startScripts = null;
   var started = Date.now(), lastFailure = null, pendingResources = [];
   var english = false;
   try { english = localStorage.getItem('bridge-language') === 'en'; } catch (_) {}
@@ -40,8 +45,12 @@
   }
   function fail(kind) {
     if (complete) return false;
-    clearTimeout(timer);
+    if (stopped) return true;
+    stopped = true;
+    failureKind = kind;
+    cancelPending();
     root.hidden = false;
+    root.setAttribute('data-state', 'failed');
     root.setAttribute('aria-busy', 'false');
     title.textContent = text('工作台尚未加载完成', 'The workspace has not finished loading');
     message.textContent = phase === 'pairing'
@@ -51,69 +60,199 @@
       : phase === 'auth'
         ? text('等待网关响应时间较长。请检查网络和电脑网关，再重新加载。', 'The gateway is taking longer to respond. Check your connection and computer gateway, then reload.')
         : text('页面资源加载时间较长。请检查网络后重新加载。', 'Page resources are taking longer to load. Check your connection, then reload.');
-    message.textContent += '\n\n' + diagnostics();
-    message.style.whiteSpace = 'pre-wrap';
-    message.style.overflowWrap = 'anywhere';
+    diagnosticText.textContent = diagnostics();
+    details.hidden = false;
     return true;
   }
-  function waitingForAuth() {
-    if (complete) return;
-    phase = 'auth';
+  function recovering() {
+    if (complete || stopped) return;
+    root.setAttribute('data-state', 'recovering');
+    root.setAttribute('aria-busy', 'true');
+    title.textContent = text('正在恢复连接…', 'Restoring your connection…');
+    message.textContent = text('连接暂时较慢，正在等待恢复，请稍候。', 'The connection is taking a moment. Waiting for it to recover.');
+  }
+  function progress() {
+    if (complete || stopped) return;
     clearTimeout(timer);
-    timer = setTimeout(function () { fail('timeout'); }, 12000);
+    timer = setTimeout(recovering, 12000);
+  }
+  function beginPhase() {
+    progress();
+    clearTimeout(deadline);
+    deadline = setTimeout(function () { fail('timeout'); }, 30000);
+  }
+  function cancelled() {
+    var error = new Error('Startup cancelled');
+    error.startupCancelled = true;
+    return error;
+  }
+  function cancelPending() {
+    clearTimeout(timer);
+    clearTimeout(deadline);
+    retryTimers.forEach(clearTimeout);
+    retryTimers = [];
+    preloads.forEach(function (node) { node.remove(); });
+    preloads = [];
+    if (cancelRead) cancelRead();
+  }
+  function waitingForAuth() {
+    if (complete || stopped) return;
+    phase = 'auth';
+    beginPhase();
+  }
+  // Only the initial read uses this policy. Pairing and all other writes stay outside it.
+  function readAuth(read) {
+    if (complete) return read();
+    if (stopped) return Promise.reject(cancelled());
+    if (cancelRead) cancelRead();
+    return new Promise(function (resolve, reject) {
+      var attempt = 0, settled = false, controller = null, attemptTimer = null, retryTimer = null;
+      function finish(error, value) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(attemptTimer);
+        clearTimeout(retryTimer);
+        if (cancelRead === cancel) cancelRead = null;
+        if (error) reject(error); else resolve(value);
+      }
+      function cancel() {
+        if (controller) controller.abort();
+        finish(cancelled());
+      }
+      function run() {
+        if (settled) return;
+        attempt++;
+        var current = new AbortController(), finished = false;
+        controller = current;
+        function end(error, value) {
+          if (finished || settled) return;
+          finished = true;
+          clearTimeout(attemptTimer);
+          if (!error) { progress(); finish(null, value); return; }
+          var retryable = error.status >= 400 ? error.status === 408 || error.status === 429 || error.status >= 500
+            : error.name === 'TypeError' || error.name === 'AbortError';
+          if (!retryable || attempt >= 3) { finish(error); return; }
+          recovering();
+          retryTimer = setTimeout(run, attempt === 1 ? 500 : 1500);
+        }
+        attemptTimer = setTimeout(function () {
+          current.abort();
+          var error = new Error('Startup read timed out'); error.name = 'AbortError'; end(error);
+        }, 8000);
+        Promise.resolve().then(function () { if (!settled) return read(current.signal); }).then(function (value) { end(null, value); }, function (error) { end(error); });
+      }
+      cancelRead = cancel;
+      run();
+    });
   }
   function onError(event) {
-    if ((event.target && event.target.tagName === 'SCRIPT') || event.target === window) {
-      if (!lastFailure) lastFailure = {kind: event.target === window ? errorKind(event.error) : 'resource',
-        path: assetPath(event.filename || (event.target && event.target.src)),
+    // Resource errors reach the capture listener before the element's retry handler.
+    if (event.target && event.target.bridgeStartupResource) return;
+    if (event.target && event.target.id === 'bridge-clipboard-script') {
+      eagerPending = true;
+      recovering();
+      // Keep an executable request in flight until this early native clipboard
+      // definition is ready. A timer gap could let WebView's load hook run first.
+      loadResource(event.target, event.target.src, true, function () {
+        eagerPending = false;
+        if (startScripts) startScripts();
+      }, 1);
+      return;
+    }
+    // Owned script resource errors are handled above. A proxy may inject an
+    // optional analytics script that our CSP correctly blocks; it is not a
+    // workspace dependency and must not stop the startup queue.
+    if (event.target === window) {
+      if (!lastFailure) lastFailure = {kind: errorKind(event.error),
+        path: assetPath(event.filename),
         line: typeof event.lineno === 'number' && event.lineno > 0 ? event.lineno : 0};
       fail('script');
     }
   }
   function onRejection(event) { if (!lastFailure) lastFailure = {kind: errorKind(event && event.reason)}; fail('script'); }
-  function loadQueue(nodes, attribute, scripts, done) {
-    var next = 0, active = 0, finished = false;
-    function pump() {
-      while (active < 4 && next < nodes.length) load(nodes[next++]);
-      if (!active && next === nodes.length && !finished) { finished = true; done(); }
-    }
-    function load(placeholder) {
-      var url = placeholder.getAttribute(attribute), node = scripts ? document.createElement('script') : placeholder;
-      var settled = false;
-      active++;
-      pendingResources.push(url);
+  function loadResource(placeholder, url, scripts, done, eagerAttempts) {
+    var attempt = eagerAttempts || 0;
+    pendingResources.push(url);
+    function load() {
+      if (stopped) return;
+      var node = document.createElement(scripts ? 'script' : 'link'), settled = false;
+      attempt++;
+      node.bridgeStartupResource = true;
       function finish(failed) {
-        if (settled) return;
+        if (settled || stopped) return;
         settled = true;
-        pendingResources.splice(pendingResources.indexOf(url), 1);
         node.onload = node.onerror = null;
         if (failed) {
-          if (!lastFailure) lastFailure = {kind: 'resource', path: assetPath(url)};
-          fail('script');
+          lastFailure = {kind: 'resource', path: assetPath(url)};
+          if (attempt >= 3) { fail('script'); return; }
+          recovering();
+          if (eagerAttempts && scripts) { load(); return; }
+          retryTimers.push(setTimeout(load, attempt === 1 ? 500 : 1500));
+          return;
         }
-        active--;
-        pump();
+        pendingResources.splice(pendingResources.indexOf(url), 1);
+        if (lastFailure && lastFailure.kind === 'resource' && lastFailure.path === assetPath(url)) lastFailure = null;
+        progress();
+        done();
       }
       node.onload = function () { finish(false); };
       node.onerror = function () { finish(true); };
       if (scripts) {
-        // Ordered classic scripts keep the original global dependency chain.
         node.async = false;
         node.src = url;
-        placeholder.parentNode.replaceChild(node, placeholder);
       } else {
-        node.removeAttribute(attribute);
+        node.rel = 'stylesheet';
         node.href = url;
       }
+      placeholder.parentNode.replaceChild(node, placeholder);
+      placeholder = node;
     }
-    pump();
+    load();
   }
   function loadResources() {
-    // HTTP/2 can otherwise open 50+ upstream requests at once. Keep the initial
-    // shell CSS eager, finish feature styles, then load ordered scripts in fours.
-    loadQueue(document.querySelectorAll('link[data-bridge-href]'), 'data-bridge-href', false, function () {
-      loadQueue(document.querySelectorAll('script[data-bridge-src]'), 'data-bridge-src', true, function () {});
-    });
+    var styles = document.querySelectorAll('link[data-bridge-href]'), next = 0, active = 0;
+    var scripts = document.querySelectorAll('script[data-bridge-src]');
+    function pumpStyles() {
+      if (stopped) return;
+      while (active < 4 && next < styles.length) {
+        var node = styles[next++]; active++;
+        loadResource(node, node.getAttribute('data-bridge-href'), false, function () { active--; pumpStyles(); });
+      }
+      if (!active && next === styles.length) {
+        startScripts = loadScripts;
+        if (!eagerPending) loadScripts();
+      }
+    }
+    function loadScripts() {
+      var index = 0;
+      function advance() {
+        if (stopped) return;
+        if (index === scripts.length) { resourcesDone = true; finishReady(); return; }
+        // Downloads are independent; execution still waits for each dependency.
+        var script = scripts[index];
+        loadResource(script, script.getAttribute('data-bridge-src'), true, function () { index++; advance(); });
+      }
+      advance();
+    }
+    // This stylesheet precedes the parser-blocking bootstrap. Its initial load
+    // has settled before we run. Some WebViews retain an empty sheet on failure.
+    var shell = document.getElementById('bridge-shell-style'), shellReady = false;
+    // A failed response can leave a sheet whose cssRules getter throws SecurityError.
+    // Treat it like a missing sheet so the bounded loader can recover the resource.
+    try { shellReady = !!(shell && shell.sheet && shell.sheet.cssRules.length); } catch (_) {}
+    if (shell && !shellReady) loadResource(shell, shell.href, false, pumpStyles, 1);
+    else pumpStyles();
+    // Discover the required scripts while styles load. Let the browser schedule
+    // downloads instead of paying another network round trip per execution group.
+    // Keep the same destination and versioned URL so execution/reopens reuse cache.
+    var probe = document.createElement('link');
+    if (probe.relList && probe.relList.supports && probe.relList.supports('preload')) {
+      for (var i = 0; i < scripts.length; i++) {
+        var link = document.createElement('link');
+        link.rel = 'preload'; link.as = 'script'; link.href = scripts[i].getAttribute('data-bridge-src');
+        document.head.appendChild(link); preloads.push(link);
+      }
+    }
   }
   function pairingSubmitted() {
     phase = 'pairing';
@@ -122,16 +261,25 @@
     originalPairing = false;
   }
   function ready() {
+    readyRequested = true;
+    // A late pairing response can resolve its unknown-result notice.
+    if (stopped && phase === 'pairing' && failureKind === 'timeout') stopped = false;
+    finishReady();
+  }
+  function finishReady() {
+    if (!readyRequested || !resourcesDone || stopped) return;
     if (complete) return;
     complete = true;
     originalUrl = null;
-    clearTimeout(timer);
+    cancelPending();
     root.hidden = true;
     window.removeEventListener('error', onError, true);
     window.removeEventListener('unhandledrejection', onRejection);
   }
   title.textContent = text('正在连接工作台…', 'Connecting to your workspace…');
   message.textContent = text('首次加载可能需要片刻。若长时间没有响应，可重新加载页面。', 'The first load may take a moment. Reload the page if it stops responding.');
+  document.getElementById('bootstrap-details-label').textContent = text('查看详情', 'View details');
+  details.hidden = true;
   retry.textContent = text('重新加载', 'Reload');
   retry.disabled = false;
   retry.onclick = function () {
@@ -142,9 +290,10 @@
   };
   window.addEventListener('error', onError, true);
   window.addEventListener('unhandledrejection', onRejection);
-  timer = setTimeout(function () { fail('timeout'); }, 12000);
+  window.addEventListener('pagehide', function (event) { if (!event.persisted) { stopped = true; cancelPending(); } });
+  beginPhase();
   window.BridgeBootstrap = {waitingForAuth: waitingForAuth, pairingSubmitted: pairingSubmitted,
-    failed: function () { return fail('connection'); }, ready: ready};
+    failed: function () { return fail('connection'); }, ready: ready, readAuth: readAuth};
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadResources);
   else loadResources();
 })();

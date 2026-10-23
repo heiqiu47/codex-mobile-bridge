@@ -262,11 +262,44 @@ def context_usage(state):
             'cached': state.get('tokenUsageFromHistory') is True}
 
 
-def normalize_state(state, connected=True, *, image_cache=None):
+def normalize_state(state, connected=True, *, image_cache=None, item_limit=None):
     turns = ordered_turns(state)
+    # Select bodies before normalization (tool results can contain megabytes).
+    # The original state remains intact for revisions, approvals and commands.
+    counts = [len(items_array(turn.get('items'))) for turn in turns] if item_limit is not None else []
+    skip = max(0, sum(counts) - item_limit) if item_limit is not None else 0
+    window_more = skip > 0
     result = []
     for ordinal, turn in enumerate(turns):
         items = items_array(turn.get("items", []))
+        if skip >= len(items) and skip:
+            skip -= len(items)
+            continue
+        omitted = skip
+        skip = 0
+        occurrences = {}
+        prefix_ordinals = {}
+        preceding_calls = {}
+        if omitted:
+            for item in items[:omitted]:
+                kind = item.get('type', 'unknown')
+                key = (item.get('id'), kind)
+                if kind in ('function_call', 'custom_tool_call'):
+                    key = (item.get('call_id', item.get('id')), 'storedToolEvent')
+                    preceding_calls[key[0]] = item
+                prefix_ordinals[key] = prefix_ordinals.get(key, 0) + 1
+        first_user_id = next((id(item) for item in items if item.get('type') in ('userMessage', 'steeringUserMessage')), None)
+        items = items[omitted:]
+        # A result at the page boundary still belongs to its call. Include only
+        # those calls, not every large body between the call and the boundary.
+        needed = {item.get('call_id') for item in items
+                  if item.get('type') in ('function_call_output', 'custom_tool_call_output')}
+        carry = [item for key, item in preceding_calls.items() if key in needed]
+        carry_ids = {id(item) for item in carry}
+        for item in carry:
+            key = (item.get('call_id', item.get('id')), 'storedToolEvent')
+            prefix_ordinals[key] -= 1
+        items = carry + items
         messages, calls = [], {}
         for item in items:
             kind = item.get('type')
@@ -275,7 +308,6 @@ def normalize_state(state, connected=True, *, image_cache=None):
                            'role': 'activity', 'title': item.get('name') or '工具调用',
                            'text': str(item.get('arguments', item.get('input', '')))}
                 calls[message['id']] = message
-                messages.append(message)
             elif kind in ('function_call_output', 'custom_tool_call_output') and item.get('call_id') in calls:
                 extract = image_cache.extract if image_cache is not None else extract_tool_images
                 output, images = extract(item.get('output', ''))
@@ -284,9 +316,18 @@ def normalize_state(state, connected=True, *, image_cache=None):
                     calls[item['call_id']]['attachments'] = images
                 else:
                     calls[item['call_id']].pop('attachments', None)
+                continue
             else:
-                messages.append(normalize_item(item, image_cache=image_cache))
-        if not any(x.get("role") == "user" for x in messages):
+                message = normalize_item(item, image_cache=image_cache)
+            if item_limit is not None:
+                message['_historyCarry'] = id(item) in carry_ids
+                key = (message.get('id'), message['kind'])
+                message['_timelineOrdinal'] = prefix_ordinals.get(key, 0) + occurrences.get(key, 0)
+                occurrences[key] = occurrences.get(key, 0) + 1
+                message['_firstUser'] = (item.get('id') == turn['_firstUserItemId']
+                                         if '_firstUserItemId' in turn else id(item) == first_user_id)
+            messages.append(message)
+        if not omitted and not any(x.get("role") == "user" for x in messages):
             opening_input = turn.get("params", {}).get("input", [])
             opening = text_content(opening_input)
             if opening:
@@ -311,7 +352,7 @@ def normalize_state(state, connected=True, *, image_cache=None):
             "collaborationMode": (state.get("latestCollaborationMode") or {}).get("mode"),
             **({'serviceTier': tier['serviceTier']} if 'serviceTier' in tier else {}),
             "goal": copy.deepcopy(state.get("threadGoal") or state.get("completedThreadGoal")),
-            "turns": result, "requests": pending_requests(state),
+            "turns": result, "requests": pending_requests(state), "historyWindowMore": window_more,
             "historyComplete": history.get("isComplete", state.get("turnsPagination", {}).get("hasLoadedOldest", True))}
 
 

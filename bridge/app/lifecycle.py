@@ -26,10 +26,10 @@ class GatewayControl:
         self.closed = threading.Event()
         self.worker = None
 
-    def start(self, shutdown, pairing=None, instance_id=None, auth=None, account=None, notifications=None, accounts=None, harness=None, desktop_sessions=None, cli_access=None):
+    def start(self, shutdown, pairing=None, instance_id=None, auth=None, account=None, notifications=None, accounts=None, harness=None, desktop_sessions=None, cli_access=None, network_adaptation=None):
         self.pairing_dir = Path(tempfile.mkdtemp(prefix=".pairing-", dir=self.path.parent))
         self.record.update(pairingDir=self.pairing_dir.name, instanceId=instance_id, deviceManagement=auth is not None,
-                           desktopSessionsManagement=desktop_sessions is not None, harnessManagement=harness is not None, accountsManagement=accounts is not None, accountManagement=account is not None, cliAccessManagement=cli_access is not None, notificationManagement=notifications is not None)
+                           desktopSessionsManagement=desktop_sessions is not None, harnessManagement=harness is not None, accountsManagement=accounts is not None, accountManagement=account is not None, cliAccessManagement=cli_access is not None, notificationManagement=notifications is not None, networkAdaptationManagement=network_adaptation is not None)
         self.request_path.unlink(missing_ok=True)
         self.path.write_text(json.dumps(self.record), encoding='utf-8')
         self.path.chmod(0o600)
@@ -68,6 +68,8 @@ class GatewayControl:
                                 result = {'ok': True, 'result': auth.manage(payload.get('value', {}))}
                             elif payload.get('action') == 'notification-watches' and notifications:
                                 result = {'ok': True, 'result': notifications(payload.get('value', {}))}
+                            elif payload.get('action') == 'network-adaptation' and network_adaptation:
+                                result = {'ok': True, 'result': network_adaptation(payload.get('value', {}))}
                             else:
                                 result = {'ok': True, 'result': pairing(payload)}
                         except (ValueError, TypeError, OSError) as exc:

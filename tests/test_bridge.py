@@ -340,7 +340,7 @@ class IntegrationTests(unittest.TestCase):
             target.connected = True
         with patch('bridge.app.service.threading.Thread', InlineThread), patch.object(self.bridge, '_attach', side_effect=attach), patch.object(self.bridge.store, 'history', return_value=saved) as read:
             self.bridge._refresh_async(session)
-        read.assert_called_once_with(THREAD, turn_limit=20)
+        read.assert_called_once_with(THREAD, turn_limit=2, item_limit=40)
         self.assertEqual(session.view()['turns'][0]['id'], 'old')
         self.assertTrue(session.connected)
 
@@ -552,7 +552,7 @@ class IntegrationTests(unittest.TestCase):
                 patch.object(self.bridge, '_attach', side_effect=AssertionError('catalog attached desktop')), \
                 patch('bridge.app.service.open_in_desktop', side_effect=AssertionError('catalog opened desktop')):
             result = self.bridge.catalog(THREAD, kind='models')
-        history.assert_called_once_with(THREAD, turn_limit=20)
+        history.assert_called_once_with(THREAD, turn_limit=2, item_limit=40)
         self.bridge.catalog_reader.get_kind.assert_called_once_with(
             'models', '/saved/project', refresh=False, provider='saved-api')
         self.assertEqual(result['currentModel'], 'saved-model')

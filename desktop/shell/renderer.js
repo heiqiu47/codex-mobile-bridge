@@ -2,6 +2,7 @@
 const $=id=>document.getElementById(id),api=window.bridgeDesktop,t=BridgeI18n.t;
 let connectionDraft=[],savedConnections='[]',lanDraft=[],savedLan='[]';
 let snapshot,dirty=false,loading=false,startingUntil=0,activeTab='overview',savedFields={},feedbackKind='',lastFeedback;
+let networkAdaptationState,networkAdaptationBusy=false,networkAdaptationRevision=0,networkAdaptationError='';
 const defaultWebhookBodyTemplate=JSON.stringify({event:'{{event}}',title:'{{title}}',body:'{{body}}',session_name:'{{session_name}}',url:'{{url}}'},null,2);
 let webhookTemplates={},revealedWebhookUrl='',webhookRevealRequest=0;
 let webhookSelectedId='legacy',webhookCreating=false,webhookSavedFields=null,webhookSaving=false,webhookRenderedRowSignature='';
@@ -56,7 +57,7 @@ const titles={'desktop-sessions':'桌面会话',harness:'Harness 官方 Web',ove
 const watchPanel=new WatchPanel({root:$('watches'),change:value=>api.notificationWatches(value)});
 const harnessPanel=typeof HarnessPanel==='undefined'?null:new HarnessPanel({root:$('harness-panel'),api,t,feedback});
 const desktopConnections=typeof DesktopConnectionsPanel==='undefined'?null:new DesktopConnectionsPanel({root:$('desktop-connections'),api,feedback});
-function fields(){return [...$('settings').querySelectorAll('input,textarea,select')].filter(node=>!node.closest('#watches')&&!node.closest('#connections')&&!node.closest('#lan-addresses')&&!node.closest('#file-transfer-settings')&&!node.closest('#webhook-editor')&&node.id!=='connection-kind');}
+function fields(){return [...$('settings').querySelectorAll('input,textarea,select')].filter(node=>!node.closest('#watches')&&!node.closest('#connections')&&!node.closest('#lan-addresses')&&!node.closest('#file-transfer-settings')&&!node.closest('#webhook-editor')&&node.id!=='connection-kind'&&node.id!=='network-adaptation-enabled');}
 function fieldValues(){return Object.fromEntries(fields().map(node=>[node.id,node.id==='webhook-sign-secret'?!!node.value:node.id==='webhook-url'?webhookUrlDraft():node.type==='checkbox'?node.checked:node.value]));}
 function updateDirty(){
   const changed=new Set();
@@ -127,24 +128,49 @@ document.querySelectorAll('[data-jump]').forEach(button=>button.onclick=()=>tab(
 $('settings').oninput=$('settings').onchange=()=>{if(snapshot){$('revoke-bound-devices-option').hidden=!$('password').value;updateDirty();}};
 function renderLan(){
   const rows=[...(snapshot?.networkInterfaces||[])];
-  for(const address of lanDraft)if(!rows.some(row=>row.address===address))rows.push({address,name:t('当前不可用')});
+  for(const id of lanDraft)if(!rows.some(row=>row.id===id))rows.push({id,name:t('当前不可用'),addresses:[]});
   $('lan-addresses').replaceChildren();
-  const selected=$('lan-scope').value==='selected';
+  const choosing=$('lan-scope').value==='selected';
   for(const row of rows){
     const label=document.createElement('label'),box=document.createElement('input'),text=document.createElement('span');
-    label.className='check lan-address';box.type='checkbox';box.dataset.lanAddress=row.address;
-    box.checked=!selected||lanDraft.includes(row.address);
-    box.disabled=!!snapshot?.runtime.running||!$('lan').checked||!selected;
-    text.textContent=row.name+' · '+row.address;
-    box.onchange=()=>{lanDraft=box.checked?[...lanDraft,row.address]:lanDraft.filter(address=>address!==row.address);updateDirty();};
+    label.className='check lan-address';box.type='checkbox';box.dataset.lanInterface=row.id;
+    box.checked=!choosing||lanDraft.includes(row.id);
+    box.disabled=!!snapshot?.runtime.running||!$('lan').checked||!choosing;
+    text.textContent=row.name+' · '+(row.addresses?.length?row.addresses.join(', '):t('当前不可用'));
+    box.onchange=()=>{lanDraft=box.checked?[...lanDraft,row.id]:lanDraft.filter(id=>id!==row.id);updateDirty();};
     label.append(box,text);$('lan-addresses').append(label);
   }
-  if(!rows.length){const note=document.createElement('p');note.className='hint';note.textContent=t('未发现可用的局域网 IPv4 地址');$('lan-addresses').append(note);}
+  if(!rows.length){const note=document.createElement('p');note.className='hint';note.textContent=t('未发现可用的局域网网卡');$('lan-addresses').append(note);}
   $('lan-scope').disabled=!!snapshot?.runtime.running||!$('lan').checked;
 }
 $('login-startup').onchange=()=>{if($('login-startup').checked)$('auto-start').checked=true;$('auto-start').disabled=$('login-startup').checked;updateDirty();};
 $('lan').onchange=()=>{renderLan();updateDirty();};
 $('lan-scope').onchange=()=>{renderLan();updateDirty();};
+function renderNetworkAdaptation(value=networkAdaptationState){
+  if(value!==undefined)networkAdaptationState=value;
+  const box=$('network-adaptation-enabled'),known=typeof networkAdaptationState?.enabled==='boolean';
+  box.checked=networkAdaptationState?.enabled===true;
+  box.disabled=networkAdaptationBusy||!snapshot||!known||typeof api.networkAdaptation!=='function';
+  box.setAttribute('aria-busy',String(networkAdaptationBusy));
+  $('network-adaptation-state').textContent=t(networkAdaptationBusy?'正在保存…':networkAdaptationError||(!known?'请更新网关以使用网络变化自动恢复。':networkAdaptationState.enabled?'已启用':'未启用'));
+}
+$('network-adaptation-enabled').onchange=async event=>{
+  event?.stopPropagation();
+  if(networkAdaptationBusy)return;
+  const enabled=$('network-adaptation-enabled').checked;
+  networkAdaptationBusy=true;networkAdaptationRevision++;networkAdaptationError='';renderNetworkAdaptation();
+  try{networkAdaptationState=unwrapValidation(await api.networkAdaptation({action:'set',enabled}));}
+  catch(error){
+    // A timeout may follow a successful save. Read the result; never replay it.
+    try{networkAdaptationState=await api.networkAdaptation({action:'status'});}
+    catch{networkAdaptationState=undefined;networkAdaptationError='网络恢复设置尚未确认，请刷新状态后重试。';}
+    if(networkAdaptationState?.enabled!==enabled)feedback(error.message,true);
+  }finally{
+    networkAdaptationBusy=false;networkAdaptationRevision++;
+    if(snapshot)snapshot.networkAdaptation=networkAdaptationState;
+    renderNetworkAdaptation();
+  }
+};
 function input(id,value){$(id).value=value??'';}
 function renderGatewayActions(){
   const running=!!snapshot?.runtime.running,starting=startPending||Date.now()<startingUntil;
@@ -158,6 +184,7 @@ function render(value,watchRevision=watchPanel.revision){
   if(snapshot&&(snapshot.runtime.instanceId!==value.runtime.instanceId||snapshot.dataDir!==value.dataDir)){resetPairing();connectionSetupState.clear();}
   if(snapshot&&snapshot.dataDir!==value.dataDir){hideWebhookUrl();webhookSavedFields=null;webhookCreating=false;webhookSelectedId='legacy';resetSecretFields();harnessPanel?.clear();if(activeTab==='accounts')harnessPanel?.refresh();watchPanel.clear();watchRevision=watchPanel.revision;devicesState=null;devicesDirty=false;$('device-list').replaceChildren();$('auto-blocks').replaceChildren();}
   snapshot=value;const running=value.runtime.running;
+  if(!networkAdaptationBusy){if(typeof value.networkAdaptation?.enabled==='boolean')networkAdaptationError='';renderNetworkAdaptation(value.networkAdaptation??null);}
   if(running||value.runtime.portOccupied)startingUntil=0;
   const starting=Date.now()<startingUntil;
   if(feedbackKind==='gateway'){
@@ -199,8 +226,8 @@ function render(value,watchRevision=watchPanel.revision){
     const p=value.preferences,n=value.notifications;
     for(const [id,key] of [['port','port'],['cloudflared','cloudflared'],['codex-home','codexHome'],['ipc-path','ipcPath'],['codex-bin','codexBin']])input(id,p[key]);
     $('login-startup').checked=!!(value.loginStartup?.enabled||value.loginStartup?.requiresApproval);$('auto-start').checked=p.autoStart;$('auto-start').disabled=!!(value.loginStartup?.enabled||value.loginStartup?.requiresApproval);$('lan').checked=p.lan;
-    $('local-access').checked=p.localAccess!==false;input('lan-scope',p.lanAddresses==null?'all':'selected');
-    lanDraft=p.lanAddresses==null?(value.networkInterfaces||[]).map(row=>row.address):[...p.lanAddresses];savedLan=JSON.stringify(lanDraft);
+    $('local-access').checked=p.localAccess!==false;input('lan-scope',p.lanInterfaces==null?'all':'selected');
+    lanDraft=p.lanInterfaces==null?(value.networkInterfaces||[]).map(row=>row.id):[...(p.lanInterfaces||[])];savedLan=JSON.stringify(lanDraft);
     if(!document.activeElement?.closest('#connections')||JSON.stringify(p.connections||[])!==savedConnections){const next=JSON.parse(JSON.stringify(p.connections||[]));for(const row of connectionDraft)if(JSON.stringify(row)!==JSON.stringify(next.find(c=>c.id===row.id)))connectionSetupState.delete(row.id);connectionDraft=next;savedConnections=JSON.stringify(connectionDraft);renderConnections();}
     const fixed=connectionDraft.filter(c=>c.enabled).map(c=>c.publicUrl);
     input('origins',value.origins.filter(o=>!fixed.includes(o)).join('\n'));input('auth-mode',value.auth.mode);input('session-hours',value.auth.sessionHours??12);input('username',value.auth.username);$('revoke-bound-devices').checked=true;$('revoke-bound-devices-option').hidden=!$('password').value;
@@ -233,8 +260,8 @@ function render(value,watchRevision=watchPanel.revision){
   loadSavedSecrets();
 }
 let renderedSnapshot='',renderedDirty=false,renderedRevision=-1;
-async function refresh(force=false){if(loading||(document.hidden&&force!==true))return;loading=true;try{const revision=watchPanel.revision,value=await api.snapshot(),signature=JSON.stringify(value);if(signature!==renderedSnapshot||renderedDirty!==dirty||renderedRevision!==revision||startingUntil){render(value,revision);renderedSnapshot=signature;renderedDirty=dirty;renderedRevision=revision;}}catch(e){feedback(e.message,true);}finally{loading=false;}}
-function collect(){return {...(snapshot?.loginStartup?.supported?{loginStartup:$('login-startup').checked}:{}),preferences:{autoStart:$('auto-start').checked,port:Number($('port').value),lan:$('lan').checked,lanAddresses:$('lan-scope').value==='all'?null:[...lanDraft],localAccess:$('local-access').checked,connections:connectionDraft.map(row=>row.accessMode==='external'||row.accessMode==='nas'?{...row,publicUrl:normalizeExternalUrl(row.publicUrl||'')}:row),cloudflared:$('cloudflared').value.trim(),codexHome:$('codex-home').value.trim(),ipcPath:$('ipc-path').value.trim(),codexBin:$('codex-bin').value.trim()},auth:{sessionHours:Number($('session-hours').value),mode:$('auth-mode').value,username:$('username').value.trim(),password:submittedSecret('password'),revokeBoundDevices:$('revoke-bound-devices').checked},origins:$('origins').value.split('\n').map(s=>s.trim()).filter(Boolean),notifications:{mobileEnabled:$('mobile-enabled').checked,mobileAppLinks:$('mobile-app-links').checked,securityEnabled:$('security-enabled').checked,addressEnabled:$('address-enabled').checked,addressName:$('address-name').value.trim(),pushplusEnabled:$('pushplus-enabled').checked,pushplusToken:submittedSecret('pushplus-token'),clearPushplusToken:$('clear-pushplus-token').checked,enabled:$('ntfy-enabled').checked,server:$('ntfy-server').value.trim(),topic:$('ntfy-topic').value.trim(),token:submittedSecret('ntfy-token'),clearToken:$('clear-token').checked,barkEnabled:$('bark-enabled').checked,barkServer:$('bark-server').value.trim(),barkKey:submittedSecret('bark-key'),clearBarkKey:$('clear-bark-key').checked,clickBase:$('click-base').value.trim(),includeTitle:$('include-title').checked}};}
+async function refresh(force=false){if(loading||(document.hidden&&force!==true))return;loading=true;try{const revision=watchPanel.revision,networkRevision=networkAdaptationRevision,value=await api.snapshot();if(networkRevision!==networkAdaptationRevision)value.networkAdaptation=networkAdaptationState;const signature=JSON.stringify(value);if(signature!==renderedSnapshot||renderedDirty!==dirty||renderedRevision!==revision||startingUntil){render(value,revision);renderedSnapshot=signature;renderedDirty=dirty;renderedRevision=revision;}}catch(e){feedback(e.message,true);}finally{loading=false;}}
+function collect(){const rows=snapshot?.networkInterfaces||[],selected=rows.filter(row=>lanDraft.includes(row.id));return {...(snapshot?.loginStartup?.supported?{loginStartup:$('login-startup').checked}:{}),preferences:{autoStart:$('auto-start').checked,port:Number($('port').value),lan:$('lan').checked,lanInterfaces:$('lan-scope').value==='all'?null:[...lanDraft],lanAddresses:$('lan-scope').value==='all'?null:[...new Set(selected.flatMap(row=>row.addresses||[]))],localAccess:$('local-access').checked,connections:connectionDraft.map(row=>row.accessMode==='external'||row.accessMode==='nas'?{...row,publicUrl:normalizeExternalUrl(row.publicUrl||'')}:row),cloudflared:$('cloudflared').value.trim(),codexHome:$('codex-home').value.trim(),ipcPath:$('ipc-path').value.trim(),codexBin:$('codex-bin').value.trim()},auth:{sessionHours:Number($('session-hours').value),mode:$('auth-mode').value,username:$('username').value.trim(),password:submittedSecret('password'),revokeBoundDevices:$('revoke-bound-devices').checked},origins:$('origins').value.split('\n').map(s=>s.trim()).filter(Boolean),notifications:{mobileEnabled:$('mobile-enabled').checked,mobileAppLinks:$('mobile-app-links').checked,securityEnabled:$('security-enabled').checked,addressEnabled:$('address-enabled').checked,addressName:$('address-name').value.trim(),pushplusEnabled:$('pushplus-enabled').checked,pushplusToken:submittedSecret('pushplus-token'),clearPushplusToken:$('clear-pushplus-token').checked,enabled:$('ntfy-enabled').checked,server:$('ntfy-server').value.trim(),topic:$('ntfy-topic').value.trim(),token:submittedSecret('ntfy-token'),clearToken:$('clear-token').checked,barkEnabled:$('bark-enabled').checked,barkServer:$('bark-server').value.trim(),barkKey:submittedSecret('bark-key'),clearBarkKey:$('clear-bark-key').checked,clickBase:$('click-base').value.trim(),includeTitle:$('include-title').checked}};}
 $('settings').onsubmit=async event=>{
   event.preventDefault();if(saving||busyActions.size)return;const invalid=[...$('settings').querySelectorAll('input,textarea,select')].find(node=>!node.closest('#file-transfer-settings')&&!node.closest('#webhook-editor')&&!node.disabled&&!node.validity.valid&&(!node.closest('.connection-card')||connectionDraft.find(row=>row.id===node.closest('.connection-card').dataset.connectionId)?.enabled));if(invalid){focusField(invalid);feedback(invalid.validationMessage,true);return;}saving=true;$('save').disabled=true;const submitted=fieldValues(),submittedConnections=JSON.stringify(connectionDraft),submittedLan=JSON.stringify(lanDraft);
   try{

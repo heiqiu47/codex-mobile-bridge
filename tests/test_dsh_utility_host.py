@@ -1,5 +1,6 @@
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,7 +69,7 @@ class DshNativeQuitTests(unittest.TestCase):
             patcher = patch('bridge.clients.lifecycle.'+name, return_value=value)
             mocked = patcher.start(); self.addCleanup(patcher.stop)
             if name == 'inspect_client': self.inspect = mocked
-        for name, value in [('sys.platform', 'win32'), ('time.sleep', Mock())]:
+        for name, value in [('sys.platform', 'win32'), ('time', SimpleNamespace(monotonic=time.monotonic, sleep=Mock()))]:
             patcher = patch('bridge.clients.lifecycle.'+name, value)
             patcher.start(); self.addCleanup(patcher.stop)
 
@@ -143,6 +144,12 @@ class DshNativeQuitTests(unittest.TestCase):
     def test_native_shutdown_timeout_does_not_terminate_processes(self):
         self.app.processes.side_effect = None
         self.app.processes.return_value = [11, 12]
+        call = self.adapter.call.side_effect
+        def other_clock_reader(*args, **kwargs):
+            # A background caller must not consume lifecycle's test clock.
+            time.monotonic()
+            return call(*args, **kwargs)
+        self.adapter.call.side_effect = other_clock_reader
         with patch('bridge.clients.lifecycle.time.monotonic', side_effect=[0, 30]):
             with self.assertRaisesRegex(ValueError, '尚未退出'):
                 self.stop()

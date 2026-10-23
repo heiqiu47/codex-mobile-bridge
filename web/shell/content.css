@@ -1,5 +1,5 @@
-/* Keep the terminal insertion cursor visible as an input indicator. */
-@media(prefers-reduced-motion:reduce){*:not(.xterm-cursor){animation:none!important}}
+/* Keep the terminal cursor and startup visibility delay; the latter has no motion. */
+@media(prefers-reduced-motion:reduce){*:not(.xterm-cursor):not(.bootstrap-status){animation:none!important}}
 .picker-head-actions{display:flex;align-items:center;gap:4px;flex:none}
 
 .artifact-image{display:block;max-width:100%;height:auto;border-radius:10px;margin:12px 0}
@@ -37,7 +37,10 @@
 .notification-channel-list{display:grid;gap:8px}.notification-channel-list button{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:10px;width:100%;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--text);font:inherit;text-align:left;cursor:pointer}.notification-channel-list button span{color:var(--muted);font-size:12px}.notification-channel-list .notification-channel-status{min-width:48px;text-align:right}.notification-common{border:0;border-top:1px solid var(--line);margin:20px 0 0;padding:16px 0 0}.notification-common legend{font-weight:600}.notification-common label{margin:12px 0}#notification-channel-back{padding-left:0}
 #webhook-dialog{max-height:calc(100dvh - 24px);overflow-y:auto}#webhook-dialog textarea{display:block;width:100%;min-width:0;box-sizing:border-box;margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:inherit;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}#webhook-dialog details{margin:16px 0}#webhook-dialog details>summary{cursor:pointer}#webhook-dialog .picker-head{gap:8px}#webhook-dialog .picker-head h2{min-width:0}
 
-.message-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px}.message-actions button{font-size:12px;min-height:32px;padding:5px 8px;color:var(--muted)}.message-actions button:hover{color:var(--accent)}.code-block{position:relative;min-width:0}.code-block>pre{margin-top:0;padding-top:38px}.code-copy{position:absolute;right:5px;top:4px;font-size:12px;padding:3px 8px;min-height:28px}.copy-dialog textarea,#message-action-text{width:100%;box-sizing:border-box;resize:vertical;min-height:180px;max-height:55dvh}.copy-dialog textarea{height:45dvh;font:inherit}.copy-dialog h2{margin-top:0}#message-action-form{display:grid;gap:12px}#message-action-error:empty{display:none}#fork-source{max-width:100%;text-align:left;overflow-wrap:anywhere}
+.message-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px}.message-actions button{font-size:12px;min-height:32px;padding:5px 8px;color:var(--muted)}.message-actions button:hover{color:var(--accent)}.code-block{position:relative;min-width:0}.code-block>pre{margin-top:0;padding-top:38px}.code-copy{position:absolute;right:5px;top:4px;font-size:12px;padding:3px 8px;min-height:28px}.copy-dialog textarea,#message-action-text{width:100%;box-sizing:border-box;resize:vertical;min-height:180px;max-height:55dvh}.copy-dialog textarea{height:45dvh;font:inherit}.copy-dialog h2{margin-top:0}
+.clipboard-selection{position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px}
+.copy-dialog-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+#message-action-form{display:grid;gap:12px}#message-action-error:empty{display:none}#fork-source{max-width:100%;text-align:left;overflow-wrap:anywhere}
 
 .attachment-list{display:grid;gap:8px;margin-bottom:8px}
 .attachment-chip{display:flex;align-items:center;gap:10px;min-width:0;padding:8px;border:1px solid var(--line);border-radius:10px;background:#fff}

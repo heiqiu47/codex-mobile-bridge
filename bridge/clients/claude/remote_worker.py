@@ -132,19 +132,171 @@ def events(path):
     return result
 
 
+def _file_stamp(fd):
+    stat = os.fstat(fd)
+    return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+
+
+def file_stamp(path):
+    # Use the same descriptor API for both ends of a read. On Windows,
+    # stat(path) and fstat(fd) can expose different file identity metadata.
+    with path.open('rb') as stream:
+        return _file_stamp(stream.fileno())
+
+
+def history_page(path, identity, before=None, limit=40):
+    """Standalone bounded reverse reader; this source runs without bridge installed."""
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError('Claude 历史分页大小无效')
+    with path.open('rb') as stream:
+        stamp = _file_stamp(stream.fileno())
+        end = stamp[2]
+        if before is not None:
+            if not isinstance(before, str) or len(before) > 1024:
+                raise ValueError('Claude 历史游标无效')
+            try:
+                source, version, end = json.loads(base64.urlsafe_b64decode(
+                    before + '=' * (-len(before) % 4)))
+            except (ValueError, TypeError, UnicodeError) as exc:
+                raise ValueError('Claude 历史游标无效') from exc
+            if source != identity or version != stamp or type(end) is not int or not 0 <= end <= stamp[2]:
+                raise ValueError('Claude 历史已变化，请重新加载最近记录')
+            if end:
+                stream.seek(end - 1)
+                if stream.read(1) != b'\n':
+                    raise ValueError('Claude 历史游标无效')
+        pos, pending, consumed, selected, boundary, visible = end, b'', 0, [], end, 0
+        has_more = False
+        while pos or pending:
+            if pos:
+                size = min(65536, pos, 4 * 1024 * 1024 - consumed)
+                if size <= 0:
+                    raise ValueError('Claude 历史单页扫描超过限制，请缩小分页范围')
+                pos -= size
+                stream.seek(pos)
+                block = stream.read(size)
+                if len(block) != size:
+                    raise ValueError('Claude 历史读取期间发生变化')
+                consumed += size
+                pending = block + pending
+            lines = pending.splitlines(keepends=True)
+            keep = lines.pop(0) if pos else b''
+            offset = pos + len(keep) + sum(map(len, lines))
+            for line in reversed(lines):
+                offset -= len(line)
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict) or event.get('type') not in ('user', 'assistant', 'result', 'system'):
+                    continue
+                if event['type'] in ('user', 'assistant') and not event.get('isSynthetic') and not event.get('isMeta'):
+                    visible += 1
+                    if not event.get('uuid') and not (isinstance(event.get('message'), dict)
+                                                      and event['message'].get('id')):
+                        event = {**event, 'uuid': 'file:' + str(offset)}
+                selected.append(event)
+                boundary = offset
+                if visible >= limit:
+                    has_more = boundary > 0
+                    break
+            pending = keep
+            if has_more:
+                break
+        if _file_stamp(stream.fileno()) != stamp:
+            raise ValueError('Claude 历史读取期间发生变化')
+        try:
+            current = file_stamp(path)
+        except OSError as exc:
+            raise ValueError('Claude 历史读取期间发生变化') from exc
+        if current != stamp:
+            raise ValueError('Claude 历史读取期间发生变化')
+        cursor = None
+        if has_more:
+            data = json.dumps([identity, stamp, boundary], separators=(',', ':')).encode()
+            cursor = base64.urlsafe_b64encode(data).decode().rstrip('=')
+        return {'events': list(reversed(selected)), 'history': {'before': cursor, 'hasMore': has_more},
+                'stamp': stamp}
+
+
 def saved(path, found, *, include_events=False):
     try:
         native = str(uuid.UUID(path.stem))
         if path.is_symlink() or not path.is_file():
             return None
-        history = events(path)
+        stamp = file_stamp(path)
     except (OSError, ValueError):
         return None
-    users = [e for e in history if e.get('type') == 'user' and not e.get('isSidechain')]
-    if not users:
+    title, cwd, model, permission, user_permission = None, '', '', None, None
+    context = []
+    history = [] if include_events else None
+    try:
+        with path.open(encoding='utf-8', errors='replace') as source:
+            for line in source:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if include_events:
+                    history.append(event)
+                kind = event.get('type')
+                if kind == 'user' and not event.get('isSidechain'):
+                    if title is None:
+                        message = event.get('message') if isinstance(event.get('message'), dict) else {}
+                        content = message.get('content', '')
+                        if isinstance(content, list):
+                            content = '\n'.join(item.get('text', '') for item in content
+                                                if isinstance(item, dict) and item.get('type') == 'text')
+                        title = str(content).strip().splitlines()[0][:120] if str(content).strip() else 'Claude Code 会话'
+                    if event.get('permissionMode') in MODES:
+                        user_permission = event['permissionMode']
+                if kind in ('user', 'assistant') and isinstance(event.get('cwd'), str) and event['cwd']:
+                    cwd = event['cwd']
+                if kind == 'assistant' and isinstance(event.get('message'), dict):
+                    candidate = event['message'].get('model')
+                    if isinstance(candidate, str):
+                        model = candidate
+                if kind == 'mode' and event.get('mode') in MODES:
+                    permission = event['mode']
+                if kind == 'system' and event.get('subtype') == 'compact_boundary':
+                    context = [{'type': 'system', 'subtype': 'compact_boundary'}]
+                elif (kind == 'assistant' and not any(event.get(key) for key in
+                      ('isSidechain', 'parent_tool_use_id', 'isSynthetic', 'isMeta', 'isCompactSummary'))
+                      and isinstance(event.get('message'), dict)
+                      and isinstance(event['message'].get('usage'), dict)
+                      and type(event['message']['usage'].get('input_tokens')) is int
+                      and event['message']['usage']['input_tokens'] >= 0):
+                    compacted = bool(context and context[0].get('subtype') == 'compact_boundary')
+                    context = ([{'type': 'system', 'subtype': 'compact_boundary'}] if compacted else [])
+                    context.append({**{key: event[key] for key in ('type', 'isSidechain', 'parent_tool_use_id',
+                                   'isSynthetic', 'isMeta', 'isCompactSummary') if key in event},
+                                   'message': {key: event['message'][key] for key in
+                                               ('usage', 'model', 'context_window') if key in event['message']}})
+                elif (kind == 'result' and context and
+                      not any(event.get(key) for key in ('isSidechain', 'parent_tool_use_id',
+                              'isSyntheticResult', 'isSynthetic', 'isMeta', 'isCompactSummary'))):
+                    assistant = next((item for item in context if item.get('type') == 'assistant'), None)
+                    model_name = (assistant or {}).get('message', {}).get('model')
+                    models = event.get('modelUsage')
+                    details = models.get(model_name) if isinstance(models, dict) else None
+                    capacity = details.get('contextWindow') if isinstance(details, dict) else None
+                    if model_name and type(capacity) is int and capacity > 0:
+                        if context[-1].get('type') == 'result':
+                            context.pop()
+                        context.append({'type': 'result', 'modelUsage': {model_name: {'contextWindow': capacity}}})
+    except OSError:
         return None
-    cwd = next((e.get('cwd') for e in reversed(history) if e.get('type') in ('user', 'assistant')
-                and isinstance(e.get('cwd'), str) and e['cwd']), '')
+    try:
+        if file_stamp(path) != stamp:
+            return None
+    except OSError:
+        return None
+    if title is None:
+        return None
     if not cwd:
         return None
     project_settings = []
@@ -153,23 +305,14 @@ def saved(path, found, *, include_events=False):
             project_settings.append(hashlib.sha256((Path(cwd)/'.claude'/name).read_bytes()).hexdigest())
         except OSError:
             project_settings.append(None)
-    assistants = [e for e in history if e.get('type') == 'assistant' and isinstance(e.get('message'), dict)]
-    model = next((e['message'].get('model') for e in reversed(assistants)
-                  if isinstance(e['message'].get('model'), str)), '')
-    permission = next((e.get('mode') for e in reversed(history)
-                       if e.get('type') == 'mode' and e.get('mode') in MODES), None)
     if permission is None:
-        permission = next((e.get('permissionMode') for e in reversed(users)
-                           if e.get('permissionMode') in MODES), None)
-    first = users[0].get('message') or {}
-    content = first.get('content', '') if isinstance(first, dict) else ''
-    if isinstance(content, list):
-        content = '\n'.join(e.get('text', '') for e in content if isinstance(e, dict) and e.get('type') == 'text')
-    title = str(content).strip().splitlines()[0][:120] if str(content).strip() else 'Claude Code 会话'
+        permission = user_permission
     row = {'nativeId': native, 'origin': found['origin'], 'cwd': cwd, 'model': model,
            'projectConfig': hashlib.sha256(json.dumps(project_settings).encode()).hexdigest(),
            'permissionMode': permission or 'default', 'permissionKnown': permission is not None,
-           'updatedAt': path.stat().st_mtime, 'title': title}
+           'updatedAt': path.stat().st_mtime, 'title': title, 'stamp': stamp,
+           'contextEvents': context,
+           'draftAccountIdentity': draft_account_identity(found['directory'], cwd, os.environ)}
     if include_events:
         row['events'] = history
     return row
@@ -190,7 +333,7 @@ def sessions(found):
     return result
 
 
-def session(found, native):
+def session_path(found, native):
     native = str(uuid.UUID(native))
     root = Path(found['directory'])/'projects'
     if not root.is_dir() or root.is_symlink():
@@ -199,9 +342,14 @@ def session(found, native):
         if directory.is_dir() and not directory.is_symlink():
             path = directory/(native+'.jsonl')
             if path.is_file() and not path.is_symlink():
-                row = saved(path, found, include_events=True)
-                if row:
-                    return row
+                return path
+    raise ValueError('原 Claude Code 会话不可用')
+
+
+def session(found, native):
+    row = saved(session_path(found, native), found)
+    if row:
+        return row
     raise ValueError('原 Claude Code 会话不可用')
 
 
@@ -322,11 +470,14 @@ def command(request):
     if not found or found['origin'] != request.get('origin'):
         raise ValueError('原 Claude Code 配置已变化或不可用')
     if operation == 'detail':
-        row = session(found, request['native'])
-        row['draftAccountIdentity'] = draft_account_identity(found['directory'], row['cwd'], os.environ)
-        if request.get('events') is not True:
-            row.pop('events', None)
-        return row
+        return session(found, request['native'])
+    if operation == 'history':
+        path = session_path(found, request['native'])
+        scope = request.get('scope')
+        if not isinstance(scope, str) or not scope:
+            raise ValueError('Claude 历史来源无效')
+        return history_page(path, found['origin'] + ':' + str(uuid.UUID(request['native'])) + ':' + scope,
+                            request.get('historyBefore'), request.get('historyLimit', 40))
     if operation == 'auth':
         return {'ready': auth_ready(found)}
     if operation == 'upload':

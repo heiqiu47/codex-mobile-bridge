@@ -114,7 +114,7 @@ class RemoteClaudeCli:
             trusted = self.hosts.hosts() if self.hosts else {}
             self.index = {sid: row for sid, row in rows.items()
                           if row['host'] in trusted and trusted[row['host']]['alias'] == row['alias']}
-            self.history = {sid: events for sid, events in self.history.items() if sid in self.index}
+            self.history = {key: page for key, page in self.history.items() if key[0] in self.index}
             self.host_snapshot = hosts
             self.last_refresh = time.monotonic()
             self.complete = complete
@@ -178,7 +178,7 @@ class RemoteClaudeCli:
                 rows.extend(future.result())
         return rows
 
-    def _get(self, sid, *, events=False):
+    def _get(self, sid):
         with self.lock:
             row = self.index.get(sid)
         if row is None:
@@ -191,20 +191,19 @@ class RemoteClaudeCli:
         if not host or host['alias'] != row['alias']:
             raise ValueError('原 SSH 主机配置已变化')
         fresh = _remote(row['alias'], {'operation': 'detail', 'native': row['nativeId'],
-                                       'origin': row['origin'], 'events': events})
+                                       'origin': row['origin']})
         if model.gateway_id('cli:ssh:'+row['host']+':'+fresh['origin'], fresh['nativeId']) != sid:
             raise ValueError('原 SSH Claude Code 会话身份已变化')
         updated = self._row(row['host'], host, fresh)
         with self.lock:
-            self.index[sid] = {key: value for key, value in updated.items() if key != 'events'}
-        if not events:
-            updated.pop('events', None)
+            self.index[sid] = updated
         return updated
 
     def _public(self, row):
         value = {key: item for key, item in row.items() if key not in
-                 ('events', 'origin', 'alias', 'permissionKnown', 'projectConfig')}
-        value.update(context_fields(row.get('events') or []))
+                 ('events', 'contextEvents', 'stamp', 'origin', 'alias', 'permissionKnown',
+                  'projectConfig', 'draftAccountIdentity')}
+        value.update(context_fields(row.get('contextEvents') or []))
         owned = self.owned.get(row['id'])
         live = bool(owned and owned.origin == row['origin'] and owned.process.poll() is None and not owned.error)
         if live:
@@ -290,7 +289,7 @@ class RemoteClaudeCli:
             while time.monotonic() < deadline:
                 try:
                     saved = _remote(alias, {'operation': 'detail', 'origin': origin,
-                                            'native': native, 'events': False}, timeout=5)
+                                            'native': native}, timeout=5)
                 except BridgeUnavailable:
                     saved = None
                 if saved and saved['cwd'] == owned.cwd and saved['origin'] == origin:
@@ -316,21 +315,44 @@ class RemoteClaudeCli:
             live_cached = bool(cached and host and host['alias'] == cached['alias'] and
                                owned_cached and owned_cached.origin == cached['origin'] and
                                owned_cached.process.poll() is None and not owned_cached.error)
-            if live_cached and action != 'resume':
-                if action == 'detail':
-                    try:
-                        row = self._get(sid, events=True)
-                        with self.lock:
-                            self.history[sid] = row['events']
-                    except BridgeUnavailable:
-                        row = {**cached, 'events': self.history.get(sid, [])}
-                else:
-                    row = cached
-            else:
-                row = self._get(sid, events=action == 'detail')
-                if action == 'detail':
+            if action == 'detail':
+                before = body.get('historyBefore')
+                limit = body.get('historyLimit', 40)
+                if before is not None and (not isinstance(before, str) or len(before) > 1024):
+                    raise ValueError('Claude 历史游标无效')
+                if type(limit) is not int or not 1 <= limit <= 100:
+                    raise ValueError('Claude 历史分页大小无效')
+                row = cached if live_cached or cached is not None else self._get(sid)
+                if row is None:
+                    row = self._get(sid)
+                current_host = self.hosts.hosts().get(row['host']) if self.hosts else None
+                if not current_host or current_host['alias'] != row['alias']:
+                    raise ValueError('原 SSH 主机配置已变化')
+                page_key = (sid, before, limit)
+                try:
+                    page = _remote(row['alias'], {'operation': 'history', 'native': row['nativeId'],
+                            'origin': row['origin'], 'scope': sid,
+                            'historyBefore': before, 'historyLimit': limit})
+                    if not isinstance(page, dict) or not isinstance(page.get('events'), list) or not isinstance(page.get('history'), dict):
+                        raise BridgeUnavailable('SSH Claude Code 历史格式无效')
+                    if page.get('stamp') != row.get('stamp'):
+                        row = self._get(sid)
+                        if page.get('stamp') != row.get('stamp'):
+                            raise BridgeUnavailable('SSH Claude Code 历史读取期间发生变化，请刷新')
                     with self.lock:
-                        self.history[sid] = row['events']
+                        self.history = {key: value for key, value in self.history.items() if key[0] != sid}
+                        self.history[page_key] = page
+                except BridgeUnavailable as exc:
+                    if not live_cached or before is not None or '主机不可用' not in str(exc):
+                        raise
+                    with self.lock:
+                        page = self.history.get(page_key)
+                    if page is None or page.get('stamp') != row.get('stamp'):
+                        raise
+            elif live_cached and action != 'resume':
+                row = cached
+            else:
+                row = self._get(sid)
         except (ValueError, BridgeUnavailable) as exc:
             if action == 'resume':
                 raise ResumePreflightBlocked(str(exc)) from exc
@@ -342,11 +364,15 @@ class RemoteClaudeCli:
             public = self._public(row)
             live = owned is not None and not owned.error
             if action == 'detail':
-                history = row['events']
+                public['draftAccountIdentity'] = row.get('draftAccountIdentity', '')
+                history = page['events']
                 if live:
                     with owned.condition:
-                        history = history + list(owned.events)
-                public.update(context_fields(history))
+                        live_events = list(owned.events) if before is None else []
+                    history = history + live_events
+                else:
+                    live_events = []
+                public.update(context_fields((row.get('contextEvents') or []) + live_events))
                 messages = model.transcript(history)
                 ready = False
                 if not live and row['permissionKnown']:
@@ -357,6 +383,7 @@ class RemoteClaudeCli:
                 return {'connected': True, 'session': public,
                         'messages': list({item['id']: item for item in messages}.values()),
                         'turns': model.turns(history),
+                        'history': page['history'],
                         'notice': '无法确认原会话权限模式，请在远端终端继续' if not live and not row['permissionKnown'] else '',
                         'capabilities': {'resume': not live and ready, 'send': live and public['connectionState'] == 'ready',
                                          'models': live, 'permissions': live, 'stop': live,

@@ -1,5 +1,6 @@
 """Claude Code/Cowork adapter over the Desktop renderer's signed file bridge."""
 import asyncio
+import base64
 import json
 import re
 import secrets
@@ -711,7 +712,26 @@ class Claude:
         if not saved:
             raise ValueError('找不到 Claude 会话')
         kind, native = saved['backend'], saved['nativeId']
-        detail = (await self.desktop.call(kind, 'mobileDetail', native)
+        history_limit = body.get('historyLimit', 40)
+        if action == 'detail' and (type(history_limit) is not int or not 1 <= history_limit <= 100):
+            raise ValueError('历史页大小无效')
+        history_before = body.get('historyBefore')
+        native_before = None
+        if action == 'detail' and history_before is not None:
+            try:
+                encoded = history_before.removeprefix('claude.')
+                cursor = json.loads(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
+                if not history_before.startswith('claude.') or cursor['sid'] != sid or cursor['kind'] != kind:
+                    raise ValueError()
+                native_before = cursor['uuid']
+                if not isinstance(native_before, str) or not native_before:
+                    raise ValueError()
+            except (AttributeError, KeyError, ValueError, TypeError):
+                raise ValueError('历史游标无效') from None
+        paged = kind == 'code' and 'mobileHistory' in self.desktop.capabilities.get(kind, [])
+        if action == 'detail' and native_before is not None and not paged:
+            raise ValueError('当前 Claude 接入不支持历史分页')
+        detail = (await self.desktop.call(kind, 'mobileDetail', native, *([{'historyLimit': history_limit, 'historyBefore': native_before}] if paged else []))
                   if action == 'detail' and 'mobileDetail' in self.desktop.capabilities.get(kind, []) else None)
         row = model.session(kind, detail['session'] if detail is not None else await self.desktop.call(kind, 'getSession', native))
         if row['id'] != sid:
@@ -730,7 +750,13 @@ class Claude:
             capabilities = self.session_capabilities(kind)
             if row['contextUsage'] is not None:
                 capabilities = {**capabilities, 'contextUsage': True}
+            history = detail.get('history', {}) if detail is not None else {}
+            before = history.get('before')
+            if before:
+                payload = json.dumps({'sid': sid, 'kind': kind, 'uuid': before}, separators=(',', ':')).encode()
+                before = 'claude.' + base64.urlsafe_b64encode(payload).decode().rstrip('=')
             return {'connected': True, 'session': row, 'messages': model.transcript(raw), 'turns': model.turns(raw), 'notice': model.transcript_notice(raw),
+                    'history': {'before': before, 'hasMore': bool(history.get('hasMore'))},
                     'capabilities': capabilities, 'maxRequestBytes': MAX_REQUEST}
         if action == 'catalog':
             if body.get('section') == 'selection':

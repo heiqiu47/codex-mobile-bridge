@@ -5,17 +5,26 @@
 
 # Codex Mobile Bridge · A remote workbench for desktop agents
 
-> **v2.1.3 (stable):** [Release page](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3) · [Full release notes](RELEASE_NOTES.md) · [Mobile installation](mobile/README.md). This release adds multiple Webhook destinations and Mermaid reading, and improves slow-link loading and iOS connection recovery.
+> **v2.1.4 (stable):** [Release page](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4) · [Full release notes](RELEASE_NOTES.md#v214) · [Mobile installation](mobile/README.md). Improved public-entry startup, long-chat loading and Web copying, with optional network-change recovery.
 
 [简体中文](README.md) · [English](README_EN.md)
 
-**[Product guide and interactive demos ↗](https://try2love.github.io/codex-mobile-bridge/?lang=en)** · **[Download desktop and mobile apps](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3)**
+**[Product guide and interactive demos ↗](https://try2love.github.io/codex-mobile-bridge/?lang=en)** · **[Download desktop and mobile apps](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4)**
 
 [![Desktop gateway: clients and access, with demo data](site/assets/v2-clients.png)](https://try2love.github.io/codex-mobile-bridge/?lang=en)
 
 Continue **Codex, Claude Code / Cowork and DeepSeek Harness** sessions from a phone app or browser. Each client keeps its own chats, accounts and workspaces. Create chats within the selected client, read replies, send attachments, select available models/reasoning and respond to approval requests.
 
 Tasks run on the original computer, or the original SSH host for Codex remote sessions. Bridge reuses the desktop session, authentication and execution environment. Your phone does not need the same model-service account: use gateway login or revocable QR pairing.
+
+## v2.1.4 updates
+
+- **Public access and caching:** improve Cloudflare entry startup, initial resource loading and transient-network recovery; reuse unchanged resources on repeat visits.
+- **Long chats:** fix large snapshots disconnecting sessions; show cached and recent messages first, load older history on demand, and preserve reading position, drafts and the original control connection.
+- **One-click Web copying:** copy replies, code and Mermaid source, including over LAN HTTP; retry and manual fallback remain available when the browser refuses access.
+- **Optional network recovery:** off by default, configurable from desktop or phone/Web. Update working entries after address changes without rebuilding tunnels on every lease renewal or brief outage.
+
+Desktop/mobile version: **2.1.4**, Android/iOS build **37**. Thanks to [@qybgh](https://github.com/qybgh) for network adaptation in [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63); the original commits are retained.
 
 <a id="mermaid-preview"></a>
 
@@ -102,7 +111,7 @@ Supports macOS, Windows and experimental Ubuntu x64/ARM64. See the [Linux guide]
 
 - Copy user messages from their action row. Choose **Edit and resend** on the latest user message, or **Edit in new branch** on an older message to keep the original conversation.
 - Choose **Branch from here** under a completed answer. The new chat keeps history through that turn and waits for your next message. Chat details link back to the source.
-- Copy complete replies as Markdown or copy an individual code block. Long replies load their full text. When clipboard access is unavailable, selectable text supports the system Copy action.
+- Copy complete replies as Markdown, individual code blocks, or Mermaid source. Long replies load their full text. Web copy buttons write directly to the clipboard, including a compatibility attempt on LAN HTTP. Selectable text and a retry button appear only when the browser blocks automatic copying.
 - In-place editing requires the turn to be stopped and generates a new answer. Editing and branching do not undo file changes; both chats share the working directory.
 - Branching requires a Codex runtime with turn-specific forking and deferred goal continuation; older versions show an update prompt. Copying and latest-message editing do not require those fork capabilities. Creating a branch does not send a model request.
 - If delivery is uncertain, check the chat list first; repeating the same request does not replay it. If a branch was created but could not connect, the replacement remains an edit draft for that branch.
@@ -458,7 +467,7 @@ Gateway data stays in its configured directory, normally `.local`. It includes l
 
 Uploaded files are retained in `uploads/` or `hosts/<host hash>/uploads/` inside gateway data, separated by chat. Remote copies are stored under that host's `$CODEX_HOME/mobile-bridge/uploads/` (default `~/.codex/mobile-bridge/uploads/`). Removing a draft attachment does not delete uploaded files, and automatic cleanup is not provided. Manually deleting a file can break historical or queued references to it.
 
-The local desktop management interface uses guarded Electron IPC and a private stdio worker. Gateway start/stop, updates and network configuration are not exposed through the phone HTTP API. Signed-in clients connected directly to the gateway can change Bark, ntfy, PushPlus and common notification settings; shared-relay connections do not expose these configuration routes. Public HTTP access remains constrained by authentication, allowed Host/Origin checks and CSRF validation.
+The local desktop management interface uses guarded Electron IPC and a private stdio worker. Gateway start/stop, updates and access-scope configuration are not exposed through the phone HTTP API. The default-off network-recovery switch is available to authenticated direct clients with CSRF validation. Signed-in clients connected directly to the gateway can change Bark, ntfy, PushPlus and common notification settings; shared-relay connections do not expose these configuration routes. Public HTTP access remains constrained by authentication, allowed Host/Origin checks and CSRF validation.
 
 ## Known limits
 
@@ -599,7 +608,11 @@ Thanks to [@tiancai123123](https://github.com/tiancai123123) for diagnosing and 
 
 ### Choose which adapters allow access
 
-In the desktop App, open **Network & login**, choose **Selected IPv4 addresses only**, and select the addresses you want to use. Exclude unwanted WSL or VMware adapters. Stop the gateway, save, and restart; unselected addresses do not listen on the gateway port. Selections bind to current IPs: reselect after a DHCP address change. The gateway does not fall back to opening all adapters. **All IPv4 addresses** retains the previous behavior.
+In the desktop App, open **Network access** and choose **Automatic LAN addresses** or **Selected adapters only**. Automatic mode publishes private LAN addresses on physical adapters, excluding virtual WSL, VMware, Docker and VPN interfaces. Stop the gateway and save when changing the access scope; unselected adapters remain closed. A failed change never opens all adapters as a fallback.
+
+**Recover after network changes is off by default.** Toggle it in desktop Network access or, after signing in, Web/mobile **App management → Gateway connection**. Changes take effect without a gateway restart. When enabled, native network events and infrequent fallback checks update successfully bound entries after DHCP address changes or disconnection/recovery, using existing address-notification settings. Renewing a lease without changing the address does not rebuild entries. Turning it off preserves current entries and stops address monitoring.
+
+After a default-route change, Quick Tunnel gets time to reconnect; only repeated health checks confirming failure can trigger a replacement, with a cooldown. A LAN-only address change does not replace a working public hostname. Fixed domains, Tailscale and SSH forwarding retain their own recovery mechanisms. This feature does not rewrite the old IP saved on a phone: use an existing fallback address, discovery, a new-address notification or pairing QR code if that entry is unreachable. Passwords and phone bindings are retained.
 
 **Allow local browser access** independently controls `127.0.0.1 / localhost`. Turning it off hides local URLs and blocks local browser/API access while keeping a private loopback path for desktop status checks and HTTPS tunnels. Turning off LAN access does not disable configured external entries.
 

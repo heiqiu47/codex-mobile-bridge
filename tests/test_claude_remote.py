@@ -62,8 +62,11 @@ class RemoteWorkerContract(unittest.TestCase):
         self.assertIn(str(self.config), profile['origin'])
         self.assertNotIn('events', listed['sessions'][0])
         detail = self.run_worker({'operation': 'detail', 'origin': profile['origin'],
-                                  'native': self.native, 'events': True})['value']
-        self.assertEqual(len(detail['events']), 2)
+                                  'native': self.native})['value']
+        history = self.run_worker({'operation': 'history', 'origin': profile['origin'],
+                                   'native': self.native, 'scope': 'test-host-session',
+                                   'historyLimit': 40})['value']
+        self.assertEqual(len(history['events']), 2)
         self.assertEqual(detail['cwd'], str(self.cwd))
         self.assertTrue(self.run_worker({'operation': 'auth', 'origin': profile['origin']})['value']['ready'])
         project_probe = self.run_worker({'operation': 'projects'})['value']
@@ -91,9 +94,63 @@ class RemoteWorkerContract(unittest.TestCase):
         saved_path = self.root/'中文项目'/(self.native + '.jsonl')
         saved_path.parent.mkdir()
         saved_path.write_text(path.read_text(encoding='utf-8'), encoding='utf-8')
-        saved = remote_worker.saved(saved_path, {'origin': 'fixture'}, include_events=True)
+        saved = remote_worker.saved(saved_path, {'origin': 'fixture', 'directory': str(self.config)},
+                                    include_events=True)
         self.assertEqual((saved['title'], saved['cwd']), ('中文标题', '/项目/中文目录'))
         self.assertEqual(saved['events'], [event])
+
+    def test_standalone_history_pages_and_file_change_invalidate_cursor(self):
+        with self.path.open('a') as target:
+            for index in range(100):
+                target.write(json.dumps({'type': 'assistant', 'uuid': f'a{index}', 'cwd': str(self.cwd),
+                    'message': {'role': 'assistant', 'content': str(index)}}) + '\n')
+        profile = self.run_worker({'operation': 'list'})['value']['profile']
+        request = {'operation': 'history', 'origin': profile['origin'], 'native': self.native,
+                   'scope': 'test-host-session', 'historyLimit': 40}
+        recent = self.run_worker(request)['value']
+        older = self.run_worker({**request, 'historyBefore': recent['history']['before']})['value']
+        self.assertEqual(len(recent['events']), 40)
+        self.assertEqual(recent['events'][0]['uuid'], 'a60')
+        self.assertEqual(older['events'][-1]['uuid'], 'a59')
+        with self.path.open('a') as target:
+            target.write(json.dumps({'type': 'assistant', 'uuid': 'new', 'cwd': str(self.cwd),
+                                     'message': {'role': 'assistant', 'content': 'new'}}) + '\n')
+        self.assertFalse(self.run_worker({**request, 'historyBefore': recent['history']['before']})['ok'])
+
+    def test_standalone_long_history_does_not_return_full_events(self):
+        with self.path.open('a') as target:
+            filler = json.dumps({'type': 'progress', 'data': 'x' * 900}) + '\n'
+            target.write(filler * 24000)
+            target.write(json.dumps({'type': 'assistant', 'uuid': 'tail', 'cwd': str(self.cwd),
+                                     'message': {'role': 'assistant', 'content': 'tail'}}) + '\n')
+        profile = self.run_worker({'operation': 'list'})['value']['profile']
+        self.assertEqual(len(self.run_worker({'operation': 'list'})['value']['sessions']), 1)
+        history = self.run_worker({'operation': 'history', 'origin': profile['origin'],
+                                   'native': self.native, 'scope': 'test-host-session',
+                                   'historyLimit': 1})['value']
+        self.assertEqual([event['uuid'] for event in history['events']], ['tail'])
+        self.assertGreater(self.path.stat().st_size, 20_000_000)
+
+    def test_remote_page_reads_valid_final_line_and_ignores_saved_approval(self):
+        with self.path.open('a') as target:
+            target.write(json.dumps({'type': 'control_request', 'request_id': 'old-approval'}) + '\n')
+            target.write(json.dumps({'type': 'assistant', 'uuid': 'last', 'cwd': str(self.cwd),
+                                     'message': {'role': 'assistant', 'content': 'done'}}))
+        result = remote_worker.history_page(self.path, 'fixture')
+        self.assertEqual(result['events'][-1]['uuid'], 'last')
+        self.assertFalse(any(event.get('type') == 'control_request' for event in result['events']))
+
+    def test_history_uses_consistent_file_identity_for_path_and_descriptor(self):
+        # Windows Python versions can expose different stat/fstat identities.
+        stat = self.path.stat()
+        path = Mock(wraps=self.path)
+        path.stat.return_value = SimpleNamespace(st_dev=stat.st_dev, st_ino=stat.st_ino + 1,
+            st_size=stat.st_size, st_mtime_ns=stat.st_mtime_ns, st_ctime_ns=stat.st_ctime_ns)
+        recent = remote_worker.history_page(path, 'fixture', limit=1)
+        older = remote_worker.history_page(path, 'fixture', before=recent['history']['before'])
+        self.assertEqual(len(recent['events']), 1)
+        self.assertEqual(len(older['events']), 1)
+        self.assertEqual(older['events'][0]['message']['role'], 'user')
 
     def test_upload_is_private_immutable_and_bound_to_remote_profile(self):
         profile = self.run_worker({'operation': 'list'})['value']['profile']
@@ -201,11 +258,35 @@ class RemoteAdapterContract(unittest.TestCase):
                    'usage': {'input_tokens': 4, 'cache_creation_input_tokens': 5,
                              'cache_read_input_tokens': 6}}}]
         def response(_alias, request, **_kwargs):
-            return {'ready': True} if request['operation'] == 'auth' else {**self.row, 'events': events}
+            if request['operation'] == 'auth':
+                return {'ready': True}
+            if request['operation'] == 'history':
+                return {'events': events, 'history': {'before': None, 'hasMore': False}, 'stamp': [1, 2, 3, 4]}
+            return {**self.row, 'contextEvents': events, 'stamp': [1, 2, 3, 4]}
         with patch.object(remote, '_remote', side_effect=response):
             result = self.cli.call('detail', row['id'], {})
         self.assertEqual(result['session']['contextUsage']['usedTokens'], 15)
         self.assertEqual(result['session']['contextUsage']['model'], 'remote-model')
+
+    def test_detail_page_uses_cached_metadata_and_passes_cursor(self):
+        row = self.cli._row('ssh:test', self.hosts.hosts()['ssh:test'],
+                            {**self.row, 'stamp': [1, 2, 3, 4]})
+        self.cli.index[row['id']] = row
+        calls = []
+        def response(_alias, request, **_kwargs):
+            calls.append(request)
+            if request['operation'] == 'auth':
+                return {'ready': False}
+            if request['operation'] == 'detail':
+                self.fail('Unchanged metadata should not be rescanned')
+            return {'events': [{'type': 'assistant', 'uuid': 'a1',
+                                'message': {'role': 'assistant', 'content': 'page'}}],
+                    'history': {'before': 'older', 'hasMore': True}, 'stamp': [1, 2, 3, 4]}
+        with patch.object(remote, '_remote', side_effect=response):
+            result = self.cli.call('detail', row['id'], {'historyBefore': 'cursor', 'historyLimit': 10})
+        self.assertEqual(result['history'], {'before': 'older', 'hasMore': True})
+        self.assertEqual(calls[0]['operation'], 'history')
+        self.assertEqual((calls[0]['historyBefore'], calls[0]['historyLimit']), ('cursor', 10))
 
     def test_live_ssh_catalog_and_settings_use_same_native_controls(self):
         row = self.cli._row('ssh:test', self.hosts.hosts()['ssh:test'], self.row)

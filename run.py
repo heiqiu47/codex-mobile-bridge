@@ -2,15 +2,12 @@
 """Run the desktop bridge with Python 3.9+; no package installation required."""
 import argparse
 import getpass
-import ipaddress
 import json
 import logging
 import os
 import secrets
 import shutil
 import signal
-import socket
-import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -25,44 +22,11 @@ from bridge.features.network.ssh_tunnel import SSHTunnel
 from bridge.features.notifications.addresses import AddressNotifications, ready_url, gateway_ready, entry_urls
 from bridge.features.notifications.channels import Notifications
 import bridge.features.network.addresses as network
+import bridge.features.network.interfaces as interfaces
+from bridge.features.network.runtime import DynamicListenerManager, RuntimeNetworkMonitor
+from bridge.features.network.adaptation import NetworkAdaptation, settings as adaptation_settings, migrate_legacy_interfaces
 
 ROOT = Path(__file__).resolve().parent
-
-
-def addresses():
-    result = {"127.0.0.1", "localhost"}
-    if sys.platform == 'linux':
-        executable = shutil.which('ip')
-        if executable:
-            try:
-                output = subprocess.run([executable, '-j', '-4', 'address', 'show', 'up'],
-                                        capture_output=True, text=True, check=True, timeout=5)
-                interfaces = json.loads(output.stdout)
-                if not isinstance(interfaces, list):
-                    raise ValueError('Invalid interface list')
-                for interface in interfaces:
-                    for address in interface.get('addr_info', []):
-                        if address.get('family') == 'inet':
-                            ip = ipaddress.IPv4Address(address['local'])
-                            if not ip.is_unspecified and not ip.is_multicast:
-                                result.add(str(ip))
-                return sorted(result)
-            except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, AttributeError):
-                pass
-    if os.name == "posix" and Path("/sbin/ifconfig").exists():
-        # Enumerate local interfaces without waiting for hostname DNS.
-        output = subprocess.run(["/sbin/ifconfig"], capture_output=True, text=True, check=False).stdout
-        for line in output.splitlines():
-            parts = line.strip().split()
-            if len(parts) > 1 and parts[0] == "inet":
-                result.add(parts[1])
-    else:
-        try:
-            for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-                result.add(item[4][0])
-        except OSError:
-            pass
-    return sorted(result)
 
 
 def save_config(path, config):
@@ -119,13 +83,20 @@ def main(connections=None, connection_secrets=None):
         first_login.unlink(missing_ok=True)
         print("密码已更新。请重新启动网关。")
         return
+    rows = interfaces.enumerate_interfaces()
+    config = migrate_legacy_interfaces(args.config, rows)
     if config["auth"].get("mode") not in ("password", "none"):
         parser.error("auth.mode 只能为 password 或 none")
     if args.no_auth:
         config["auth"]["mode"] = "none"
     from bridge.features.network.access import validate_connections, public_urls, public_url
+    legacy_addresses = config.get('lanAddresses')
+    raw_interfaces = config.get('lanInterfaces',
+                                interfaces.migrate_addresses_to_interfaces(rows, legacy_addresses))
     preferences = {'connections': config.get('connections', []) if connections is None else connections,
-                   'lan': args.lan, 'port': args.port, 'lanAddresses': network.selected_addresses(config.get('lanAddresses'))}
+                   'lan': args.lan, 'port': args.port,
+                   'lanAddresses': network.selected_addresses(legacy_addresses),
+                   'lanInterfaces': interfaces.selected_interfaces(raw_interfaces)}
     entries = validate_connections(preferences)
     preferences['connections'] = entries
     if config['auth']['mode'] == 'none' and any(c['enabled'] and c['accessMode'] == 'tailscale' and c['tailscaleMode'] == 'funnel' for c in entries):
@@ -138,19 +109,24 @@ def main(connections=None, connection_secrets=None):
         parsed = urlsplit(origin)
         if parsed.scheme != "https" or not parsed.hostname or parsed.path or parsed.query or parsed.fragment or parsed.username or parsed.password:
             parser.error("额外 origin 必须是完整 HTTPS 源且不能有路径")
-    selected = preferences['lanAddresses']
-    hosts = (addresses() if selected is None else ['127.0.0.1', 'localhost'] + selected) if args.lan else ['127.0.0.1', 'localhost']
+    if args.lan:
+        hosts = ['127.0.0.1', 'localhost'] + network.bindings(preferences, rows)[1:]
+    else:
+        hosts = ['127.0.0.1', 'localhost']
     config["origins"] = sorted(set(origins + [f"http://{host}:{args.port}" for host in hosts]))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     bridge = Bridge(args.codex_home, args.config.parent, ipc_path=args.ipc_path, codex_bin=args.codex_bin)
     servers = []
     tailscale_port = None
     try:
-        for address in network.bindings(preferences):
+        # Auto-LAN and selected adapters are owned by the runtime monitor, so
+        # DHCP changes replace listeners without a gateway restart.
+        startup_bindings = ['127.0.0.1'] if args.lan else network.bindings(preferences, rows)
+        for address in startup_bindings:
             servers.append(GatewayServer((address, args.port), bridge, config, ROOT / 'web', args.config.parent,
                                          **({'shared': servers[0]} if servers else {})))
         if any(c['enabled'] and c['accessMode'] == 'tailscale' for c in entries):
-            # A pre-existing loopback SSH forward can shadow a LAN/wildcard
+            # A pre-existing loopback SSH forward can shadow a LAN
             # listener on args.port. Give Tailscale an unambiguous local owner.
             private = GatewayServer(('127.0.0.1', 0), bridge, config, ROOT / 'web', args.config.parent, shared=servers[0])
             servers.append(private)
@@ -164,6 +140,9 @@ def main(connections=None, connection_secrets=None):
         bridge.close()
         raise
     server = servers[0]
+    listener_manager = DynamicListenerManager(
+        server, args.port, bridge, config, ROOT / 'web', GatewayServer,
+    )
     listener_threads = []
     pid_file = args.config.parent / "gateway.pid"
     pid_file.write_text(str(os.getpid()), encoding='utf-8')
@@ -171,6 +150,13 @@ def main(connections=None, connection_secrets=None):
     tunnel = None
     tunnel_thread = None
     ssh_tunnels = []
+    monitor = RuntimeNetworkMonitor(args.config.parent, preferences, args.port, listener_manager,
+                                    server.instance_id, pid=os.getpid(),
+                                    enabled=adaptation_settings(args.config.parent)['enabled'],
+                                    route_enumerator=None if args.tunnel else lambda rows: {})
+    adaptation = NetworkAdaptation(args.config.parent, monitor)
+    for listener in servers:
+        listener.network_adaptation = adaptation
     def notification_urls():
         if not gateway_ready(args.port, server.instance_id):
             return []
@@ -180,7 +166,10 @@ def main(connections=None, connection_secrets=None):
             status = read_json(args.config.parent/('ssh-status-'+entry['id']+'.json'), {})
             if status.get('pid') == os.getpid():
                 external[entry['id']] = status
-        return entry_urls(preferences, hosts, ready_url(tunnel, args.port, server.instance_id), external)
+        if tunnel and not tunnel.entry_stable():
+            return []
+        return entry_urls(preferences, hosts, ready_url(tunnel, args.port, server.instance_id), external,
+                          lan_addresses=monitor.addresses())
     address_notifications = AddressNotifications(args.config.parent, notification_urls, server.instance_id)
     notifications = Notifications(bridge, args.config.parent, lambda: server.origins, lambda: config.get('publicUrl', ''), desktop_sessions=server.desktop_sessions)
     def valid_push_session(key):
@@ -193,8 +182,16 @@ def main(connections=None, connection_secrets=None):
     def stop_signal(signum, frame):
         raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM, stop_signal)
+    from bridge.features.network.discovery import ConnectionDiscovery
+    discovery = ConnectionDiscovery(args.config.parent, server)
+    listener_manager.configure = lambda listener: setattr(listener, 'connection_discovery', discovery)
+    try:
+        monitor.scan(initial=True)
+    except Exception:
+        monitor.close()
+        raise
     print("Codex App 手机网关已启动", flush=True)
-    for origin in config["origins"]:
+    for origin in sorted(server.origins):
         if not config.get("localAccess", True) and urlsplit(origin).hostname in ("127.0.0.1", "localhost"):
             continue
         print("  " + origin, flush=True)
@@ -245,6 +242,10 @@ def main(connections=None, connection_secrets=None):
                 server.hosts.add(host)
                 server.secure_hosts.add(host)
             tunnel = QuickTunnel(args.cloudflared, args.port, args.config.parent, allow_origin)
+            # Let the existing tunnel recover first. Its origin remains valid
+            # until a replacement is actually ready, not merely on a route event.
+            monitor.network_changed = tunnel.network_changed
+            monitor.network_cancelled = tunnel.cancel_network_check
             def connect_tunnel():
                 try:
                     url = tunnel.start()
@@ -254,14 +255,13 @@ def main(connections=None, connection_secrets=None):
                     print(str(exc), flush=True)
             tunnel_thread = threading.Thread(target=connect_tunnel, daemon=True)
             tunnel_thread.start()
-        from bridge.features.network.discovery import ConnectionDiscovery
-        discovery = ConnectionDiscovery(args.config.parent, server)
         for listener in servers:
             listener.connection_discovery = discovery
         notifications.start()
         address_notifications.start()
+        monitor.start()
         bridge.accounts.monitor.start()
-        control.start(server.shutdown, server.pairing.control, server.instance_id, server.auth, bridge.account.control, server.notifications.control, bridge.accounts.control, server.harness.control, server.desktop_sessions.control, bridge.cli_access.control)
+        control.start(server.shutdown, server.pairing.control, server.instance_id, server.auth, bridge.account.control, server.notifications.control, bridge.accounts.control, server.harness.control, server.desktop_sessions.control, bridge.cli_access.control, network_adaptation=adaptation.control)
         for listener in servers[1:]:
             thread = threading.Thread(target=listener.serve_forever, kwargs={'poll_interval': 0.5}, daemon=True)
             thread.start()
@@ -277,6 +277,7 @@ def main(connections=None, connection_secrets=None):
         server.harness.close()
         server.desktop_sessions.close()
         address_notifications.close()
+        monitor.close()
         bridge.accounts.monitor.close()
         notifications.close()
         if tunnel:
