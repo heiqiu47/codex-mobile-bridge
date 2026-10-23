@@ -30,6 +30,11 @@ class ClaudeHandoff(unittest.IsolatedAsyncioTestCase):
         (self.directory/'response.json').write_text(self.desktop.pack(value), encoding='utf-8')
 
     def request(self):
+        for _ in range(50):
+            try:
+                return json.loads(json.loads((self.directory/'request.json').read_text(encoding='utf-8'))['payload'])
+            except PermissionError:
+                time.sleep(.01)
         return json.loads(json.loads((self.directory/'request.json').read_text(encoding='utf-8'))['payload'])
 
     async def wait_request(self, kind):

@@ -849,13 +849,16 @@ test('failed device policy save retains the editable draft',async()=>{
 
 test('LAN selection drafts survive polling and are saved with local browser access disabled',async()=>{
   const ui=await renderer();
-  ui.value.networkInterfaces=[{name:'Ethernet',address:'192.168.1.7'},{name:'VMnet8',address:'192.168.55.1'}];
+  ui.value.networkInterfaces=[
+    {id:'Ethernet',name:'Ethernet',addresses:['192.168.1.7']},
+    {id:'VMnet8',name:'VMnet8',addresses:['192.168.55.1']}];
   await ui.poll();
-  assert.deepEqual(Array.from(ui.run('lanDraft')),['192.168.1.7','192.168.55.1']);
+  assert.deepEqual(Array.from(ui.run('lanDraft')),['Ethernet','VMnet8']);
   ui.nodes.get('lan-scope').value='selected';
   ui.nodes.get('local-access').checked=false;
-  ui.run("lanDraft=['192.168.1.7'];savedFields=fieldValues();savedLan='[]';updateDirty()");
+  ui.run("lanDraft=['Ethernet'];savedFields=fieldValues();savedLan='[]';updateDirty()");
   await ui.poll();
+  assert.deepEqual(Array.from(ui.run('collect().preferences.lanInterfaces')),['Ethernet']);
   assert.deepEqual(Array.from(ui.run('collect().preferences.lanAddresses')),['192.168.1.7']);
   assert.equal(ui.run('collect().preferences.localAccess'),false);
   let saved;
@@ -866,6 +869,19 @@ test('LAN selection drafts survive polling and are saved with local browser acce
   ui.value.runtime.running=true;await ui.poll();
   assert.equal(ui.nodes.get('lan-scope').disabled,true);
   assert.equal(ui.nodes.get('local-access').disabled,true);
+});
+
+test('selected adapter identity survives its address changing',async()=>{
+  const ui=await renderer();
+  ui.value.preferences.lanInterfaces=['Wi-Fi'];
+  ui.value.preferences.lanAddresses=['192.168.1.7'];
+  ui.value.networkInterfaces=[{id:'Wi-Fi',name:'Wi-Fi',addresses:['192.168.1.7']}];
+  await ui.poll();
+  ui.value.networkInterfaces=[{id:'Wi-Fi',name:'Wi-Fi',addresses:['192.168.3.9']}];
+  await ui.poll();
+  assert.deepEqual(Array.from(ui.run('lanDraft')),['Wi-Fi']);
+  assert.match(ui.run("document.getElementById('lan-addresses').children[0].children[1].textContent"),/192\.168\.3\.9/);
+  assert.deepEqual(Array.from(ui.run('collect().preferences.lanAddresses')),['192.168.3.9']);
 });
 
 test('project navigation uses fixed project destinations',async()=>{

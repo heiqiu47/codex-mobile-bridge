@@ -125,7 +125,8 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(self.desktop.config()['origins'], ['https://phone.example.com:8443'])
         self.assertEqual(self.desktop.config()['publicUrl'], 'https://phone.example.com:8443')
         self.assertEqual(self.desktop.preferences()['connections'][0]['proxyUpstream'], '')
-        with patch('bridge.app.desktop.socket.socket'), patch('bridge.app.desktop.subprocess.Popen') as spawn:
+        with patch('bridge.app.desktop.interfaces.enumerate_interfaces', return_value=[]), \
+                patch('bridge.app.desktop.socket.socket'), patch('bridge.app.desktop.subprocess.Popen') as spawn:
             self.assertTrue(self.desktop.start()['started'])
         self.assertEqual(spawn.return_value.stdin.write.call_args.args[0], b'{}')
         with self.assertRaisesRegex(ValueError, '自有服务器或 NAS'):
@@ -312,7 +313,8 @@ class ConcurrentRuntimeTests(unittest.TestCase):
             tunnels = [MagicMock(), MagicMock()]
             with patch.object(run.sys, 'argv', ['run.py', '--config', str(config), '--lan']), \
                  patch.object(run.sys, 'stdout', MagicMock()), patch.object(run.sys, 'stderr', MagicMock()), \
-                 patch.object(run, 'addresses', return_value=['127.0.0.1']), \
+                 patch('bridge.features.network.interfaces.enumerate_interfaces', return_value=[]), \
+                 patch('bridge.features.network.runtime.network_signature', return_value={'fixture': True}), \
                  patch.object(run, 'Bridge'), patch.object(run, 'Notifications'), \
                  patch.object(run, 'GatewayControl'), patch.object(run.signal, 'signal'), \
                  patch.object(run, 'GatewayServer', return_value=server) as make_server, \
@@ -448,3 +450,65 @@ class ConcurrentRuntimeTests(unittest.TestCase):
                     starter.join(3)
                 old_process.terminate.assert_called_once()
                 new_process.terminate.assert_called_once()
+
+    def test_quick_tunnel_replaces_healthy_session_after_network_change(self):
+        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as directory:
+            data = Path(directory)
+            executable = data/'cloudflared';executable.touch()
+            old_gate, new_gate = threading.Event(), threading.Event()
+            old_process = MagicMock(stdout=LineStream([
+                'https://old-network.trycloudflare.com',
+                'Registered tunnel connection',
+            ], old_gate))
+            old_process.poll.return_value = None
+            old_process.terminate.side_effect = old_gate.set
+            new_process = MagicMock(stdout=LineStream([
+                'https://new-network.trycloudflare.com',
+                'Registered tunnel connection',
+            ], new_gate))
+            new_process.poll.return_value = None
+            new_process.terminate.side_effect = new_gate.set
+            tunnel = QuickTunnel(executable, 8787, data, MagicMock())
+            tunnel.RESTART_DELAY = 0
+
+            old_origin = threading.Event()
+            new_origin = threading.Event()
+            tunnel.on_origin.side_effect = lambda url: (
+                old_origin.set() if url.endswith('old-network.trycloudflare.com') else new_origin.set()
+            )
+            with patch('bridge.features.network.tunnel.subprocess.Popen',
+                       side_effect=[old_process, new_process]):
+                starter = threading.Thread(target=tunnel.start)
+                try:
+                    starter.start()
+                    self.assertTrue(old_origin.wait(5), 'First Quick Tunnel was not established')
+                    self.assertTrue(tunnel.ready.wait(1))
+                    self.assertTrue(tunnel.network_changed())
+                    self.assertFalse(tunnel.ready.is_set())
+                    self.assertTrue(new_origin.wait(5), 'Network change did not replace Quick Tunnel')
+                    starter.join(3)
+                    self.assertFalse(starter.is_alive())
+                    self.assertEqual(tunnel.url, 'https://new-network.trycloudflare.com')
+                finally:
+                    tunnel.close()
+                    starter.join(3)
+                self.assertFalse(starter.is_alive())
+                old_process.terminate.assert_called_once()
+                new_process.terminate.assert_called_once()
+
+    def test_quick_tunnel_suppresses_transient_entry_updates(self):
+        tunnel = QuickTunnel(Path('.tmp')/'unused-cloudflared', 8787, Path('.tmp'), MagicMock())
+        try:
+            self.assertFalse(tunnel.entry_stable())
+            self.assertTrue(tunnel.network_changed())
+            self.assertFalse(tunnel.entry_stable())
+            tunnel.broken.clear()
+            tunnel.finished.clear()
+            tunnel.ready.set()
+            self.assertTrue(tunnel.entry_stable())
+            tunnel.network_changed()
+            self.assertFalse(tunnel.entry_stable())
+            tunnel.finished.set()
+            self.assertFalse(tunnel.entry_stable())
+        finally:
+            tunnel.close()

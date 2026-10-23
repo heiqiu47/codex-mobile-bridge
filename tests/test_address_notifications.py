@@ -209,6 +209,14 @@ class AddressNotificationTests(unittest.TestCase):
         preferences['lan'] = False
         self.assertEqual(entry_urls(preferences, hosts, '', {'server': {'state': 'retrying'}}), ['https://nas.example'])
 
+    def test_dynamic_lan_addresses_replace_stale_startup_hosts(self):
+        preferences = {'port': 8787, 'lan': True, 'lanAddresses': ['192.168.5.22'], 'connections': []}
+        hosts = ['127.0.0.1', 'localhost', '192.168.5.22']
+        self.assertEqual(entry_urls(preferences, hosts), ['http://192.168.5.22:8787'])
+        self.assertEqual(
+            entry_urls(preferences, hosts, lan_addresses=['192.168.0.174']),
+            ['http://192.168.0.174:8787'])
+
     def test_lan_and_fixed_addresses_resend_each_start_and_delayed_tunnel_updates(self):
         urls = ['https://server.example', 'http://192.168.1.3:8787']
         current = lambda: urls[:]

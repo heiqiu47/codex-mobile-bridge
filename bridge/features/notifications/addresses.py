@@ -37,7 +37,7 @@ def ready_url(tunnel, port, instance_id):
     return url
 
 
-def entry_urls(preferences, hosts, quick_url='', external_status=None):
+def entry_urls(preferences, hosts, quick_url='', external_status=None, lan_addresses=None):
     """Enabled fixed entries, live tunnels, and selected LAN listeners, in click order."""
     urls = []
     for entry in preferences.get('connections', []):
@@ -50,8 +50,15 @@ def entry_urls(preferences, hosts, quick_url='', external_status=None):
     if quick_url:
         urls.append(quick_url.rstrip('/'))
     if preferences.get('lan'):
-        selected = preferences.get('lanAddresses')
-        for host in hosts:
+        # hosts is only a startup snapshot; a running monitor supplies the
+        # live authority after DHCP or Wi-Fi changes.
+        if lan_addresses is None:
+            selected = set(preferences.get('lanAddresses') or [])
+            live_hosts = hosts
+        else:
+            selected = None
+            live_hosts = sorted(set(lan_addresses), key=ipaddress.ip_address)
+        for host in live_hosts:
             try:
                 address = ipaddress.ip_address(host)
             except ValueError:
@@ -67,7 +74,7 @@ def address_message(config, urls, first=False, test=False):
     title = 'Codex Mobile Bridge · ' + ('入口通知测试' if test else '网关已启动' if first else '访问入口已更新')
     name = config.get('addressName') or 'Codex Mobile Bridge'
     body = name + ('已启动。' if first else '的当前访问入口如下。')
-    body += '\n访问地址：\n' + '\n'.join(urls) + '\n局域网地址需在同一网络访问；固定域名需已完成部署。\n请使用原网关登录方式访问。'
+    body += '\n访问地址：\n' + '\n'.join(urls) + '\n局域网地址需在同一网络访问；固定域名需要先完成部署。\n请使用原网关登录方式访问。'
     return title, body
 
 

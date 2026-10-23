@@ -1,6 +1,8 @@
 """IPv4 listener selection shared by the desktop controller and gateway."""
 import ipaddress
 
+from bridge.features.network.interfaces import addresses_for_interfaces, eligible_lan_addresses
+
 
 def selected_addresses(value):
     if value is None:
@@ -20,8 +22,17 @@ def selected_addresses(value):
     return result
 
 
-def bindings(preferences):
-    selected = selected_addresses(preferences.get('lanAddresses'))
+def bindings(preferences, interfaces=None):
+    """Resolve the startup listeners; selected adapter listeners are dynamic."""
+    selected_ids = preferences.get('lanInterfaces')
+    if 'lanInterfaces' in preferences:
+        selected = None if selected_ids is None else selected_ids
+        resolved_addresses = (eligible_lan_addresses(interfaces or [])
+                              if selected_ids is None else
+                              addresses_for_interfaces(interfaces or [], selected_ids))
+    else:
+        selected = selected_addresses(preferences.get('lanAddresses'))
+        resolved_addresses = selected or []
     if preferences.get('lan') and selected is None:
-        return ['0.0.0.0']
-    return ['127.0.0.1'] + (selected if preferences.get('lan') else [])
+        return ['127.0.0.1'] + resolved_addresses
+    return ['127.0.0.1'] + (resolved_addresses if preferences.get('lan') else [])

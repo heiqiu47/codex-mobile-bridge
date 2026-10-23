@@ -27,6 +27,11 @@ if sys.platform == 'win32':
         command.extend(['--add-data', str(root/'dist/conpty'/name)+':conpty'])
 # Ship roots and their license explicitly; source users still need only stdlib.
 command.extend(['--add-data', certifi.where()+':bridge/features/auth'])
+command.extend([
+    '--hidden-import', 'bridge.platforms.linux.interfaces',
+    '--hidden-import', 'bridge.platforms.macos.interfaces',
+    '--hidden-import', 'bridge.platforms.windows.interfaces',
+])
 certificate_package = distribution('certifi')
 license_file = next(p for p in certificate_package.files if p.name == 'LICENSE')
 command.extend(['--add-data', str(certificate_package.locate_file(license_file))+':licenses/certifi'])

@@ -127,19 +127,19 @@ document.querySelectorAll('[data-jump]').forEach(button=>button.onclick=()=>tab(
 $('settings').oninput=$('settings').onchange=()=>{if(snapshot){$('revoke-bound-devices-option').hidden=!$('password').value;updateDirty();}};
 function renderLan(){
   const rows=[...(snapshot?.networkInterfaces||[])];
-  for(const address of lanDraft)if(!rows.some(row=>row.address===address))rows.push({address,name:t('当前不可用')});
+  for(const id of lanDraft)if(!rows.some(row=>row.id===id))rows.push({id,name:t('当前不可用'),addresses:[]});
   $('lan-addresses').replaceChildren();
-  const selected=$('lan-scope').value==='selected';
+  const choosing=$('lan-scope').value==='selected';
   for(const row of rows){
     const label=document.createElement('label'),box=document.createElement('input'),text=document.createElement('span');
-    label.className='check lan-address';box.type='checkbox';box.dataset.lanAddress=row.address;
-    box.checked=!selected||lanDraft.includes(row.address);
-    box.disabled=!!snapshot?.runtime.running||!$('lan').checked||!selected;
-    text.textContent=row.name+' · '+row.address;
-    box.onchange=()=>{lanDraft=box.checked?[...lanDraft,row.address]:lanDraft.filter(address=>address!==row.address);updateDirty();};
+    label.className='check lan-address';box.type='checkbox';box.dataset.lanInterface=row.id;
+    box.checked=!choosing||lanDraft.includes(row.id);
+    box.disabled=!!snapshot?.runtime.running||!$('lan').checked||!choosing;
+    text.textContent=row.name+' · '+(row.addresses?.length?row.addresses.join(', '):t('当前不可用'));
+    box.onchange=()=>{lanDraft=box.checked?[...lanDraft,row.id]:lanDraft.filter(id=>id!==row.id);updateDirty();};
     label.append(box,text);$('lan-addresses').append(label);
   }
-  if(!rows.length){const note=document.createElement('p');note.className='hint';note.textContent=t('未发现可用的局域网 IPv4 地址');$('lan-addresses').append(note);}
+  if(!rows.length){const note=document.createElement('p');note.className='hint';note.textContent=t('未发现可用的局域网网卡');$('lan-addresses').append(note);}
   $('lan-scope').disabled=!!snapshot?.runtime.running||!$('lan').checked;
 }
 $('login-startup').onchange=()=>{if($('login-startup').checked)$('auto-start').checked=true;$('auto-start').disabled=$('login-startup').checked;updateDirty();};
@@ -199,8 +199,8 @@ function render(value,watchRevision=watchPanel.revision){
     const p=value.preferences,n=value.notifications;
     for(const [id,key] of [['port','port'],['cloudflared','cloudflared'],['codex-home','codexHome'],['ipc-path','ipcPath'],['codex-bin','codexBin']])input(id,p[key]);
     $('login-startup').checked=!!(value.loginStartup?.enabled||value.loginStartup?.requiresApproval);$('auto-start').checked=p.autoStart;$('auto-start').disabled=!!(value.loginStartup?.enabled||value.loginStartup?.requiresApproval);$('lan').checked=p.lan;
-    $('local-access').checked=p.localAccess!==false;input('lan-scope',p.lanAddresses==null?'all':'selected');
-    lanDraft=p.lanAddresses==null?(value.networkInterfaces||[]).map(row=>row.address):[...p.lanAddresses];savedLan=JSON.stringify(lanDraft);
+    $('local-access').checked=p.localAccess!==false;input('lan-scope',p.lanInterfaces==null?'all':'selected');
+    lanDraft=p.lanInterfaces==null?(value.networkInterfaces||[]).map(row=>row.id):[...(p.lanInterfaces||[])];savedLan=JSON.stringify(lanDraft);
     if(!document.activeElement?.closest('#connections')||JSON.stringify(p.connections||[])!==savedConnections){const next=JSON.parse(JSON.stringify(p.connections||[]));for(const row of connectionDraft)if(JSON.stringify(row)!==JSON.stringify(next.find(c=>c.id===row.id)))connectionSetupState.delete(row.id);connectionDraft=next;savedConnections=JSON.stringify(connectionDraft);renderConnections();}
     const fixed=connectionDraft.filter(c=>c.enabled).map(c=>c.publicUrl);
     input('origins',value.origins.filter(o=>!fixed.includes(o)).join('\n'));input('auth-mode',value.auth.mode);input('session-hours',value.auth.sessionHours??12);input('username',value.auth.username);$('revoke-bound-devices').checked=true;$('revoke-bound-devices-option').hidden=!$('password').value;
@@ -234,7 +234,7 @@ function render(value,watchRevision=watchPanel.revision){
 }
 let renderedSnapshot='',renderedDirty=false,renderedRevision=-1;
 async function refresh(force=false){if(loading||(document.hidden&&force!==true))return;loading=true;try{const revision=watchPanel.revision,value=await api.snapshot(),signature=JSON.stringify(value);if(signature!==renderedSnapshot||renderedDirty!==dirty||renderedRevision!==revision||startingUntil){render(value,revision);renderedSnapshot=signature;renderedDirty=dirty;renderedRevision=revision;}}catch(e){feedback(e.message,true);}finally{loading=false;}}
-function collect(){return {...(snapshot?.loginStartup?.supported?{loginStartup:$('login-startup').checked}:{}),preferences:{autoStart:$('auto-start').checked,port:Number($('port').value),lan:$('lan').checked,lanAddresses:$('lan-scope').value==='all'?null:[...lanDraft],localAccess:$('local-access').checked,connections:connectionDraft.map(row=>row.accessMode==='external'||row.accessMode==='nas'?{...row,publicUrl:normalizeExternalUrl(row.publicUrl||'')}:row),cloudflared:$('cloudflared').value.trim(),codexHome:$('codex-home').value.trim(),ipcPath:$('ipc-path').value.trim(),codexBin:$('codex-bin').value.trim()},auth:{sessionHours:Number($('session-hours').value),mode:$('auth-mode').value,username:$('username').value.trim(),password:submittedSecret('password'),revokeBoundDevices:$('revoke-bound-devices').checked},origins:$('origins').value.split('\n').map(s=>s.trim()).filter(Boolean),notifications:{mobileEnabled:$('mobile-enabled').checked,mobileAppLinks:$('mobile-app-links').checked,securityEnabled:$('security-enabled').checked,addressEnabled:$('address-enabled').checked,addressName:$('address-name').value.trim(),pushplusEnabled:$('pushplus-enabled').checked,pushplusToken:submittedSecret('pushplus-token'),clearPushplusToken:$('clear-pushplus-token').checked,enabled:$('ntfy-enabled').checked,server:$('ntfy-server').value.trim(),topic:$('ntfy-topic').value.trim(),token:submittedSecret('ntfy-token'),clearToken:$('clear-token').checked,barkEnabled:$('bark-enabled').checked,barkServer:$('bark-server').value.trim(),barkKey:submittedSecret('bark-key'),clearBarkKey:$('clear-bark-key').checked,clickBase:$('click-base').value.trim(),includeTitle:$('include-title').checked}};}
+function collect(){const rows=snapshot?.networkInterfaces||[],selected=rows.filter(row=>lanDraft.includes(row.id));return {...(snapshot?.loginStartup?.supported?{loginStartup:$('login-startup').checked}:{}),preferences:{autoStart:$('auto-start').checked,port:Number($('port').value),lan:$('lan').checked,lanInterfaces:$('lan-scope').value==='all'?null:[...lanDraft],lanAddresses:$('lan-scope').value==='all'?null:[...new Set(selected.flatMap(row=>row.addresses||[]))],localAccess:$('local-access').checked,connections:connectionDraft.map(row=>row.accessMode==='external'||row.accessMode==='nas'?{...row,publicUrl:normalizeExternalUrl(row.publicUrl||'')}:row),cloudflared:$('cloudflared').value.trim(),codexHome:$('codex-home').value.trim(),ipcPath:$('ipc-path').value.trim(),codexBin:$('codex-bin').value.trim()},auth:{sessionHours:Number($('session-hours').value),mode:$('auth-mode').value,username:$('username').value.trim(),password:submittedSecret('password'),revokeBoundDevices:$('revoke-bound-devices').checked},origins:$('origins').value.split('\n').map(s=>s.trim()).filter(Boolean),notifications:{mobileEnabled:$('mobile-enabled').checked,mobileAppLinks:$('mobile-app-links').checked,securityEnabled:$('security-enabled').checked,addressEnabled:$('address-enabled').checked,addressName:$('address-name').value.trim(),pushplusEnabled:$('pushplus-enabled').checked,pushplusToken:submittedSecret('pushplus-token'),clearPushplusToken:$('clear-pushplus-token').checked,enabled:$('ntfy-enabled').checked,server:$('ntfy-server').value.trim(),topic:$('ntfy-topic').value.trim(),token:submittedSecret('ntfy-token'),clearToken:$('clear-token').checked,barkEnabled:$('bark-enabled').checked,barkServer:$('bark-server').value.trim(),barkKey:submittedSecret('bark-key'),clearBarkKey:$('clear-bark-key').checked,clickBase:$('click-base').value.trim(),includeTitle:$('include-title').checked}};}
 $('settings').onsubmit=async event=>{
   event.preventDefault();if(saving||busyActions.size)return;const invalid=[...$('settings').querySelectorAll('input,textarea,select')].find(node=>!node.closest('#file-transfer-settings')&&!node.closest('#webhook-editor')&&!node.disabled&&!node.validity.valid&&(!node.closest('.connection-card')||connectionDraft.find(row=>row.id===node.closest('.connection-card').dataset.connectionId)?.enabled));if(invalid){focusField(invalid);feedback(invalid.validationMessage,true);return;}saving=true;$('save').disabled=true;const submitted=fieldValues(),submittedConnections=JSON.stringify(connectionDraft),submittedLan=JSON.stringify(lanDraft);
   try{
