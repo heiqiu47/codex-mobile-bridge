@@ -884,6 +884,40 @@ test('selected adapter identity survives its address changing',async()=>{
   assert.deepEqual(Array.from(ui.run('collect().preferences.lanAddresses')),['192.168.3.9']);
 });
 
+test('network recovery is a separate default-off live setting and does not overwrite general drafts',async()=>{
+  const ui=await renderer(),calls=[];ui.value.networkAdaptation={enabled:false};ui.value.runtime.running=true;
+  ui.api.networkAdaptation=async payload=>{calls.push(payload);ui.value.networkAdaptation={enabled:payload.enabled};return ui.value.networkAdaptation;};
+  await ui.poll();const box=ui.nodes.get('network-adaptation-enabled');assert.equal(box.checked,false);assert.equal(box.disabled,false);
+  ui.nodes.get('port').value='8790';box.checked=true;await box.onchange({stopPropagation(){}});
+  assert.equal(calls.length,1);assert.equal(calls[0].action,'set');assert.equal(calls[0].enabled,true);assert.equal(box.checked,true);assert.equal(ui.nodes.get('port').value,'8790');
+  assert.equal(Object.hasOwn(ui.run('collect().preferences'),'networkAdaptation'),false);
+  assert.equal(Object.hasOwn(ui.run('collect().preferences'),'networkAdaptationEnabled'),false);
+  box.id='network-adaptation-enabled';ui.nodes.get('settings').querySelectorAll=()=>[box];assert.equal(ui.run('fields().length'),0);
+});
+
+test('desktop network recovery reconciles an uncertain write exactly once',async()=>{
+  const ui=await renderer(),calls=[];ui.value.networkAdaptation={enabled:false};
+  ui.api.networkAdaptation=async payload=>{calls.push(payload);if(payload.action==='set')throw Error('timeout');return {enabled:true};};await ui.poll();
+  const box=ui.nodes.get('network-adaptation-enabled');box.checked=true;await box.onchange();
+  assert.deepEqual(calls.map(row=>row.action),['set','status']);assert.equal(box.checked,true);assert.equal(box.disabled,false);
+});
+
+test('a snapshot started before the live network save cannot undo its result',async()=>{
+  const ui=await renderer();ui.value.networkAdaptation={enabled:false};ui.api.networkAdaptation=async()=>({enabled:true});await ui.poll();
+  let finish;ui.api.snapshot=()=>new Promise(resolve=>finish=resolve);const reading=ui.poll();
+  const box=ui.nodes.get('network-adaptation-enabled');box.checked=true;await box.onchange();finish(structuredClone(ui.value));await reading;
+  assert.equal(box.checked,true);assert.equal(ui.run('snapshot.networkAdaptation.enabled'),true);
+});
+
+test('network recovery IPC is narrowly allowlisted and forwarded by preload',async()=>{
+  const fs=require('node:fs'),vm=require('node:vm');
+  const script="let value='';process.stdin.on('data',data=>value+=data);process.stdin.on('end',()=>console.log(JSON.stringify({ok:true,result:{action:process.argv[1],payload:JSON.parse(value)}})));";
+  const payload={action:'set',enabled:true};const result=await runWorker({executable:process.execPath,prefix:['-e',script],dataDir:'/fixture'},'network-adaptation',payload);
+  assert.deepEqual(result,{action:'network-adaptation',payload});
+  let api;const calls=[];vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../desktop/preload.cjs'),'utf8'),{require:()=>({contextBridge:{exposeInMainWorld(_name,value){api=value;}},ipcRenderer:{invoke(...args){calls.push(args);}}})});
+  api.networkAdaptation(payload);assert.deepEqual(calls,[['bridge:network-adaptation',payload]]);
+});
+
 test('project navigation uses fixed project destinations',async()=>{
   const ui=await renderer(),opened=[];ui.api.open=async target=>opened.push(target);
   await ui.nodes.get('project-home').onclick();

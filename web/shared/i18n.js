@@ -2,6 +2,16 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"网络变化自动恢复":"Recover after network changes",
+"网关连接":"Gateway connection",
+"默认关闭。开启后检测网络变化，更新所选网卡的 IP 入口，并恢复失效的临时 HTTPS 连接。开关即时保存，无需重启网关。":"Off by default. Follow IP changes on selected adapters and recover failed temporary HTTPS connections. Changes are saved immediately; no restart needed.",
+"自动模式只发布非虚拟网卡上的私有内网地址；可选择网卡自定义范围。开启“网络变化自动恢复”后，会跟随所选网卡的 IP 变化。":"Automatic mode publishes private LAN addresses on physical adapters. Select adapters to limit access. Enable network recovery to follow their IP changes.",
+"正在读取网络恢复设置…":"Loading network recovery settings…",
+"请更新网关以使用网络变化自动恢复。":"Update the gateway to use network recovery.",
+"网络恢复设置读取失败，请刷新状态。":"Could not load network recovery settings. Refresh the status.",
+"网络恢复设置尚未确认，请刷新状态后重试。":"Network recovery settings are unconfirmed. Refresh the status before retrying.",
+"免密访问下不能远程修改此设置，请在网关 App 中调整。":"This setting cannot be changed remotely without sign-in. Use the gateway app.",
+
 "图表":"Diagram",
 "复制源码":"Copy source",
 "源码":"Source",
