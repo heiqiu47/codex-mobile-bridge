@@ -361,7 +361,7 @@ class RuntimeMonitorTests(unittest.TestCase):
         self.monitor.worker = MagicMock(is_alive=lambda: True)
         self.monitor._stop.set()
         try:
-            with self.assertRaisesRegex(RuntimeError, 'still stopping'):
+            with self.assertRaisesRegex(ValueError, 'still stopping'):
                 self.monitor.set_enabled(True)
             self.assertFalse(self.monitor.enabled)
         finally:

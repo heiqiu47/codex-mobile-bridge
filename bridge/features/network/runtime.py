@@ -356,7 +356,7 @@ class RuntimeNetworkMonitor:
     def set_enabled(self, enabled):
         with self.lifecycle_lock:
             if enabled and self.worker and self.worker.is_alive() and self._stop.is_set():
-                raise RuntimeError('Previous network monitor is still stopping')
+                raise ValueError('Previous network monitor is still stopping')
             with self.lock:
                 if self.closed.is_set():
                     return self._status()

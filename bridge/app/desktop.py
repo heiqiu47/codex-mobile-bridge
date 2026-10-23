@@ -23,7 +23,7 @@ from bridge.clients.codex.catalog import Catalog
 import bridge.features.network.access as access
 import bridge.features.network.addresses as network
 import bridge.features.network.interfaces as interfaces
-from bridge.features.network.adaptation import settings as adaptation_settings
+from bridge.features.network.adaptation import settings as adaptation_settings, migrate_legacy_interfaces
 from bridge.api.validation import FieldError, at_field
 
 
@@ -344,6 +344,7 @@ class Desktop:
         if state['running']:
             return {'started': False, 'message': '已连接正在运行的网关'}
         self.close_local(check_busy=True)
+        migrate_legacy_interfaces(self.config_path)
         preferences = self.preferences()
         if not Path(preferences['codexHome']).expanduser().is_dir():
             raise ValueError('请先选择存在的 Codex 数据目录')

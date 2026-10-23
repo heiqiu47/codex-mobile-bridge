@@ -24,7 +24,7 @@ from bridge.features.notifications.channels import Notifications
 import bridge.features.network.addresses as network
 import bridge.features.network.interfaces as interfaces
 from bridge.features.network.runtime import DynamicListenerManager, RuntimeNetworkMonitor
-from bridge.features.network.adaptation import NetworkAdaptation, settings as adaptation_settings
+from bridge.features.network.adaptation import NetworkAdaptation, settings as adaptation_settings, migrate_legacy_interfaces
 
 ROOT = Path(__file__).resolve().parent
 
@@ -83,12 +83,13 @@ def main(connections=None, connection_secrets=None):
         first_login.unlink(missing_ok=True)
         print("密码已更新。请重新启动网关。")
         return
+    rows = interfaces.enumerate_interfaces()
+    config = migrate_legacy_interfaces(args.config, rows)
     if config["auth"].get("mode") not in ("password", "none"):
         parser.error("auth.mode 只能为 password 或 none")
     if args.no_auth:
         config["auth"]["mode"] = "none"
     from bridge.features.network.access import validate_connections, public_urls, public_url
-    rows = interfaces.enumerate_interfaces()
     legacy_addresses = config.get('lanAddresses')
     raw_interfaces = config.get('lanInterfaces',
                                 interfaces.migrate_addresses_to_interfaces(rows, legacy_addresses))
