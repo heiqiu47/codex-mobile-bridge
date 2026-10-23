@@ -14,7 +14,7 @@ from collections import deque
 from pathlib import Path
 
 from bridge.clients.claude import model
-from bridge.clients.claude.history import page as history_page
+from bridge.clients.claude.history import file_stamp, page as history_page
 from bridge.clients.claude.context import context_fields
 from bridge.clients.claude.session_registry import assert_session_closed
 from bridge.clients.errors import BridgeUnavailable
@@ -286,7 +286,7 @@ def _message_content(body):
 def _saved(path, origin):
     try:
         native = str(uuid.UUID(path.stem))
-        stat = path.stat()
+        stamp = file_stamp(path)
     except (OSError, ValueError):
         return None
     title, cwd, selected_model, permission = None, '', '', None
@@ -352,11 +352,10 @@ def _saved(path, origin):
     except OSError:
         return None
     try:
-        final = path.stat()
+        final = file_stamp(path)
     except OSError:
         return None
-    if (final.st_dev, final.st_ino, final.st_size, final.st_mtime_ns, final.st_ctime_ns) != (
-            stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns):
+    if final != stamp:
         return None
     if title is None:
         return None
@@ -367,8 +366,8 @@ def _saved(path, origin):
     return {'id': model.gateway_id('cli:' + origin, native), 'nativeId': native, 'backend': 'cli', 'mode': 'cli',
             'host': 'local', 'title': title, 'cwd': cwd, 'model': selected_model,
             'permissionMode': permission or 'default', 'permissionKnown': permission is not None,
-            'updatedAt': stat.st_mtime, 'archived': False, 'origin': origin, 'path': path,
-            'stamp': (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns),
+            'updatedAt': stamp[3] / 1_000_000_000, 'archived': False, 'origin': origin, 'path': path,
+            'stamp': stamp,
             'events': list(recent), 'contextEvents': list(context_events)}
 
 
@@ -616,10 +615,9 @@ class ClaudeCli:
 
     def _saved_cached(self, path, origin):
         try:
-            stat = path.stat()
+            stamp = file_stamp(path)
         except OSError:
             return None
-        stamp = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
         sid = model.gateway_id('cli:' + origin, path.stem)
         with self.lock:
             cached = self.index.get(sid)

@@ -141,16 +141,26 @@ class ClaudeCliHistory(unittest.TestCase):
         replaced = False
         def replace_after_open(path, *args, **kwargs):
             nonlocal replaced
-            stream = original_open(path, *args, **kwargs)
             if path == target and not replaced and args and args[0] == 'rb':
                 replaced = True
                 old = target.with_suffix('.old')
                 target.replace(old)
                 target.write_bytes(old.read_bytes())
-            return stream
+                # Return the old inode while the path identifies its replacement.
+                # Rename before opening: Windows disallows renaming an open file.
+                return original_open(old, *args, **kwargs)
+            return original_open(path, *args, **kwargs)
         with patch.object(Path, 'open', replace_after_open):
             with self.assertRaisesRegex(ValueError, '发生变化'):
                 page(self.path, self.sid)
+
+    def test_same_size_mtime_rollback_refreshes_cached_metadata(self):
+        self.write(2)
+        self.assertEqual(self.cli.listing()['sessions'][0]['model'], 'model-a')
+        original = self.path.stat()
+        self.path.write_bytes(self.path.read_bytes().replace(b'model-a', b'model-b'))
+        os.utime(self.path, ns=(original.st_atime_ns, original.st_mtime_ns))
+        self.assertEqual(self.cli.listing()['sessions'][0]['model'], 'model-b')
 
     def test_context_capacity_survives_later_irrelevant_result(self):
         self.write(2)

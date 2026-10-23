@@ -9,8 +9,19 @@ from pathlib import Path
 MAX_PAGE_BYTES = 4 * 1024 * 1024
 
 
-def _stamp(stat):
-    return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+def _stamp(stat, fd=None):
+    changed = stat.st_ctime_ns
+    if os.name == 'nt':
+        from bridge.platforms.windows.file_revision import change_time
+        changed = change_time(fd)
+    return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, changed]
+
+
+def file_stamp(path):
+    if os.name == 'nt':
+        with Path(path).open('rb') as stream:
+            return _stamp(os.fstat(stream.fileno()), stream.fileno())
+    return _stamp(Path(path).stat())
 
 
 def _cursor(identity, stamp, offset):
@@ -28,7 +39,7 @@ def page(path, identity, before=None, limit=40):
         raise ValueError('Claude 历史分页大小无效')
     path = Path(path)
     with path.open('rb') as stream:
-        stamp = _stamp(os.fstat(stream.fileno()))
+        stamp = _stamp(os.fstat(stream.fileno()), stream.fileno())
         end = stamp[2]
         if before is not None:
             try:
@@ -86,10 +97,10 @@ def page(path, identity, before=None, limit=40):
             pending = keep
             if has_more:
                 break
-        if _stamp(os.fstat(stream.fileno())) != stamp:
+        if _stamp(os.fstat(stream.fileno()), stream.fileno()) != stamp:
             raise ValueError('Claude 历史读取期间发生变化')
         try:
-            current = _stamp(path.stat())
+            current = file_stamp(path)
         except OSError as exc:
             raise ValueError('Claude 历史读取期间发生变化') from exc
         if current != stamp:

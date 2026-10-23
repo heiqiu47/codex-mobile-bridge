@@ -2,6 +2,7 @@ import json
 import sqlite3
 import threading
 import unittest
+from contextlib import closing
 from unittest.mock import patch
 
 import test_bridge
@@ -9,6 +10,7 @@ from test_bridge import THREAD
 from bridge.app.service import LiveSession
 from bridge.features.sessions import model
 from bridge.features.sessions.store import SessionStore
+from bridge.features.workspace.files import path_identity
 
 
 class HistoryControlTests(unittest.TestCase):
@@ -84,7 +86,7 @@ class HistoryControlTests(unittest.TestCase):
 
     def test_native_history_index_is_bounded_read_only_and_never_control_state(self):
         db = self.root / 'thread_history_1.sqlite'
-        with sqlite3.connect(db) as conn:
+        with closing(sqlite3.connect(db)) as conn, conn:
             conn.execute('CREATE TABLE thread_items(thread_id,turn_id,rollout_ordinal,item_json)')
             conn.execute('CREATE TABLE thread_turns(thread_id,turn_id,status,error_json,started_at,first_user_item_id)')
             conn.execute('CREATE TABLE thread_history_projection_state(thread_id,next_rollout_byte_offset)')
@@ -104,12 +106,12 @@ class HistoryControlTests(unittest.TestCase):
         self.assertEqual(recent['requests'], [])
         self.assertEqual(before, db.read_bytes())
         # A native index for another/stale rollout must not hide new messages.
-        with sqlite3.connect(db) as conn:
+        with closing(sqlite3.connect(db)) as conn, conn:
             conn.execute('UPDATE thread_history_projection_state SET next_rollout_byte_offset=1')
         with patch.object(store, '_history', return_value={'fallback': True}) as fallback:
             self.assertEqual(store.history(THREAD, turn_limit=2, item_limit=40), {'fallback': True})
             fallback.assert_called_once()
-        with sqlite3.connect(db) as conn:
+        with closing(sqlite3.connect(db)) as conn, conn:
             conn.execute('UPDATE thread_history_projection_state SET next_rollout_byte_offset=0')
             conn.execute('UPDATE thread_items SET item_json=? WHERE rollout_ordinal=999',
                          (json.dumps({'type': 'function_call_output', 'call_id': 'outside-page', 'output': 'result'}),))
@@ -175,7 +177,7 @@ class HistoryControlTests(unittest.TestCase):
             session.state = state(old)
             session.connected = False
             session.set_history(state(current))
-        key = lambda path: hashlib.sha256(str(path.resolve()).encode()).hexdigest()
+        key = lambda path: hashlib.sha256(str(path_identity(path)).encode()).hexdigest()
         self.assertEqual(self.bridge.artifact(THREAD, key(current))['path'], current)
         with self.assertRaises(KeyError):
             self.bridge.artifact(THREAD, key(old))
