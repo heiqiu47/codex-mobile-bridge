@@ -1,3 +1,28 @@
+<a id="issue65-large-desktop-snapshot"></a>
+
+# Issue #65 与跨平台 Web 复制验收（2026-10-23，未发布）
+
+分支 `fix/issue-65-desktop-ipc-session` 保留已验收的 PR #63 与 Web 一键复制改动，产品提交 `16d6ef51ca42f3fe1da966db23c1f01833a1c35a`。桌面与手机版本仍为 `2.1.4-preview.1`，未推送 GitHub、未合并 main、未发布更新。
+
+根因由只读原生 IPC 探针确认：用户指定的 B 会话快照约 89 MB，超过旧客户端 64 MiB 接收上限，触发共享连接断开，连带影响同一连接上的 A 会话。没有发现“会话链接导致 A 占用 B 连接”的证据。接收上限改为有界的 256 MiB，并以最多 1 MiB 分块读取；出站请求仍维持 64 MiB 限制。不会因此发送、恢复或切换原会话，也不会把完整原始快照传给手机。
+
+| 范围 | 本轮证据 |
+| --- | --- |
+| 回归 | 新增 4 项：超过 64 MiB 的快照、Unicode、两个会话后续增量、分页体积、分片读取、非法长度拒绝及出站限制。定向 Bridge 85 项中 83 通过、2 跳过；CLI 41/41；平台 14 项中 11 通过、3 跳过；Web/原生复制 8/8 |
+| 真实 A/B | 源码和已安装 Mac 包中的编译 IPC/服务模块均完成原生只读连接。后者 A 1.57 秒、B 6.47 秒，两者保持连接，B 最近 20 行约 12 KB；原会话 id/owner 匹配。仅使用隔离网关数据目录，没有发送消息、改变草稿或调用模型。此为当前机器和会话的一次测量，不是通用耗时承诺 |
+| Mac arm64 Test | 完整构建及签名检查通过，360 个 Web 文件匹配。已安装编译模块的 4 项回归及上述真实 A/B 通过；8788 服务启动等待本机钥匙串确认，不能把模块验收写成已安装服务启动成功。旧 Test 包暂保留用于回退 |
+| Windows x64 Test | F 盘完整原生构建、NSIS 覆盖安装，706 个安装文件匹配；二维码、完整 ConPTY、独立 Test 数据与自启动检查通过。已安装编译模块 4/4；普通桌面 GUI、8788 启动和版本资源 304 通过。正式版、原配置、有效手机绑定和用户已启用的网络变化检测选项保留；GUI 旧夹具的“必须关闭”前提已修正，仅续验、未重复安装 |
+| Windows 网关 Web | 实际安装服务提供脚本，macOS 上真实 Chromium 访问 Windows 的局域网 HTTP 地址，点击 → 系统粘贴逐字验证中文、emoji、多行文本、延迟 600ms 的 30,010 字符正文及弹窗内源码；无原生手机桥接，`isSecureContext=false`、现代 Clipboard API 不存在，未出现手动复制窗口，草稿不变。此项明确为浏览器客户端访问 Windows 网关，不冒充 Windows 本机 Edge 或手机真机验收 |
+| Ubuntu x64 Test | 原生 DEB 构建、4 项 IPC 与 8 项复制测试、冻结运行时检查通过。713 项应用文件及独立 Test 包身份核验，模拟安装仅更新 Test。旧 Test 已安全停止，正式版与原配置绑定保留；等待本机 sudo 覆盖安装，安装后启动与浏览器验收尚未完成 |
+
+Windows 验收后清理上一轮 Test 安装包及本轮重复构建副本，逻辑大小 1,271,041,272 字节；当前已安装 Test、最新安装包、配置绑定与验收记录保留。Ubuntu 和 Mac 的旧包在各自安装后启动通过前暂不清理。
+
+本地构建和验收证据保存在 `.tmp/issue65-20261023/`，Windows 对应文件全部位于 F 盘。本轮没有更新手机原生包；Web 复制沿用上一轮已验证的共享实现与原生 App 适配。操作系统或浏览器明确拒绝剪贴板写入时仍保留手动兜底，不宣称绕过权限。
+
+**English:** Issue #65 was reproduced as an oversized Desktop snapshot closing the shared IPC stream. The bounded receive budget is now 256 MiB with 1 MiB reads; outbound limits remain unchanged. Real A/B sessions connected through both source and installed compiled modules without sending or activating turns. Windows Test installation, startup, preservation and real browser copy/paste against its HTTP service passed. Ubuntu's package is built and verified, awaiting sudo installation; Mac service startup awaits the user's Keychain confirmation. These pending steps are not reported as passed.
+
+---
+
 <a id="web-clipboard-one-click"></a>
 
 # Web 一键复制本地验收（2026-10-23，未发布）
