@@ -221,20 +221,24 @@ class SessionStore:
             columns = {r[1] for r in conn.execute('PRAGMA table_info(threads)')}
             fields = [name for name in ('id', 'originator', 'source') if name in columns]
             rows = [dict(row) for row in conn.execute('SELECT ' + ','.join(fields) + ' FROM threads')]
-        desktop = {row['id'] for row in rows if ('originator' not in columns and self.source == 'desktop')
-                   or self._matches(row)}
+        if self.source == 'all':
+            roots = {row['id'] for row in rows if
+                     ('originator' not in columns and row.get('source') != 'cli') or
+                     self._origin(row) == 'desktop'}
+        else:
+            roots = {row['id'] for row in rows if self._matches(row)}
         children = {}
         for row in rows:
             parent = self._agent_source(row).get('parent_thread_id')
             if isinstance(parent, str):
                 children.setdefault(parent, []).append(row['id'])
-        pending = list(desktop)
+        pending = list(roots)
         while pending:
             for child in children.get(pending.pop(), []):
-                if child not in desktop:
-                    desktop.add(child)
+                if child not in roots:
+                    roots.add(child)
                     pending.append(child)
-        return [{'id': identifier} for identifier in sorted(desktop)]
+        return [{'id': identifier} for identifier in sorted(roots)]
 
     def recencies(self, identifiers):
         if not identifiers:

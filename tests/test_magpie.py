@@ -37,7 +37,8 @@ class MagpieTests(unittest.TestCase):
                                        'model_catalog_json': '/fixture/magpie-models.json'}}
                 self.assertEqual(method, 'model/list')
                 return {'data': [{'model': 'group/fixture', 'displayName': 'Fixture routing group'}]}
-            with patch('bridge.clients.codex.catalog.model_ids', side_effect=AssertionError('must use native catalog')):
+            with patch('bridge.clients.codex.catalog.model_catalog',
+                       side_effect=AssertionError('must use native catalog')):
                 result = reader.read_models(request, '/fixture')
             self.assertEqual(calls, ['config/read', 'model/list'])
             self.assertEqual(result['modelSource'], 'magpie')

@@ -276,8 +276,10 @@ class RemoteCliModels:
         source = source_text('features/auth/tls.py') + '\n'
         source += source_text('features/accounts/models.py').replace(
             'from bridge.features.auth.tls import client_context', '') + '\n'
+        source += source_text('clients/codex/configuration.py') + '\n'
         source += source_text('clients/codex/catalog.py').replace(
-            'from bridge.features.accounts.models import model_catalog', '') + '\n'
+            'from bridge.features.accounts.models import model_catalog', '').replace(
+            'from bridge.clients.codex.configuration import magpie_managed', '') + '\n'
         source += source_text('platforms/linux/codex_daemon_env.py') + '\n'
         source += '_linux_read_process_environment = read_process_environment\n'
         source += source_text('platforms/macos/force_exit.py') + '\n'

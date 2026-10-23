@@ -148,6 +148,7 @@ class ResourceLayoutTests(unittest.TestCase):
         # The real catalog builder combines TLS/model/catalog definitions and
         # removes package imports. Test its output, not a duplicate assembler.
         combined = {'bridge/features/auth/tls.py', 'bridge/features/accounts/models.py',
+                    'bridge/clients/codex/configuration.py',
                     'bridge/clients/codex/catalog.py'}
         source = RemoteCatalog('fixture-host')._source()
         for node in ast.walk(ast.parse(source)):
