@@ -889,6 +889,7 @@ class HttpTests(unittest.TestCase):
         identifier = 'wsl:' + 'a' * 32
         target = Mock()
         target.projects.return_value = [{'key': identifier + '|/fixture', 'cwd': '/fixture'}]
+        target.project_environments.return_value = [{'key': 'cli|' + identifier, 'type': 'cli', 'host': identifier}]
         target.create_chat.return_value = {'id': THREAD, 'host': identifier}
         target.connect.return_value = {'ok': True}
         self.server.bridge.entries = Mock()
@@ -900,7 +901,9 @@ class HttpTests(unittest.TestCase):
         headers = self.login()
         self.assertEqual(self.request('POST', path, body, {'Cookie': headers['Cookie']})[0], 403)
         target.create_chat.assert_not_called()
-        self.assertEqual(self.request('GET', '/api/projects?entry=' + identifier, headers=headers)[0], 200)
+        status, _, listing = self.request('GET', '/api/projects?entry=' + identifier, headers=headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(listing['environments'], target.project_environments.return_value)
         directory = {'path': '~/fixture', 'createDirectory': True, 'host': identifier}
         target.register_project.return_value = {'key': identifier + '|directory:fixture', 'host': identifier}
         self.assertEqual(self.request('POST', '/api/projects?entry=' + identifier, directory, {'Cookie': headers['Cookie']})[0], 403)
@@ -1616,7 +1619,7 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             scripts = re.findall(r'<script (?:src|data-bridge-src)="([^"]+)"', response.read().decode())
             self.assertEqual([script.split('?', 1)[0] for script in scripts], ['/bootstrap.js', '/host.js', '/layout.js', '/vendor/markdown-it.min.js', '/vendor/katex/katex.min.js',
-                                       '/vendor/texmath.js', '/message-actions.js', '/markdown.js', '/i18n.js', '/downloads.js', '/image-viewer.js', '/timeline.js', '/account.js', '/modes.js', '/attachments.js', '/activity.js', '/fast-mode.js', '/accounts.js', '/client-accounts.js', '/cli-access.js', '/floating-panel.js', '/git-panel.js', '/vendor/xterm/xterm.js', '/vendor/xterm/addon-fit.js', '/command-terminal-panel.js', '/terminal-panel.js', '/permissions.js', '/side-chat.js', '/agents-panel.js', '/file-actions.js', '/vendor/prism/source-view.min.js', '/source-view.js', '/pdf-preview.js', '/html-preview.js', '/workbench.js', '/list-sync.js', '/client-lifecycle.js', '/desktop-sessions.js', '/client-navigation.js', '/app.js', '/presentation.js'])
+                                       '/vendor/texmath.js', '/message-actions.js', '/markdown.js', '/i18n.js', '/downloads.js', '/image-viewer.js', '/timeline.js', '/account.js', '/modes.js', '/attachments.js', '/activity.js', '/fast-mode.js', '/accounts.js', '/client-accounts.js', '/cli-access.js', '/floating-panel.js', '/git-panel.js', '/vendor/xterm/xterm.js', '/vendor/xterm/addon-fit.js', '/command-terminal-panel.js', '/terminal-panel.js', '/permissions.js', '/side-chat.js', '/agents-panel.js', '/file-actions.js', '/vendor/prism/source-view.min.js', '/source-view.js', '/pdf-preview.js', '/html-preview.js', '/workbench.js', '/list-sync.js', '/client-lifecycle.js', '/project-picker.js', '/desktop-sessions.js', '/client-navigation.js', '/app.js', '/presentation.js'])
             for script in scripts:
                 conn.request('GET', script)
                 response = conn.getresponse()

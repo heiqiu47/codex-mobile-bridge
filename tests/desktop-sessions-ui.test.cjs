@@ -828,3 +828,21 @@ test('known preflight rejection permits a new explicit Claude CLI resume attempt
  await ui.view.resumeButton.click();await new Promise(setImmediate);
  const writes=ui.calls.filter(c=>c.body);assert.equal(writes.length,2);assert.notEqual(writes[0].body.id,writes[1].body.id);assert.equal(ui.view.canMutate(),true);
 });
+
+test('Claude directory creation is scoped to the selected SSH environment and sends only after explicit submit',async()=>{
+ const ui=fixture();await ui.view.choose('claude');ui.run('window.BridgeProjectPicker={choose(options){window.fixturePicker=options;return Promise.resolve();}}');
+ const local={key:'local-cli',surface:'cli',host:'local',name:'Local CLI',createRequiresMessage:true},ssh={key:'ssh-cli',surface:'cli',host:'ssh:work',name:'Work server',createRequiresMessage:true};
+ ui.setHandler(async(url,body)=>url.includes('/projects/register')?{project:{key:'registered-ssh',environment:ssh.key,surface:'cli',cwd:'/srv/new-project',name:'new-project'}}:url.includes('/projects/browse')?{path:'/srv',directories:[],roots:[]}:url.includes('/projects')?{projects:[],environments:[local,ssh]}:body?{status:'ready',result:{id:'created'}}:url.includes('/detail')?{session:{id:'created',title:'Native CLI title',status:'idle'},messages:[]}:{sessions:[]});
+ await ui.view.create();const dialog=ui.document.querySelector('dialog'),selects=dialog.querySelectorAll('select');selects[0].value=ssh.key;selects[0].onchange();
+ const create=dialog.querySelector('.primary');assert.equal(create.disabled,true);assert.equal(dialog.querySelector('input').parentElement.hidden,true);
+ await dialog.querySelector('.project-picker-browse').onclick();assert.equal(ui.calls.some(call=>call.body),false);
+ await ui.run("window.fixturePicker.request({path:null,hidden:false,name:null,identity:null})");const browse=ui.calls.at(-1);assert.equal(browse.body.environment,ssh.key);
+ ui.run("window.fixturePicker.onSelect({path:'/srv/new-project',identity:'ssh-id'})");assert.equal(create.disabled,false);assert.equal(ui.calls.some(call=>call.url.includes('/projects/register')),false);
+ dialog.querySelector('textarea').value='First CLI instruction';await dialog.querySelector('form').onsubmit({preventDefault(){}});
+ const registered=ui.calls.find(call=>call.url.includes('/projects/register'));assert.deepEqual(JSON.parse(JSON.stringify(registered.body)),{environment:ssh.key,path:'/srv/new-project',createDirectory:false});
+ const sent=ui.calls.find(call=>call.url.endsWith('/create'));assert.equal(sent.body.projectKey,'registered-ssh');assert.equal(sent.body.firstMessage,'First CLI instruction');assert.equal(Object.hasOwn(sent.body,'title'),false);
+});
+
+test('a provider with no supported project environments cannot advertise directory creation',async()=>{
+ const ui=fixture();await ui.view.choose('deepseek');ui.setHandler(async()=>({projects:[],environments:[]}));await ui.view.create();const dialog=ui.document.querySelector('dialog');assert.equal(dialog.querySelector('.project-picker-browse').hidden,true);assert.equal(dialog.querySelector('.primary').disabled,true);assert.equal(ui.calls.some(call=>call.body),false);
+});

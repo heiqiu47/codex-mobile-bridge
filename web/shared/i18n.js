@@ -2,6 +2,10 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"更换目录":"Change folder",
+"选择其他目录…":"Choose another folder…",
+"新建文件夹":"New folder",
+
 "网络变化自动恢复":"Recover after network changes",
 "网关连接":"Gateway connection",
 "默认关闭。开启后检测网络变化，更新所选网卡的 IP 入口，并恢复失效的临时 HTTPS 连接。开关即时保存，无需重启网关。":"Off by default. Follow IP changes on selected adapters and recover failed temporary HTTPS connections. Changes are saved immediately; no restart needed.",

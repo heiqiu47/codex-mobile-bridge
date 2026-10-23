@@ -21,11 +21,13 @@ class Projects:
         with self.lock:
             return dict(self.rows[key]) if key in self.rows else None
 
-    def save(self, host, label, identity):
+    def save(self, host, label, identity, *, scope=None, **details):
         key = host + '|directory:' + hashlib.sha256(identity['cwd'].encode('utf-8')).hexdigest()
+        if scope:
+            key = scope + '|' + key
         row = {'key': key, 'host': host, 'hostLabel': label, 'cwd': identity['cwd'],
                'name': identity['cwd'].replace('\\', '/').rstrip('/').rsplit('/', 1)[-1] or identity['cwd'],
-               'directoryIdentity': identity}
+               'directoryIdentity': identity, **details}
         with self.lock:
             updated = {**self.rows, key: row}
             self.path.parent.mkdir(parents=True, exist_ok=True)

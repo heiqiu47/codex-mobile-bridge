@@ -14,7 +14,7 @@ function fixture({native=true,listSource='all',host='local'}={}){
    append(...children){for(const child of children){this.children.push(child);child.parentElement=this;if(this.tagName==='SELECT'&&!value)value=child.value;}},
    replaceChildren(...children){this.children=[];if(this.tagName==='SELECT')value='';this.append(...children);},
    showModal(){this.open=true;},close(){this.open=false;},addEventListener(){},dispatchEvent(){},setAttribute(key,v){this[key]=v;},after(){},
-   querySelectorAll(){return [];},classList:{add(){},remove(){},toggle(){},contains(){return false;}}};return n;
+   querySelector(){return this.labelNode||(this.labelNode=node('span'));},querySelectorAll(){return [];},classList:{add(){},remove(){},toggle(){},contains(){return false;}}};return n;
  }
  const html=fs.readFileSync(path.join(__dirname,'../web/index.html'),'utf8');
  for(const match of html.matchAll(/<([a-z]+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)){const n=node(match[1]);n.hidden=/\bhidden\b/.test(match[2]);nodes.set(match[3],n);}
@@ -26,11 +26,12 @@ function fixture({native=true,listSource='all',host='local'}={}){
  const api=async(url,body)=>{calls.push({url,body:body===undefined?undefined:JSON.parse(JSON.stringify(body))});return handler(url,body);};
  class AccountsPanel{constructor(options){Object.assign(this,options);this.clears=0;}clear(){this.clears++;}refresh(){return this.read();}}
  class CliAccessPanel{constructor(options){Object.assign(this,options);this.clears=0;this.refreshes=0;}clear(){this.clears++;}refresh(){this.refreshes++;return this.read();}}
- const close=node('button'),context=vm.createContext({$,api,Option,AccountsPanel,CliAccessPanel,URL,Event:class{constructor(type){this.type=type;}},window:{},document:{querySelector:()=>close},
+ const close=node('button'),context=vm.createContext({$,api,Option,AccountsPanel,CliAccessPanel,URL,Event:class{constructor(type){this.type=type;}},window:{},BridgeI18n:{t:value=>value},document:{getElementById:$,createElement:node,querySelector:()=>close},
   t:value=>value,el:(tag,_class='',text='')=>Object.assign(node(tag),{textContent:text}),
   clientNavigation:{provider:'codex',clients:[{id:'codex',entries}]},currentHost:host,currentId:null,listSource,listRows:[],
   uuid:()=> '11111111-1111-4111-8111-111111111111',setLanguageBusy(){},loadList:async()=>{},openChat:async(id,where)=>opened.push({id,host:where}),toast:message=>notices.push(message),isCodexClient:id=>id==='codex',
   sessionStorage:{getItem:key=>store.get(key)||null,setItem:(key,value)=>store.set(key,value),removeItem:key=>store.delete(key)}});
+ vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/shared/project-picker.js'),'utf8'),context);
  vm.runInContext(environmentsCode+creationCode+accountCode,context);
  return {$,calls,opened,entries,context,run:code=>vm.runInContext(code,context),setHandler:next=>handler=next};
 }
@@ -105,4 +106,27 @@ test('stopping the current environment returns to the list without affecting ano
  vm.runInContext(section('clientNavigation.onClientStates=', 'desktopSessions.onListEnter='),ui.context);
  const native=ui.entries.find(row=>row.id==='desktop'),wsl=ui.entries.find(row=>row.id===ubuntu);native.enabled=false;ui.context.clientNavigation.onClientStates(ui.context.clientNavigation.clients);assert.equal(left,0);
  wsl.enabled=false;ui.context.clientNavigation.onClientStates(ui.context.clientNavigation.clients);assert.equal(left,1);
+});
+
+test('Codex CLI exposes configured SSH environments before any project exists and registers the selected host and kind',async()=>{
+ const ui=fixture({listSource:'cli',host:'build-host'});
+ ui.setHandler(async(url,body)=>{
+  if(url==='/api/projects/browse')return {path:'/srv/work',home:'/home/fixture',parent:'/srv',roots:[],directories:[],identity:'ssh-directory'};
+  if(url==='/api/projects')return body?{project:{key:'cli|build-host|new'}}:{projects:[],environments:[{key:'cli|local',type:'cli',host:'local',name:'此电脑 · Codex CLI'},{key:'cli|build-host',type:'cli',host:'build-host',name:'Build host · Codex CLI'}]};
+  return {id:'created',host:'build-host'};
+ });
+ await ui.$('new-chat').onclick();assert.equal(ui.$('new-chat-entry').value,'cli|build-host');assert.equal(ui.$('new-chat-entry-label').hidden,false);assert.equal(ui.$('new-chat-submit').disabled,true);
+ await ui.$('new-chat-directory-browse').onclick();assert.equal(ui.calls.at(-1).body.host,'build-host');assert.equal(ui.calls.at(-1).body.name,null);
+ ui.$('folder-picker-select').onclick();assert.equal(ui.$('new-chat-project').value,'__directory__');assert.equal(ui.$('new-chat-submit').disabled,false);
+ await ui.$('new-chat-form').onsubmit({preventDefault(){}});
+ const register=ui.calls.find(call=>call.url==='/api/projects'&&call.body);assert.deepEqual(register.body,{host:'build-host',path:'/srv/work',createDirectory:false,kind:'cli'});
+ const create=ui.calls.find(call=>call.url==='/api/sessions');assert.equal(create.body.kind,'cli');assert.equal(create.body.project,'cli|build-host|new');assert.deepEqual(ui.opened,[{id:'created',host:'build-host'}]);
+});
+
+test('changing the selected WSL invalidates an open directory picker before it can create a folder',async()=>{
+ const ui=fixture({listSource:'wsl'});ui.setHandler(async url=>url.startsWith('/api/projects/browse')?{path:'/home/fixture',home:'/home/fixture',parent:'/home',roots:[],directories:[],identity:'old-environment'}:{projects:[]});
+ await ui.$('new-chat').onclick();await ui.$('new-chat-directory-browse').onclick();
+ ui.$('new-chat-entry').value=debian;await ui.$('new-chat-entry').onchange();const count=ui.calls.length;
+ ui.$('folder-picker-name').value='must-not-create';await ui.$('folder-picker-create').onclick();
+ assert.equal(ui.calls.length,count);assert.equal(ui.$('folder-picker').open,false);assert.equal(ui.$('new-chat-directory-path').value,'');
 });

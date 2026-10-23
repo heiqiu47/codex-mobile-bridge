@@ -21,6 +21,7 @@ STATIC = {"/file-actions.js": ("file-actions.js", "text/javascript; charset=utf-
           "/client-lifecycle.js": ("client-lifecycle.js", "text/javascript; charset=utf-8"),
           "/client-navigation.js": ("client-navigation.js", "text/javascript; charset=utf-8"),
           "/client-navigation.css": ("client-navigation.css", "text/css; charset=utf-8"),
+          "/project-picker.js": ("shared/project-picker.js", "text/javascript; charset=utf-8"),
           "/desktop-sessions.js": ("desktop-sessions.js", "text/javascript; charset=utf-8"),
           "/client-accounts.js": ("client-accounts.js", "text/javascript; charset=utf-8"),
           "/cli-access.js": ("cli-access.js", "text/javascript; charset=utf-8"),

@@ -175,7 +175,14 @@ def project_directory_listing(value=None, hidden=False, name=None, identity=None
                     or any(c in name for c in '/\\:') or any(ord(c) < 32 for c in name)):
                 raise ValueError('请输入有效的文件夹名称，不含路径分隔符')
             if identity != current: raise ValueError('当前目录已变化，请刷新后新建')
-            path = Path(project_directory(str(path/name.strip()), create=True)['cwd'])
+            child = path/name.strip()
+            # A lost mkdir response must never silently select an existing
+            # folder or follow a replacement symlink on a later request.
+            try:
+                child.mkdir(mode=0o700)
+            except FileExistsError as exc:
+                raise ValueError('文件夹已存在，请刷新后选择') from exc
+            path = Path(project_directory(str(child))['cwd'])
             st = path.stat(); current = {'cwd': str(path), 'device': st.st_dev, 'inode': st.st_ino}
         directories = []
         for child in path.iterdir():

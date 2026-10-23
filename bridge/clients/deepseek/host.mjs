@@ -1,7 +1,7 @@
 // Adapted from 2389859005/coding-mobile (MIT), commit 7a8f003. See LICENSE.coding-mobile.
 // Harness plugin: authenticated loopback adapter over the installed session services.
 import {createServer} from 'node:http';
-import {readFile,writeFile,rename,unlink} from 'node:fs/promises';
+import {readFile,writeFile,rename,unlink,realpath,stat} from 'node:fs/promises';
 import {timingSafeEqual,randomUUID} from 'node:crypto';
 export const inject=['sessionController','sessionSkillCatalog','permissionPresets','agents','workspaceRegistry'];
 export async function readHistoryPage(controller,row,body={},signal=new AbortController().signal){
@@ -135,11 +135,22 @@ export async function apply(ctx,config){
       quitting=true;
       return {status:'accepted',pid:process.pid,generation};
     }
-    if(action==='status')return {connected:true,bridgeRevision:4,nativeQuit:typeof ctx.get?.('appExit')==='function',configured:(await account()).status==='configured'};
+    if(action==='status')return {connected:true,bridgeRevision:4,projectDirectories:true,nativeQuit:typeof ctx.get?.('appExit')==='function',configured:(await account()).status==='configured'};
     if(action==='account')return account(sid);
     if(action==='list')return {connected:true,sessions:(await list()).filter(r=>!r.parentSessionId).map(r=>({...normalize(r),archived:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(r.sessionId)})).sort((a,b)=>Number(a.archived)-Number(b.archived))};
     if(action==='projects'){const seen=new Map();for(const row of await list())if(row.cwd)seen.set(row.cwd,{key:row.cwd,cwd:row.cwd,name:row.cwd.replaceAll('\\','/').split('/').pop()});for(const w of ctx.workspaceRegistry.list())seen.set(w.path,{key:w.path,cwd:w.path,name:w.name||w.path});return {projects:[...seen.values()]};}
-    if(action==='create'){const project=(await dispatch('projects')).projects.find(p=>p.key===body.projectKey);if(!project)throw Error('请选择现有项目');const result=await ctx.sessionController.create({sessionId:'session-'+body.id,cwd:project.cwd});if(body.title)await ctx.sessionController.rename({sessionId:result.sessionId,title:body.title});return {status:'ready',result:{id:result.sessionId,title:body.title||'新会话'}};}
+    if(action==='create'){
+      let project;
+      if(body.projectDirectory){
+        const expected=body.projectDirectory,cwd=await realpath(expected.cwd),identity=await stat(cwd);
+        if(!identity.isDirectory()||cwd!==expected.cwd||identity.dev!==expected.device||identity.ino!==expected.inode)throw Error('项目目录已变化，请重新选择目录');
+        project={cwd};
+      }else project=(await dispatch('projects')).projects.find(p=>p.key===body.projectKey);
+      if(!project)throw Error('请选择项目目录');
+      const result=await ctx.sessionController.create({sessionId:'session-'+body.id,cwd:project.cwd});
+      if(body.title)await ctx.sessionController.rename({sessionId:result.sessionId,title:body.title});
+      return {status:'ready',result:{id:result.sessionId,title:body.title||'新会话'}};
+    }
     const row=await find(sid);
     if(action==='rename'){const title=String(body.title||'').trim();if(!title||title.length>120)throw Error('标题为 1–120 字');await ctx.sessionController.rename({sessionId:sid,title});return {status:'accepted'};}
     if(action==='archive'){if(body.confirmed!==true)throw Error('请确认归档');await ctx.workspaceRegistry.archiveSession(sid,{stopActivity:true});return {status:'accepted'};}

@@ -36,6 +36,8 @@ window.checkCodexEntries = async function checkCodexEntries() {
   document.getElementById('search').value='';await loadList(true);
   await document.getElementById('new-chat').onclick();
   assert(document.getElementById('new-chat-dialog').open,'new chat opens inside Codex');
+  assert(document.getElementById('new-chat-dialog').classList.contains('project-picker'),'Codex uses the shared compact project layout');
+  assert(document.activeElement.id==='new-chat-heading','new chat opens on the heading without focusing an editable field');
   assert(document.getElementById('new-chat-type').value==='wsl','WSL filter defaults new chats to WSL');
   assert(!document.getElementById('new-chat-entry-label').hidden&&document.getElementById('new-chat-entry').value===wsl,'new chat selects a registered WSL environment');
   assert(document.getElementById('new-chat-project').value===wsl+'|independent','independent workspace belongs to the selected environment');
@@ -50,10 +52,13 @@ window.checkCodexEntries = async function checkCodexEntries() {
   await document.getElementById('new-chat-directory-browse').onclick();
   assert(document.getElementById('folder-picker').open&&folderPickerData.path==='/home/fixture','directory browser opens at WSL home');
   await document.querySelector('#folder-picker-list button').onclick();assert(folderPickerData.path==='/home/fixture/works','folder navigation stays inside WSL');
+  assert(!document.getElementById('folder-picker-new-folder').open,'new-folder controls begin collapsed');document.getElementById('folder-picker-new-folder').open=true;
   document.getElementById('folder-picker-name').value='new fixture';await document.getElementById('folder-picker-create').onclick();
   assert(folderPickerData.path==='/home/fixture/works/new fixture','new directory uses the selected parent');
+  assert(!document.getElementById('folder-picker-new-folder').open,'successful creation collapses the new-folder controls');
   document.getElementById('folder-picker-select').onclick();
   assert(!document.getElementById('folder-picker').open&&document.getElementById('new-chat-directory-path').value==='/home/fixture/works/new fixture','chosen directory returns to the form');
+  assert(document.getElementById('new-chat-location-summary').textContent==='works / new fixture','WSL project path has a short summary');document.getElementById('new-chat-location').open=true;assert(document.getElementById('new-chat-path').textContent==='/home/fixture/works/new fixture','full WSL project path remains available');document.getElementById('new-chat-location').open=false;
   await document.getElementById('new-chat-form').onsubmit({preventDefault(){}});assert(!document.getElementById('new-chat-dialog').open,'directory-backed WSL chat is created');
   await openChat(sid,wsl);await until(()=>state?.model==='group/auto-gpt-6-1-sol');
   assert(document.getElementById('skills-button').hidden&&document.getElementById('work-mode').hidden,'WSL unsupported controls remain hidden');
@@ -78,5 +83,41 @@ window.checkCodexEntries = async function checkCodexEntries() {
   assert(clientNavigation.provider==='codex','disabling WSL keeps the native Codex page');assert(currentId===null,'disabling the current environment closes its live chat view');
   await filter('all');assert(rows().every(row=>row.dataset.host==='local'),'disabled WSL disappears from the combined list');
   assert(!document.querySelector('.client-disable-dialog'),'WSL never offers a native exit');
-  return {passed,modelLabels:models.map(option=>option.textContent),application:'Codex',viewport:innerWidth};
+  const nativeProjects=await window.checkCodexProjectCreation({assert});
+  return {passed,nativeProjects,modelLabels:models.map(option=>option.textContent),application:'Codex',viewport:innerWidth};
+};
+
+
+// Uses the native CLI environments advertised by smoke-wsl-app-ui.cjs.
+// Creation requests reach only that loopback fixture and never start a model turn.
+window.checkCodexProjectCreation=async function({assert:report}={}){
+  let passed=0;const assert=(value,message)=>{if(!value)throw Error(message);passed++;report?.(value,message);};
+  const hosts=[{host:'local',name:'local-cli-project',home:'/Users/fixture/projects'},{host:'fixture-ssh',name:'ssh-cli-project',home:'/srv/fixture/projects'}];
+  document.getElementById('source-filter').value='cli';await document.getElementById('source-filter').onchange();
+  for(const target of hosts){
+    await document.getElementById('new-chat').onclick();
+    const dialog=document.getElementById('new-chat-dialog'),entry=document.getElementById('new-chat-entry'),project=document.getElementById('new-chat-project');
+    assert(document.getElementById('new-chat-type').value==='cli','CLI list defaults creation to native Codex CLI');
+    assert(!document.getElementById('new-chat-entry-label').hidden,'configured native environments have one explicit selector');
+    assert([...entry.options].map(option=>option.value).join('|')==='cli|local|cli|fixture-ssh','only CLI environments appear in the native CLI picker');
+    entry.value='cli|'+target.host;await entry.onchange();
+    assert(document.getElementById('new-chat-directory-host').value===target.host,'project directory host follows the selected native environment');
+    assert(project.options.length===1&&project.value==='__directory__','a CLI environment with no saved projects offers a new directory');
+    assert(document.getElementById('new-chat-submit').disabled,'a CLI chat cannot be created until its directory is selected');
+    await document.getElementById('new-chat-directory-browse').onclick();
+    assert(document.getElementById('folder-picker').open&&folderPickerData.path===target.home,'shared directory picker opens in the selected native environment');
+    assert(document.getElementById('folder-picker-environment').textContent.includes(target.host==='local'?'此电脑':'Research server'),'directory picker displays the native environment identity');
+    assert(!document.getElementById('folder-picker-new-folder').open,'native directory creation begins collapsed');
+    document.getElementById('folder-picker-new-folder').open=true;document.getElementById('folder-picker-name').value=target.name;await document.getElementById('folder-picker-create').onclick();
+    assert(folderPickerData.path===target.home+'/'+target.name,'native directory creation keeps the selected environment and parent');
+    document.getElementById('folder-picker-select').onclick();
+    assert(project.value==='__directory__'&&!document.getElementById('new-chat-submit').disabled,'selecting a native folder readies the existing form');
+    assert(document.getElementById('new-chat-location-summary').textContent==='projects / '+target.name,'native project paths have concise summaries');
+    assert(dialog.scrollWidth<=dialog.clientWidth+1,'native creation form fits the current viewport');
+    document.getElementById('new-chat-title').value='Synthetic '+target.name;
+    await document.getElementById('new-chat-form').onsubmit({preventDefault(){}});
+    assert(!dialog.open&&currentHost===target.host,'native CLI creation opens the original environment');
+    assert(state?.access?.source==='cli','created native CLI chat retains CLI execution identity');
+  }
+  return {passed,environments:hosts.map(row=>row.host),creationRequests:2};
 };

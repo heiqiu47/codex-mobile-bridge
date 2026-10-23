@@ -38,3 +38,24 @@
 它创建独立界面，所有历史与 workspace 请求均为合成只读结果；不访问真实会话。
 分别在宽屏与 390 px 下验证首屏、旧页追加、滚动位置、文件引用、当前状态及草稿保留。
 断言使用当前消息节点，因为文件引用更新可能合法地替换旧 DOM 节点。
+
+
+## 新建聊天与项目目录
+
+`project-creation.browser.js` 在已加载生产 Web 脚本的隔离 loopback 页面中运行。
+通过浏览器驱动读取并注入脚本后，调用并等待
+`runProjectCreationBrowserChecks({language:'zh',provider:'claude',keepOpen:true})`。
+`language` 支持 `zh` / `en`，`provider` 支持 `claude` / `deepseek`；
+`folder:true` 会在检查结束时停留于共享目录弹窗，便于视觉验收。
+`keepOpen:true` 保留预览，结束时调用 `window.__projectCreationPreview.cleanup()`；默认自动清理。
+分别在 320 px、390 px 和宽屏下运行中英检查，核验短路径、环境身份、首条消息要求、折叠新建文件夹和横向溢出。
+该脚本创建独立 `DesktopSessionsView`，所有请求由闭包合成；新建文件夹仅改变内存中的路径，拒绝项目登记和聊天创建，不访问实际客户端。
+
+Codex 的环境路由、目录登记和创建回执由 `codex-entries.browser.js` 检查，配套服务为
+`scripts/smoke-wsl-app-ui.cjs`。运行 `CMB_FIXTURE_ONLY=1 node scripts/smoke-wsl-app-ui.cjs`
+只启动合成 API 服务，随后由现有浏览器打开打印的 loopback 地址；不要对真实网关调用这些检查。
+页面启动后注入 `codex-entries.browser.js`，调用并等待 `checkCodexEntries()`，使用中文界面和全新的夹具状态。
+它覆盖单一 Codex 入口、WSL 扫描启停、列表过滤分页、WSL 新目录、本机及 SSH CLI 无既有项目时的新目录流程、模型标签和草稿隔离。
+`checkCodexProjectCreation()` 可在原生 Codex 接入已启用时单独检查本机与 SSH CLI 项目流程。
+合成服务核验 `environments`、目录 `host`、WSL `entry`、`kind:'cli'`、目录身份和创建请求；
+这些聊天创建只返回内存中的合成会话，不发送消息、不调用模型。修改服务端夹具后应重启服务，重新加载页面不能更新旧进程的路由。

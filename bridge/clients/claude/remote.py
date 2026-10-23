@@ -178,6 +178,25 @@ class RemoteClaudeCli:
                 rows.extend(future.result())
         return rows
 
+    def project_environments(self):
+        """Discover configured CLI hosts even when they have no saved project."""
+        if self.closed or self.hosts is None:
+            return []
+        rows = []
+        for host_id, host in self.hosts.hosts().items():
+            try:
+                result = _remote(host['alias'], {'operation': 'projects'}, timeout=12)
+            except BridgeUnavailable:
+                continue
+            found = result.get('profile')
+            if found and result.get('authReady'):
+                rows.append({'surface': 'cli', 'host': host_id, 'alias': host['alias'],
+                    'hostLabel': host.get('displayName') or host['alias'],
+                    'name': 'Claude Code · '+(host.get('displayName') or host['alias']),
+                    'origin': found['origin'], 'scope': host['alias']+'|'+found['origin'],
+                    'createRequiresMessage': True})
+        return rows
+
     def _get(self, sid):
         with self.lock:
             row = self.index.get(sid)
@@ -238,7 +257,7 @@ class RemoteClaudeCli:
             result.append({'name': item['name'], 'path': remote['path']})
         return result
 
-    def create(self, host_id, alias, origin, cwd, message):
+    def create(self, host_id, alias, origin, cwd, message, directory_identity=None):
         host = self.hosts.hosts().get(host_id) if self.hosts else None
         if not host or host['alias'] != alias:
             raise ValueError('原 SSH 主机配置已变化')
@@ -252,7 +271,8 @@ class RemoteClaudeCli:
                                    stderr=subprocess.DEVNULL, text=True, encoding='utf-8', bufsize=1)
         try:
             process.stdin.write(json.dumps({'operation': 'create', 'origin': origin,
-                'native': native, 'cwd': cwd, 'scope': DesktopUploads.scope('claude', sid)})+'\n')
+                'native': native, 'cwd': cwd, 'directoryIdentity': directory_identity,
+                'scope': DesktopUploads.scope('claude', sid)})+'\n')
             process.stdin.flush()
         except OSError:
             process.terminate()

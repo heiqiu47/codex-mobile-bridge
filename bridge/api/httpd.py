@@ -566,6 +566,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self.output(200, self.server.notifications.policy(
                     sid, 'desktop:' + provider, self.read_json() if write else None))
             desktop_workspace = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/(workspace(?:/[a-z-]+)?|terminal)', path)
+            desktop_projects = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/projects/(browse|register)', path)
+            if desktop_projects:
+                if not write:
+                    return self.output(405, {'error': '请通过目录选择器浏览'})
+                manager = self.server.desktop_sessions
+                if manager is None:
+                    return self.output(503, {'error': '桌面会话接入不可用'})
+                provider, action = desktop_projects.groups()
+                manager.require_enabled(provider)
+                body = self.read_json()
+                fields = ({'environment', 'path', 'hidden', 'name', 'identity'} if action == 'browse'
+                          else {'environment', 'path', 'createDirectory'})
+                if not isinstance(body, dict) or set(body) != fields:
+                    raise ValueError('项目目录请求无效')
+                if action == 'browse':
+                    return self.output(200, manager.project_directories(provider, **body))
+                return self.output(200, {'project': manager.register_project(provider,
+                    body['environment'], body['path'], body['createDirectory'])})
             if path.startswith('/api/desktop-sessions/') and not desktop_workspace:
                 parts = path.strip('/').split('/')
                 manager = self.server.desktop_sessions
@@ -810,10 +828,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.output(200, target.project_directories(**body))
                 if write:
                     body = self.read_json()
-                    if not isinstance(body, dict) or set(body) != {'path', 'createDirectory', 'host'}:
+                    if (not isinstance(body, dict) or not {'path', 'createDirectory', 'host'} <= set(body)
+                            or set(body) - {'path', 'createDirectory', 'host', 'kind'}):
                         raise ValueError('项目目录请求无效')
-                    return self.output(200, {'project': target.register_project(body['path'], body['createDirectory'], body['host'])})
-                return self.output(200, {'projects': target.projects()})
+                    options = {'kind': body['kind']} if 'kind' in body else {}
+                    return self.output(200, {'project': target.register_project(body['path'], body['createDirectory'], body['host'], **options)})
+                return self.output(200, {'projects': target.projects(),
+                    'environments': target.project_environments() if hasattr(target, 'project_environments') else []})
             if write and path == '/api/activity':
                 groups = self.read_json().get('hosts')
                 if not isinstance(groups, dict) or len(groups) > 20:

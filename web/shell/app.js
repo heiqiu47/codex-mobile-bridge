@@ -374,98 +374,96 @@ $('session-diagnostics-export').onclick=event=>{if(BridgeHost.isNativeApp()&&win
 $('archived').onchange=()=>loadList(true).catch(e=>toast(e.message));
 const listSync=window.BridgeListSync=new ListSync({root:$('sessions'),status:$('list-sync'),refresh:()=>loadList(true),visible:()=>!$('app').hidden&&$('sidebar').getBoundingClientRect().width>0,ready:()=>!listLoading&&document.activeElement!==$('search')});
 const contextUsageControl=new ContextUsageControl();$('permissions-button').after(contextUsageControl.button);
-let newChatProjects=[],newChatEntry='desktop',creatingChat=false,approvalBusy=0;
+let newChatProjects=[],newChatEnvironments=[],newChatCanBrowse=false,newChatEntry='desktop',newChatPreferredHost='local',creatingChat=false,approvalBusy=0;
 const newChatUrl=path=>path+(newChatEntry.startsWith('wsl:')?'?entry='+encodeURIComponent(newChatEntry):'');
 const independentProject=()=>newChatEntry.startsWith('wsl:')?newChatEntry+'|independent':'local|independent';
 $('new-chat-title').value=t('新聊天');
 $('new-chat-title').oninput=()=>{$('new-chat-title').dataset.edited='true';};
 let newChatRequest=0;
+function newChatEnvironment(){return newChatEnvironments.find(row=>row.key===$('new-chat-entry').value)||{host:newChatEntry.startsWith('wsl:')?newChatEntry:'local',name:newChatEntry.startsWith('wsl:')?wslEntries().find(row=>row.id===newChatEntry)?.name:t('此电脑')};}
+function renderNewChatProjects(){
+  const kind=$('new-chat-type').value,wsl=kind==='wsl',environment=newChatEnvironment(),host=environment.host;
+  $('new-chat-directory-host').replaceChildren(new Option(environment.name||environment.hostLabel||host,host));
+  $('new-chat-directory').hidden=true;$('new-chat-directory-path').value='';
+  const projects=newChatProjects.filter(row=>(wsl||(row.type||'desktop')===kind)&&row.host===host);
+  $('new-chat-project').replaceChildren();
+  if(wsl||kind==='desktop'&&host==='local')$('new-chat-project').append(new Option(t('不选择项目'),independentProject()));
+  if(newChatCanBrowse)$('new-chat-project').append(new Option(t('选择其他目录…'),'__directory__'));
+  $('new-chat-directory-browse').hidden=!newChatCanBrowse;$('new-chat-directory-browse').disabled=false;
+  for(const project of projects)$('new-chat-project').append(new Option(project.name,project.key));
+  const selected=listRows.find(row=>row.id===currentId&&row.host===currentHost)?.projectKey;
+  if(projects.some(row=>row.key===selected))$('new-chat-project').value=selected;
+  else if(projects.length&&!wsl)$('new-chat-project').value=projects[0].key;
+  $('new-chat-project').onchange();
+  if(!wsl&&!newChatEnvironments.length){$('new-chat-directory-browse').hidden=true;$('new-chat-project').replaceChildren();$('new-chat-submit').disabled=true;}
+}
 async function loadNewChatProjects(){
   const generation=++newChatRequest,kind=$('new-chat-type').value,wsl=kind==='wsl';
   newChatEntry=wsl?$('new-chat-entry').value:'desktop';
   const entry=newChatEntry;
-  $('new-chat-entry-label').hidden=!wsl;
-  $('new-chat-directory').hidden=true;$('new-chat-directory-path').value='';
-  $('new-chat-description').textContent=t(wsl?'选择 WSL 中的已有项目、浏览目录新建项目，或创建独立聊天。创建后可直接发送消息，无需打开终端。':'选择已有项目，或不选择项目创建独立聊天。电脑会打开这条聊天。');
-  $('new-chat-help').hidden=wsl;
-  $('new-chat-help').textContent=t(kind==='cli'?'选择已有 CLI 项目目录，在此创建聊天。':'选择已有项目，或不选择项目创建独立聊天。电脑会打开这条聊天。');
-  $('new-chat-error').textContent='';$('new-chat-submit').disabled=true;
+  $('new-chat-description').textContent=wsl?'Codex · WSL':kind==='cli'?'Codex CLI':'Codex App';
+  $('new-chat-error').textContent='';$('new-chat-submit').disabled=true;$('new-chat-directory-browse').disabled=true;
   $('new-chat-project').replaceChildren();$('new-chat-path').textContent=t('正在读取电脑项目…');
-  if(wsl&&!entry){$('new-chat-path').textContent='';return;}
-  if(wsl){
-    newChatProjects=[];
-    $('new-chat-project').append(new Option(t('不选择项目'),independentProject()),new Option(t('指定目录 / 新建项目'),'__directory__'));
-    $('new-chat-directory-host').replaceChildren(new Option(wslEntries().find(row=>row.id===entry)?.name||'WSL',entry));
-    $('new-chat-project').onchange();$('new-chat-submit').textContent=t('创建聊天');
-  }
+  $('new-chat-location-summary').textContent=t('正在读取电脑项目…');$('new-chat-location').hidden=false;
+  $('new-chat-submit').textContent=t(wsl||kind==='cli'?'创建聊天':'创建并打开');
+  if(wsl&&!entry)return;
+  if(wsl){newChatProjects=[];newChatEnvironments=[];newChatCanBrowse=true;$('new-chat-entry-label').hidden=false;renderNewChatProjects();}
   try{
-    const projects=(await api(newChatUrl('/api/projects'))).projects;
+    const value=await api(newChatUrl('/api/projects'));
     if(generation!==newChatRequest||entry!==newChatEntry||!$('new-chat-dialog').open)return;
-    newChatProjects=projects;$('new-chat-project').replaceChildren();
-    if(wsl||kind==='desktop')$('new-chat-project').append(new Option(t('不选择项目'),independentProject()));
-    if(kind!=='cli')$('new-chat-project').append(new Option(t('指定目录 / 新建项目'),'__directory__'));
-    for(const project of newChatProjects.filter(p=>wsl||(p.type||'desktop')===kind))$('new-chat-project').append(new Option(project.name+' · '+(project.host==='local'?t('此电脑'):project.hostLabel),project.key));
-    const hosts=new Map(wsl?[[entry,wslEntries().find(row=>row.id===entry)?.name||'WSL']]:[['local',t('此电脑')]]);
-    for(const project of newChatProjects)hosts.set(project.host,project.host==='local'?t('此电脑'):project.hostLabel);
-    $('new-chat-directory-host').replaceChildren(...[...hosts].map(([id,name])=>new Option(name,id)));
-    const selected=listRows.find(row=>row.id===currentId&&row.host===currentHost)?.projectKey;
-    if([...$('new-chat-project').options].some(option=>option.value===selected))$('new-chat-project').value=selected;
-    $('new-chat-project').onchange();
-    $('new-chat-submit').textContent=t(wsl||kind==='cli'?'创建聊天':'创建并打开');
-  }catch(e){if(generation===newChatRequest){$('new-chat-error').textContent=t(e.message);$('new-chat-path').textContent='';}}
+    newChatProjects=value.projects||[];newChatCanBrowse=wsl||kind==='desktop'||Array.isArray(value.environments);
+    if(!wsl){
+      const environments=Array.isArray(value.environments)?value.environments.filter(row=>(row.type||row.surface)===kind):[];
+      if(!Array.isArray(value.environments)){const hosts=new Map([['local',t('此电脑')]]);for(const row of newChatProjects)hosts.set(row.host,row.host==='local'?t('此电脑'):row.hostLabel||row.host);for(const [host,name] of hosts)environments.push({key:kind+'|'+host,host,name});}
+      newChatEnvironments=environments;const previous=$('new-chat-entry').value;
+      $('new-chat-entry').replaceChildren(...environments.map(row=>new Option(row.host==='local'?(row.name||row.hostLabel||t('此电脑')).replace('此电脑',t('此电脑')):row.name||row.hostLabel,row.key)));
+      const selected=environments.find(row=>row.key===previous)||environments.find(row=>row.host===newChatPreferredHost);
+      if(selected)$('new-chat-entry').value=selected.key;
+      $('new-chat-entry-label').hidden=environments.length<2;
+    }
+    renderNewChatProjects();
+  }catch(error){if(generation===newChatRequest){$('new-chat-error').textContent=t(error.message);$('new-chat-path').textContent='';}}
 }
 $('new-chat').onclick=async()=>{
-  const entries=wslEntries(),native=codexEntries().find(row=>row.id==='desktop');
-  const type=$('new-chat-type');
+  const entries=wslEntries(),native=codexEntries().find(row=>row.id==='desktop'),type=$('new-chat-type');
   for(const option of type.options)option.disabled=option.value==='wsl'?!entries.length:native?.enabled===false;
   $('new-chat-entry').replaceChildren(...entries.map(row=>new Option(row.name||row.label,row.id)));
   const preferred=currentHost.startsWith('wsl:')?currentHost:preferredWslEntry;
   if(entries.some(row=>row.id===preferred))$('new-chat-entry').value=preferred;
+  newChatPreferredHost=currentHost;newChatEnvironments=[];
   type.value=native?.enabled===false&&entries.length?'wsl':listSource==='wsl'&&entries.length?'wsl':listSource==='cli'?'cli':listSource==='all'&&currentHost.startsWith('wsl:')&&entries.length?'wsl':'desktop';
-  $('new-chat-dialog').showModal();
-  await loadNewChatProjects();
+  $('new-chat-dialog').showModal();await loadNewChatProjects();
 };
-$('new-chat-type').onchange=loadNewChatProjects;
-$('new-chat-entry').onchange=()=>{preferredWslEntry=$('new-chat-entry').value;return loadNewChatProjects();};
-$('new-chat-project').onchange=()=>{const value=$('new-chat-project').value,custom=value==='__directory__';$('new-chat-directory').hidden=!custom;$('new-chat-directory-path').required=custom;$('new-chat-path').textContent=custom?'':value===independentProject()?t(newChatEntry.startsWith('wsl:')?'在 WSL 中创建独立聊天':'在此电脑创建独立聊天'):newChatProjects.find(p=>p.key===value)?.cwd||'';$('new-chat-submit').disabled=!value||(custom&&!$('new-chat-directory-path').value);};
-let folderPickerData=null,folderPickerBusy=false;
-function folderPickerControls(){
-  $('folder-picker').querySelectorAll('button,input,select').forEach(node=>node.disabled=folderPickerBusy);
-  $('folder-picker-up').disabled=folderPickerBusy||!folderPickerData?.parent;
-  $('folder-picker-select').disabled=folderPickerBusy||!folderPickerData;
-}
-async function folderNavigate(path=null,name=null){
-  if(folderPickerBusy)return;
-  folderPickerBusy=true;folderPickerControls();$('folder-picker-error').textContent='';
-  try{
-    const value=await api(newChatUrl('/api/projects/browse'),{host:$('new-chat-directory-host').value,path,hidden:$('folder-picker-hidden').checked,name,identity:name?folderPickerData?.identity:null});
-    folderPickerData=value;$('folder-picker-location').textContent=value.path;
-    $('folder-picker-roots').replaceChildren(new Option(t('磁盘与文件系统'),''),...value.roots.map(root=>new Option(root.name,root.path)));
-    $('folder-picker-list').replaceChildren();
-    for(const directory of value.directories){const button=el('button','folder-picker-item','📁 '+directory.name);button.type='button';button.onclick=()=>folderNavigate(directory.path);$('folder-picker-list').append(button);}
-    if(!value.directories.length)$('folder-picker-list').append(el('p','muted',t('此目录没有子文件夹')));
-    if(name)$('folder-picker-name').value='';
-  }catch(error){$('folder-picker-error').textContent=t(error.message);}
-  finally{folderPickerBusy=false;folderPickerControls();}
-}
-$('new-chat-directory-host').onchange=()=>{$('new-chat-directory-path').value='';folderPickerData=null;if($('new-chat-project').value==='__directory__')$('new-chat-submit').disabled=true;};
+$('new-chat-type').onchange=()=>{
+  if($('new-chat-type').value==='wsl'){$('new-chat-entry').replaceChildren(...wslEntries().map(row=>new Option(row.name||row.label,row.id)));if(wslEntries().some(row=>row.id===preferredWslEntry))$('new-chat-entry').value=preferredWslEntry;}
+  return loadNewChatProjects();
+};
+$('new-chat-entry').onchange=()=>{if($('new-chat-type').value==='wsl'){preferredWslEntry=$('new-chat-entry').value;return loadNewChatProjects();}newChatRequest++;renderNewChatProjects();};
+$('new-chat-project').onchange=()=>{
+  const value=$('new-chat-project').value,custom=value==='__directory__',path=custom?$('new-chat-directory-path').value:newChatProjects.find(row=>row.key===value)?.cwd||'';
+  $('new-chat-directory').hidden=!custom;$('new-chat-directory-path').required=custom;
+  $('new-chat-path').textContent=path;
+  $('new-chat-location').hidden=!path;
+  $('new-chat-location-summary').textContent=path.split(/[\\/]/).filter(Boolean).slice(-2).join(' / ')||path;
+  $('new-chat-location').open=false;
+  const browseLabel=$('new-chat-directory-browse').querySelector('[data-i18n]');browseLabel.dataset.i18n=path?'更换目录':'选择目录';browseLabel.textContent=t(browseLabel.dataset.i18n);
+  $('new-chat-submit').disabled=!value||(custom&&!path);
+};
+let folderPickerData=null;
+$('new-chat-directory-host').onchange=()=>{$('new-chat-directory-path').value='';$('new-chat-project').onchange();};
 $('new-chat-directory-browse').onclick=async()=>{
-  folderPickerData=null;$('folder-picker-name').value='';$('folder-picker-hidden').checked=false;$('folder-picker-list').replaceChildren();$('folder-picker-location').textContent=t('正在读取目录…');
-  $('folder-picker').showModal();await folderNavigate($('new-chat-directory-path').value||null);
+  if(!newChatCanBrowse)return;
+  const request=newChatRequest,entry=newChatEntry,host=$('new-chat-directory-host').value,url=newChatUrl('/api/projects/browse');
+  folderPickerData=null;
+  return window.BridgeProjectPicker.choose({environment:host==='local'?(newChatEnvironment().name||'此电脑').replace('此电脑',t('此电脑')):newChatEnvironment().name,path:$('new-chat-directory-path').value||newChatProjects.find(row=>row.key===$('new-chat-project').value)?.cwd||null,
+    request:body=>api(url,{host,...body}),isCurrent:()=>request===newChatRequest&&entry===newChatEntry&&$('new-chat-dialog').open,
+    onChange:value=>folderPickerData=value,onSelect:value=>{$('new-chat-project').value='__directory__';$('new-chat-directory-path').value=value.path;$('new-chat-project').onchange();}});
 };
-$('folder-picker-home').onclick=()=>folderNavigate(folderPickerData?.home||null);
-$('folder-picker-up').onclick=()=>folderPickerData?.parent&&folderNavigate(folderPickerData.parent);
-$('folder-picker-roots').onchange=()=>{if($('folder-picker-roots').value)folderNavigate($('folder-picker-roots').value);};
-$('folder-picker-hidden').onchange=()=>folderNavigate(folderPickerData?.path||null);
-$('folder-picker-create').onclick=()=>{const name=$('folder-picker-name').value.trim();if(!name){$('folder-picker-error').textContent=t('请输入新文件夹名称');return;}if(folderPickerData)return folderNavigate(folderPickerData.path,name);};
-$('folder-picker-name').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();$('folder-picker-create').onclick();}};
-$('folder-picker-select').onclick=()=>{if(!folderPickerData||folderPickerBusy)return;$('new-chat-directory-path').value=folderPickerData.path;$('new-chat-directory-path').dispatchEvent(new Event('input'));$('new-chat-submit').disabled=false;$('folder-picker').close();};
-$('folder-picker').addEventListener('cancel',event=>{if(folderPickerBusy)event.preventDefault();});
 $('new-chat-dialog').addEventListener('cancel',event=>{if(creatingChat)event.preventDefault();});
 $('new-chat-form').onsubmit=async event=>{
   event.preventDefault();if(creatingChat)return;
   const project=$('new-chat-project').value,title=$('new-chat-title').value.trim(),kind=newChatEntry.startsWith('wsl:')?'wsl':$('new-chat-type').value;
-  const directory=project==='__directory__'?{path:$('new-chat-directory-path').value.trim(),createDirectory:false,host:$('new-chat-directory-host').value}:null;
+  const directory=project==='__directory__'?{path:$('new-chat-directory-path').value.trim(),createDirectory:false,host:$('new-chat-directory-host').value,...(kind==='cli'?{kind:'cli'}:{})}:null;
   if(directory&&!directory.path){$('new-chat-error').textContent=t('请输入完整的项目目录');return;}
   const selection=directory?JSON.stringify(directory):project;
   if(!project||!title){$('new-chat-error').textContent=t('请选择项目或不选择项目，并填写聊天名称。');return;}
@@ -1035,10 +1033,11 @@ $('phone-language').onchange=()=>{
   BridgeI18n.setLanguage($('phone-language').value);BridgeI18n.apply();if(typeof accountsPanel!=="undefined")accountsPanel?.render();renderSourceFilter();renderList();
   if(!$('new-chat-title').dataset.edited)$('new-chat-title').value=t('新聊天');
   $('new-chat-help').textContent=t($('new-chat-type').value==='cli'?'选择已有 CLI 项目目录，在此创建聊天。':'选择已有项目，或不选择项目创建独立聊天。电脑会打开这条聊天。');
-  $('new-chat-submit').textContent=t($('new-chat-type').value==='cli'?'创建聊天':'创建并打开');
+  $('new-chat-submit').textContent=t($('new-chat-type').value==='desktop'?'创建并打开':'创建聊天');
   renderLoginStatus();
   for(const id of ['login-error','send-error','model-error','skills-error','new-chat-error','notify-error','rename-error','pushplus-error','toast'])$(id).textContent=t($(id).textContent);
-  for(const option of $('new-chat-project').options){const project=newChatProjects.find(p=>p.key===option.value);if(project)option.textContent=project.name+' · '+(project.host==='local'?t('此电脑'):project.hostLabel);}
+  for(const option of $('new-chat-project').options){const project=newChatProjects.find(p=>p.key===option.value);option.textContent=project?project.name:t(option.value==='__directory__'?'选择其他目录…':'不选择项目');}
+  for(const option of $('new-chat-entry').options){const environment=newChatEnvironments.find(row=>row.key===option.value);if(environment?.host==='local')option.textContent=(environment.name||environment.hostLabel||'此电脑').replace('此电脑',t('此电脑'));}
   if($('model-select').querySelector('[value=__custom__]'))$('model-select').querySelector('[value=__custom__]').textContent=t('自定义模型…');
   if($('model-dialog').open){renderModelChoices();renderEffortChoices();}
   if(state){approvalStamp='';renderState(state);[...$('approvals').querySelectorAll('input,textarea,select')].forEach((node,i)=>{if(replies[i]){node.value=replies[i].value;node.checked=replies[i].checked;if(node.tagName==='SELECT')node.dispatchEvent(new Event('change'));}});}

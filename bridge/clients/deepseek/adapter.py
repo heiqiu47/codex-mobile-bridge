@@ -173,6 +173,10 @@ class DeepSeek:
         return {'installed': False, 'restartRequired': True}
 
     def call(self, action, sid=None, body=None):
+        if action == 'create' and body and body.get('directoryProject'):
+            project = body['directoryProject']
+            body = {**body, 'projectDirectory': project['directoryIdentity']}
+            body.pop('directoryProject')
         try:
             config = json.loads((self.directory/'connection.json').read_text())
             endpoint = json.loads((self.directory/'endpoint.json').read_text())
@@ -221,6 +225,14 @@ class DeepSeek:
                 self.use_existing(self.directory)
             value['updateRequired'] = self.legacy_protocol or value.get('bridgeRevision') != BRIDGE_REVISION
         return value
+
+    def project_environments(self):
+        state = self.call('status')
+        if not state.get('connected') or not state.get('projectDirectories'):
+            return []
+        return [{'surface': 'desktop', 'host': 'local', 'hostLabel': '此电脑',
+                 'name': 'DSH Desktop · 此电脑', 'scope': str(self.home),
+                 'createRequiresMessage': False}]
 
 
 def turns(records):

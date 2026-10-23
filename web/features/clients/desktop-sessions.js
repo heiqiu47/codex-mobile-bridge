@@ -418,13 +418,56 @@ class DesktopSessionsView {
   }
   async create(){
     if(this.previewOnly)return;
-    const generation=this.generation,provider=this.provider,dialog=this.dialog('新建聊天'),loading=this.translated('p','正在读取…','muted');const heading=dialog.querySelector('h2');heading.classList.add('dialog-content-start');heading.tabIndex=-1;heading.autofocus=true;dialog.append(this.node('p','muted',(provider==='claude'?'Claude':'DeepSeek Harness')+' · '+BridgeI18n.t('当前客户端')),loading);dialog.showModal();
-    try{const value=await this.request(this.path('projects',null));if(generation!==this.generation||!dialog.open)return dialog.close();loading.remove();const projects=value.projects||[],form=this.node('form'),surface=this.node('select'),project=this.node('select'),title=this.node('input'),message=this.node('textarea'),error=this.node('p','error');this.label(project,'项目');this.label(surface,'会话类型');title.maxLength=120;title.required=true;title.value=BridgeI18n.t('新会话');this.label(title,'聊天名称');message.rows=3;message.maxLength=100000;message.required=provider==='claude'||value.createRequiresMessage===true;this.label(message,'首条消息');
-      for(const kind of ['code','cowork','cli'])if(projects.some(row=>row.surface===kind))surface.add(new Option(kind==='code'?'Code':kind==='cowork'?'Cowork':'Claude Code CLI',kind));surface.value=[...surface.options].some(row=>row.value===this.state?.backend)?this.state.backend:surface.options[0]?.value||'';
-      const create=this.button(message.required?'创建并发送':'创建并打开',()=>{});create.type='submit';create.className='primary';let titleField;const sync=()=>{project.replaceChildren();for(const row of projects.filter(row=>provider!=='claude'||row.surface===surface.value))project.add(new Option(row.name+' · '+row.cwd,row.key));const cli=provider==='claude'&&surface.value==='cli';title.required=!cli;titleField.hidden=cli;create.disabled=!project.options.length;};surface.onchange=sync;
-      const field=(label,input)=>{const node=this.translated('label',label);node.append(input);form.append(node);return node;};if(provider==='claude')field('会话类型',surface);field('项目',project);titleField=field('聊天名称',title);if(message.required)field('首条消息',message);sync();
-      form.append(this.node('p','muted',BridgeI18n.t(projects.length?'沿用所选项目与客户端配置':'请先在客户端创建一个项目会话')),error,create);form.onsubmit=async event=>{event.preventDefault();if(generation!==this.generation)return dialog.close();const cli=provider==='claude'&&surface.value==='cli';if(!cli&&!title.value.trim()||message.required&&!message.value.trim()){error.textContent=BridgeI18n.t(cli?'请输入首条消息':message.required?'请填写聊天名称和首条消息':'请输入聊天名称');return;}create.disabled=true;const body={projectKey:project.value};if(!cli)body.title=title.value.trim();if(message.required)body.firstMessage=message.value.trim();const result=await this.mutate('create',body,null);if(result?.result?.id&&generation===this.generation){dialog.close();await this.open(result.result.id);}else{error.textContent=BridgeI18n.t('结果待核对，请检查原会话列表');create.disabled=false;}};dialog.append(form);
-    }catch(error){if(dialog.open){loading.textContent=BridgeI18n.t(error.message);loading.className='error';}}
+    const generation=this.generation,provider=this.provider,dialog=this.dialog('新建聊天'),loading=this.translated('p','正在读取…','muted');
+    dialog.classList.add('project-picker');const heading=dialog.querySelector('h2');heading.classList.add('dialog-content-start');heading.tabIndex=-1;heading.autofocus=true;
+    const clientLabel=this.node('p','project-picker-client',provider==='claude'?'Claude':'DeepSeek Harness');dialog.append(clientLabel,loading);dialog.showModal();
+    const current=()=>generation===this.generation&&provider===this.provider&&dialog.open;
+    try{
+      const value=await this.request(this.path('projects',null));if(!current())return dialog.close();loading.remove();
+      const projects=value.projects||[],canBrowse=Array.isArray(value.environments),environments=canBrowse?value.environments:provider==='claude'?['code','cowork','cli'].filter(kind=>projects.some(row=>row.surface===kind)).map(kind=>({key:kind,surface:kind,name:kind==='code'?'Claude · Code':kind==='cowork'?'Claude · Cowork':'Claude Code CLI'})):[{key:'desktop',surface:'desktop',name:'DeepSeek Harness'}];
+      if(environments.length===1){const env=environments[0];clientLabel.textContent=env.host==='local'?(env.name||env.hostLabel||'此电脑').replace('此电脑',BridgeI18n.t('此电脑')):env.name||clientLabel.textContent;}
+      const form=this.node('form'),surface=this.node('select'),project=this.node('select'),title=this.node('input'),message=this.node('textarea'),error=this.node('p','error'),workspace=this.node('section','project-picker-workspace'),location=this.node('details','project-picker-location'),summary=this.node('summary'),fullPath=this.node('p','muted'),browse=this.button('选择目录',()=>chooseDirectory());
+      this.label(surface,'运行环境');this.label(project,'项目');title.maxLength=120;title.value=BridgeI18n.t('新会话');this.label(title,'聊天名称');message.rows=3;message.maxLength=100000;this.label(message,'首条消息');error.setAttribute('role','alert');browse.className='plain project-picker-browse';location.append(summary,fullPath);workspace.append(location,browse);
+      const field=(label,input,parent=form)=>{const node=this.node('label');node.append(this.translated('span',label),input);parent.append(node);return node;};
+      for(const row of environments)surface.add(new Option(row.host==='local'?(row.name||row.hostLabel||row.key).replace('此电脑',BridgeI18n.t('此电脑')):row.name||row.hostLabel||row.key,row.key));
+      const preferred=environments.find(row=>row.surface===this.state?.backend&&(!this.state?.host||row.host===this.state.host));if(preferred)surface.value=preferred.key;
+      const environmentField=field('运行环境',surface);environmentField.hidden=environments.length<2;field('项目',project,workspace);workspace.append(location,browse);form.append(workspace);const titleField=field('聊天名称',title),messageField=field('首条消息',message),actions=this.node('div','project-picker-actions'),cancel=this.button('取消',()=>dialog.close()),create=this.button('创建并打开',()=>{});create.type='submit';create.className='primary';actions.append(cancel,create);form.append(error,actions);dialog.append(form);
+      let directory=null,saving=false;
+      const environment=()=>environments.find(row=>row.key===surface.value),matches=row=>canBrowse?row.environment===surface.value||!row.environment&&row.surface===environment()?.surface&&(!row.host||row.host===environment()?.host):provider!=='claude'||row.surface===surface.value;
+      const selected=()=>projects.find(row=>row.key===project.value),path=()=>project.value==='__directory__'?directory?.path:selected()?.cwd;
+      const update=()=>{
+        const env=environment(),cli=env?.surface==='cli',requiresMessage=env?.createRequiresMessage??(provider==='claude'||value.createRequiresMessage===true),cwd=path()||'';
+        title.required=!cli;titleField.hidden=cli;message.required=requiresMessage;messageField.hidden=!requiresMessage;
+        create.dataset.i18n=requiresMessage?'创建并发送':'创建并打开';create.textContent=BridgeI18n.t(create.dataset.i18n);create.disabled=saving||!env||!project.value||project.value==='__directory__'&&!directory;
+        location.hidden=!cwd;summary.textContent=cwd.split(/[\\/]/).filter(Boolean).slice(-2).join(' / ')||cwd;fullPath.textContent=cwd;location.open=false;browse.hidden=!canBrowse||!env;browse.dataset.i18n=cwd?'更换目录':'选择目录';browse.textContent=BridgeI18n.t(browse.dataset.i18n);
+      };
+      const sync=()=>{directory=null;error.textContent='';project.replaceChildren();for(const row of projects.filter(matches))project.add(new Option(row.name,row.key));if(canBrowse&&environment())project.add(new Option(BridgeI18n.t('选择其他目录…'),'__directory__'));update();};
+      const chooseDirectory=()=>{
+        const env=environment();if(!env||saving)return;
+        return window.BridgeProjectPicker.choose({environment:env.host==='local'?(env.name||env.hostLabel||'此电脑').replace('此电脑',BridgeI18n.t('此电脑')):env.name,path:path()||null,isCurrent:()=>current()&&environment()?.key===env.key,
+          request:body=>this.request(this.path('projects/browse',null,provider),{environment:env.key,...body}),
+          onSelect:chosen=>{directory=chosen;project.value='__directory__';update();}});
+      };
+      surface.onchange=sync;project.onchange=update;sync();
+      if(!environments.length||!projects.length&&!canBrowse)error.textContent=BridgeI18n.t('请先在客户端创建一个项目会话');
+      form.onsubmit=async event=>{
+        event.preventDefault();if(!current())return dialog.close();if(saving||create.disabled)return;
+        const env=environment(),cli=env?.surface==='cli';
+        if(!cli&&!title.value.trim()||message.required&&!message.value.trim()){error.textContent=BridgeI18n.t(cli?'请输入首条消息':message.required?'请填写聊天名称和首条消息':'请输入聊天名称');return;}
+        saving=true;error.textContent='';form.querySelectorAll('input,textarea,select,button').forEach(node=>node.disabled=true);
+        try{
+          let projectKey=project.value;
+          if(projectKey==='__directory__'){
+            const registered=await this.request(this.path('projects/register',null,provider),{environment:env.key,path:directory.path,createDirectory:false});
+            if(!current())return;const row=registered.project;projects.push(row);project.add(new Option(row.name,row.key));project.value=row.key;projectKey=row.key;
+          }
+          const body={projectKey};if(!cli)body.title=title.value.trim();if(message.required)body.firstMessage=message.value.trim();
+          const result=await this.mutate('create',body,null);
+          if(result?.result?.id&&current()){dialog.close();await this.open(result.result.id);}else if(current())error.textContent=BridgeI18n.t('结果待核对，请检查原会话列表');
+        }catch(failure){if(current())error.textContent=BridgeI18n.t(failure.message);}
+        finally{saving=false;if(current()){form.querySelectorAll('input,textarea,select,button').forEach(node=>node.disabled=false);update();}}
+      };
+    }catch(error){if(current()){loading.textContent=BridgeI18n.t(error.message);loading.className='error';}}
   }
   relabel(){this.renderConnectionStatus();this.listStamp='';this.requestStamp='';this.search.placeholder=BridgeI18n.t('搜索');this.input.placeholder=BridgeI18n.t('继续这条聊天…');[...this.mode.options].forEach((option,i)=>option.textContent=BridgeI18n.t(['发送新消息','完成后发送','补充当前任务'][i]));this.listMode.options[0].textContent=BridgeI18n.t('最近交互');this.listMode.options[1].textContent=BridgeI18n.t('按项目');this.renderList();this.attachments.render();this.updateComposer();this.renderMessages(this.lastMessages||[]);this.collapseComposer(this.composerBody.hidden);this.workbench.relabel();if(this.sid)this.renderNotice();if(this.sid)this.renderRequests(this.freshDetail?this.state?.requests||[]:[]);}
 }

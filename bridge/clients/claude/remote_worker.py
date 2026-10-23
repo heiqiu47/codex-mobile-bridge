@@ -63,8 +63,8 @@ def draft_account_identity(directory, cwd=None, environment=None):
     return ''
 
 
-def auth_status(binary, directory):
-    env = os.environ.copy()
+def auth_status(binary, directory, environment=None):
+    env = dict(os.environ if environment is None else environment)
     env['CLAUDE_CONFIG_DIR'] = str(directory)
     try:
         result = subprocess.run([binary, 'auth', 'status', '--json'], env=env,
@@ -75,15 +75,17 @@ def auth_status(binary, directory):
         return {}
 
 
-def auth_fingerprint(binary, directory):
-    status = auth_status(binary, directory)
+def auth_fingerprint(binary, directory, environment=None):
+    status = (auth_status(binary, directory) if environment is None
+              else auth_status(binary, directory, environment))
     stable = {key: status[key] for key in ('authMethod', 'apiProvider', 'email', 'accountId',
               'accountUuid', 'organizationId', 'organizationUuid', 'orgId', 'workspaceId')
               if isinstance(status.get(key), str) and status[key]}
     credentials = Path(directory)/'.credentials.json'
-    ambient = {key: os.environ[key] for key in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+    environment = os.environ if environment is None else environment
+    ambient = {key: environment[key] for key in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
                'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS')
-               if os.environ.get(key)}
+               if environment.get(key)}
     identity = {'loggedIn': status.get('loggedIn') is True, 'stable': stable,
                 'ambient': ambient}
     if not any(key in stable for key in ('email', 'accountId', 'accountUuid',
@@ -523,6 +525,10 @@ def create(request):
     cwd = Path(request['cwd']).resolve(strict=True)
     if not cwd.is_dir():
         raise ValueError('原项目目录不可用')
+    if request.get('directoryIdentity') is not None:
+        stat = cwd.stat()
+        if request['directoryIdentity'] != {'cwd': str(cwd), 'device': stat.st_dev, 'inode': stat.st_ino}:
+            raise ValueError('项目目录已变化，请重新选择目录')
     directory = upload_root(found, request['scope'])
     if profile() != found:
         raise ValueError('原 Claude Code 配置已变化或不可用')

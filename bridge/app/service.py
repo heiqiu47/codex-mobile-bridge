@@ -540,9 +540,9 @@ class Bridge:
     def projects(self):
         projects = [dict(project, type=project.get('type', 'desktop'))
                     for project in self.directory_projects.list({'local', *self.hosts.hosts()})]
-        known = {(project['host'], project.get('cwd')) for project in projects}
+        known = {(project['host'], project.get('cwd'), project.get('type', 'desktop')) for project in projects}
         for project in self.hosts.projects():
-            identity = (project['host'], project.get('cwd'))
+            identity = (project['host'], project.get('cwd'), 'desktop')
             if identity not in known:
                 projects.append(dict(project, type='desktop'))
                 known.add(identity)
@@ -557,7 +557,7 @@ class Bridge:
                 return []
         with ThreadPoolExecutor(max_workers=min(4, len(candidates))) as pool:
             groups = list(pool.map(read, candidates))
-        seen = set()
+        seen = {(project['host'], project['cwd']) for project in projects if project.get('type') == 'cli'}
         for (host, bridge), rows in zip(candidates, groups):
             for row in rows:
                 cwd = row.get('cwd')
@@ -568,10 +568,22 @@ class Bridge:
                 projects.append({'key': 'cli|' + host + '|' + hashlib.sha256(cwd.encode()).hexdigest()[:20],
                                  'type': 'cli', 'host': host, 'hostLabel': label,
                                  'name': cwd.rstrip('/').rsplit('/', 1)[-1] or cwd, 'cwd': cwd})
+        for project in projects:
+            project['environment'] = project.get('type', 'desktop') + '|' + project['host']
         return projects
 
+    def project_environments(self):
+        hosts = {'local': {'displayName': '此电脑'}, **self.hosts.hosts()}
+        return [{'key': kind + '|' + host, 'type': kind, 'surface': kind, 'host': host,
+                 'hostLabel': info.get('displayName') or info.get('alias') or host,
+                 'name': (info.get('displayName') or info.get('alias') or host) +
+                         (' · Codex App' if kind == 'desktop' else ' · Codex CLI')}
+                for host, info in hosts.items() for kind in ('desktop', 'cli')]
+
     @operation
-    def register_project(self, path, create=False, host='local'):
+    def register_project(self, path, create=False, host='local', kind='desktop'):
+        if kind not in ('desktop', 'cli'):
+            raise ValueError('未知聊天类型')
         if host == 'local':
             identity = project_directory(path, create)
             label = '此电脑'
@@ -582,7 +594,9 @@ class Bridge:
             source += '\nprint(json.dumps(project_directory(**' + payload({'value': path, 'create': create}) + ')))\n'
             identity = ssh_read(info['alias'], source)
             label = info.get('displayName') or info['alias']
-        return self.directory_projects.save(host, label, identity)
+        return self.directory_projects.save(host, label, identity,
+            scope='cli' if kind == 'cli' else None, type=kind, environment=kind+'|'+host,
+            hostIdentity=None if host == 'local' else info['alias'])
 
     @operation
     def project_directories(self, host, path=None, hidden=False, name=None, identity=None):
@@ -619,6 +633,13 @@ class Bridge:
                 if not entry.get('id'):
                     raise CreationError('上次创建结果尚不确定，请先刷新聊天列表并检查电脑 App，避免重复创建')
             else:
+                if project.get('hostIdentity') and self.hosts.hosts().get(project['host'], {}).get('alias') != project['hostIdentity']:
+                    raise ValueError('原 SSH 主机配置已变化，请重新选择项目')
+                if kind == 'cli':
+                    cli_bridge = self.for_host(project['host'])
+                    if (project['host'] != 'local' and
+                            cli_bridge.cli_sessions.alias != self.hosts.hosts()[project['host']]['alias']):
+                        raise ValueError('原 SSH 主机配置已变化，请重启网关后重新选择项目')
                 if kind == 'desktop':
                     self.ipc.connect()
                 entry = {'project': project_key, 'title': title, 'kind': kind,
@@ -636,7 +657,18 @@ class Bridge:
                         self._save_creations()
 
                     try:
-                        state = self.for_host(project['host']).cli_sessions.create(
+                        if project.get('directoryIdentity'):
+                            if project['host'] == 'local':
+                                project_directory(project['cwd'], expected=project['directoryIdentity'])
+                            else:
+                                source = source_text('features/sessions/create.py')
+                                source += '\nprint(json.dumps(project_directory(**' + payload({
+                                    'value': project['cwd'], 'expected': project['directoryIdentity']}) + ')))\n'
+                                ssh_read(cli_bridge.cli_sessions.alias, source)
+                        if (project['host'] != 'local' and
+                                cli_bridge.cli_sessions.alias != self.hosts.hosts().get(project['host'], {}).get('alias')):
+                            raise ValueError('原 SSH 主机配置已变化，请重启网关后重新选择项目')
+                        state = cli_bridge.cli_sessions.create(
                             project['cwd'], title, on_start=mark_started, on_created=mark_created)
                         thread_id = state['id']
                     except AppServerUnavailable:
@@ -668,7 +700,7 @@ class Bridge:
                 entry['id'] = thread_id
                 self._save_creations()
                 if kind == 'cli':
-                    bridge = self.for_host(project['host'])
+                    bridge = cli_bridge
                     with bridge.lock:
                         session = bridge.live.setdefault(thread_id, LiveSession(thread_id))
                     with session.condition:

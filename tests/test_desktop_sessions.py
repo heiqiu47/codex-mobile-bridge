@@ -489,6 +489,26 @@ class HttpAdapters(unittest.TestCase):
         self.assertEqual(self.request('POST','/api/desktop-sessions/deepseek/send',body,headers)[0],200)
         self.server.desktop_sessions.call.assert_called_with('deepseek','send','session-original',{'id':body['id'],'text':'hi'})
 
+    def test_project_directory_routes_require_auth_csrf_and_exact_environment_payload(self):
+        manager = self.server.desktop_sessions = Mock()
+        manager.project_directories.return_value = {'path': '/fixture', 'directories': []}
+        manager.register_project.return_value = {'key': 'registered-project', 'cwd': '/fixture'}
+        for provider in ('claude', 'deepseek'):
+            route = '/api/desktop-sessions/'+provider+'/projects/'
+            self.assertEqual(self.request('POST', route+'browse')[0], 401)
+            headers = self.login()
+            self.assertEqual(self.request('POST', route+'browse', headers={'Cookie': headers['Cookie']})[0], 403)
+            self.assertEqual(self.request('GET', route+'browse', headers=headers)[0], 405)
+            body = {'environment': 'cli|local|fixture', 'path': '/fixture',
+                    'hidden': False, 'name': None, 'identity': None}
+            self.assertEqual(self.request('POST', route+'browse', body, headers)[0], 200)
+            manager.project_directories.assert_called_with(provider, **body)
+            self.assertEqual(self.request('POST', route+'browse', {**body, 'alias': 'untrusted'}, headers)[0], 400)
+            registration = {'environment': body['environment'], 'path': '/fixture', 'createDirectory': False}
+            self.assertEqual(self.request('POST', route+'register', registration, headers)[0], 200)
+            manager.register_project.assert_called_with(provider, body['environment'], '/fixture', False)
+            self.assertEqual(self.request('POST', route+'register', {**registration, 'cwd': '/other'}, headers)[0], 400)
+
     def test_native_process_recovery_is_not_exposed_to_authenticated_web_clients(self):
         self.server.desktop_sessions = Mock()
         self.server.desktop_sessions.toggle_client.return_value = {'clients': []}

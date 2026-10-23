@@ -23,6 +23,10 @@ from bridge.clients.codex.catalog import ModelStore, MODEL_REFRESH_SECONDS
 from bridge.features.accounts.draft_identity import draft_identity
 from bridge.app.lifecycle import private_json
 from bridge.platforms.windows import session as windows_session
+from bridge.features.sessions.projects import Projects
+from bridge.features.sessions.create import project_directory, project_directory_listing
+from bridge.clients.codex.remote import ssh_read, payload
+from bridge.resources import source_text
 
 READS = {'list', 'detail', 'catalog', 'projects', 'account', 'access'}
 WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume'}
@@ -63,6 +67,7 @@ class DesktopSessions:
         self.directory = Path(directory)/'desktop-sessions'
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.model_store = ModelStore(self.directory)
+        self.directory_projects = Projects(self.directory/'projects')
         self.model_locks = {}
         self.model_refreshing = set()
         self.model_retry_at = {}
@@ -631,6 +636,67 @@ class DesktopSessions:
                     self.activity_pending.discard(provider)
         threading.Thread(target=refresh, daemon=True, name='desktop-activity-'+provider).start()
 
+    def _project_environments(self, provider):
+        rows = self.adapters[provider].project_environments()
+        result = []
+        for row in rows:
+            scope = row['scope']
+            if row['surface'] != 'cli':
+                try:
+                    scope += '|' + self._account_model_identity(provider)
+                except (OSError, ValueError, KeyError, TypeError, BridgeUnavailable):
+                    continue
+            digest = hashlib.sha256(scope.encode()).hexdigest()[:24]
+            result.append({**row, 'key': row['surface']+'|'+row['host']+'|'+digest})
+        return result
+
+    @staticmethod
+    def _public_project(row):
+        return {key: value for key, value in row.items()
+                if key not in ('scope', 'origin', 'alias', 'directoryIdentity', 'accountFingerprint')}
+
+    def _project_environment(self, provider, key):
+        self.require_enabled(provider)
+        selected = next((row for row in self._project_environments(provider) if row['key'] == key), None)
+        if selected is None:
+            raise ValueError('运行环境或账号已变化，请重新选择项目')
+        return selected
+
+    def _project_alias(self, environment):
+        hosts = self.bridge.hosts if self.bridge else self.adapters['claude'].hosts
+        host = hosts.hosts().get(environment['host']) if hosts else None
+        if not host or host['alias'] != environment.get('alias'):
+            raise ValueError('原 SSH 主机配置已变化')
+        return host['alias']
+
+    def _project_directory(self, environment, path, create=False, expected=None):
+        if environment['host'] == 'local':
+            return project_directory(path, create, expected)
+        alias = self._project_alias(environment)
+        source = source_text('features/sessions/create.py')
+        source += '\nprint(json.dumps(project_directory(**' + payload({
+            'value': path, 'create': create, 'expected': expected}) + ')))\n'
+        return ssh_read(alias, source)
+
+    def register_project(self, provider, environment, path, create=False):
+        with self.locks[provider]:
+            selected = self._project_environment(provider, environment)
+            identity = self._project_directory(selected, path, create)
+            row = self.directory_projects.save(selected['host'], selected['hostLabel'], identity,
+                scope=provider+'|'+environment, provider=provider, environment=environment,
+                surface=selected['surface'], createRequiresMessage=selected['createRequiresMessage'])
+            return self._public_project(row)
+
+    def project_directories(self, provider, environment, path=None, hidden=False, name=None, identity=None):
+        with self.locks[provider]:
+            selected = self._project_environment(provider, environment)
+            if selected['host'] == 'local':
+                return project_directory_listing(path, hidden, name, identity)
+            source = source_text('features/sessions/create.py')
+            source += '\nprint(json.dumps(project_directory_listing(**' + payload({
+                'value': path, 'hidden': hidden, 'name': name, 'identity': identity}) + ')))\n'
+            return ssh_read(self._project_alias(selected), source)
+
     def call(self, provider, action, sid=None, body=None):
         if provider not in self.adapters or action not in READS | WRITES:
             raise ValueError('不支持的桌面操作')
@@ -639,6 +705,8 @@ class DesktopSessions:
         if action not in ('list', 'projects', 'create', 'account') and (not isinstance(sid, str) or not sid or len(sid) > 512):
             raise ValueError('会话标识无效')
         body = body or {}
+        if any(key in body for key in ('directoryProject', 'projectDirectory')):
+            raise ValueError('项目目录必须通过目录选择器登记')
         adapter = self.adapters[provider]
         if action == 'account':
             return self._account_models(provider, refresh=body.get('refresh') is True)
@@ -646,6 +714,20 @@ class DesktopSessions:
             return self._catalog_models(provider, sid, body)
         if action in READS and not (action == 'access' and 'mode' in body):
             result = self._read(provider, action, sid, body)
+            if action == 'projects':
+                environments = self._project_environments(provider)
+                for project in result.get('projects', []):
+                    environment = next((row for row in environments
+                        if row['host'] == project.get('host', 'local') and
+                        row['surface'] == project.get('surface', 'desktop')), None)
+                    if environment:
+                        project['environment'] = environment['key']
+                keys = {row['key'] for row in environments}
+                registered = [self._public_project(row) for row in self.directory_projects.list(
+                    {row['host'] for row in environments})
+                    if row.get('provider') == provider and row.get('environment') in keys]
+                result['projects'] = result.get('projects', []) + registered
+                result['environments'] = [self._public_project(row) for row in environments]
             if action == 'detail' and result.get('session'):
                 result['modelCatalogIdentity'] = self._model_identity(provider, sid)
                 try:
@@ -684,7 +766,14 @@ class DesktopSessions:
                         raise BridgeUnavailable('接入的操作记录正被另一网关占用，请停止旧网关后重试') from None
                     raise
             try:
-                result = adapter.call(action, sid, body)
+                dispatched = body
+                if action == 'create':
+                    project = self.directory_projects.get(body.get('projectKey'))
+                    if project and project.get('provider') == provider:
+                        environment = self._project_environment(provider, project['environment'])
+                        self._project_directory(environment, project['cwd'], expected=project['directoryIdentity'])
+                        dispatched = {**body, 'directoryProject': {**environment, **project}}
+                result = adapter.call(action, sid, dispatched)
             except ResumePreflightBlocked as exc:
                 result = {'status': 'blocked', 'id': rid, 'message': str(exc)}
             except Exception as exc:

@@ -17,6 +17,59 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class CreationTests(unittest.TestCase):
+    def test_new_directory_can_create_cli_without_existing_cli_history(self):
+        self.bridge.store.list = lambda **kwargs: []
+        root = str(self.root.resolve())
+        cli = self.bridge.register_project(root, kind='cli')
+        desktop = self.bridge.register_project(root)
+        self.assertNotEqual(cli['key'], desktop['key'])
+        rows = self.bridge.projects()
+        self.assertEqual({row['type'] for row in rows if row['cwd'] == root}, {'cli', 'desktop'})
+        with patch.object(self.bridge.cli_sessions, 'create', return_value={
+                'id': self.tid, 'modelProvider': 'fixture-provider', 'cwd': root}) as create, \
+             patch('bridge.app.service.open_in_desktop') as opened:
+            self.bridge.create_chat(cli['key'], 'New CLI', str(uuid.uuid4()), kind='cli')
+            self.assertEqual(create.call_args.args, (root, 'New CLI'))
+            opened.assert_not_called()
+
+    def test_new_cli_directory_is_revalidated_before_runtime_dispatch(self):
+        project = self.bridge.register_project(str(self.root.resolve()), kind='cli')
+        self.bridge.directory_projects.rows[project['key']]['directoryIdentity']['inode'] += 1
+        with patch.object(self.bridge.cli_sessions, 'create') as create:
+            with self.assertRaisesRegex(ValueError, '已变化'):
+                self.bridge.create_chat(project['key'], 'Changed CLI', str(uuid.uuid4()), kind='cli')
+            create.assert_not_called()
+
+    def test_project_environments_include_hosts_without_any_saved_project(self):
+        self.bridge.hosts.state = lambda: {}
+        self.bridge.hosts.hosts = lambda: {'ssh:empty': {'alias': 'fixture-ssh', 'displayName': 'Empty SSH'}}
+        environments = self.bridge.project_environments()
+        self.assertEqual({(row['type'], row['host']) for row in environments},
+            {('desktop', 'local'), ('cli', 'local'), ('desktop', 'ssh:empty'), ('cli', 'ssh:empty')})
+
+    def test_cli_directory_creation_refuses_cached_bridge_for_reassigned_ssh_alias(self):
+        host = 'ssh:reassigned'
+        configured = {host: {'alias': 'old-host', 'displayName': 'Selected SSH'}}
+        self.bridge.hosts.hosts = lambda: configured
+        self.bridge.hosts.projects = lambda: []
+        self.bridge.store.list = lambda **kwargs: []
+        cached = self.bridge.for_host(host)
+        cached.store.list = lambda **kwargs: []
+        self.assertEqual(cached.cli_sessions.alias, 'old-host')
+        configured[host] = {'alias': 'new-host', 'displayName': 'Selected SSH'}
+        identity = {'cwd': '/new-project', 'device': 7, 'inode': 11}
+        with patch('bridge.app.service.ssh_read', return_value=identity):
+            project = self.bridge.register_project('/new-project', host=host, kind='cli')
+        request = str(uuid.uuid4())
+        with patch('bridge.app.service.ssh_read') as preflight, \
+             patch.object(cached.cli_sessions, 'create') as create:
+            with self.assertRaisesRegex(ValueError, 'SSH 主机配置已变化'):
+                self.bridge.create_chat(project['key'], 'New host project', request, kind='cli')
+            preflight.assert_not_called()
+            create.assert_not_called()
+        self.assertNotIn(request, self.bridge.creations)
+        self.assertIs(self.bridge.for_host(host), cached)
+
     def test_directory_browser_lists_only_folders_and_creates_inside_fresh_parent(self):
         root = self.root.resolve()
         (root/'folder').mkdir(); (root/'.hidden').mkdir(); (root/'file.txt').write_text('keep')
@@ -28,6 +81,8 @@ class CreationTests(unittest.TestCase):
         child = project_directory_listing(str(root), name='new folder', identity=listing['identity'])
         self.assertEqual(Path(child['path']), root/'new folder')
         self.assertEqual(child['parent'], str(root))
+        with self.assertRaisesRegex(ValueError, '已存在'):
+            project_directory_listing(str(root), name='folder', identity=listing['identity'])
         for name in ('../outside', 'bad/name', 'bad\\name', '..'):
             with self.assertRaises(ValueError): project_directory_listing(str(root), name=name, identity=listing['identity'])
         with self.assertRaisesRegex(ValueError, '已变化'):

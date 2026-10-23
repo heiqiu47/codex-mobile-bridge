@@ -11,15 +11,15 @@ const stateCode=extract('function renderState(view){',"$('send-mode').onchange")
 const reconnectCode=extract("$('reconnect').onclick=", "document.querySelectorAll('[data-close]')");
 const permissionCode=extract("$('permissions-button').onclick=",'const fileTransferSettings=');
 const newChatTypeCode=extract("let newChatRequest=0;", "$('new-chat-project').onchange=");
-test('CLI creation picker enables only a known CLI folder and uses an accurate action',async()=>{
+test('CLI creation picker offers existing and custom folders with an accurate action',async()=>{
   const nodes=new Map(),$=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',disabled:false,open:true,children:[],get options(){return this.children;},replaceChildren(...parts){this.children=parts;this.value=parts[0]?.value||'';},append(option){this.children.push(option);if(!this.value)this.value=option.value;},onchange(){}});return nodes.get(id);};
-  const ctx={$,listRows:[],currentId:null,currentHost:'local',newChatProjects:[],newChatEntry:'desktop',preferredWslEntry:'',codexEntries:()=>[],wslEntries:()=>[],newChatUrl:value=>value,independentProject:()=> 'local|independent',api:async()=>({projects:ctx.projects||[]}),Option:class{constructor(text,value){this.text=text;this.value=value;}},t:key=>({'创建聊天':'Create chat','创建并打开':'Create and open'}[key]||key)};
-  $('new-chat-project').onchange=()=>{$('new-chat-submit').disabled=!$('new-chat-project').value;};
+  const ctx={$,listRows:[],currentId:null,currentHost:'local',newChatProjects:[],newChatEnvironments:[],newChatCanBrowse:false,newChatPreferredHost:'local',newChatEntry:'desktop',preferredWslEntry:'',codexEntries:()=>[],wslEntries:()=>[],newChatUrl:value=>value,independentProject:()=> 'local|independent',api:async()=>({projects:ctx.projects||[],environments:[{key:'cli|local',host:'local',type:'cli',name:'Local CLI'},{key:'desktop|local',host:'local',type:'desktop',name:'Local App'}]}),Option:class{constructor(text,value){this.text=text;this.value=value;}},t:key=>({'创建聊天':'Create chat','创建并打开':'Create and open'}[key]||key)};
+  $('new-chat-project').onchange=()=>{$('new-chat-submit').disabled=!$('new-chat-project').value||$('new-chat-project').value==='__directory__';};
   vm.createContext(ctx);vm.runInContext(newChatTypeCode,ctx);
   $('new-chat-type').value='cli';await $('new-chat-type').onchange();
   assert.equal($('new-chat-submit').disabled,true);
   assert.equal($('new-chat-submit').textContent,'Create chat');
-  assert.equal($('new-chat-project').children.some(option=>option.value==='__directory__'),false);
+  assert.equal($('new-chat-project').children.some(option=>option.value==='__directory__'),true);
   ctx.projects=[{type:'cli',host:'local',key:'cli|local|folder',name:'agent_chat',cwd:'/fixture/agent_chat'}];
   await $('new-chat-type').onchange();
   assert.equal($('new-chat-project').value,'cli|local|folder');

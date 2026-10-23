@@ -64,7 +64,6 @@ class ClientNavigation {
     new MutationObserver(restore).observe(document.body,{childList:true});
     new MutationObserver(restore).observe(settings,{childList:true});
     document.querySelector('#chat .chat-info').before(this.icon('codex'));
-    document.getElementById('new-chat-form').prepend(Object.assign(document.createElement('p'),{id:'new-chat-client',className:'muted',textContent:'Codex'}));
     new MutationObserver(()=>document.body.classList.toggle('gateway-authenticated',!document.getElementById('app').hidden)).observe(document.getElementById('app'),{attributes:true,attributeFilter:['hidden']});
     document.addEventListener('bridge-language',()=>{this.paint();BridgeI18n.apply();});
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)this.refresh();});
