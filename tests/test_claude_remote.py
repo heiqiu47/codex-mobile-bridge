@@ -140,6 +140,18 @@ class RemoteWorkerContract(unittest.TestCase):
         self.assertEqual(result['events'][-1]['uuid'], 'last')
         self.assertFalse(any(event.get('type') == 'control_request' for event in result['events']))
 
+    def test_history_uses_consistent_file_identity_for_path_and_descriptor(self):
+        # Windows Python versions can expose different stat/fstat identities.
+        stat = self.path.stat()
+        path = Mock(wraps=self.path)
+        path.stat.return_value = SimpleNamespace(st_dev=stat.st_dev, st_ino=stat.st_ino + 1,
+            st_size=stat.st_size, st_mtime_ns=stat.st_mtime_ns, st_ctime_ns=stat.st_ctime_ns)
+        recent = remote_worker.history_page(path, 'fixture', limit=1)
+        older = remote_worker.history_page(path, 'fixture', before=recent['history']['before'])
+        self.assertEqual(len(recent['events']), 1)
+        self.assertEqual(len(older['events']), 1)
+        self.assertEqual(older['events'][0]['message']['role'], 'user')
+
     def test_upload_is_private_immutable_and_bound_to_remote_profile(self):
         profile = self.run_worker({'operation': 'list'})['value']['profile']
         scope, identifier = str(uuid.uuid4()), str(uuid.uuid4())

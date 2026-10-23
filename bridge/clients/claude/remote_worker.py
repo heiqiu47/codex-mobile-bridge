@@ -132,9 +132,16 @@ def events(path):
     return result
 
 
-def file_stamp(path):
-    stat = path.stat()
+def _file_stamp(fd):
+    stat = os.fstat(fd)
     return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+
+
+def file_stamp(path):
+    # Use the same descriptor API for both ends of a read. On Windows,
+    # stat(path) and fstat(fd) can expose different file identity metadata.
+    with path.open('rb') as stream:
+        return _file_stamp(stream.fileno())
 
 
 def history_page(path, identity, before=None, limit=40):
@@ -142,9 +149,8 @@ def history_page(path, identity, before=None, limit=40):
     if type(limit) is not int or not 1 <= limit <= 100:
         raise ValueError('Claude 历史分页大小无效')
     with path.open('rb') as stream:
-        stat = os.fstat(stream.fileno())
-        stamp = [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
-        end = stat.st_size
+        stamp = _file_stamp(stream.fileno())
+        end = stamp[2]
         if before is not None:
             if not isinstance(before, str) or len(before) > 1024:
                 raise ValueError('Claude 历史游标无效')
@@ -153,7 +159,7 @@ def history_page(path, identity, before=None, limit=40):
                     before + '=' * (-len(before) % 4)))
             except (ValueError, TypeError, UnicodeError) as exc:
                 raise ValueError('Claude 历史游标无效') from exc
-            if source != identity or version != stamp or type(end) is not int or not 0 <= end <= stat.st_size:
+            if source != identity or version != stamp or type(end) is not int or not 0 <= end <= stamp[2]:
                 raise ValueError('Claude 历史已变化，请重新加载最近记录')
             if end:
                 stream.seek(end - 1)
@@ -199,8 +205,7 @@ def history_page(path, identity, before=None, limit=40):
             pending = keep
             if has_more:
                 break
-        final = os.fstat(stream.fileno())
-        if [final.st_dev, final.st_ino, final.st_size, final.st_mtime_ns, final.st_ctime_ns] != stamp:
+        if _file_stamp(stream.fileno()) != stamp:
             raise ValueError('Claude 历史读取期间发生变化')
         try:
             current = file_stamp(path)
