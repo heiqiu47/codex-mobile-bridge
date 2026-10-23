@@ -6,12 +6,15 @@
 
 - Web 回复、代码和 Mermaid 源码支持点击后直接复制，补齐局域网 HTTP 兼容路径，改善读取长正文后的复制；浏览器拒绝时保留重试和手动复制入口。
 - 修复 Codex 长会话的大型历史快照导致共享连接断开、其他会话也无法保持连接的问题；手机和 Web 仍分页读取内容。
+- 改善长会话打开速度：先显示最近内容，重新进入优先复用缓存；上翻时才补读旧记录，保持阅读位置，并减少后台重复处理历史的开销。
 
 Integrates [@qybgh](https://github.com/qybgh)'s [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63), retaining the original commits. Adds default-off network recovery controls to desktop and signed-in Web/mobile clients, with native event notifications and infrequent fallback checks. Fixes Windows adapter addresses, migration of multiple selected adapters and publication of addresses that failed to bind. Quick Tunnel first attempts recovery and is replaced only after repeated health checks confirm failure.
 
 Web replies, code blocks and Mermaid source now copy with one click, with a LAN HTTP compatibility path and improved copying after full-text retrieval. Retry and manual copying remain available when the browser blocks clipboard access.
 
 Fix large Codex history snapshots disconnecting the shared desktop connection and disrupting other chats. Mobile and Web content remains paginated.
+
+Open long chats with recent content first and reuse cached messages when returning. Older history loads on demand while preserving the reading position, with less repeated history processing in the background.
 
 ---
 

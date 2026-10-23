@@ -59,7 +59,9 @@ class LiveSession:
         self.discovering = False
         self.state = None
         self.saved_view = None
-        self.history_limit = 20
+        self.history_limit = 2
+        self.timeline_limit = 40
+        self.timeline_source = None
         self.revision = None
         self.sequence = 0
         self.connected = False
@@ -87,7 +89,15 @@ class LiveSession:
 
     def changed(self):
         self.sequence += 1
+        self.timeline_source = None
         self.condition.notify_all()
+
+    def timeline_view(self):
+        # Presentation only. Actions still call view() against current state.
+        with self.condition:
+            if self.timeline_source is None:
+                self.timeline_source = self.view()
+            return dict(self.timeline_source)
 
     def set_history(self, state):
         self.saved_view = normalize_state(state, False, image_cache=self.tool_image_cache)
@@ -664,7 +674,7 @@ class Bridge:
             session = self._target(thread_id)
             with session.action_lock:
                 with session.condition:
-                    session.timeline.update(session.view())
+                    session.timeline.update(session.view(), limit=session.timeline_limit)
                     position = session.timeline.position(body.get('key', ''))
                     if position is None:
                         raise ValueError('消息位置已变化，请刷新后重试')
@@ -1975,9 +1985,12 @@ class Bridge:
         if mode == 'page' and options.get('before'):
             with session.condition:
                 position = session.timeline.position(options['before'])
-                expand = position is not None and position < options.get('limit', 20) and session.saved_view and not session.saved_view['historyComplete']
+                near_edge = position is not None and position < options.get('limit', 20)
+                expand = near_edge and not session.timeline.window_more and session.saved_view and not session.saved_view['historyComplete']
+                if near_edge:
+                    session.timeline_limit += max(1, min(100, options.get('limit', 20)))
                 if expand:
-                    session.history_limit += 50
+                    session.history_limit += 5
             if expand:
                 saved = self._saved_history(session)
                 with session.condition:
@@ -1985,9 +1998,11 @@ class Bridge:
         with session.condition:
             session.access = self._access(session.origin, session)
             projection = session.timeline
-            authoritative_view = self._overlay_native_goal(session, thread_id, session.view())
-            if projection.sequence != session.sequence or projection.meta.get("goal") != authoritative_view.get("goal"):
-                projection.update(authoritative_view)
+            authoritative_view = self._overlay_native_goal(session, thread_id, session.timeline_view())
+            authoritative_view['access'] = dict(session.access)
+            projection.update(authoritative_view, limit=session.timeline_limit)
+            # Goals/access may change independently of the history revision.
+            projection.meta.update(goal=authoritative_view.get('goal'), access=authoritative_view['access'])
             # Annotate the full projection, not only the returned page. Otherwise
             # older pages briefly render raw localImage paths after an upgrade.
             self._annotate_upload_attachments(session, projection.rows)

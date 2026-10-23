@@ -13,6 +13,47 @@ def view(count=320, sequence=1):
 
 
 class TimelineTests(unittest.TestCase):
+    def test_recent_window_skips_old_bodies_and_expands_without_cursor_reset(self):
+        from unittest.mock import patch
+        import bridge.features.sessions.timeline as module
+        timeline = Timeline()
+        source = view(10000)
+        source['turns'][0]['messages'][0]['text'] = 'old body' * 100000
+        encoded_sizes = []
+        original = module.encoded
+        def encode(value):
+            result = original(value)
+            encoded_sizes.append(len(result))
+            return result
+        with patch.object(module, 'encoded', encode):
+            timeline.update(source, limit=40)
+        first = timeline.page()
+        self.assertEqual(len(timeline.rows), 40)
+        self.assertLess(max(encoded_sizes), 1000)
+        self.assertTrue(first['hasMore'])
+        timeline.update(source, limit=140)
+        older = timeline.page(100, first['before'])
+        self.assertNotIn('reset', older)
+        self.assertEqual(len(older['rows']), 100)
+        self.assertEqual(older['rows'][-1]['text'], 'message 9979')
+        # New content must not slide the reader's loaded prefix out of memory.
+        source['turns'][0]['messages'].append({'id': 'new', 'kind': 'agentMessage', 'role': 'assistant', 'text': 'new'})
+        source['sequence'] += 1
+        timeline.update(source, limit=140)
+        self.assertIsNotNone(timeline.position(older['before']))
+        self.assertEqual(timeline.changes(1, first['epoch'], older['before'])['rows'][-1]['text'], 'new')
+
+    def test_recent_window_keeps_duplicate_item_keys_stable(self):
+        timeline = Timeline()
+        source = view(100)
+        for message in source['turns'][0]['messages']:
+            message['id'] = None
+        timeline.update(source, limit=20)
+        first = timeline.page()
+        timeline.update(source, limit=60)
+        self.assertEqual(timeline.page()['before'], first['before'])
+        self.assertIsNotNone(timeline.position(first['before']))
+
     def test_desktop_hydration_cannot_relabel_completed_history_with_current_model(self):
         session=LiveSession('chat')
         with session.condition:
