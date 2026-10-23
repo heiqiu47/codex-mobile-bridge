@@ -25,6 +25,12 @@
 
 `tests/browser/*.browser.js` 是依赖真实页面和隔离网关夹具的浏览器检查，不属于 Node 测试；需要通过对应浏览器驱动单独执行，不能将仅加载脚本视作检查通过。
 
+## Web 复制
+
+`features/chat/message-actions.js` 定义共享 `BridgeClipboard.copy(getText, button)`：已就绪的文本同步调用 Clipboard API；异步完整正文优先在点击内创建带 Promise 的 `ClipboardItem`，保留 WebKit 的用户手势。局域网 HTTP 或现代 API 拒绝时尝试临时只读文本框的兼容复制，并恢复原焦点和选择；弹窗内复制使用同一顶层 dialog。全部失败才展示可重试、可选中文本的兜底窗口，不读取系统剪贴板、不修改草稿。原生 App 继续由 `mobile/shared/web/mobile-clipboard.js` 接管，保留可信点击与桥接令牌检查。
+
+`getText` 可返回字符串或 Promise。普通消息、已读取源码应直接返回字符串；截断正文保留分页、版本与会话校验，不能把预览当成完整内容复制。Node 回归见 `tests/web-clipboard.test.cjs`；真实复制验收须用浏览器点击与系统粘贴，不能把假 Clipboard 对象的调用当作写入成功。
+
 ## 工具执行截图
 
 Codex 的 MCP、动态工具及保存历史中的工具输出，共用 `bridge/features/sessions/tool_images.py` 提取图片。支持 MCP 图片块、Codex 的 `input_image` / `inputImage` 内容项、内联图片 data URL，以及 computer use 返回的嵌套 JSON 文本。“显示设置 → 对话内容 → 工具截图”默认开启，偏好保存在当前浏览器或手机 WebView。关闭时不创建工具图片预览，也不请求图片字节；开启后截图显示在折叠的工具文字详情下方，点击使用现有图片放大查看器。切换立即生效并保留工具详情展开状态；关闭“执行过程”时仍隐藏整条工具记录。用户上传的图片不受此开关影响。

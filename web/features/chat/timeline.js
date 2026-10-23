@@ -189,19 +189,21 @@ class ChatTimeline {
     if(activity){content.open=!!open;content.ontoggle=()=>{if(content.open&&!this.details.has(row.key))load();};}
     return node;
   }
-  async fullText(row){
+  fullText(row){
     const valid=()=>!this.abort.signal.aborted&&this.rows.get(row.key)?.row.version===row.version;
-    if(!valid())throw Error(timelineText('消息内容已变化，请重新打开编辑'));
+    if(!valid())return Promise.reject(Error(timelineText('消息内容已变化，请重新打开编辑')));
     if(!row.truncated)return row.text;
-    let text='',offset=0;
-    do{
-      const detail=await this.read('detail',{key:this.epoch+'.'+row.key,offset,version:row.version});
-      if(!valid()||detail.version!==row.version||detail.offset!==offset||detail.key!==row.key)throw Error(timelineText('消息内容已变化，请重新打开编辑'));
-      text+=detail.text;
-      if(detail.next===null)return text;
-      if(detail.next<=offset)throw Error(timelineText('读取完整正文失败，请重试'));
-      offset=detail.next;
-    }while(true);
+    return (async()=>{
+      let text='',offset=0;
+      do{
+        const detail=await this.read('detail',{key:this.epoch+'.'+row.key,offset,version:row.version});
+        if(!valid()||detail.version!==row.version||detail.offset!==offset||detail.key!==row.key)throw Error(timelineText('消息内容已变化，请重新打开编辑'));
+        text+=detail.text;
+        if(detail.next===null)return text;
+        if(detail.next<=offset)throw Error(timelineText('读取完整正文失败，请重试'));
+        offset=detail.next;
+      }while(true);
+    })();
   }
   refreshActions(){
     for(const [key,{node}] of this.nodes){

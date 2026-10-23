@@ -104,7 +104,7 @@ Supports macOS, Windows and experimental Ubuntu x64/ARM64. See the [Linux guide]
 
 - Copy user messages from their action row. Choose **Edit and resend** on the latest user message, or **Edit in new branch** on an older message to keep the original conversation.
 - Choose **Branch from here** under a completed answer. The new chat keeps history through that turn and waits for your next message. Chat details link back to the source.
-- Copy complete replies as Markdown or copy an individual code block. Long replies load their full text. When clipboard access is unavailable, selectable text supports the system Copy action.
+- Copy complete replies as Markdown, individual code blocks, or Mermaid source. Long replies load their full text. Web copy buttons write directly to the clipboard, including a compatibility attempt on LAN HTTP. Selectable text and a retry button appear only when the browser blocks automatic copying.
 - In-place editing requires the turn to be stopped and generates a new answer. Editing and branching do not undo file changes; both chats share the working directory.
 - Branching requires a Codex runtime with turn-specific forking and deferred goal continuation; older versions show an update prompt. Copying and latest-message editing do not require those fork capabilities. Creating a branch does not send a model request.
 - If delivery is uncertain, check the chat list first; repeating the same request does not replay it. If a branch was created but could not connect, the replacement remains an edit draft for that branch.

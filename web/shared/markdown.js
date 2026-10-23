@@ -81,12 +81,15 @@
           if (token.type === 'code_inline') parent.append(code);
           else {
             const index=codeIndex++;
-            const getSource=async()=>{
+            const getSource=()=>{
               if(!options.fullText)return token.content;
-              const complete=await options.fullText();
-              const blocks=parse(complete).filter(t=>t.type==='fence'||t.type==='code_block');
-              if(!blocks[index])throw Error('读取完整正文失败，请重试');
-              return blocks[index].content;
+              const extract=complete=>{
+                const blocks=parse(complete).filter(t=>t.type==='fence'||t.type==='code_block');
+                if(!blocks[index])throw Error('读取完整正文失败，请重试');
+                return blocks[index].content;
+              };
+              const complete=options.fullText();
+              return typeof complete==='string'?extract(complete):Promise.resolve(complete).then(extract);
             };
             if(token.type==='fence' && /^mermaid(?:\s|$)/i.test(token.info.trim()) && completeFence(token) && window.BridgeMermaidCards){
               parent.append(window.BridgeMermaidCards.create(token.content,{owner:node,index,getSource}));

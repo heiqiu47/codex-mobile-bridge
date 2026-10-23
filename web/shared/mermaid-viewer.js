@@ -92,14 +92,17 @@
       } else lastTap = {...prior,time:performance.now()};
     } else lastTap = null;
   }
-  async function exactSource() {
+  function exactSource() {
     if (!entry) throw Error(t('读取源码失败，请重试。'));
     if (typeof entry.exactSource === 'string') return entry.exactSource;
     if (entry.getSource) {
-      const current = entry, value = await current.getSource();
-      if (current !== entry || typeof value !== 'string') throw Error(t('读取源码失败，请重试。'));
-      current.exactSource = value;
-      return value;
+      const current = entry, value = current.getSource();
+      const accept = value => {
+        if (current !== entry || typeof value !== 'string') throw Error(t('读取源码失败，请重试。'));
+        current.exactSource = value;
+        return value;
+      };
+      return typeof value === 'string' ? accept(value) : Promise.resolve(value).then(accept);
     }
     if (typeof entry.source === 'string') return entry.exactSource = entry.source;
     throw Error(t('读取源码失败，请重试。'));
