@@ -62,7 +62,11 @@ window.BridgeClipboard=(()=>{
           const retry=document.createElement('button');retry.type='button';retry.className='primary';retry.textContent=actionText('复制');
           retry.onclick=async()=>{
             retry.disabled=true;
-            try{if(await modernCopy(text)||selectionCopy(text,retry)){dialog.close();done();}else{input.focus();input.select();}}
+            try{
+              const pending=modernCopy(text);
+              const copied=pending===null?selectionCopy(text,retry):(await pending)||selectionCopy(text,retry);
+              if(copied){dialog.close();done();}else{input.focus();input.select();}
+            }
             finally{retry.disabled=false;}
           };
           const close=document.createElement('button');close.type='button';close.textContent=actionText('完成');close.onclick=()=>dialog.close();

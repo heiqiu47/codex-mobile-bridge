@@ -47,6 +47,12 @@ test('failed source reads never copy partial data or show success',async()=>{
  const ui=fixture({clipboard:{write:items=>items[0].data['text/plain'].then(()=>{})}});await ui.copy(()=>Promise.reject(Error('source changed')));
  assert.deepEqual(ui.errors,['source changed']);assert.equal(ui.dialog(),undefined);assert.equal(ui.button.disabled,false);assert.equal(ui.button.textContent,'Copy');
 });
+test('HTTP retry uses the fresh click synchronously if the first copy was blocked',async()=>{
+ const ui=fixture();await ui.copy(()=> 'loaded text');const dialog=ui.dialog();
+ const retry=dialog.children.find(n=>n.className==='copy-dialog-actions').children[0];let copied=false;
+ ui.document.execCommand=()=>{copied=true;return true;};
+ const pending=retry.onclick();assert.equal(copied,true);await pending;assert.equal(ui.dialog(),undefined);assert.equal(ui.button.textContent,'已复制');
+});
 test('older browsers can copy resolved text without ClipboardItem and ignore duplicate clicks',async()=>{
  let resolve,reads=0;const writes=[],ui=fixture({items:false,clipboard:{writeText:text=>{writes.push(text);return Promise.resolve();}}});
  const pending=ui.copy(()=>{reads++;return new Promise(r=>resolve=r);});await ui.copy(()=>{reads++;return 'wrong';});resolve('complete');await pending;assert.deepEqual(writes,['complete']);assert.equal(reads,1);
