@@ -354,3 +354,35 @@ test('desktop offers force only inside close choices and retains a disabled runn
   ui.panel.clients=[{...client,running:true}];ui.panel.gatewayRunning=false;ui.panel.renderClients();assert.equal(ui.all().some(node=>node.textContent==='Close desktop app…'),false);
  }
 });
+
+function codexEntries({native=true,wsl=true,nativeSelectable=true}={}){
+ const entry='wsl:'+'c'.repeat(32);
+ return {id:'codex',name:'Codex',enabled:native||wsl,configured:true,selectable:true,installed:true,running:wsl,connected:wsl,desktopEnabled:native,entries:[
+  {id:'desktop',kind:'desktop',name:'Codex',enabled:native,configured:nativeSelectable,selectable:nativeSelectable,installed:nativeSelectable,running:false,connected:false,canQuitDesktop:false},
+  {id:entry,kind:'wsl-cli',icon:'codex',name:'WSL Codex · Ubuntu',enabled:wsl,configured:true,selectable:true,installed:true,running:wsl,connected:wsl,canQuitDesktop:false}
+ ]};
+}
+test('desktop client management groups native and WSL Codex switches in one Codex section',()=>{
+ const ui=fixture();ui.panel.clients=[codexEntries()];ui.panel.renderClients();
+ const rows=ui.all().filter(node=>node.tag==='tr'),group=rows.find(row=>row.children[0]?.attributes.scope==='rowgroup');assert.ok(group);assert.equal(group.children[0].textContent,'Codex');assert.equal(group.children[0].colSpan,5);
+ const entries=rows.filter(row=>row.dataset.clientParent==='codex');assert.deepEqual(entries.map(row=>row.dataset.clientId),['codex','wsl:'+'c'.repeat(32)]);
+ assert.equal(ui.all().filter(node=>node.tag==='input'&&node.className==='client-toggle').length,2);assert.equal(ui.all().some(node=>node.textContent==='关闭电脑 App…'),false);
+});
+test('desktop native Codex disable preserves WSL-only availability while the write is pending',async()=>{
+ const ui=fixture();ui.panel.clients=[codexEntries()];ui.panel.refreshClients=async()=>{};let finish;ui.setHandler(()=>new Promise(resolve=>finish=resolve));
+ const disabling=ui.panel.toggleClient('codex',false);assert.equal(ui.choices.length,0);assert.equal(ui.panel.clients[0].desktopEnabled,false);assert.equal(ui.panel.clients[0].enabled,true);assert.equal(ui.panel.clients[0].entries[1].enabled,true);
+ assert.equal(ui.calls[0].provider,'codex');assert.equal(ui.calls[0].enabled,false);finish({clients:ui.panel.clients});await disabling;
+});
+test('desktop WSL disable only changes its own environment and skips native quit choices',async()=>{
+ const ui=fixture();ui.panel.clients=[codexEntries()];ui.panel.refreshClients=async()=>{};const id=ui.panel.clients[0].entries[1].id;
+ ui.setHandler(async()=>({clients:ui.panel.clients}));await ui.panel.toggleClient(id,false);
+ assert.equal(ui.choices.length,0);assert.equal(ui.calls[0].provider,id);assert.equal(ui.calls[0].quitDesktop,false);assert.equal(ui.panel.clients[0].entries[1].enabled,false);assert.equal(ui.panel.clients[0].desktopEnabled,true);assert.equal(ui.panel.clients[0].enabled,true);
+});
+test('desktop aggregate WSL readiness cannot enable an unavailable native Codex entry',async()=>{
+ const ui=fixture();ui.panel.clients=[codexEntries({native:false,nativeSelectable:false})];ui.panel.renderClients();
+ const native=ui.all().find(row=>row.dataset.clientId==='codex');assert.equal(native.querySelector('input').disabled,true);await ui.panel.toggleClient('codex',true);assert.equal(ui.calls.length,0);
+});
+test('desktop reconciliation checks native quit against the native entry while WSL stays connected',async()=>{
+ const ui=fixture(),client=codexEntries({native:false});ui.panel.clients=[client];ui.panel.operationFailures=new Map([['codex',{action:'quit',uncertain:true,message:'pending'}]]);
+ ui.setHandler(async()=>({clients:[client]}));await ui.panel.refreshClients();assert.equal(ui.panel.operationFailures.has('codex'),false);assert.equal(ui.panel.clients[0].enabled,true);assert.equal(ui.panel.clients[0].connected,true);
+});
