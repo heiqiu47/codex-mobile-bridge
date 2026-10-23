@@ -1,3 +1,16 @@
+<a id="v215-unreleased"></a>
+
+## v2.1.5 · 开发中，尚未发布 / Unreleased
+
+- **WSL Codex**：Windows 网关可接入已登记的 WSL 环境，与原生 APP、CLI 共用 Codex 页面，保留来源筛选以及各环境的账号、历史、草稿和工作目录。
+- **新建项目聊天**：Codex App/CLI、WSL、Claude Desktop/CLI 与 DSH Desktop 可使用已有项目或选择其他目录；支持在选定父目录中创建新文件夹。SSH 接入使用所选主机的目录。Claude 需要首条消息时明确显示“创建并发送”。
+- **创建界面**：统一中英文和宽窄屏布局，按运行环境选择项目，项目路径可展开，目录浏览器共用；只有一个环境时不显示多余的选择框。
+- 感谢 [@we-worker](https://github.com/we-worker) 在 [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64) 中的 WSL、Magpie 和项目目录贡献，8 个原始提交保留。
+
+**English:** This unreleased work adds registered WSL Codex environments to the unified Codex page, preserving their original accounts, history, drafts and directories. New project chats use a shared directory picker across Codex App/CLI, WSL, Claude Desktop/CLI and DSH Desktop, including registered SSH environments where supported. The compact responsive dialog shows the selected environment and expandable project path; Claude explicitly labels its required initial-message action **Create and send**. Thanks to [@we-worker](https://github.com/we-worker) for [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64), with all eight original commits retained.
+
+当前仅为本地开发内容，发布版本仍为 v2.1.4。使用方式见[新建项目聊天](docs/project-chats.md)与[WSL 接入](docs/wsl-codex.md)。
+
 <a id="v214"></a>
 
 ## v2.1.4 · 公网启动、长会话与网络恢复

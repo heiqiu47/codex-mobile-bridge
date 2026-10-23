@@ -871,6 +871,8 @@ python3 -B -m unittest discover -s tests -v
 
 感谢 [LINUX DO](https://linux.do/) 社区及各位佬友的支持。
 
+感谢 [@we-worker](https://github.com/we-worker) 在 [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64) 中贡献 Windows WSL Codex 接入、Magpie 兼容与项目目录能力。本地 v2.1.5 开发分支保留全部 8 个原始提交，统一界面及跨接入新建项目的调整另行提交。
+
 感谢 [@qybgh（Luoran Yau）](https://github.com/qybgh) 在 [PR #8](https://github.com/try2love/codex-mobile-bridge/pull/8) 中对移动端计划、目标模式、附件预览和界面体验的贡献。v1.3.1 在该贡献基础上完成目标控制、通知和交互优化。
 
 感谢 [@heiqiu47](https://github.com/heiqiu47) 在 [PR #24](https://github.com/try2love/codex-mobile-bridge/pull/24) 中贡献 v2.0.2 的文件兼容、手机文件打开、系统栏与登录自启改进。

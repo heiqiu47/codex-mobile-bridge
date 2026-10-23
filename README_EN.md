@@ -594,6 +594,8 @@ Thanks to [@jasongzy](https://github.com/jasongzy) for requesting general Webhoo
 
 Thanks to [@tiancai123123](https://github.com/tiancai123123) for diagnosing and reproducing repeated static-resource downloads on slow connections in [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54), and contributing content-hash versioning, browser caching, conditional requests and tests in [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56). The integration preserves the original commit and reconciles it with the project's existing cache invalidation and resource-version handling.
 
+Thanks to [@we-worker](https://github.com/we-worker) for Windows WSL Codex support, Magpie compatibility and project-directory capabilities in [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64). The local v2.1.5 development branch retains all eight original commits; unified UI and project creation across connection types are separate follow-up changes.
+
 ## License and references
 
 [MIT License](LICENSE).
