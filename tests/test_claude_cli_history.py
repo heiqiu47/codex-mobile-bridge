@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -127,6 +128,8 @@ class ClaudeCliHistory(unittest.TestCase):
         self.write(80)
         cursor = self.cli.call('detail', self.sid, {})['history']['before']
         original = self.path.stat()
+        # Linux filesystems may timestamp writes within one clock tick equally.
+        time.sleep(0.05)
         data = self.path.read_bytes().replace(b'a70', b'z70')
         self.path.write_bytes(data)
         os.utime(self.path, ns=(original.st_atime_ns, original.st_mtime_ns))
@@ -158,6 +161,7 @@ class ClaudeCliHistory(unittest.TestCase):
         self.write(2)
         self.assertEqual(self.cli.listing()['sessions'][0]['model'], 'model-a')
         original = self.path.stat()
+        time.sleep(0.05)
         self.path.write_bytes(self.path.read_bytes().replace(b'model-a', b'model-b'))
         os.utime(self.path, ns=(original.st_atime_ns, original.st_mtime_ns))
         self.assertEqual(self.cli.listing()['sessions'][0]['model'], 'model-b')
