@@ -2,14 +2,25 @@
 
 # v2.1.4 正式发布验收（2026-10-24）
 
-发布分支 `release/v2.1.4`，承接已验收的 `perf/history-control-decoupling@b70099a`；桌面与手机版本统一为 2.1.4，Android/iOS 构建号 37。保留 PR #63 作者全部 8 个原提交。正式应用标识、安装身份、Android 签名与桌面更新验证公钥沿用原版本。
+发布产品提交 `0f1934a`（标签 `v2.1.4`），承接已验收的历史读取与控制分离改动；桌面与手机版本统一为 2.1.4，Android/iOS 构建号 37。PR #63 作者的全部 8 个原提交保留。正式应用标识、安装身份、Android 签名与桌面更新验证公钥沿用原版本。
 
-- 用户已在当前 Mac 8788 Test 的固定 HTTPS 入口，用手机确认 A/B 两个长会话的最近内容、上翻旧页、位置稳定及返回后复用均通过。
-- 三平台当前 Test 安装、启动、原生分页回归与配置绑定保留的证据见[历史与控制拆分](docs/architecture/history-control-separation.md#test-安装验收2026-10-24)。真实 A/B 会话位于 Mac；Windows/Ubuntu 原生回归不冒充这两条会话的实际运行环境。
-- 正式发布候选的完整 CI、分发资产、覆盖升级和回滚仍在验收中；通过前不公开 Release。后续结果将在本节补齐。
-- 历史首屏不等待完整控制快照；Desktop → 网关首次全量传输仍可能发生。网络恢复默认关闭；受控换址测试不等同于真实 DHCP 租约切换。
+| 范围 | 结果与边界 |
+| --- | --- |
+| 完整 CI | Windows、Ubuntu 的 Python 3.9/3.13，macOS Python 3.13，以及桌面、更新器、手机发布与下载检查通过。源码与 PR 工作流均通过；构建工作流在各原生平台再次执行测试。修复 Windows Claude 历史元数据中 path stat/fstat 差异，并隔离 DSH 退出测试的时间模拟，补齐回归 |
+| 正式桌面包 | Mac arm64/x64 DMG、ZIP；Windows x64 NSIS、ZIP；Linux x64/arm64 DEB、AppImage 完成原生构建、包内运行时与安装启动检查。Windows 带齐六项 ConPTY 文件；Mac 验证嵌套签名。五种桌面架构的关键启动资源与已验收源码一致 |
+| Mac 正式升级 | 在本机隔离目录以正式 2.1.3 签名包执行真实更新助手、Electron 重启及原网关重启，升级到 2.1.4 通过；注入暂存可执行文件缺失后自动恢复 2.1.3。原配置值、通知配置和旧 QR 手机 cookie 均保留；日常正式版进程、包文件与 Test 配置绑定摘要前后一致 |
+| Windows 正式升级 | 在真实 Windows 设备的 F 盘隔离目录，用已发布 2.1.3 ZIP 和本次 2.1.4 ZIP 执行真实更新助手与 Electron 重启。正常升级通过；移除仅属于测试事务的暂存可执行文件后，失败更新自动恢复 2.1.3。原 QR 配对 cookie 持续通过 trusted 认证，配置和通知设置保留 |
+| Linux 升级与回退 | 真实 Ubuntu 虚拟机中，正式 DEB 解包载荷 2.1.3 → 2.1.4 → 2.1.3 切换、启动和原 QR 绑定认证通过。此项为隔离载荷切换，不是对用户正式安装执行 sudo 包管理回滚；两种架构的 DEB 安装与 GUI/AppImage 启动另由原生 CI 验证 |
+| 配置迁移 | 新版仅为旧局域网 IP 选择补充对应网卡 `lanInterfaces`；验收逐字段确认全部旧值不变，新增选择与系统实际网卡一致。回退保留旧 IP 字段并正常启动；通知配置字节不变，原绑定命名空间与有效会话保留。现有正式版与 Test 包及持久配置的前后摘要一致 |
+| Android / iOS | Android 正式签名 APK 在独立 API 35 模拟器完成 2.1.3/build35 → 2.1.4/build37 → 2.1.3，首次安装身份、电脑列表、设置及原生/WebView 认证保留。iOS 用正式应用及扩展标识完成设备构建，并在独立 iOS 18.2 模拟器完成同样升级/回退，电脑列表、设置与原生/WebView cookie 认证保留；不是重新签名安装用户真机的验收 |
+| 手机长会话 | 用户在 Mac 8788 Test 原固定 HTTPS 入口，确认 A/B 两个长会话进入先显示最近内容、上翻读取旧记录且位置稳定、返回列表再进入复用均通过；无需发送消息或审批 |
+| 下载与更新身份 | 14 个分发资产（含已签名更新清单）与 SHA256SUMS 核对通过，共 15 个 Release 文件。桌面更新清单签名及三种自动更新 ZIP 的大小和 SHA-256 通过原公钥验证；GitHub 草稿资产摘要与本地对应。iOS 三个正式标识和 Android 原签名核对通过 |
 
-本机证据目录：`.tmp/release-v214-20261024/`。Windows 临时文件与验收产物仅放 F 盘，重型任务串行；不发送聊天消息、不调用模型、不修改日常账号或手机绑定。
+三平台 Test 安装、启动、原生分页与配置绑定保留证据见[历史与控制拆分](docs/architecture/history-control-separation.md#test-安装验收2026-10-24)。真实 A/B 会话位于 Mac，Windows/Ubuntu 的原生合成回归不冒充这两条会话的实际运行环境。历史首屏不等待完整控制快照，但 Desktop → 网关首次控制订阅仍可能传输全量；网络恢复默认关闭，受控换址测试不等同于真实 DHCP 租约切换。
+
+本机记录位于 `.tmp/release-v214-20261024/`。Windows 临时文件与验收产物仅放 F 盘，Windows/Ubuntu 重型操作串行；测试只使用隔离配置与本地认证夹具，不发送聊天消息或调用模型。保留现有正式版、原会话、账号、配置和手机绑定；结束后移除本轮重复 App 载荷，保留结果、哈希和日志。
+
+**English:** The product tag is fixed at `0f1934a`. Native CI covers macOS arm64/x64, Windows x64 and Linux x64/arm64, with official mobile identities and the existing Android/update signing keys. Isolated desktop upgrade/recovery and mobile simulator upgrade/downgrade checks verify original configuration values and trusted cookies. Linux rollback coverage is an extracted-DEB payload switch, not a system package-manager rollback. A/B long-chat reading was accepted by the user on the existing Mac Test HTTPS entry. Original desktop ownership and bindings remain intact; initial control subscription can still carry a full snapshot.
 
 ---
 
