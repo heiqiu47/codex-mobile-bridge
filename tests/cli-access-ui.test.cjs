@@ -10,20 +10,21 @@ const listCode=extract('function renderList(){','async function loadList(');
 const stateCode=extract('function renderState(view){',"$('send-mode').onchange");
 const reconnectCode=extract("$('reconnect').onclick=", "document.querySelectorAll('[data-close]')");
 const permissionCode=extract("$('permissions-button').onclick=",'const fileTransferSettings=');
-const newChatTypeCode=extract("$('new-chat-type').onchange=", "$('new-chat-project').onchange=");
-test('CLI creation picker enables only a known CLI folder and uses an accurate action',()=>{
-  const nodes=new Map(),$=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',disabled:false,children:[],replaceChildren(){this.children=[];this.value='';},append(option){this.children.push(option);this.value=option.value;},onchange(){}});return nodes.get(id);};
-  const ctx={$,listRows:[],currentId:null,currentHost:'local',newChatProjects:[],Option:class{constructor(text,value){this.text=text;this.value=value;}},t:key=>({'创建聊天':'Create chat','创建并打开':'Create and open'}[key]||key)};
+const newChatTypeCode=extract("let newChatRequest=0;", "$('new-chat-project').onchange=");
+test('CLI creation picker enables only a known CLI folder and uses an accurate action',async()=>{
+  const nodes=new Map(),$=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',disabled:false,open:true,children:[],get options(){return this.children;},replaceChildren(...parts){this.children=parts;this.value=parts[0]?.value||'';},append(option){this.children.push(option);if(!this.value)this.value=option.value;},onchange(){}});return nodes.get(id);};
+  const ctx={$,listRows:[],currentId:null,currentHost:'local',newChatProjects:[],newChatEntry:'desktop',preferredWslEntry:'',codexEntries:()=>[],wslEntries:()=>[],newChatUrl:value=>value,independentProject:()=> 'local|independent',api:async()=>({projects:ctx.projects||[]}),Option:class{constructor(text,value){this.text=text;this.value=value;}},t:key=>({'创建聊天':'Create chat','创建并打开':'Create and open'}[key]||key)};
+  $('new-chat-project').onchange=()=>{$('new-chat-submit').disabled=!$('new-chat-project').value;};
   vm.createContext(ctx);vm.runInContext(newChatTypeCode,ctx);
-  $('new-chat-type').value='cli';$('new-chat-type').onchange();
+  $('new-chat-type').value='cli';await $('new-chat-type').onchange();
   assert.equal($('new-chat-submit').disabled,true);
   assert.equal($('new-chat-submit').textContent,'Create chat');
   assert.equal($('new-chat-project').children.some(option=>option.value==='__directory__'),false);
-  ctx.newChatProjects=[{type:'cli',host:'local',key:'cli|local|folder',name:'agent_chat',cwd:'/fixture/agent_chat'}];
-  $('new-chat-type').onchange();
+  ctx.projects=[{type:'cli',host:'local',key:'cli|local|folder',name:'agent_chat',cwd:'/fixture/agent_chat'}];
+  await $('new-chat-type').onchange();
   assert.equal($('new-chat-project').value,'cli|local|folder');
   assert.equal($('new-chat-submit').disabled,false);
-  $('new-chat-type').value='desktop';$('new-chat-type').onchange();
+  $('new-chat-type').value='desktop';await $('new-chat-type').onchange();
   assert.equal($('new-chat-submit').textContent,'Create and open');
   assert.equal($('new-chat-project').children.some(option=>option.value==='__directory__'),true);
 });
@@ -41,11 +42,11 @@ test('source selector uses full inventory and preserves its open options across 
   const ctx={$ ,availableSources:['desktop','cli'],listSource:'all',sourceFilterStamp:'',localStorage:{setItem(...args){saved.push(args);}},BridgeI18n:{locale:()=>locale},t:key=>key,el:(tag,cls,label)=>({tag,cls,textContent:label,value:''})};
   vm.createContext(ctx);vm.runInContext(sourceFilterCode,ctx);
   assert.equal(ctx.renderSourceFilter(),true);assert.equal($('source-filter-label').hidden,false);
-  assert.deepEqual($('source-filter').children.map(option=>option.value),['all','desktop','cli']);
+  assert.deepEqual($('source-filter').children.map(option=>option.value),['all','cli','desktop','wsl']);
   const rebuilds=$('source-filter').rebuilds;ctx.renderSourceFilter();assert.equal($('source-filter').rebuilds,rebuilds);
   locale='en-US';ctx.renderSourceFilter();assert.equal($('source-filter').rebuilds,rebuilds+1);
-  ctx.listSource='cli';ctx.availableSources=['desktop'];assert.equal(ctx.renderSourceFilter(),false);
-  assert.equal($('source-filter-label').hidden,true);assert.equal(ctx.listSource,'all');assert.deepEqual(saved.at(-1),['codex-source-filter','all']);
+  ctx.listSource='wsl';ctx.availableSources=['desktop'];assert.equal(ctx.renderSourceFilter(),true);
+  assert.equal($('source-filter-label').hidden,false);assert.equal(ctx.listSource,'wsl');assert.equal(saved.length,0);
 });
 test('every Codex row identifies its source even with a single-source inventory',()=>{
   const {ctx,$}=fixture();$('list-mode').value='recent';
@@ -158,4 +159,15 @@ test('diagnostics summary uses only aggregate fields and old native apps cannot 
   assert.equal(prevented,true);
   ctx.window.BridgeMobileCapabilities={diagnosticsExport:true};$('open-session-diagnostics').onclick();await new Promise(setImmediate);
   assert.equal($('session-diagnostics-export').hidden,false);
+});
+
+test('WSL source badges remain distinct from CLI and APP without changing access source',()=>{
+  const {ctx}=fixture();assert.equal(ctx.sourceLabel({source:'cli',runtime:'wsl'}),'WSL');assert.equal(ctx.sourceLabel({source:'cli',runtime:'cli'}),'CLI');assert.equal(ctx.sourceLabel({source:'desktop',runtime:'desktop'}),'APP');ctx.listRows=[{id:'a',host:'wsl:fixture',title:'WSL',projectName:'P',projectKey:'p',recency:1,access:{source:'cli',runtime:'wsl'}}];ctx.renderList();assert.equal(ctx.$('sessions').children[0].children[1].textContent,'WSL');
+});
+test('switching from a restricted WSL chat restores APP controls and queue availability',()=>{
+  const {ctx,$}=fixture(),queue=node(),steer=node();$('send-mode').querySelector=selector=>selector==='[value=queue]'?queue:steer;ctx.workModes.selection='default';
+  ctx.renderState({host:'wsl:fixture',endpointId:'wsl:fixture',access:{...cli,runtime:'wsl'},capabilities:{permissions:false,skills:false,notifications:false,queue:false,plan:false},connected:false,status:'idle',requests:[],submissions:[],historyComplete:true});
+  assert.equal($('skills-button').hidden,true);assert.equal($('permissions-button').hidden,true);assert.equal($('notify-button').hidden,true);assert.equal($('work-mode').hidden,true);assert.equal(queue.disabled,true);
+  ctx.renderState({host:'local',access:{source:'desktop'},connected:true,status:'idle',requests:[],submissions:[],historyComplete:true});
+  assert.equal($('skills-button').hidden,false);assert.equal($('permissions-button').hidden,false);assert.equal($('notify-button').hidden,false);assert.equal($('work-mode').hidden,false);assert.equal(queue.disabled,false);
 });

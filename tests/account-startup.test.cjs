@@ -15,7 +15,7 @@ async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage,accountS
   }
   const storage=()=>({getItem(){return null;},setItem(){},clear(){}});
   const response=(data,status=200)=>({ok:status===200,status,json:async()=>data});
-  const context=vm.createContext({ClientNavigation:class{constructor(){this.provider="codex";}async refresh(){}async openChatLink(hash){assert.equal(hash,'','This fixture enters without a chat deep link');return false;}},DesktopSessionsView:class{bindListCache(){}previewCachedList(){return false;}clear(){}},Workbench:class{open(){}reset(){}setThumbnails(){}relabel(){}},Event:class{constructor(type){this.type=type;}},navigator:{userAgent:'test'},Date,Option:function(text,value){return {...node('option'),textContent:text,value};},document:{addEventListener(){},dispatchEvent(){},documentElement:{},getElementById:id=>nodes.get(id),querySelector:()=>({classList:{toggle(){}}}),querySelectorAll:()=>[],createElement:node},
+  const context=vm.createContext({ClientNavigation:class{constructor(){this.provider="codex";this.clients=[];}async refresh(){}async openChatLink(hash){assert.equal(hash,'','This fixture enters without a chat deep link');return false;}},DesktopSessionsView:class{bindListCache(){}previewCachedList(){return false;}clear(){}},Workbench:class{open(){}reset(){}setThumbnails(){}relabel(){}},Event:class{constructor(type){this.type=type;}},navigator:{userAgent:'test'},Date,Option:function(text,value){return {...node('option'),textContent:text,value};},document:{addEventListener(){},dispatchEvent(){},documentElement:{},getElementById:id=>nodes.get(id),querySelector:()=>({classList:{toggle(){}}}),querySelectorAll:()=>[],createElement:node},
     window:{addEventListener:(name,fn)=>events[name]=fn},localStorage:storage(),sessionStorage:storage(),
     location:{hash:'',pathname:'/',search:''},history:{replaceState(){}},
     setTimeout(fn,delay){timers.set(++timerId,{fn,delay});return timerId;},clearTimeout(id){timers.delete(id);},setInterval(fn,delay){intervals.push({fn,delay});},
@@ -23,6 +23,7 @@ async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage,accountS
       requests.push(url);
       if(url==='/api/auth')return response({authenticated:true,csrf:'fixture',uiLanguage:gatewayLanguage});
       if(url.startsWith('/api/sessions?'))return response({sessions:[]});
+      if(url.startsWith('/api/accounts?entry='))return response({accounts:[],current:{status:'ready',kind:'external',name:'Fixture WSL'},management:{external:true},canSwitch:false,canManageDesktop:false});
       if(url==='/api/accounts')return response(accountSnapshot||{accounts:[],activeId:null,current:{kind,status:'ready',name:'Fixture'},switch:{phase:'idle'}});
       if(url.includes('/catalog?kind=skills')){
         if(failNextSkill){failNextSkill=false;return response({error:'Skill fixture error'},500);}
@@ -47,13 +48,15 @@ async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage,accountS
     async retry(){const entry=[...timers.entries()].find(([,t])=>t.delay<=5000);assert.ok(entry,'Account read should retry promptly without user input');timers.delete(entry[0]);await entry[1].fn();await new Promise(setImmediate);}};
 }
 
-test('WSL account URLs stay scoped and an explicit desktop choice restores desktop scope',async()=>{
+test('WSL account URLs follow the selected environment within a single Codex page',async()=>{
  const ui=await fixture(r=>r(official));
- ui.run("currentId='fixture';currentHost='wsl:original';clientNavigation.provider='wsl:original';");
+ ui.run("clientNavigation.clients=[{id:'codex',entries:[{id:'desktop',enabled:true},{id:'wsl:original',kind:'wsl-cli',enabled:true},{id:'wsl:selected',kind:'wsl-cli',enabled:true}]}];currentId='fixture';currentHost='wsl:original';refreshEntryAccounts();");
  assert.equal(ui.run("accountUrl('/api/accounts')"),'/api/accounts?entry=wsl%3Aoriginal');
  assert.equal(ui.run("accountUrl('/api/account?cached=1')"),'/api/account?cached=1&entry=wsl%3Aoriginal');
- ui.run("clientNavigation.provider='wsl:selected';");assert.equal(ui.run("accountUrl('/api/accounts')"),'/api/accounts?entry=wsl%3Aselected');
- ui.run("clientNavigation.provider='codex';");assert.equal(ui.run("accountUrl('/api/accounts')"),'/api/accounts');
+ ui.run("accountEntrySelect.value='wsl:selected';accountEntrySelect.onchange();");assert.equal(ui.run("accountUrl('/api/accounts')"),'/api/accounts?entry=wsl%3Aselected');
+ assert.equal(ui.run('codexCliDetails.hidden'),true);
+ ui.run("accountEntrySelect.value='desktop';accountEntrySelect.onchange();");assert.equal(ui.run("accountUrl('/api/accounts')"),'/api/accounts');assert.equal(ui.run('codexCliDetails.hidden'),false);
+ await new Promise(setImmediate);
 });
 
 test('official and API connections have no current-account fallback outside saved cards',async()=>{

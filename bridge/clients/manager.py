@@ -1344,8 +1344,17 @@ class DesktopSessions:
                         row['reason'] = ('已选择，启动网关后在后台启动并连接' if row['id'] == 'claude'
                                          else '已选择，启动网关后自动接入')
             entries = getattr(self.bridge, 'entries', None)
-            if entries is not None:
-                rows.extend(entries.applications())
+            codex = rows[0]
+            native = {**codex, 'id': 'desktop', 'kind': 'desktop'}
+            codex_entries = [native, *(entries.applications() if entries is not None else [])]
+            codex.update(entries=codex_entries, desktopEnabled=native['enabled'],
+                         nativeConfigured=native['configured'], nativeSelectable=native['selectable'],
+                         nativeInstalled=native['installed'], nativeRunning=native['running'],
+                         nativeConnected=native['connected'])
+            for field in ('enabled', 'configured', 'selectable', 'installed', 'connected', 'running'):
+                codex[field] = any(entry.get(field) is True for entry in codex_entries)
+            if codex['configured'] and not native['configured']:
+                codex.update(setupStatus='ready', reason='WSL Codex 接入可用')
             result = {'clients': rows, 'computer': socket.gethostname(), 'gatewayRunning': self.gateway_running,
                       'wslSupported': entries is not None and sys.platform == 'win32'}
             if sys.platform == 'win32':
@@ -1508,6 +1517,8 @@ class DesktopSessions:
                 accounts.assert_editable()
             if enabled:
                 row = next(row for row in self.clients(refresh=True)['clients'] if row['id'] == provider)
+                if provider == 'codex':
+                    row = row['entries'][0]
                 if not row['selectable']:
                     raise ValueError(row['reason'])
             if not self.gateway_running:

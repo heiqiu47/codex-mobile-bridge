@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 
 from bridge.app.lifecycle import private_json
@@ -27,6 +28,17 @@ CAPABILITIES = {'send': True, 'stop': True, 'settings': True, 'approvals': True,
                 'workspace': True, 'attachments': True, 'skills': False, 'permissions': False,
                 'plan': False, 'goal': False, 'terminal': False, 'sideChat': False,
                 'notifications': False, 'messageActions': False}
+
+
+def _entry_write(method):
+    @wraps(method)
+    def guarded(self, *args, **kwargs):
+        # Disabling waits for accepted writes; stale HTTP targets cannot start
+        # another write after the entry is closed.
+        with self.write_lock:
+            self._require_open()
+            return method(self, *args, **kwargs)
+    return guarded
 
 
 class WslStore(RemoteStore):
@@ -96,11 +108,16 @@ class WslEntry:
         self.worker.start()
 
     def read(self, alias, source, timeout=20):
+        self._require_open()
         prefix = 'import os\nos.environ["CODEX_HOME"]=' + repr(self.row['home']) + '\n'
         try:
             return wsl.read(self.row['distribution'], prefix + source, self.row['user'], timeout)
         except (OSError, ValueError, TimeoutError) as exc:
             raise RemoteUnavailable('WSL 入口暂不可用，请检查发行版和原 Codex') from exc
+
+    def _require_open(self):
+        if self.closed.is_set():
+            raise IPCError('WSL 入口已关闭')
 
     def runtime(self, allow_start=False):
         with self.connection_lock:
@@ -269,8 +286,9 @@ class WslEntry:
                     self._refresh_background(session)
 
     def list(self, query='', limit=100, offset=0, archived=False, source='all', include_sources=False):
-        available = self.store.available_sources() if include_sources else []
-        rows = self.store.list(query=query, limit=limit, offset=offset, archived=archived, source=source)
+        available = ['wsl'] if include_sources and self.store.available_sources() else []
+        rows = [] if source == 'desktop' else self.store.list(query=query, limit=limit, offset=offset,
+            archived=archived, source='cli' if source == 'wsl' else source)
         for row in rows:
             cwd = row.get('cwd') or ''
             row.update(host=self.host, endpointId=self.host, hostLabel=self.row['label'],
@@ -390,6 +408,7 @@ class WslEntry:
             raise IPCError('原 WSL 会话设置或连接已变化，操作尚未发送，请重新查看原会话')
         self.subscriptions[identifier] = generation
 
+    @_entry_write
     def activate(self, identifier):
         uuid.UUID(identifier)
         self.runtime(allow_start=True)
@@ -412,6 +431,7 @@ class WslEntry:
                     session.activating = False
                     session.changed()
 
+    @_entry_write
     def connect(self):
         self.runtime(allow_start=True)
         return {'ok': True, 'host': self.host}
@@ -428,6 +448,7 @@ class WslEntry:
         return registered + [{'key': self.host + '|' + cwd, 'host': self.host, 'hostLabel': self.row['label'],
                  'cwd': cwd, 'name': cwd.rstrip('/').rsplit('/', 1)[-1] or cwd} for cwd in roots if cwd not in known]
 
+    @_entry_write
     def register_project(self, path, create=False, host=None):
         if host not in (None, self.host): raise ValueError('请选择当前 WSL 应用的目录')
         # Explicit action can wake only this already registered distribution.
@@ -438,6 +459,7 @@ class WslEntry:
         if identity.get('error'): raise ValueError(identity['error'])
         return self.directory_projects.save(self.host, self.row['label'], identity)
 
+    @_entry_write
     def project_directories(self, host, path=None, hidden=False, name=None, identity=None):
         if host != self.host: raise ValueError('请选择当前 WSL 应用')
         source = source_text('features/sessions/create.py')
@@ -446,6 +468,7 @@ class WslEntry:
         if result.get('error'): raise ValueError(result['error'])
         return result
 
+    @_entry_write
     def create_chat(self, project_key, title, request_id):
         if not isinstance(request_id, str):
             raise ValueError('创建请求标识无效')
@@ -496,6 +519,7 @@ class WslEntry:
             self.activate(identifier)
             return {'id': identifier, 'host': self.host, 'opened': True, 'message': '聊天已创建，可以直接发送消息'}
 
+    @_entry_write
     def _mutation(self, identifier, key, value, call):
         fingerprint = hashlib.sha256(json.dumps([identifier, value], sort_keys=True).encode()).hexdigest()
         with self.write_lock:
@@ -528,6 +552,7 @@ class WslEntry:
                 raise ValueError('相同请求标识不能用于不同操作')
             return dict(old['result'])
 
+    @_entry_write
     def send(self, identifier, text, submission_id, mode='send', skills=None, work_mode=None, attachments=None, **options):
         uuid.UUID(identifier); uuid.UUID(submission_id)
         if skills:
@@ -571,6 +596,7 @@ class WslEntry:
             self.session(identifier, background=True)
             return result
 
+    @_entry_write
     def interrupt(self, identifier):
         with self.session(identifier, attach=False).action_lock:
             runtime, _ = self._target(identifier)
@@ -581,6 +607,7 @@ class WslEntry:
             return self._mutation(identifier, identifier + ':stop:' + turn, {'turnId': turn},
                 lambda: runtime.request('turn/interrupt', {'threadId': identifier, 'turnId': turn}))
 
+    @_entry_write
     def settings(self, identifier, model, effort, *, fast_mode=None):
         if (not isinstance(model, str) or not model or len(model) > 200 or any(c in model for c in '\r\n\0')
                 or effort not in (None, 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')):
@@ -630,6 +657,7 @@ class WslEntry:
                     'reason': 'WSL 接入由原终端或 Magpie 管理，请在原环境中切换'},
                 'desktopUpdate': {'state': 'unsupported'}, 'reminders': {}}
 
+    @_entry_write
     def respond(self, identifier, request_id, response):
         session = self.session(identifier, attach=False)
         with session.action_lock:
@@ -686,6 +714,7 @@ class WslEntry:
             receipt = self._mutation(identifier, identifier + ':approval:' + self.generation + ':' + str(pending['id']), result, dispatch)
             return receipt
 
+    @_entry_write
     def rename(self, identifier, title):
         if not isinstance(title, str) or not title.strip() or len(title) > 120 or any(ord(c) < 32 for c in title):
             raise ValueError('聊天名称需为 1–120 个字符，不能包含控制字符')
@@ -693,6 +722,7 @@ class WslEntry:
         self.runtime().request('thread/name/set', {'threadId': identifier, 'name': title.strip()})
         return {'id': identifier, 'title': title.strip(), 'host': self.host}
 
+    @_entry_write
     def workspace(self, identifier, action, params):
         root = self.store.get(identifier)['cwd']
         source = source_text('features/workspace/workspace.py')
@@ -716,10 +746,12 @@ class WslEntry:
         except OSError as exc:
             raise RemoteUnavailable('WSL 下载失败，请检查原环境后重试') from exc
 
+    @_entry_write
     def upload(self, identifier, upload_id, name, data):
         self.store.get(identifier)
         return self.uploads.put(identifier, upload_id, name, data)
 
+    @_entry_write
     def upload_thumb(self, identifier, upload_id, data, width, height):
         self.store.get(identifier)
         return self.uploads.set_thumb(identifier, upload_id, data, width, height)
@@ -750,8 +782,9 @@ class WslEntry:
     desktop_image_preview = unsupported
 
     def close(self):
-        self.closed.set()
-        server = self.server
-        if server is not None:
-            server.close()
+        with self.write_lock:
+            self.closed.set()
+            server = self.server
+            if server is not None:
+                server.close()
         self.worker.join(timeout=3)

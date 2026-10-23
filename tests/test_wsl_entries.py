@@ -8,6 +8,7 @@ import uuid
 import io
 import os
 import subprocess
+from email.message import Message
 from contextlib import redirect_stdout
 from contextlib import closing
 from pathlib import Path
@@ -263,6 +264,177 @@ class Runtime:
 
 
 class WslSessionTests(unittest.TestCase):
+    def test_disable_after_http_upload_headers_rejects_delayed_body(self):
+        from bridge.api.httpd import Handler
+        root = Path(self.temp.name)/'project'
+        root.mkdir()
+        self.entry.store = SimpleNamespace(get=lambda _: {'cwd': str(root)})
+        entries = Entries(self.temp.name)
+        self.addCleanup(entries.close)
+        entries.entries = [{**self.row, 'enabled': True}]
+        entries.bridges[self.entry.host] = self.entry
+        entered, release = threading.Event(), threading.Event()
+        def body(size):
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError('fixture upload body was not released')
+            return b'fixture'
+        def remote(distribution, source, user, timeout):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                exec(source, {'__name__': 'wsl_fixture_payload'})
+            return json.loads(output.getvalue())
+        handler = Handler.__new__(Handler)
+        handler.path = '/api/sessions/' + self.identifier + '/workspace/upload?host=' + self.entry.host + '&path=late.txt'
+        handler.headers = Message()
+        handler.headers['Content-Length'] = '7'
+        handler.rfile = SimpleNamespace(read=body)
+        handler.check_request = Mock()
+        handler.client = lambda: {'ip': '127.0.0.1'}
+        handler.authorized = lambda _: {'csrf': 'fixture'}
+        handler.output = Mock()
+        handler.server = SimpleNamespace(bridge=SimpleNamespace(for_host=entries.get),
+            desktop_sessions=SimpleNamespace(require_enabled=lambda _: None),
+            auth=SimpleNamespace(permitted=lambda _: True, config={'mode': 'password'}))
+        with patch.object(wsl, 'read', side_effect=remote):
+            request = threading.Thread(target=handler.handle_method, args=(True,))
+            request.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                entries.configure(self.entry.host, False)
+            finally:
+                release.set()
+                request.join(3)
+        self.assertFalse(request.is_alive())
+        self.assertFalse((root/'late.txt').exists())
+        self.assertEqual(handler.output.call_args.args[0], 409)
+
+    def test_closed_entry_rejects_workspace_git_and_attachment_writes_before_effects(self):
+        self.entry.close()
+        with patch.object(self.entry, 'read') as read, patch.object(self.entry.uploads, 'put') as put, \
+                patch.object(self.entry.uploads, 'set_thumb') as thumb:
+            for action in ('upload', 'git-action'):
+                with self.assertRaisesRegex(IPCError, '已关闭'):
+                    self.entry.workspace(self.identifier, action, {})
+            with self.assertRaisesRegex(IPCError, '已关闭'):
+                self.entry.upload(self.identifier, str(uuid.uuid4()), 'fixture.txt', b'fixture')
+            with self.assertRaisesRegex(IPCError, '已关闭'):
+                self.entry.upload_thumb(self.identifier, str(uuid.uuid4()), b'fixture', 1, 1)
+            read.assert_not_called()
+            put.assert_not_called()
+            thumb.assert_not_called()
+
+    def test_closed_entry_rejects_directory_and_chat_creation_before_native_or_local_writes(self):
+        self.entry.close()
+        with patch.object(self.entry, 'runtime') as runtime, patch.object(self.entry, 'read') as read:
+            calls = [lambda: self.entry.register_project('/fixture/new', True, self.entry.host),
+                     lambda: self.entry.project_directories(self.entry.host, '/fixture', name='new'),
+                     lambda: self.entry.create_chat(self.entry.host + '|independent', 'Fixture', str(uuid.uuid4()))]
+            for call in calls:
+                with self.assertRaisesRegex(IPCError, '已关闭'):
+                    call()
+            runtime.assert_not_called()
+            read.assert_not_called()
+        self.assertFalse(self.entry.creations_path.exists())
+
+    def test_close_waits_for_accepted_file_git_and_attachment_writes(self):
+        for action in ('upload', 'git-action', 'attachment', 'thumbnail'):
+            with self.subTest(action=action):
+                entry = self.make_entry()
+                self.addCleanup(entry.close)
+                entered, release, closing, closed = (threading.Event() for _ in range(4))
+                failures = []
+                def mutate(*args, **kwargs):
+                    entered.set()
+                    if not release.wait(3):
+                        raise TimeoutError('fixture file mutation was not released')
+                    self.assertFalse(entry.server.closed)
+                    return {'value': {'saved': True}}
+                def write():
+                    try:
+                        if action == 'attachment':
+                            entry.upload(self.identifier, str(uuid.uuid4()), 'fixture.txt', b'fixture')
+                        elif action == 'thumbnail':
+                            entry.upload_thumb(self.identifier, str(uuid.uuid4()), b'fixture', 1, 1)
+                        else:
+                            entry.workspace(self.identifier, action, {})
+                    except Exception as error:
+                        failures.append(error)
+                def close():
+                    closing.set()
+                    entry.close()
+                    closed.set()
+                with patch.object(entry, 'read', side_effect=mutate), \
+                        patch.object(entry.uploads, 'put', side_effect=mutate), \
+                        patch.object(entry.uploads, 'set_thumb', side_effect=mutate):
+                    writer, closer = threading.Thread(target=write), threading.Thread(target=close)
+                    writer.start()
+                    try:
+                        self.assertTrue(entered.wait(2))
+                        closer.start()
+                        self.assertTrue(closing.wait(2))
+                        self.assertFalse(closed.wait(.1))
+                    finally:
+                        release.set()
+                        writer.join(3)
+                        if closer.ident is not None:
+                            closer.join(3)
+                self.assertFalse(writer.is_alive())
+                self.assertFalse(closer.is_alive())
+                self.assertEqual(failures, [])
+                self.assertTrue(entry.server.closed)
+
+    def test_close_waits_for_accepted_mutation_before_closing_transport(self):
+        entered, release, closing, closed = (threading.Event() for _ in range(4))
+        failures = []
+        def mutate():
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError('fixture mutation was not released')
+            self.assertFalse(self.entry.server.closed)
+            return {'saved': True}
+        def write():
+            try:
+                self.entry._mutation(self.identifier, 'fixture', {'action': 'fixture'}, mutate)
+            except Exception as error:
+                failures.append(error)
+        def close():
+            closing.set()
+            self.entry.close()
+            closed.set()
+        writer, closer = threading.Thread(target=write), threading.Thread(target=close)
+        writer.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            closer.start()
+            self.assertTrue(closing.wait(2))
+            self.assertFalse(closed.wait(.1))
+        finally:
+            release.set()
+            writer.join(3)
+            if closer.ident is not None:
+                closer.join(3)
+        self.assertFalse(writer.is_alive())
+        self.assertFalse(closer.is_alive())
+        self.assertEqual(failures, [])
+        self.assertTrue(self.entry.server.closed)
+        self.assertEqual(self.entry.receipts['fixture']['result'], {'saved': True})
+
+    def test_wsl_classification_uses_unfiltered_inventory_and_retains_cli_runtime_identity(self):
+        row = {'id': self.identifier, 'cwd': '/home/fixture/project', 'title': 'fixture', 'source': 'cli'}
+        self.entry.store.available_sources = Mock(return_value=['cli'])
+        self.entry.store.list = Mock(return_value=[row])
+        rows, available = self.entry.list(source='wsl', query='fixture', offset=4, archived=True, include_sources=True)
+        self.assertEqual(available, ['wsl'])
+        self.entry.store.list.assert_called_once_with(query='fixture', limit=100, offset=4, archived=True, source='cli')
+        self.assertEqual(rows[0]['access']['source'], 'cli')
+        self.assertEqual(rows[0]['access']['runtime'], 'wsl')
+        self.entry.store.list.reset_mock()
+        self.assertEqual(self.entry.list(source='desktop', include_sources=True), ([], ['wsl']))
+        self.entry.store.list.assert_not_called()
+        self.entry.store.available_sources.return_value = []
+        self.assertEqual(self.entry.list(source='desktop', include_sources=True), ([], []))
+
     def test_register_project_executes_on_selected_wsl_and_persists_identity(self):
         identity = {'cwd': '/home/fixture/new-project', 'device': 1, 'inode': 42}
         with patch.object(self.entry, 'read', return_value=identity) as read:

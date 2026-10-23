@@ -691,12 +691,21 @@ class Handler(BaseHTTPRequestHandler):
                 report = self.server.bridge.discovery_diagnostics(query.get('thread', [None])[0])
                 return self.output(200, report, content_disposition='attachment; filename="codex-session-diagnostics.json"')
             if not write and path == "/api/sessions":
+                wsl_inventory_only = False
+                native_enabled = True
                 if self.server.desktop_sessions:
+                    native_enabled = bool(self.server.desktop_sessions.enabled('codex'))
                     entry = query.get('entry', ['desktop'])[0]
-                    self.server.desktop_sessions.require_enabled(
-                        entry if entry.startswith('wsl:') else 'codex')
+                    if query.get('scope') == ['host'] and entry == 'desktop':
+                        entry = query.get('host', ['local'])[0]
+                    if entry == 'local' and 'entry' not in query and not native_enabled:
+                        entries = getattr(self.server.bridge, 'entries', None)
+                        wsl_inventory_only = bool(entries is not None and entries.hosts())
+                    if not wsl_inventory_only:
+                        self.server.desktop_sessions.require_enabled(
+                            entry if entry.startswith('wsl:') else 'codex')
                 source = query.get('source', ['all'])[0]
-                if source not in ('all', 'desktop', 'cli'):
+                if source not in ('all', 'desktop', 'cli', 'wsl'):
                     raise ValueError('不支持的会话来源')
                 feed = self.server.notifications.mobile.checkpoint() if self.server.notifications else None
                 entry = query.get('entry', [None])[0]
@@ -704,20 +713,38 @@ class Handler(BaseHTTPRequestHandler):
                     if entry not in (None, 'desktop'):
                         raise ValueError('Codex 入口与主机范围不能同时指定')
                     host = query.get('host', ['local'])[0]
-                    host_infos = self.server.bridge.hosts.hosts()
+                    host_infos = dict(self.server.bridge.hosts.hosts()) if native_enabled else {}
+                    entries = getattr(self.server.bridge, 'entries', None)
+                    if entries is not None and entry != 'desktop':
+                        host_infos.update(entries.hosts())
                     if host != 'local' and host not in host_infos:
-                        raise ValueError('未知 SSH 主机')
+                        raise ValueError('未知 Codex 主机')
                     offset = max(0, int(query.get('offset', [0])[0]))
-                    target = self.server.bridge.for_host(host)
                     host_info = host_infos.get(host, {})
-                    rows, available = target.list(query=query.get('q', [''])[0][:200], limit=offset + 101,
-                                                  archived=query.get('archived', ['false'])[0] == 'true',
-                                                  source=source, include_sources=True, local_only=True,
-                                                  host_label=host_info.get('displayName') or host_info.get('alias'))
+                    options = dict(query=query.get('q', [''])[0][:200], limit=offset + 101,
+                                   archived=query.get('archived', ['false'])[0] == 'true',
+                                   source=source, include_sources=True)
+                    if wsl_inventory_only:
+                        rows, available, errors = [], [], []
+                    elif host.startswith('wsl:'):
+                        target = self.server.bridge.for_host(host)
+                        options['source'] = 'wsl' if source in ('all', 'wsl') else 'desktop'
+                        try:
+                            rows, available = target.list(**options)
+                            errors = []
+                        except (RemoteUnavailable, StoreUnavailable) as exc:
+                            rows, available = [], []
+                            errors = [{'host': host, 'label': host_info['label'], 'error': str(exc)}]
+                    else:
+                        target = self.server.bridge.for_host(host)
+                        options.update(local_only=True,
+                                       host_label=host_info.get('displayName') or host_info.get('alias'))
+                        rows, available = target.list(**options)
+                        errors = target.host_errors
                     return self.output(200, {'sessions': rows, 'availableSources': available,
-                                             'unavailableHosts': target.host_errors,
+                                             'unavailableHosts': errors,
                                              'remoteHosts': list(host_infos) if host == 'local' else [],
-                                             'complete': not target.host_errors,
+                                             'complete': not errors,
                                              'notificationRead': {key: feed[key] for key in ('streamId', 'cursor')} if feed else None})
                 entry_options = {'entry': entry} if entry else {}
                 rows, available = self.server.bridge.list(

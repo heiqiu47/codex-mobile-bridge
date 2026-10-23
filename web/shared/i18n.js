@@ -283,6 +283,8 @@ const en={
 "可从手机新建、恢复 WSL 会话；账号与模型接入由原工具管理。":"Create or resume WSL chats from your phone. Providers remain managed by the original tools.",
 "打开此应用时可启动已登记的 WSL 环境和原生共享服务。":"Opening this app can start its registered WSL environment and native shared service.",
 "正在恢复会话…":"Resuming conversation…",
+"运行环境":"Runtime environment",
+"WSL 环境":"WSL environment",
 "选择 WSL 中的已有项目、浏览目录新建项目，或创建独立聊天。创建后可直接发送消息，无需打开终端。":"Choose an existing WSL project or create an independent chat. Send messages directly without opening a terminal.",
 "在 WSL 中创建独立聊天":"Create an independent chat in WSL",
 "聊天已创建，可以直接发送消息":"Chat created. You can send messages now.",

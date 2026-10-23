@@ -4,7 +4,7 @@
 
 ## 目标与执行边界
 
-手机网页控制 Codex App 聊天，并可在已保存项目中新建空聊天。WSL 独立应用支持直接创建及恢复原生线程；明确打开时可用已安装 Codex 的原生 daemon start 启动共享服务。网关不替换已有执行器或聊天。已有聊天的执行与审批操作绑定 `hostId + conversationId + ownerClientId`，由 App 中相应 owner 执行。重命名是独立的元数据操作，使用所选主机的短期官方运行时调用 `thread/name/set`，不加载执行任务、不调用 `turn/start`，也不改变 provider、认证或审批策略。
+手机网页控制 Codex App 聊天，并可在已保存项目中新建空聊天。Codex 页面内的 WSL 接入支持直接创建及恢复原生线程；明确创建或继续时可用已安装 Codex 的原生 daemon start 启动共享服务。网关不替换已有执行器或聊天。已有聊天的执行与审批操作绑定 `hostId + conversationId + ownerClientId`，由 App 中相应 owner 执行。重命名是独立的元数据操作，使用所选主机的短期官方运行时调用 `thread/name/set`，不加载执行任务、不调用 `turn/start`，也不改变 provider、认证或审批策略。
 
 默认继承已有会话的设置。显式选择模型时更新 `model`、`effort` 或速度档位。账号切换是独立的全局操作：仅桌面端添加凭据，双端选择已保存接入，退出官方桌面后替换本机认证及默认 provider，再启动核验。已有聊天的 provider 和审批策略不直接迁移；详情见 [账号与接入](docs/account-switching.md)。
 
@@ -18,7 +18,7 @@ App 执行的本地聊天，其 Goal 元数据通过受限的官方运行时连�
 
 ## 会话发现
 
-Windows 可在应用管理中显式扫描并启用独立的 **WSL Codex** 应用，详见 [WSL 说明](docs/wsl-codex.md)。应用 ID 沿用已登记的 `wsl:<摘要>`；原 Codex 与各 WSL 应用分别切换、分别读取列表，底层复用 Codex 聊天界面。桌面入口保留原 IPC owner；WSL 仅连接已核验的原共享服务，以独立路由、连接世代和线程 ID 隔离状态与写入记录。被动读取不恢复线程，未加载的 CLI 历史保持只读。发送/审批前重新核验原线程，不另起执行器。Magpie 由外部管理，WSL 接入页不回退到 Windows 账号；HTTP 仍执行原有登录、Origin、CSRF 和文件边界限制。WSL 应用开关仅停止网关连接，不提供退出原 CLI 进程的操作。
+Windows 可在应用管理的 Codex 组内显式扫描并启用 WSL 接入，详见 [WSL 说明](docs/wsl-codex.md)。顶层仅有一个 Codex，列表按全部 / CLI / APP / WSL 分类；WSL 保留 `source=cli / runtime=wsl`，不将展示分类作为执行能力。原生 APP / CLI 与各 WSL 子项分别启停，顶层状态聚合；只有 WSL 可用时也可列出环境。应用 ID 沿用 `wsl:<摘要>` 作为内部路由和缓存身份，原 IPC owner、账号、cwd、连接世代及操作回执继续隔离。列表与历史读取不恢复线程。WSL 账号由原工具或 Magpie 管理，不回退到 Windows 账号；HTTP 沿用登录、Origin、CSRF 和文件边界。WSL 停用与写入共用门锁，旧请求在停用后不能继续写文件或创建聊天，关闭接入不退出原 CLI。
 
 本地通过只读 SQLite 连接读取 `$CODEX_HOME/state_*.sqlite`，筛选桌面聊天并排除子代理。尚无 IPC 快照时，可读取原始会话记录作为历史展示。WAL 模式且 `-wal` 缺失时，先复制到私有临时目录，并核对复制前后主文件的身份、大小和修改时间以及 WAL 仍不存在，再读取副本；并发变化时丢弃副本并等待重试。已有 WAL 时直接只读查询，保留最新提交。发现与历史读取不直接写入原数据库或会话文件；用户新建聊天时由官方运行时持久化新记录。
 

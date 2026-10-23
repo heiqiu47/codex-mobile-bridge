@@ -25,7 +25,7 @@ function isCodexClient(id){return id==='codex'||typeof id==='string'&&/^wsl:[0-9
 
 class ClientNavigation {
   constructor({view,request,notify}) {
-    Object.assign(this,{view,request,notify});this.clients=[];this.revision=0;this.pending=new Set();this.provider=localStorage.getItem('bridge-client')||'codex';const requested=new URLSearchParams(location.search).get('client');if(['codex','claude','deepseek'].includes(requested)||isCodexClient(requested))this.provider=requested;
+    Object.assign(this,{view,request,notify});this.clients=[];this.revision=0;this.pending=new Set();this.restoreClientSelection();
     this.heading=document.querySelector('#sidebar .list-heading');this.sidebar=document.getElementById('sidebar');
     this.footer=document.querySelector('.sidebar-foot');this.footer.classList.add('client-functions');
     this.navigation=document.createElement('div');this.navigation.className='client-navigation';this.sidebar.append(this.navigation);this.navigation.append(this.footer);
@@ -71,6 +71,11 @@ class ClientNavigation {
     this.timer=setInterval(()=>this.poll(),15000);this.connectingTimer=setInterval(()=>this.poll(true),2000);this.paint();
   }
   syncHome(){this.home.hidden=!BridgeHost.hasNativeLayout();}
+  restoreClientSelection(){
+    this.provider=localStorage.getItem('bridge-client')||'codex';const requested=new URLSearchParams(location.search).get('client');
+    if(['codex','claude','deepseek'].includes(requested)||isCodexClient(requested))this.provider=requested;
+    if(this.provider.startsWith('wsl:')&&isCodexClient(this.provider)){this.initialHost=this.provider;this.provider='codex';localStorage.setItem('bridge-client','codex');}
+  }
   paintSettingsActions(){
     this.settingsNotifications.hidden=!!window.BridgeSharedRelay;
     const count=2+Number(!this.switchToggle.hidden)+Number(!this.settingsNotifications.hidden);
@@ -182,18 +187,18 @@ class ClientNavigation {
   applyClients(data){
     this.clients=data.clients;this.wslSupported=data.wslSupported??this.wslSupported;this.gatewayRunning=data.gatewayRunning??this.gatewayRunning;
     this.windowsSession=data.windowsSession??this.windowsSession;
-    for(const client of this.clients.filter(row=>row.kind==='wsl-cli')){if(document.getElementById('appearance-switch-'+client.id))continue;const row=document.createElement('label'),box=document.createElement('input'),caption=document.createElement('span');row.className='display-option';box.type='checkbox';box.id='appearance-switch-'+client.id;box.checked=this.preference('switch:'+client.id);box.onchange=()=>{this.preference('switch:'+client.id,box.checked);this.paint();};caption.textContent=client.name;row.append(caption,box);this.switchPreferences.append(row);}
     this.syncViewClients();
     if(data.computer){this.computer.dataset.deviceName=data.computer;this.computerName.textContent=data.computer;document.dispatchEvent(new Event('bridge-computer'));}
     const enabled=this.clients.filter(c=>c.enabled);
     const id=enabled.some(c=>c.id===this.provider)?this.provider:enabled[0]?.id||null;
     if(id!==this.provider||this.view.provider!==(isCodexClient(id)?'codex':id||'codex'))this.choose(id,{activate:false}).catch(error=>this.notify(error.message));
     else{if(id&&this.view.previewOnly)this.view.confirmCachedList();this.paint();}
+    this.onClientStates?.(this.clients);
   }
   async refresh(){
     if(this.loading||this.pending.size||this.choosing||document.getElementById('app').hidden)return;
     this.loading=true;const revision=this.revision;
-    try{const data=await ClientLifecycle.request(signal=>this.request('/api/clients',undefined,signal),{timeout:this.statusTimeout??10000,uncertain:false,message:'客户端状态读取超时，请重试。'});if(revision===this.revision){this.statusPending=data.pending===true;if(data.refreshError)throw Error(data.refreshError);if(!this.statusPending){ClientLifecycle.reconcile(this.operationFailures,data.clients);this.applyClients(data);}}}
+    try{const data=await ClientLifecycle.request(signal=>this.request('/api/clients',undefined,signal),{timeout:this.statusTimeout??10000,uncertain:false,message:'客户端状态读取超时，请重试。'});if(revision===this.revision){this.statusPending=data.pending===true;if(data.refreshError)throw Error(data.refreshError);if(!this.statusPending){ClientLifecycle.reconcile(this.operationFailures,this.managementClients(data.clients));this.applyClients(data);}}}
     catch(error){this.notify(error.message);}finally{this.loading=false;this.paint();}
   }
   clear(){this.revision++;this.clients=[];this.choosing=null;this.pending.clear();this.operationFailures?.clear();this.swipeSnapshots.clear();}
@@ -205,17 +210,20 @@ class ClientNavigation {
     finally{if(revision===this.revision){this.choosing=null;this.revision++;button.disabled=false;this.paint();}}
   }
   poll(fast=false){
-    if(document.hidden||document.getElementById('app').hidden||this.hasUncertain()||(fast&&!this.statusPending&&!this.clients.some(client=>ClientLifecycle.connection(client).waiting)))return;
+    if(document.hidden||document.getElementById('app').hidden||this.hasUncertain()||(fast&&!this.statusPending&&!this.managementClients().some(client=>ClientLifecycle.connection(client).waiting)))return;
     return this.refresh();
   }
   connection(client){return ClientLifecycle.connection({...client,pendingEnable:this.gatewayRunning!==false&&this.pending.has(client.id)&&client.enabled});}
+  managementClients(clients=this.clients){return clients.flatMap(client=>client.id==='codex'&&client.entries?.length?client.entries.map(entry=>({...entry,id:entry.id==='desktop'?'codex':entry.id,parentId:'codex'})):[client]);}
+  withClientEnabled(id,enabled){return this.clients.map(client=>{if(client.id==='codex'&&client.entries?.length){const entries=client.entries.map(entry=>(entry.id==='desktop'?'codex':entry.id)===id?{...entry,enabled}:entry);return {...client,entries,desktopEnabled:entries.find(entry=>entry.id==='desktop')?.enabled,enabled:entries.some(entry=>entry.enabled)};}return client.id===id?{...client,enabled}:client;});}
   hasUncertain(){return [...(this.operationFailures?.values()||[])].some(value=>value.uncertain);}
   syncViewClients(){this.view.setClientStates?.(this.clients.map(client=>({...client,operationFailure:this.operationFailures?.get(client.id),operationUncertain:this.hasUncertain(),pendingEnable:this.gatewayRunning!==false&&this.pending.has(client.id)&&client.enabled})),id=>this.toggle(id,true),id=>this.initialize(id),()=>this.refresh(),id=>this.reconnect(id));}
   retryOperation(id){const failure=this.operationFailures?.get(id);if(!failure||this.hasUncertain())return;return failure.action==='initialize'?this.initialize(id):this.toggle(id,failure.action==='enable');}
   async choose(id,{activate=true}={}){
     this.cancelListSwipe();
+    const host=id?.startsWith('wsl:')&&isCodexClient(id)?id:undefined;if(host)id='codex';
     if(id===this.provider&&this.view.provider===(isCodexClient(id)?'codex':id||'codex')){
-      if(activate&&id?.startsWith('wsl:'))await this.onApplicationChange?.(id,id,{activate});
+      if(host){++this.revision;await this.onApplicationChange?.(id,id,{activate,host});}
       return;
     }
     ++this.revision;
@@ -223,7 +231,7 @@ class ClientNavigation {
     this.rememberSwipeList();
     const previous=this.provider;this.listReadDone=false;this.listVisit=(this.listVisit||0)+1;this.provider=id;if(id)localStorage.setItem('bridge-client',id);
     const ready=this.view.choose(isCodexClient(id)?'codex':id||'codex');if(restoreCodex)this.view.onSelect?.('codex');this.paint();
-    await this.onApplicationChange?.(previous,id,{activate});await ready;
+    await this.onApplicationChange?.(previous,id,{activate,...(host?{host}:{})});await ready;
   }
   acknowledgeList(provider,value){
     if(provider?.startsWith('wsl:')||this.listReadDone||provider!==this.provider||document.hidden||document.getElementById('app').hidden||value.connected===false||value.complete===false||value.unavailableHosts?.length)return;
@@ -238,25 +246,27 @@ class ClientNavigation {
       if(!id||id.length>512||host.length>256||/[\x00-\x1f\x7f]/.test(id+host))return null;
       if(['desktop:claude','desktop:deepseek'].includes(host))return {provider:host.slice(8),id,host};
       if(host.startsWith('desktop:')||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))return null;
-      return {provider:host.startsWith('wsl:')?host:'codex',id,host};
+      if(host.startsWith('wsl:')&&!isCodexClient(host))return null;
+      return {provider:'codex',id,host};
     }catch{return null;}
   }
   async openChatLink(hash,openCodex){
     const target=this.chatTarget(hash);if(!target)return false;
-    if(!this.clients.some(client=>client.id===target.provider&&client.enabled)){this.notify('尚未启用应用，请打开应用管理。');return true;}
-    const ready=this.choose(target.provider),generation=this.view.generation;await ready;
-    if(this.provider!==target.provider||generation!==this.view.generation)return true;
+    const entry=target.provider==='codex'?(target.host.startsWith('wsl:')?target.host:'codex'):target.provider;
+    if(!this.managementClients().some(client=>client.id===entry&&client.enabled)){this.notify('尚未启用应用，请打开应用管理。');return true;}
+    const ready=this.choose(target.host.startsWith('wsl:')?target.host:target.provider),generation=this.view.generation,revision=this.revision;await ready;
+    if(this.provider!==target.provider||generation!==this.view.generation||revision!==this.revision)return true;
     if(isCodexClient(target.provider))await openCodex(target.id,target.host);else await this.view.open(target.id);
     return true;
   }
   async initialize(id){
-    const client=this.clients.find(row=>row.id===id),state=client&&this.connection(client);if(this.gatewayRunning===false||this.pending.size||this.choosing||this.hasUncertain()||!state||!(state.canInitialize||state.canStartDesktop))return;
+    const client=this.managementClients().find(row=>row.id===id),state=client&&this.connection(client);if(this.gatewayRunning===false||this.pending.size||this.choosing||this.hasUncertain()||!state||!(state.canInitialize||state.canStartDesktop))return;
     this.choosing=id;++this.revision;this.paint();let confirmed=false;
     try{confirmed=await ClientLifecycle.chooseInitialize(client);}finally{this.choosing=null;this.paint();}
     if(confirmed)return this.toggle(id,true,{initializeDesktop:true});
   }
   async toggle(id,enabled,{initializeDesktop=false}={}){
-    const client=this.clients.find(row=>row.id===id);if(this.pending.size||this.choosing||this.hasUncertain()||!client||(enabled&&!(client.selectable??client.configured)))return;
+    const client=this.managementClients().find(row=>row.id===id);if(this.pending.size||this.choosing||this.hasUncertain()||!client||(enabled&&!(client.selectable??client.configured)))return;
     let quitDesktop=false;
     if(!enabled&&this.gatewayRunning!==false&&client.canQuitDesktop!==false){
       this.choosing=id;++this.revision;this.paint();
@@ -268,7 +278,7 @@ class ClientNavigation {
     const before=this.clients.map(c=>({...c})),previous=this.provider;
     this.operationFailures??=new Map();this.operationFailures.delete(id);let failed=false;
     this.pending.add(id);this.pendingQuitDesktop=quitDesktop;this.pendingForceDesktop=forceDesktop;++this.revision;
-    this.applyClients({clients:this.clients.map(c=>c.id===id?{...c,enabled}:c)});
+    this.applyClients({clients:this.withClientEnabled(id,enabled)});
     try{const data=await ClientLifecycle.request(signal=>this.request('/api/clients',{provider:id,enabled,...(!enabled?{quitDesktop}:{}),...(forceDesktop?{forceDesktop:true,forceConfirmed:true}:{}),...(initializeDesktop?{initializeDesktop:true}:{})},signal),{timeout:this.lifecycleTimeout??45000});this.applyClients(data);if(enabled&&id==='codex'&&previous===null)this.view.onSelect?.('codex');}
     catch(error){failed=true;this.operationFailures.set(id,ClientLifecycle.failure(initializeDesktop?'initialize':enabled?'enable':forceDesktop?'force':quitDesktop?'quit':'disable',error));this.provider=previous;this.applyClients({clients:before});throw error;}
     finally{this.pending.delete(id);this.pendingQuitDesktop=false;this.pendingForceDesktop=false;++this.revision;this.paint();if(failed)await this.refresh();}
@@ -305,13 +315,15 @@ class ClientNavigation {
   renderManager(){
     const manager=this.manager;if(!manager?.dialog.open)return;
     const {list,note}=manager;list.replaceChildren();
-    for(const client of this.clients){
+    let codexGroup;
+    for(const client of this.managementClients()){
+      let parent=list;if(client.parentId==='codex'){if(!codexGroup){codexGroup=document.createElement('section');codexGroup.className='client-management-group';codexGroup.setAttribute('aria-label','Codex');const title=document.createElement('h3');title.textContent='Codex';codexGroup.append(title);list.append(codexGroup);}parent=codexGroup;}
       const row=document.createElement('div');row.className='client-management-row';row.dataset.clientId=client.id;
       const text=document.createElement('span'),name=document.createElement('strong'),status=document.createElement('small'),reason=document.createElement('small'),control=document.createElement('span'),label=document.createElement('span'),toggle=document.createElement('button');
-      const state=this.connection(client),failure=this.operationFailures?.get(client.id),message=failure?ClientLifecycle.failureMessage(failure):state.reason;name.textContent=client.name;status.textContent=BridgeI18n.t(state.label);status.setAttribute('role','status');status.setAttribute('aria-busy',String(state.waiting));status.classList.toggle('client-connection-waiting',state.waiting);reason.textContent=BridgeI18n.t(message);reason.hidden=!message||reason.textContent===status.textContent;text.append(name,status,reason);
+      const state=this.connection(client),failure=this.operationFailures?.get(client.id),message=failure?ClientLifecycle.failureMessage(failure):state.reason;name.textContent=client.parentId==='codex'&&client.id==='codex'?'APP / CLI':client.name;status.textContent=BridgeI18n.t(state.label);status.setAttribute('role','status');status.setAttribute('aria-busy',String(state.waiting));status.classList.toggle('client-connection-waiting',state.waiting);reason.textContent=BridgeI18n.t(message);reason.hidden=!message||reason.textContent===status.textContent;text.append(name,status,reason);
       control.className='client-management-control';label.className='client-toggle-status';label.setAttribute('role','status');label.textContent=BridgeI18n.t(this.managementState(client));
       toggle.type='button';toggle.className='client-management-switch';toggle.setAttribute('role','switch');toggle.setAttribute('aria-checked',String(client.enabled));toggle.setAttribute('aria-label',BridgeI18n.t('启用')+' '+client.name);toggle.setAttribute('aria-busy',String(this.pending.has(client.id)));toggle.disabled=(!client.enabled&&!(client.selectable??client.configured))||this.pending.size>0||!!this.choosing||this.hasUncertain();
-      toggle.append(document.createElement('span'));control.append(toggle,label);row.append(this.icon(client.id),text,control);list.append(row);
+      toggle.append(document.createElement('span'));control.append(toggle,label);row.append(this.icon(client.id),text,control);parent.append(row);
       toggle.onclick=()=>this.toggle(client.id,!client.enabled).catch(error=>this.notify(error.message));
       if(!client.enabled&&client.running&&client.canQuitDesktop!==false&&this.gatewayRunning!==false){const quit=document.createElement('button');quit.type='button';quit.textContent=BridgeI18n.t('关闭电脑 App…');quit.disabled=this.pending.size>0||!!this.choosing||this.hasUncertain();quit.onclick=()=>this.toggle(client.id,false).catch(error=>this.notify(error.message));control.append(quit);}
       if(client.enabled){const open=document.createElement('button');open.type='button';open.textContent=BridgeI18n.t('查看聊天');open.onclick=()=>{manager.dialog.close();this.choose(client.id).catch(error=>this.notify(error.message));};control.append(open);}

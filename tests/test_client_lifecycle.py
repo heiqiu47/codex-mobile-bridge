@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ClientLifecycleTests(unittest.TestCase):
-    def test_wsl_is_an_independent_managed_app_and_never_uses_native_desktop_lifecycle(self):
+    def test_wsl_is_a_codex_entry_and_never_uses_native_desktop_lifecycle(self):
         from bridge.features.endpoints.registry import Entries
         from bridge.platforms.windows import wsl
         entries = self.bridge.entries = Entries(self.root)
@@ -26,10 +26,15 @@ class ClientLifecycleTests(unittest.TestCase):
                 patch('bridge.clients.lifecycle.inspect_clients', return_value={}) as inspect, \
                 patch('bridge.clients.lifecycle.launch_client') as launch, patch('bridge.clients.lifecycle.stop_client') as stop:
             result = self.manager.scan_wsl()
-            row = next(row for row in result['clients'] if row.get('kind') == 'wsl-cli')
+            self.assertEqual([row['id'] for row in result['clients']], ['codex', 'claude', 'deepseek'])
+            codex = result['clients'][0]
+            self.assertEqual(codex['entries'][0]['id'], 'desktop')
+            row = next(row for row in codex['entries'] if row.get('kind') == 'wsl-cli')
             self.assertFalse(row['enabled'])
             enabled = self.manager.control({'action': 'toggle-client', 'provider': row['id'], 'enabled': True})
-            self.assertTrue(next(item for item in enabled['clients'] if item['id'] == row['id'])['enabled'])
+            self.assertTrue(next(item for item in enabled['clients'][0]['entries'] if item['id'] == row['id'])['enabled'])
+            self.assertTrue(enabled['clients'][0]['enabled'])
+            self.assertFalse(enabled['clients'][0]['desktopEnabled'])
             self.manager.require_enabled(row['id'])
             with self.assertRaises(ValueError):
                 self.manager.require_enabled('codex')
@@ -41,6 +46,33 @@ class ClientLifecycleTests(unittest.TestCase):
             self.assertTrue(all(not descriptor['id'].startswith('wsl:') for args in inspect.call_args_list for descriptor in args.args[0]))
             launch.assert_not_called()
             stop.assert_not_called()
+
+    def test_wsl_only_installation_keeps_codex_available_without_enabling_native_access(self):
+        from bridge.features.endpoints.registry import Entries, entry_id
+        from bridge.platforms.windows import wsl
+        entries = self.bridge.entries = Entries(self.root)
+        self.addCleanup(entries.close)
+        identifier = entry_id('Ubuntu', 'fixture', '/home/fixture/.codex')
+        entries.entries = [{'id': identifier, 'distribution': 'Ubuntu', 'user': 'fixture',
+            'home': '/home/fixture/.codex', 'label': 'Ubuntu fixture', 'enabled': True}]
+        self.manager.config['enabled']['codex'] = False
+        self.manager.config['discovered']['codex']['installed'] = False
+        self.accounts.index.clear()
+        self.manager._codex_executable = Mock(return_value=None)
+        with patch.object(wsl, 'running_distributions', return_value=['Ubuntu']):
+            codex = self.manager.clients(refresh=True)['clients'][0]
+        for field in ('enabled', 'installed', 'configured', 'selectable'):
+            self.assertTrue(codex[field], field)
+        for field in ('desktopEnabled', 'nativeInstalled', 'nativeConfigured', 'nativeSelectable'):
+            self.assertFalse(codex[field], field)
+        self.assertEqual([row['id'] for row in codex['entries']], ['desktop', identifier])
+        self.manager.require_enabled(identifier)
+        with self.assertRaises(ValueError):
+            self.manager.require_enabled('codex')
+        with self.assertRaisesRegex(ValueError, '安装 Codex'):
+            self.manager.toggle_client({'provider': 'codex', 'enabled': True})
+        self.launch.assert_not_called()
+        self.assertTrue(entries.enabled(identifier))
 
     def setUp(self):
         platform = patch('bridge.clients.manager.sys', SimpleNamespace(platform='darwin'))

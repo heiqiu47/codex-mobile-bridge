@@ -76,6 +76,11 @@ class Entries:
         with self.lock:
             return any(row['id'] == identifier and row.get('enabled', True) for row in self.entries)
 
+    def hosts(self):
+        with self.lock:
+            return {row['id']: {'label': row['label'], 'kind': 'wsl-cli'}
+                    for row in self.entries if row.get('enabled', True)}
+
     def applications(self):
         """Display inventory only; never connect or probe a daemon while polling."""
         rows = []
@@ -122,8 +127,8 @@ class Entries:
             self.directory.mkdir(parents=True, exist_ok=True)
             private_json(self.path, {'version': 1, 'entries': self.entries})
             old = self.bridges.pop(identifier, None) if not enabled else None
-        if old is not None:
-            old.close()
+            if old is not None:
+                old.close()
         return self.public()
 
     def get(self, identifier):

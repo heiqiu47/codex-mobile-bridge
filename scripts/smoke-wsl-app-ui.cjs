@@ -13,11 +13,13 @@ async function connect(url){
  return {call,errors,close:()=>socket.close(),async evaluate(expression){const result=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(result.exceptionDetails)throw Error(result.exceptionDetails.exception?.description||'Renderer evaluation failed');return result.result.value;}};
 }
 async function main(){
- const browser=process.env.CMB_BROWSER||'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';assert.ok(fs.existsSync(browser),'Set CMB_BROWSER to a Chromium browser executable');
+ const browser=process.env.CMB_BROWSER||'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';if(!process.env.CMB_FIXTURE_ONLY)assert.ok(fs.existsSync(browser),'Set CMB_BROWSER to a Chromium browser executable');
  const fixture=fs.mkdtempSync(path.join(root,'.tmp/wsl-app-ui-')),debugPort=await port(),wsl='wsl:'+'a'.repeat(32),sid='12345678-1234-4234-9234-123456789012';
- const assets=JSON.parse(fs.readFileSync(path.join(root,'web/assets.json'))),requests=[],unexpected=[];let scanned=false,enabled=false,cdp;
+ const assets=JSON.parse(fs.readFileSync(path.join(root,'web/assets.json'))),requests=[],unexpected=[];let scanned=false,enabled=false,nativeEnabled=true,cdp;
  for(const match of fs.readFileSync(path.join(root,'bridge/api/assets.py'),'utf8').matchAll(/"(\/vendor\/[^"]+)": \("([^"]+)"/g))assets[match[1]]=match[2];
- const clients=()=>({wslSupported:true,gatewayRunning:true,computer:'Synthetic Windows fixture',clients:[{id:'codex',name:'Codex',enabled:true,installed:true,configured:true,connected:true,running:true},{id:'claude',name:'Claude',enabled:false,installed:false,configured:false},{id:'deepseek',name:'DSH',enabled:false,installed:false,configured:false},...(scanned?[{id:wsl,name:'WSL Codex · Ubuntu · fixture',kind:'wsl-cli',icon:'codex',enabled,installed:true,configured:true,selectable:true,connected:enabled,running:enabled,canQuitDesktop:false,canForceQuit:false,reason:'使用原终端的 Codex 会话；账号与模型接入由 WSL 中的原工具管理。'}]:[])]});
+ const native=()=>({id:'desktop',name:'Codex',kind:'desktop',enabled:nativeEnabled,installed:true,configured:true,selectable:true,connected:nativeEnabled,running:true,canQuitDesktop:true});
+ const entry=()=>({id:wsl,name:'WSL · Ubuntu · fixture',kind:'wsl-cli',icon:'codex',enabled,installed:true,configured:true,selectable:true,connected:enabled,running:enabled,canQuitDesktop:false,canForceQuit:false,reason:'账号与模型接入由 WSL 中的原工具管理。'});
+ const clients=()=>({wslSupported:true,gatewayRunning:true,computer:'Synthetic Windows fixture',clients:[{...native(),id:'codex',name:'Codex',enabled:nativeEnabled||enabled,desktopEnabled:nativeEnabled,nativeConfigured:true,nativeSelectable:true,entries:[native(),...(scanned?[entry()]:[])]},{id:'claude',name:'Claude',enabled:false,installed:false,configured:false},{id:'deepseek',name:'DSH',enabled:false,installed:false,configured:false}]});
  const models=[{id:'group/auto-gpt-6-1-sol',name:'Magpie 分组模型',efforts:['low','medium','high'],defaultEffort:'high'},{id:'group/id-only',name:'group/id-only',efforts:['medium'],defaultEffort:'medium'},{id:'group/another',name:'另一分组',efforts:['high'],defaultEffort:'high'}];
  const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,'http://fixture'),pathname=url.pathname;let body='';for await(const chunk of req)body+=chunk;body=body?JSON.parse(body):undefined;
@@ -25,21 +27,30 @@ async function main(){
   if(pathname.startsWith('/api/')){
    requests.push({path:pathname,query:Object.fromEntries(url.searchParams),body});
    if(pathname==='/api/auth')return json({authenticated:true,csrf:'fixture',uiLanguage:'zh',computer:{name:'Synthetic Windows fixture',platform:'win32'}});
-   if(pathname==='/api/clients'){if(body?.action==='scan-wsl')scanned=true;else if(body){assert.equal(body.provider,wsl);assert.equal(body.quitDesktop||false,false);enabled=body.enabled;}return json(clients());}
-   if(pathname==='/api/accounts')return json({accounts:[],current:{status:'ready',kind:'external',name:'Magpie'},scope:url.searchParams.has('entry')?'wsl':'desktop',management:{external:true},canSwitch:false,blockers:[]});
+   if(pathname==='/api/clients'){if(body?.action==='scan-wsl')scanned=true;else if(body){assert.ok([wsl,'codex'].includes(body.provider));assert.equal(body.quitDesktop||false,false);if(body.provider===wsl)enabled=body.enabled;else nativeEnabled=body.enabled;}return json(clients());}
+   if(pathname==='/api/accounts')return json({accounts:[],current:{status:'ready',kind:'external',name:url.searchParams.has('entry')?'WSL Magpie':'Native fixture'},scope:url.searchParams.has('entry')?'wsl':'desktop',scopeLabel:'WSL fixture',management:{external:true},canSwitch:false,canManageDesktop:false,blockers:[]});
+   if(pathname==='/api/cli-access')return json({codex:{accounts:[],activeId:null}});
    if(pathname==='/api/account')return json({visible:false});
    if(pathname==='/api/activity')return json({sessions:[]});
    if(pathname==='/api/codex/entries'&&body?.action==='connect'){assert.equal(body.id,wsl);return json({ok:true,host:wsl});}
    if(pathname==='/api/projects/browse'){assert.equal(url.searchParams.get('entry'),wsl);assert.equal(body.host,wsl);const selected=body.name?body.path+'/'+body.name:body.path||'/home/fixture';if(body.name)assert.deepEqual(body.identity,{cwd:body.path,device:1,inode:42});return json({path:selected,parent:selected==='/home/fixture'?'/home':'/home/fixture',home:'/home/fixture',roots:[{name:'/',path:'/'}],identity:{cwd:selected,device:1,inode:42},directories:selected==='/home/fixture'?[{name:'works',path:'/home/fixture/works'}]:[]});}
    if(pathname==='/api/projects'){assert.equal(url.searchParams.get('entry'),wsl);if(body){assert.deepEqual(body,{path:'/home/fixture/works/new fixture',createDirectory:false,host:wsl});return json({project:{key:wsl+'|directory:fixture',cwd:'/home/fixture/works/new fixture',host:wsl,name:'new fixture'}});}return json({projects:[{key:wsl+'|/fixture',name:'fixture',host:wsl,hostLabel:'WSL fixture',cwd:'/fixture'}]});}
    if(pathname==='/api/sessions'&&body){assert.equal(url.searchParams.get('entry'),wsl);assert.ok([wsl+'|independent',wsl+'|directory:fixture'].includes(body.project));assert.deepEqual(Object.keys(body).sort(),['id','project','title']);return json({id:sid,host:wsl,opened:true,message:'聊天已创建，可以直接发送消息'});}
-   if(pathname==='/api/sessions'&&url.searchParams.get('q')==='paging-fixture'){const offset=Number(url.searchParams.get('offset'));return json({sessions:Array.from({length:101},(_,i)=>({id:'12345678-1234-4234-9234-'+String(i).padStart(12,'0'),host:wsl,title:'Paging fixture '+i,projectName:'fixture',projectKey:'fixture',cwd:'/fixture',recency:101-i})).slice(offset,offset+100),unavailableHosts:[]});}
-   if(pathname==='/api/sessions')return json({sessions:[{id:sid,host:url.searchParams.get('entry')===wsl?wsl:'local',hostLabel:'Synthetic fixture',title:url.searchParams.get('entry')===wsl?'WSL fixture conversation':'Windows fixture conversation',projectName:'fixture',projectKey:'fixture',cwd:'/fixture',recency:Date.now()}],unavailableHosts:[]});
+   if(pathname==='/api/sessions'){
+    const host=url.searchParams.get('host')||'local',isWsl=host===wsl,source=url.searchParams.get('source')||'all',q=url.searchParams.get('q')||'',offset=Number(url.searchParams.get('offset')||0);
+    const access=kind=>({source:kind==='desktop'?'desktop':'cli',runtime:isWsl?'wsl':kind,canSend:true,canReconnect:true,canChangeModel:true,canSelectSkills:!isWsl,canUseModes:!isWsl,canUseGoal:!isWsl});
+    const row=(id,kind,title,recency)=>({id,host,hostLabel:isWsl?'WSL · Ubuntu · fixture':'此电脑',title,projectName:'fixture',projectKey:host+'|fixture',cwd:'/fixture',recency,access:access(kind)});
+    let rows=isWsl?(enabled?[row(sid,'cli','WSL fixture conversation',300)]:[]):nativeEnabled?[row(sid,'desktop','APP fixture conversation',200),row('12345678-1234-4234-9234-123456789013','cli','CLI fixture conversation',100)]:[];
+    if(q==='paging-fixture')rows=isWsl&&enabled?Array.from({length:101},(_,i)=>row('12345678-1234-4234-9234-'+String(i).padStart(12,'0'),'cli','Paging fixture '+i,101-i)):[];
+    else if(q)rows=rows.filter(row=>row.title.includes(q));
+    if(source!=='all')rows=rows.filter(row=>source===(isWsl?'wsl':row.access.source));
+    return json({sessions:rows.slice(0,offset+100),availableSources:isWsl?['wsl']:nativeEnabled?['desktop','cli']:[],remoteHosts:host==='local'&&enabled?[wsl]:[],complete:true,unavailableHosts:[]});
+   }
    if(pathname.startsWith('/api/sessions/'+sid+'/')){
-    const meta={id:sid,host:url.searchParams.get('host')||wsl,hostLabel:'WSL fixture',title:'WSL fixture conversation',cwd:'/fixture',model:models[0].id,provider:'magpie',effort:'high',requests:[],status:'idle',connected:true,historyComplete:true,capabilities:{send:true,stop:true,settings:true,workspace:true,attachments:true,permissions:false,skills:false,notifications:false,queue:false,plan:false,goal:false,terminal:false,sideChat:false,messageActions:false}};
+    const meta={id:sid,host:url.searchParams.get('host')||wsl,hostLabel:'WSL fixture',endpointId:url.searchParams.get('host')===wsl?wsl:'desktop',access:{source:url.searchParams.get('host')===wsl?'cli':'desktop',runtime:url.searchParams.get('host')===wsl?'wsl':'desktop',canSend:true,canReconnect:true,canChangeModel:true,canSelectSkills:url.searchParams.get('host')!==wsl,canUseModes:url.searchParams.get('host')!==wsl,canUseGoal:url.searchParams.get('host')!==wsl},title:'WSL fixture conversation',cwd:'/fixture',model:models[0].id,provider:'magpie',effort:'high',requests:[],status:'idle',connected:true,historyComplete:true,capabilities:{send:true,stop:true,settings:true,workspace:true,attachments:true,permissions:false,skills:false,notifications:false,queue:false,plan:false,goal:false,terminal:false,sideChat:false,messageActions:false}};
     if(pathname.endsWith('/timeline')||pathname.endsWith('/changes'))return json({sequence:0,epoch:'fixture',rows:[],files:[],hasMore:false,meta});
     if(pathname.endsWith('/reconnect'))return json(meta);
-    if(pathname.endsWith('/catalog'))return json({kind:'models',models,currentModel:models[0].id,currentEffort:'high',modelSource:'codex',fastMode:{allowed:false}});
+    if(pathname.endsWith('/catalog')){if(url.searchParams.get('kind')==='skills')return json({skills:[],errors:[],total:0});return json({kind:'models',models,currentModel:models[0].id,currentEffort:'high',modelSource:'codex',fastMode:{allowed:false}});}
     if(pathname.endsWith('/notifications'))return json({enabled:false});
    }
    if(pathname==='/api/notifications/defaults')return json({requests:true,completions:false});
@@ -50,13 +61,14 @@ async function main(){
   res.writeHead(404);res.end();
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+server.address().port;
+ if(process.env.CMB_FIXTURE_ONLY){console.log(JSON.stringify({origin}));return;}
  const child=spawn(browser,['--headless=new','--no-first-run','--no-default-browser-check','--disable-gpu','--disable-extensions','--remote-debugging-port='+debugPort,'--user-data-dir='+path.join(fixture,'profile'),'about:blank'],{windowsHide:true,stdio:'ignore'});
  try{
   const targets=await until(async()=>{const response=await fetch('http://127.0.0.1:'+debugPort+'/json/list');const value=await response.json();return value.find(item=>item.type==='page');});cdp=await connect(targets.webSocketDebuggerUrl);
   await cdp.call('Runtime.enable');await cdp.call('Page.enable');await cdp.call('Emulation.setDeviceMetricsOverride',{width:492,height:850,deviceScaleFactor:1,mobile:true});await cdp.call('Page.navigate',{url:origin});
   await until(()=>cdp.evaluate('typeof clientNavigation!=="undefined"&&clientNavigation.clients.length===3'));
   await cdp.evaluate(fs.readFileSync(path.join(root,'tests/browser/codex-entries.browser.js'),'utf8'));
-  const result=await cdp.evaluate('checkCodexEntries()');assert.equal(result.passed,30);
+  const result=await cdp.evaluate('checkCodexEntries()');assert.ok(result.passed>=40);
   await cdp.evaluate('(async()=>{clientNavigation.manager?.dialog.close();await clientNavigation.toggle("'+wsl+'",true);await clientNavigation.choose("'+wsl+'");await document.getElementById("new-chat").onclick();document.getElementById("new-chat-project").value="__directory__";document.getElementById("new-chat-project").onchange();await document.getElementById("new-chat-directory-browse").onclick();})()');
   const pickerScreenshot=await cdp.call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(root,'.tmp/wsl-folder-picker.png'),Buffer.from(pickerScreenshot.data,'base64'));
   await cdp.evaluate('document.getElementById("folder-picker-select").onclick()');

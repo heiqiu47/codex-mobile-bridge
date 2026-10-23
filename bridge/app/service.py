@@ -1042,19 +1042,35 @@ class Bridge:
 
     def list(self, query="", limit=100, offset=0, archived=False, source='all', include_sources=False,
              local_only=False, host_label=None, entry=None):
+        if source not in ('all', 'desktop', 'cli', 'wsl'):
+            raise ValueError('不支持的会话来源')
         if entry and entry not in ('desktop', 'all'):
             self.host_errors = []
-            return self.for_host(entry).list(
-                query=query, limit=limit, offset=offset, archived=archived,
-                source=source, include_sources=include_sources)
+            target = self.for_host(entry)
+            try:
+                return target.list(query=query, limit=limit, offset=offset, archived=archived,
+                                   source=source, include_sources=include_sources)
+            except (RemoteUnavailable, StoreUnavailable) as exc:
+                self.host_errors = [{'host': entry, 'label': host_label or 'WSL', 'error': str(exc)}]
+                return ([], []) if include_sources else []
         sources = [(self, host_label or "此电脑")]
         if self.host == 'local' and not local_only:
             sources.extend((self.for_host(host), info.get('displayName') or info['alias']) for host, info in self.hosts.hosts().items())
+            if self.entries is not None and entry != 'desktop':
+                sources.extend((self.for_host(host), info['label']) for host, info in self.entries.hosts().items())
         def read(host_source):
             bridge, label = host_source
             try:
+                if bridge.host.startswith('wsl:'):
+                    # WSL is a display category; its native source remains CLI.
+                    wsl_source = 'wsl' if source in ('all', 'wsl') else 'desktop'
+                    value = bridge.list(query=query, limit=limit + offset, archived=archived,
+                                        source=wsl_source, include_sources=include_sources)
+                    rows, available = value if include_sources else (value, [])
+                    return rows, None, available
                 available = bridge.store.available_sources() if include_sources else []
-                rows = bridge.store.list(limit=limit + offset, archived=archived, query=query, source=source)
+                rows = ([] if source == 'wsl' else bridge.store.list(
+                    limit=limit + offset, archived=archived, query=query, source=source))
                 rows = self.hosts.decorate(rows, bridge.host, label)
                 with bridge.lock:
                     bridge.listed.update(row['id'] for row in rows)
@@ -1072,13 +1088,6 @@ class Bridge:
         self.host_errors = [error for _, error, _ in results if error]
         rows = [row for group, _, _ in results for row in group]
         available_sources = {source for _, _, available in results for source in available}
-        if self.entries is not None and entry != 'desktop' and source != 'desktop':
-            extra, errors = self.entries.lists(
-                query=query, limit=limit + offset, archived=archived, source=source)
-            rows.extend(extra)
-            self.host_errors.extend(errors)
-            if extra:
-                available_sources.add('cli')
         rows.sort(key=lambda row: (row['recency'], row['id'], row['host']), reverse=True)
         page = rows[offset:offset + limit]
         return (page, sorted(available_sources)) if include_sources else page
