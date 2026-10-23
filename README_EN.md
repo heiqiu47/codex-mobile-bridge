@@ -460,7 +460,7 @@ Gateway data stays in its configured directory, normally `.local`. It includes l
 
 Uploaded files are retained in `uploads/` or `hosts/<host hash>/uploads/` inside gateway data, separated by chat. Remote copies are stored under that host's `$CODEX_HOME/mobile-bridge/uploads/` (default `~/.codex/mobile-bridge/uploads/`). Removing a draft attachment does not delete uploaded files, and automatic cleanup is not provided. Manually deleting a file can break historical or queued references to it.
 
-The local desktop management interface uses guarded Electron IPC and a private stdio worker. Gateway start/stop, updates and network configuration are not exposed through the phone HTTP API. Signed-in clients connected directly to the gateway can change Bark, ntfy, PushPlus and common notification settings; shared-relay connections do not expose these configuration routes. Public HTTP access remains constrained by authentication, allowed Host/Origin checks and CSRF validation.
+The local desktop management interface uses guarded Electron IPC and a private stdio worker. Gateway start/stop, updates and access-scope configuration are not exposed through the phone HTTP API. The default-off network-recovery switch is available to authenticated direct clients with CSRF validation. Signed-in clients connected directly to the gateway can change Bark, ntfy, PushPlus and common notification settings; shared-relay connections do not expose these configuration routes. Public HTTP access remains constrained by authentication, allowed Host/Origin checks and CSRF validation.
 
 ## Known limits
 

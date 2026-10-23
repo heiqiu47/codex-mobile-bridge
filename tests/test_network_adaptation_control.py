@@ -1,5 +1,7 @@
 """Opt-in control, persistence and public-entry safety regressions."""
 import json
+import http.client
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +9,10 @@ from unittest.mock import Mock, patch
 
 import test_bridge as support
 from bridge.app.desktop import Desktop
+from bridge.app.lifecycle import GatewayControl, request_pairing
 from bridge.features.network.adaptation import NetworkAdaptation, settings
+from bridge.features.network.runtime import DynamicListenerManager, RuntimeNetworkMonitor
+from bridge.api.httpd import GatewayServer
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -63,6 +68,20 @@ class ControlTests(unittest.TestCase):
                 desktop.network_adaptation({'action': 'set', 'enabled': True})
         request.assert_called_once()
         self.assertFalse((self.directory / 'network-adaptation.json').exists())
+
+    def test_busy_control_error_keeps_pairing_channel_alive(self):
+        control = GatewayControl(self.directory)
+        handler = Mock(side_effect=ValueError('网络检测正在停止，请稍后重试'))
+        control.start(lambda: None, lambda payload: {'states': {}},
+                      instance_id='test', network_adaptation=handler)
+        try:
+            with self.assertRaisesRegex(ValueError, '正在停止'):
+                request_pairing(self.directory, {'action': 'network-adaptation',
+                                                'value': {'action': 'set', 'enabled': True}})
+            self.assertEqual(request_pairing(self.directory, {'action': 'status', 'ids': []}), {'states': {}})
+            self.assertTrue(control.worker.is_alive())
+        finally:
+            control.close()
 
     def test_bound_addresses_win_over_detected_pending_addresses(self):
         desktop = Desktop(self.directory)
@@ -128,3 +147,47 @@ class ControlHttpTests(unittest.TestCase):
         self.assertFalse(self.request('GET', '/api/network-adaptation', headers=headers)[2]['canEdit'])
         self.assertEqual(self.request('POST', '/api/network-adaptation', {'enabled': True}, headers)[0], 403)
         self.server.network_adaptation.control.assert_not_called()
+
+    @unittest.skipIf(sys.platform == 'darwin', 'macOS requires configuring additional loopback aliases; do not change host networking')
+    def test_real_listener_change_and_down_up_preserve_authenticated_binding(self):
+        # Simulate DHCP addresses on loopback aliases; do not alter host networking.
+        clock = [0]
+        rows = [{'id': 'test-adapter', 'name': 'Fixture', 'addresses': ['127.0.0.2']}]
+        headers = self.login()
+        manager = DynamicListenerManager(self.server, self.port, self.server.bridge,
+                                         {}, ROOT / 'web', GatewayServer)
+        with tempfile.TemporaryDirectory(dir=ROOT / '.tmp') as directory:
+            monitor = RuntimeNetworkMonitor(directory, {'lan': True, 'lanInterfaces': ['test-adapter']},
+                self.port, manager, 'fixture', enumerator=lambda: rows, route_enumerator=lambda _: {},
+                clock=lambda: clock[0], enabled=True)
+            self.server.network_adaptation = NetworkAdaptation(directory, monitor)
+
+            def state(address):
+                connection = http.client.HTTPConnection(address, self.port, timeout=2)
+                try:
+                    connection.request('GET', '/api/network-adaptation', headers={
+                        **headers, 'Origin': f'http://{address}:{self.port}'})
+                    response = connection.getresponse()
+                    return response.status, json.loads(response.read())
+                finally:
+                    connection.close()
+
+            try:
+                monitor.scan(initial=True)
+                self.assertEqual(state('127.0.0.2')[0], 200)
+                rows[0]['addresses'] = ['127.0.0.3']
+                monitor.scan()
+                self.assertEqual(monitor.addresses(), ['127.0.0.2'])
+                clock[0] = 4
+                monitor.scan()
+                self.assertEqual(state('127.0.0.3')[1]['addresses'], ['127.0.0.3'])
+                self.assertNotIn(f'127.0.0.2:{self.port}', self.server.hosts)
+                rows[0]['addresses'] = []
+                monitor.scan(); clock[0] = 8; monitor.scan()
+                self.assertEqual(monitor.addresses(), [])
+                self.assertEqual(self.request('GET', '/api/network-adaptation', headers=headers)[0], 200)
+                rows[0]['addresses'] = ['127.0.0.3']
+                monitor.scan(); clock[0] = 12; monitor.scan()
+                self.assertEqual(state('127.0.0.3')[0], 200)
+            finally:
+                monitor.close()

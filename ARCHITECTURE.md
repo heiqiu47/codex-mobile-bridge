@@ -102,7 +102,7 @@ Windows 自动发现用户目录中的 App 运行时、常见安装目录、MSIX
 
 ## 模块
 
-桌面控制器通过白名单 Electron IPC 调用 `desktop.py` 的独立 JSON 工作进程；网关启停、更新和网络配置管理不监听网络。PushPlus 全局配置与测试允许通过手机 HTTP 操作，必须经过 Host、Origin、登录及写入 CSRF 校验，仅接受 PushPlus 字段，不返回 Token。该配置影响整个网关的关注聊天，不按登录设备隔离。打包版本执行随包提供的 PyInstaller 运行时，网关以独立后台进程运行，退出控制器不会停止网关。Windows 使用 NSIS 安装包或完整 ZIP 目录，避免临时自解压目录随控制器退出被删除而破坏后台运行时。
+桌面控制器通过白名单 Electron IPC 调用 `desktop.py` 的独立 JSON 工作进程；网关启停、更新和访问范围配置不监听网络。网络恢复布尔开关独立保存在 network-adaptation.json，通过本地控制通道及已登录且启用密码保护的 /api/network-adaptation 修改；写入沿用 Host、Origin、CSRF 校验，不提供网卡或域名范围修改。PushPlus 全局配置与测试允许通过手机 HTTP 操作，必须经过 Host、Origin、登录及写入 CSRF 校验，仅接受 PushPlus 字段，不返回 Token。该配置影响整个网关的关注聊天，不按登录设备隔离。打包版本执行随包提供的 PyInstaller 运行时，网关以独立后台进程运行，退出控制器不会停止网关。Windows 使用 NSIS 安装包或完整 ZIP 目录，避免临时自解压目录随控制器退出被删除而破坏后台运行时。
 
 Windows `desktop/shell/tray.cjs` 管理托盘状态、手机地址和两种退出动作；仅显式停止才调用网关的协作停止协议。主窗口关闭时隐藏，第二次启动恢复原窗口；退出前销毁托盘并允许窗口关闭。状态请求合并，菜单操作避免重复提交；停止失败保留控制器并显示错误。macOS 使用同一菜单提供菜单栏入口，关闭控制面板后仍可从菜单栏或 Dock 重新打开。登录自启动由用户在高级设置中启用：Windows/macOS 使用系统登录项，Linux 已安装的桌面包使用用户 XDG autostart；AppImage 注册原始文件路径，不注册临时挂载目录。Windows/macOS 登录启动隐藏控制面板，Linux 保持窗口可见。启用登录自启动同时启用网关自动启动；关闭登录项保留后者。
 

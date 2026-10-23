@@ -342,7 +342,7 @@ npm run pack:desktop
 
 Windows 可再执行 `npm run build:windows` 生成安装包与 ZIP；文件位于 `dist/desktop/`。随后执行 `npm run test:windows-app` 验证实际打包窗口、内置运行时、托盘恢复与启停。此检查使用临时端口和合成数据，不发送模型请求或真实通知，需要可显示窗口的 Windows 会话和 Node.js 24。开发测试可用 `CMB_DATA_DIR` 指定独立数据目录，`CMB_PYTHON` 指定开发用 Python；打包后的 App 使用内置运行时。运行 `python -B -m unittest discover -s tests -v` 和 `npm run test:desktop` 进行自动检查。产品图标源为 `assets/icon.png`，可用 `npm run icons:desktop` 更新桌面 PNG/ICO、手机网页和介绍页图标。macOS 打包时会从桌面 PNG 生成系统图标。
 
-App 设置界面通过本机进程通信管理网关；网关启停、更新及网络配置管理不对局域网或隧道开放。直连网关的网页登录用户可以修改 Bark、ntfy、PushPlus 及通用通知配置，沿用 Host、Origin、登录与 CSRF 校验；共享中继不开放这些配置入口。配置、通知密钥、凭据和投递记录位于网关数据目录，三个推送通道默认关闭；打包与提交不包含 `.local`、`.tmp` 或个人配置。
+App 设置界面通过本机进程通信管理网关；网关启停、更新及访问范围配置不对局域网或隧道开放；默认关闭的网络恢复开关允许已认证的直连客户端修改，并校验 CSRF。直连网关的网页登录用户可以修改 Bark、ntfy、PushPlus 及通用通知配置，沿用 Host、Origin、登录与 CSRF 校验；共享中继不开放这些配置入口。配置、通知密钥、凭据和投递记录位于网关数据目录，三个推送通道默认关闭；打包与提交不包含 `.local`、`.tmp` 或个人配置。
 
 ## Codex 会话功能
 
