@@ -1,7 +1,7 @@
 # 历史展示与实时控制拆分（2026-10-23）
 
 状态：本地分支 `perf/history-control-decoupling`，基于原生分页只读原型 `0a27fdf`。
-本轮未构建、安装、替换正在运行的网关，也未推送。
+源码实现阶段未部署；后续 Test 构建与安装验收见文末。全部改动仍在本地，未推送。
 
 ## 行为与权限边界
 
@@ -84,10 +84,38 @@ A 使用原生持久化索引。B 的索引进度与当前 rollout 不一致，�
   草稿、旧页文件引用和只读请求均通过。
 - 本机真实 A/B owner、账号、cwd/provider/source 元信息、正式 App 文件、正式与 Test 配置、
   认证身份及现有手机会话均通过前后哈希或集合核验；没有发送消息或调用模型。
-- 本轮未在 Windows/Linux 真机部署新包，未做 Android/iOS 原生 App 实机验收；这些不能由
+- 源码实现阶段未在 Windows/Linux 真机部署新包，未做 Android/iOS 原生 App 实机验收；这些不能由
   共享源码或 Chromium 窄屏通过替代。Claude Desktop Linux 原有能力边界保持不变。
 
 相关入口：`tests/test_history_control_separation.py`、`tests/test_claude_cli_history.py`、
 `tests/test_desktop_paged_turn_state.py`、`tests/desktop-sessions-ui.test.cjs` 和
 `tests/browser/desktop-history.browser.js`。前一轮只读 API 能力证据见
 [原生分页原型](native-history-prototype.md)。
+
+## Test 安装验收（2026-10-24）
+
+三平台 Test 使用产品提交 `b299ac4`，版本号仍为 `2.1.4-preview.1`。
+后续提交仅修正测试夹具的资源释放顺序及文件系统时钟时序，没有改变打包产品代码。
+
+| 平台 | 构建与安装 | 启动与只读回归 |
+| --- | --- | --- |
+| macOS arm64 | 独立 Test 覆盖更新，签名与资源哈希通过 | 8788 与 Test 窗口运行，包内模块 42 项通过；原 A/B 最近页及旧页读取通过 |
+| Windows x64 | NSIS 仅更新 F 盘 Test，706 个安装文件核对通过 | 普通桌面用户窗口、网关健康检查、包内模块 42 项及静态资源缓存校验通过 |
+| Ubuntu amd64 | DEB 仅重装 Test，716 个安装文件核对通过 | 图形桌面窗口、8788 网关、包内模块 42 项及静态资源缓存校验通过 |
+
+Windows 实机回归补齐了 Claude JSONL 文件版本判断：使用原生文件 ChangeTime，避免将
+创建时间当成内容变更时间，导致等长改写并还原修改时间后继续复用旧游标或元信息。
+该读取只查询文件元数据，不增加完整日志扫描。SSH 的独立 worker 仍按目标 Unix 系统读取。
+
+安装后的 Mac 本机 HTTP 采样：A/B 最近 20 条分别约 11.6/11.0 KB；向前读取 100 条分别
+约 47.0/49.3 KB。最近页请求约 13–35 ms，旧页约 7–16 ms；这是当前缓存状态下的本机
+接口测量，不代表冷缓存、公网、蜂窝网络或手机渲染耗时。旧页与当前页无重复键，游标 epoch
+保持一致。首次 Desktop 全量快照仍存在，边界与前述说明相同。
+
+三平台均核对正式版、原配置、账号文件和手机绑定保留；Mac 的 14 个有效登录绑定及 A/B
+原始会话元信息不变。没有发送会话消息、审批或调用模型；手机端 A/B 上手复测由用户完成。
+Windows 临时文件和构建产物均位于 F 盘；安装成功后删除旧 Test 安装包及重复中间产物，
+保留当前安装版本、最新 Windows/Ubuntu 安装包和脱敏验收记录。
+
+本机记录：`.tmp/history-control-verified-20261023/`；其中构建清单固定源提交、安装包哈希、
+Test 隔离覆盖项及测试夹具修订，未包含在 Git 提交中。
