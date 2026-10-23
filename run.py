@@ -24,6 +24,7 @@ from bridge.features.notifications.channels import Notifications
 import bridge.features.network.addresses as network
 import bridge.features.network.interfaces as interfaces
 from bridge.features.network.runtime import DynamicListenerManager, RuntimeNetworkMonitor
+from bridge.features.network.adaptation import NetworkAdaptation, settings as adaptation_settings
 
 ROOT = Path(__file__).resolve().parent
 
@@ -149,7 +150,12 @@ def main(connections=None, connection_secrets=None):
     tunnel_thread = None
     ssh_tunnels = []
     monitor = RuntimeNetworkMonitor(args.config.parent, preferences, args.port, listener_manager,
-                                    server.instance_id, pid=os.getpid())
+                                    server.instance_id, pid=os.getpid(),
+                                    enabled=adaptation_settings(args.config.parent)['enabled'],
+                                    route_enumerator=None if args.tunnel else lambda rows: {})
+    adaptation = NetworkAdaptation(args.config.parent, monitor)
+    for listener in servers:
+        listener.network_adaptation = adaptation
     def notification_urls():
         if not gateway_ready(args.port, server.instance_id):
             return []
@@ -235,16 +241,10 @@ def main(connections=None, connection_secrets=None):
                 server.hosts.add(host)
                 server.secure_hosts.add(host)
             tunnel = QuickTunnel(args.cloudflared, args.port, args.config.parent, allow_origin)
-            def rebuild_quick_tunnel():
-                nonlocal quick_origin
-                if quick_origin:
-                    server.origins.discard(quick_origin)
-                    old_host = urlsplit(quick_origin).netloc
-                    server.hosts.discard(old_host)
-                    server.secure_hosts.discard(old_host)
-                    quick_origin = None
-                tunnel.network_changed()
-            monitor.network_changed = rebuild_quick_tunnel
+            # Let the existing tunnel recover first. Its origin remains valid
+            # until a replacement is actually ready, not merely on a route event.
+            monitor.network_changed = tunnel.network_changed
+            monitor.network_cancelled = tunnel.cancel_network_check
             def connect_tunnel():
                 try:
                     url = tunnel.start()
@@ -260,7 +260,7 @@ def main(connections=None, connection_secrets=None):
         address_notifications.start()
         monitor.start()
         bridge.accounts.monitor.start()
-        control.start(server.shutdown, server.pairing.control, server.instance_id, server.auth, bridge.account.control, server.notifications.control, bridge.accounts.control, server.harness.control, server.desktop_sessions.control, bridge.cli_access.control)
+        control.start(server.shutdown, server.pairing.control, server.instance_id, server.auth, bridge.account.control, server.notifications.control, bridge.accounts.control, server.harness.control, server.desktop_sessions.control, bridge.cli_access.control, network_adaptation=adaptation.control)
         for listener in servers[1:]:
             thread = threading.Thread(target=listener.serve_forever, kwargs={'poll_interval': 0.5}, daemon=True)
             thread.start()

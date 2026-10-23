@@ -23,6 +23,7 @@ from bridge.clients.codex.catalog import Catalog
 import bridge.features.network.access as access
 import bridge.features.network.addresses as network
 import bridge.features.network.interfaces as interfaces
+from bridge.features.network.adaptation import settings as adaptation_settings
 from bridge.api.validation import FieldError, at_field
 
 
@@ -162,10 +163,7 @@ class Desktop:
         config = self.config()
         preferences = self.preferences()
         runtime = self.status()
-        rows = interfaces.enumerate_interfaces()
         selected = interfaces.selected_interfaces(preferences.get('lanInterfaces'))
-        static_addresses = (interfaces.eligible_lan_addresses(rows) if selected is None else
-                            interfaces.addresses_for_interfaces(rows, selected))
         network_status = {}
         if runtime['running']:
             value = read_json(self.data_dir/'network-status.json', {})
@@ -174,10 +172,14 @@ class Desktop:
                     value.get('mode') == ('off' if not preferences['lan'] else
                                           'all' if selected is None else 'selected')):
                 network_status = {key: item for key, item in value.items() if key != 'updatedAt'}
-                static_addresses = interfaces.addresses_for_interfaces(
-                    value.get('interfaces', []), value.get('selectedInterfaces', selected)) \
-                    if selected is not None or value.get('mode') == 'selected' else \
-                    interfaces.eligible_lan_addresses(value.get('interfaces', []))
+        # The owned runtime publishes successfully bound addresses. A detected
+        # address can still be settling or have failed to bind; never advertise it.
+        rows = network_status.get('interfaces') if network_status else interfaces.enumerate_interfaces()
+        if runtime['running']:
+            static_addresses = network.selected_addresses(network_status.get('addresses', [])) or []
+        else:
+            static_addresses = (interfaces.eligible_lan_addresses(rows) if selected is None else
+                                interfaces.addresses_for_interfaces(rows, selected))
         hosts = ['127.0.0.1', 'localhost'] + static_addresses if preferences['lan'] else ['127.0.0.1', 'localhost']
         if not preferences['localAccess']:
             hosts = [host for host in hosts if host not in ('127.0.0.1', 'localhost')]
@@ -215,7 +217,28 @@ class Desktop:
                 'notificationStatus': read_json(self.data_dir/'notification-status.json', {}),
                 'dataDir': str(self.data_dir), 'credentialsAvailable': (self.data_dir/'首次登录.txt').exists(),
                 'networkInterfaces': rows, 'networkStatus': network_status,
+                'networkAdaptation': {**adaptation_settings(self.data_dir),
+                                      'running': runtime['running']},
                 'runtime': runtime, 'urls': urls, 'externalStatus': external, 'cloudflared': cloudflared, 'quickTunnel': quick}
+
+    def network_adaptation(self, value):
+        if not isinstance(value, dict) or not (value == {'action': 'status'} or
+                (set(value) == {'action', 'enabled'} and value['action'] == 'set'
+                 and type(value['enabled']) is bool)):
+            raise ValueError('网络变化自动恢复请求无效')
+        record = read_record(self.data_dir/'gateway-control.json')
+        runtime = self.status()
+        if record:
+            if not runtime['running']:
+                raise ValueError('网关状态暂不可用，请稍后刷新')
+            if not record.get('networkAdaptationManagement'):
+                raise ValueError('请重新启动新版网关以调整网络变化自动恢复')
+            return request_pairing(self.data_dir, {'action': 'network-adaptation', 'value': value}, timeout=10)
+        if runtime['running'] or runtime.get('portOccupied') or time.monotonic() < self.starting_until:
+            raise ValueError('网关正在启动或端口被占用，请稍后刷新')
+        saved = adaptation_settings(self.data_dir,
+                                    {'enabled': value['enabled']} if value['action'] == 'set' else None)
+        return {**saved, 'running': False}
 
     def save(self, value):
         with session_file_lock(self.config_path):

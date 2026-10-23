@@ -79,6 +79,7 @@ class GatewayServer(ThreadingHTTPServer):
         if shared is None:
             self.bridge = bridge
             self.notifications = None
+            self.network_adaptation = None
             self.harness = Harness(data_dir) if data_dir else None
             self.desktop_sessions = DesktopSessions(data_dir, bridge, gateway_running=True) if data_dir else None
             self.desktop_uploads = DesktopUploads(data_dir) if data_dir else None
@@ -95,7 +96,7 @@ class GatewayServer(ThreadingHTTPServer):
         else:
             # Listeners serve one gateway: shared sessions, pairing, limits and
             # mutable tunnel origins, with a single notification manager.
-            for name in ('bridge', 'harness', 'desktop_sessions', 'desktop_uploads', 'notifications', 'instance_id', 'auth', 'origins', 'pairing', 'hosts', 'secure_hosts', 'web_dir', 'slots', 'terminal_sockets', 'ui_language_path'):
+            for name in ('bridge', 'harness', 'desktop_sessions', 'desktop_uploads', 'notifications', 'network_adaptation', 'instance_id', 'auth', 'origins', 'pairing', 'hosts', 'secure_hosts', 'web_dir', 'slots', 'terminal_sockets', 'ui_language_path'):
                 setattr(self, name, getattr(shared, name))
         try:
             super().__init__(address, Handler)
@@ -484,6 +485,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self.output(200, manager.reconnect_claude())
             if path == '/api/file-transfer':
                 return self.output(200, transfer_settings(self.server.transfer_directory, self.read_json() if write else None))
+            if path == '/api/network-adaptation':
+                if query:
+                    raise ValueError('网络变化自动恢复请求无效')
+                adaptation = self.server.network_adaptation
+                if adaptation is None:
+                    return self.output(503, {'error': '此网关暂不支持网络变化自动恢复'})
+                if write:
+                    if self.server.auth.config.get('mode') == 'none':
+                        raise PermissionError('请启用密码保护后更改网络恢复设置')
+                    value = self.read_json()
+                    if not isinstance(value, dict) or set(value) != {'enabled'}:
+                        raise ValueError('网络变化自动恢复请求无效')
+                    return self.output(200, {**adaptation.control({'action': 'set', **value}), 'canEdit': True})
+                return self.output(200, {**adaptation.public(), 'canEdit': self.server.auth.config.get('mode') != 'none'})
             if path == '/api/clients':
                 manager = self.server.desktop_sessions
                 if manager is None:

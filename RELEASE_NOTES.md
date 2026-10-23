@@ -1,3 +1,13 @@
+## 尚未发布 · 可选网络变化恢复 / Unreleased · Optional network recovery
+
+- 整合 [@qybgh](https://github.com/qybgh) 的 [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63)，保留原始提交，按网卡管理局域网入口与地址通知。
+- 新增默认关闭的「网络变化自动恢复」，桌面网关及登录后的 Web/手机 App 均可即时调整；系统事件与低频兜底检测减少空转，同 IP 续期不重建入口。
+- 修复 Windows 网卡地址读取、多网卡旧配置迁移及监听失败时错误展示新地址的问题。Quick Tunnel 优先自行恢复，仅在连续健康检查确认失败后有限重建。
+
+Integrates [@qybgh](https://github.com/qybgh)'s [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63), retaining the original commits. Adds default-off network recovery controls to desktop and signed-in Web/mobile clients, with native event notifications and infrequent fallback checks. Fixes Windows adapter addresses, migration of multiple selected adapters and publication of addresses that failed to bind. Quick Tunnel first attempts recovery and is replaced only after repeated health checks confirm failure.
+
+---
+
 <a id="v214-preview1"></a>
 
 ## v2.1.4-preview.1 · 启动恢复与首次加载优化

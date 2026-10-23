@@ -601,7 +601,11 @@ Thanks to [@tiancai123123](https://github.com/tiancai123123) for diagnosing and 
 
 ### Choose which adapters allow access
 
-In the desktop App, open **Network & login**, choose **Selected IPv4 addresses only**, and select the addresses you want to use. Exclude unwanted WSL or VMware adapters. Stop the gateway, save, and restart; unselected addresses do not listen on the gateway port. Selections bind to current IPs: reselect after a DHCP address change. The gateway does not fall back to opening all adapters. **All IPv4 addresses** retains the previous behavior.
+In the desktop App, open **Network access** and choose **Automatic LAN addresses** or **Selected adapters only**. Automatic mode publishes private LAN addresses on physical adapters, excluding virtual WSL, VMware, Docker and VPN interfaces. Stop the gateway and save when changing the access scope; unselected adapters remain closed. A failed change never opens all adapters as a fallback.
+
+**Recover after network changes is off by default.** Toggle it in desktop Network access or, after signing in, Web/mobile **App management → Gateway connection**. Changes take effect without a gateway restart. When enabled, native network events and infrequent fallback checks update successfully bound entries after DHCP address changes or disconnection/recovery, using existing address-notification settings. Renewing a lease without changing the address does not rebuild entries. Turning it off preserves current entries and stops address monitoring.
+
+After a default-route change, Quick Tunnel gets time to reconnect; only repeated health checks confirming failure can trigger a replacement, with a cooldown. A LAN-only address change does not replace a working public hostname. Fixed domains, Tailscale and SSH forwarding retain their own recovery mechanisms. This feature does not rewrite the old IP saved on a phone: use an existing fallback address, discovery, a new-address notification or pairing QR code if that entry is unreachable. Passwords and phone bindings are retained.
 
 **Allow local browser access** independently controls `127.0.0.1 / localhost`. Turning it off hides local URLs and blocks local browser/API access while keeping a private loopback path for desktop status checks and HTTPS tunnels. Turning off LAN access does not disable configured external entries.
 
