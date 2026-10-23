@@ -1,3 +1,22 @@
+<a id="web-clipboard-one-click"></a>
+
+# Web 一键复制本地验收（2026-10-23，未发布）
+
+分支 `fix/web-clipboard-one-click` 从已验收的 PR #63 集成提交 `f0bbdad` 新建，保留该轮网络恢复功能。产品提交 `76ef57e`、`4680695`；本机最终 Test 包源码为 `46806959d8940470ebfff5051cb507d7542a7c8e`，版本仍为 `2.1.4-preview.1`。未推送 GitHub、未合并 main、未发布更新。
+
+- 复现并修复普通 Web 只尝试 Clipboard API、局域网 HTTP 直接进入手动复制窗口的问题；已读取文本在点击内立即复制，完整正文通过 Promise ClipboardItem 保留原始手势，兼容路径恢复原焦点和选择。读取失败或浏览器拒绝不能显示成功；兜底窗口提供新点击重试。
+- Node 定向回归 **158 项全部通过**，包括 8 项复制用例、分页正文与版本校验、Claude/DSH 的原生可信点击桥接、资源白名单及启动恢复。原生剪贴板脚本没有变更。
+- 真实 Chromium 的安全 loopback、普通局域网 HTTP、固定 HTTPS 入口完成按钮点击 → 系统粘贴检查。消息、延迟完整正文、代码、全屏 Mermaid 源码保留中文、emoji 和换行；HTTP 明确验证 `isSecureContext=false`、`navigator.clipboard` 不存在时仍能复制。草稿内容保持不变。
+- 390px 窄屏完成普通消息、延迟正文、代码复制；1280×800 浏览器完成 Markdown 15 项、Mermaid 全屏 22 项检查。初次超大窗口下，全屏夹具未满足缩放后必须可平移的前提；限定标准窗口后通过，未因此改动缩放或拖动逻辑。
+- Mac arm64 独立 Test 已构建、覆盖并启动 8788。360 个打包 Web 文件与源码归档匹配，签名和包内二维码验证通过；固定 HTTPS 刷新后确实加载最终脚本。正式版进程/文件、网络设置、原 Test 配置及 **12 个有效登录绑定记录**保持不变。
+- Mac、Windows、Linux 网关共用此次 Web 源码；本轮只更新 Mac Test。Windows/Ubuntu 安装包、Android/iPhone 原生 App 未重装；Chromium 窄屏不等同于 iPhone Safari 或 Android 浏览器真机验收。浏览器或系统明确禁止自动复制时仍需使用兜底操作。
+
+本地日志与构建清单位于 `.tmp/web-clipboard-20261023/`、`.tmp/web-clipboard-final-20261023/`，不提交临时文件或任何配置、凭据和绑定数据。
+
+**English:** local one-click Web clipboard support covers direct and delayed text, LAN HTTP compatibility, modal source copying and a fresh-click retry. All 158 targeted tests passed, with real Chromium copy/paste checks over loopback, LAN HTTP and the fixed HTTPS entry. The Mac 8788 Test was rebuilt and started with configuration, binding records and the formal app preserved. Other native packages were not rebuilt, and physical Safari/Android-browser acceptance remains separate.
+
+---
+
 <a id="pr63-network-adaptation"></a>
 
 # PR #63 可选网络恢复本地验收（2026-10-23，未发布）
