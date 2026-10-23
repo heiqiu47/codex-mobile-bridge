@@ -5,19 +5,26 @@
 
 # Codex Mobile Bridge · A remote workbench for desktop agents
 
-> **Try v2.1.4-preview.1:** [Prerelease downloads](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4-preview.1) · [Changes](RELEASE_NOTES.md#v214-preview1). First-load, Cloudflare entry and startup recovery improvements on a separate preview branch. v2.1.3 remains the latest stable release.
-
-> **v2.1.3 (stable):** [Release page](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3) · [Full release notes](RELEASE_NOTES.md) · [Mobile installation](mobile/README.md). This release adds multiple Webhook destinations and Mermaid reading, and improves slow-link loading and iOS connection recovery.
+> **v2.1.4 (stable):** [Release page](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4) · [Full release notes](RELEASE_NOTES.md#v214) · [Mobile installation](mobile/README.md). Improved public-entry startup, long-chat loading and Web copying, with optional network-change recovery.
 
 [简体中文](README.md) · [English](README_EN.md)
 
-**[Product guide and interactive demos ↗](https://try2love.github.io/codex-mobile-bridge/?lang=en)** · **[Download desktop and mobile apps](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3)**
+**[Product guide and interactive demos ↗](https://try2love.github.io/codex-mobile-bridge/?lang=en)** · **[Download desktop and mobile apps](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4)**
 
 [![Desktop gateway: clients and access, with demo data](site/assets/v2-clients.png)](https://try2love.github.io/codex-mobile-bridge/?lang=en)
 
 Continue **Codex, Claude Code / Cowork and DeepSeek Harness** sessions from a phone app or browser. Each client keeps its own chats, accounts and workspaces. Create chats within the selected client, read replies, send attachments, select available models/reasoning and respond to approval requests.
 
 Tasks run on the original computer, or the original SSH host for Codex remote sessions. Bridge reuses the desktop session, authentication and execution environment. Your phone does not need the same model-service account: use gateway login or revocable QR pairing.
+
+## v2.1.4 updates
+
+- **Public access and caching:** improve Cloudflare entry startup, initial resource loading and transient-network recovery; reuse unchanged resources on repeat visits.
+- **Long chats:** fix large snapshots disconnecting sessions; show cached and recent messages first, load older history on demand, and preserve reading position, drafts and the original control connection.
+- **One-click Web copying:** copy replies, code and Mermaid source, including over LAN HTTP; retry and manual fallback remain available when the browser refuses access.
+- **Optional network recovery:** off by default, configurable from desktop or phone/Web. Update working entries after address changes without rebuilding tunnels on every lease renewal or brief outage.
+
+Desktop/mobile version: **2.1.4**, Android/iOS build **37**. Thanks to [@qybgh](https://github.com/qybgh) for network adaptation in [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63); the original commits are retained.
 
 <a id="mermaid-preview"></a>
 

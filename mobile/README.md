@@ -2,15 +2,15 @@
 
 手机扫描网关二维码后连接 Codex、Claude Desktop 和 DeepSeek Harness，电脑继续执行任务。手机 App 保存多台电脑，提供原生扫码、剪贴板、文件下载和通知；浏览器入口同时保留。
 
-**[v2.1.3 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
+**[v2.1.4 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
 
-## v2.1.4-preview.1 体验版 / Preview
+## v2.1.4：启动、长会话与 Web 复制 / Startup, long chats and Web copying
 
-[预发布下载 / Prerelease downloads](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4-preview.1) · [本次说明 / Release notes](../RELEASE_NOTES.md#v214-preview1)
+网关与手机版本为 **2.1.4**，Android/iOS 构建号 **37**。配合新版网关改善公网首次加载、资源缓存复用、长会话最近内容和按需翻页；手机/Web 可管理默认关闭的网络变化自动恢复。
 
-本预览版配合新版网关改善首次加载、Cloudflare 入口与短暂资源失败恢复。Android/iOS 构建号 36；iOS 系统版本 2.1.4，更新通道版本 2.1.4-preview.1。沿用现有应用标识，覆盖安装以保留电脑列表和绑定，不要先卸载。iOS IPA 仍需自行签名；独立 Test 与发布包是不同标识，不互相覆盖。v2.1.3 仍是最新正式版。
+覆盖安装匹配的原 App，保留电脑列表、设置和有效绑定，不要先卸载或清除数据。Android 沿用原签名；iOS 沿用正式应用标识，需要使用自己的原签名身份安装。独立 Test 与正式发布 App 使用不同标识，不能互相覆盖。
 
-**English:** build 36 accompanies the gateway startup/cache fixes. iOS uses marketing version 2.1.4 and release-channel version 2.1.4-preview.1. Install over the matching app to retain saved computers and bindings; do not uninstall first. iOS requires your own signing. Independent Test apps and release apps use different identifiers. v2.1.3 remains stable.
+**English:** v2.1.4/build 37 accompanies public-entry startup and cache recovery, recent-history-first loading, on-demand paging and optional network recovery controls. Install over the matching existing app to retain saved computers, settings and valid bindings. Android keeps its signing identity; iOS keeps its official identifiers and requires your own signing. Independent Test apps do not replace the release app. See the [release notes](../RELEASE_NOTES.md#v214).
 
 ## v2.1.3：通知、图表与连接恢复
 
@@ -54,11 +54,11 @@
 
 ## 安装与升级
 
-- **Android 8.0 及以上**：从 Release 下载 `Codex-Mobile-Bridge-2.1.3-Android.apk`，按系统提示安装。升级时覆盖安装，不要先卸载，以保留电脑列表和登录。相机权限仅供扫码，拒绝后仍可粘贴地址登录。
+- **Android 8.0 及以上**：从 Release 下载 `Codex-Mobile-Bridge-2.1.4-Android.apk`，按系统提示安装。升级时覆盖安装，不要先卸载，以保留电脑列表和登录。相机权限仅供扫码，拒绝后仍可粘贴地址登录。
 - **iPhone / iPad**：Release 提供未签名 IPA 和 Xcode 源码包，需使用自己的 Apple 账号签名；不能直接点击 IPA 安装，暂无 App Store / TestFlight 分发。免费签名可能需要定期重新安装。
 - 使用 Release 中的 `SHA256SUMS.txt` 校验下载。编译通过不代表已验证所有机型、系统版本和网络环境。
 
-首次从较旧版本升级到 v2.1.3，可先下载 APK 覆盖安装；新版 Android 再次更新时可直接使用以下应用内流程。
+首次从较旧版本升级到 v2.1.4，可先下载 APK 覆盖安装；新版 Android 再次更新时可直接使用以下应用内流程。
 
 在「手机设置 → 应用更新」查看当前版本并检查更新。正式版只检查正式发布，预览版也可检查后续预览；不会在后台自动下载或安装。确认更新后，Android 会在 App 内下载 APK 并打开系统安装器，iOS 打开新版与签名安装指引。访问公开 GitHub Release 的请求不携带网关凭据或 Cookie。
 

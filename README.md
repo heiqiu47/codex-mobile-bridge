@@ -5,19 +5,26 @@
 
 # Codex Mobile Bridge · 多客户端远程工作台
 
-> **v2.1.4-preview.1 体验版**：[预发布下载](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4-preview.1) · [本次修复](RELEASE_NOTES.md#v214-preview1)。改善首次加载、Cloudflare 固定入口与启动恢复；独立分支体验，v2.1.3 仍是最新正式版。
-
-> **v2.1.3 正式版**：[发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3) · [完整更新说明](RELEASE_NOTES.md) · [手机安装说明](mobile/README.md)。新增多目标 Webhook、Mermaid 图表阅读，改善弱网加载和 iOS 连接恢复。
+> **v2.1.4 正式版**：[发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4) · [完整更新说明](RELEASE_NOTES.md#v214) · [手机安装说明](mobile/README.md)。改善公网启动、长会话加载与 Web 复制，新增可选的网络变化自动恢复。
 
 [简体中文](README.md) · [English](README_EN.md)
 
-**[双语介绍与使用演示 ↗](https://try2love.github.io/codex-mobile-bridge/?lang=zh)** · **[下载桌面与手机 App](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3)**
+**[双语介绍与使用演示 ↗](https://try2love.github.io/codex-mobile-bridge/?lang=zh)** · **[下载桌面与手机 App](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4)**
 
 [![桌面网关：客户端与接入（演示数据）](site/assets/v2-clients.png)](https://try2love.github.io/codex-mobile-bridge/?lang=zh)
 
 从手机 App 或浏览器继续电脑上的 **Codex、Claude Code / Cowork、DeepSeek Harness** 会话。三个客户端保留独立聊天列表、账号和工作区；在当前应用下创建会话、查看回复、发送附件、切换可用模型与推理强度、处理权限请求。
 
 任务继续在原电脑执行，Codex 的 SSH 任务继续在原服务器执行。网关复用原客户端的会话、认证和执行环境，不让手机重新运行一套 Agent。手机无需登录相同的模型账号，使用网关登录或可撤销的扫码配对即可接入。
+
+## v2.1.4 更新
+
+- **公网启动与缓存**：改善 Cloudflare 固定入口、首次资源加载和短暂网络故障恢复；重复打开复用未变化资源。
+- **长会话**：修复超大快照导致连接断开；先展示缓存与最近内容，上翻时再读取旧记录，保留阅读位置、草稿和原会话控制连接。
+- **Web 一键复制**：回复、代码和 Mermaid 源码可点击复制，兼容局域网 HTTP；浏览器拒绝时仍提供重试与手动复制。
+- **可选网络恢复**：默认关闭，可在网关或手机/Web 启用。网络地址变化后更新可用入口，避免同 IP 续期或短暂断网造成不必要的隧道重建。
+
+桌面和手机 App 版本为 **2.1.4**，Android/iOS 构建号 **37**。感谢 [@qybgh](https://github.com/qybgh) 的 [PR #63](https://github.com/try2love/codex-mobile-bridge/pull/63) 网络适配贡献，原始提交完整保留。
 
 <a id="mermaid-preview"></a>
 
