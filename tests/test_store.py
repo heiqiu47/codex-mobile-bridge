@@ -122,6 +122,23 @@ class StoreTests(unittest.TestCase):
         self.assertNotIn('CLI private title', str(report))
         self.assertEqual(self.store.discovery_diagnostics('absent')['target']['reason'], 'missing')
 
+    def test_legacy_mobile_app_thread_is_exclusive_to_app_filter_outside_wsl_store(self):
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.executemany('INSERT INTO threads VALUES (?,?,?,?,?,?,?)', [
+                ('mobile-app', 'App mobile thread', '/project', 2, 0, 'codex_mobile_bridge', 'vscode'),
+                ('native-cli', 'CLI thread', '/project', 3, 0, 'codex-tui', 'cli')])
+        desktop = self.store.list(source='desktop')
+        cli = self.store.list(source='cli')
+        self.assertEqual({row['id'] for row in desktop}, {'test', 'mobile-app'})
+        self.assertEqual({row['id'] for row in cli}, {'native-cli'})
+        self.assertTrue(all(row['origin'] == 'desktop' for row in desktop))
+        self.assertTrue(all(row['origin'] == 'cli' for row in cli))
+        wsl_store = SessionStore(self.root, source='cli')
+        wsl_rows = wsl_store.list(source='cli')
+        self.assertEqual({row['id'] for row in wsl_rows}, {'mobile-app', 'native-cli'})
+        self.assertTrue(all(row['origin'] == 'cli' for row in wsl_rows))
+        self.assertEqual(wsl_store.get('mobile-app')['origin'], 'cli')
+
     def test_source_only_schema_has_same_list_and_get_eligibility(self):
         self.path.unlink()
         with closing(sqlite3.connect(self.path)) as db, db:

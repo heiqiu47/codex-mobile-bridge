@@ -205,8 +205,7 @@ class WslEntry:
                 runtime = self.runtime()
                 generation = self.generation
                 thread = runtime.request('thread/read', {'threadId': session.id, 'includeTurns': False})['thread']
-                if thread.get('parentThreadId') or thread.get('threadSource') == 'subagent':
-                    raise KeyError('不是 CLI 根会话')
+                self._verify_thread(session.id, metadata, thread)
                 turns, cursor = [], None
                 while len(turns) < session.history_limit:
                     page = runtime.request('thread/turns/list', {'threadId': session.id, 'cursor': cursor,
@@ -340,7 +339,7 @@ class WslEntry:
         session = self.session(identifier, background=True)
         if options.get('before') and not session.view()['historyComplete']:
             with session.action_lock:
-                session.history_limit = min(2000, session.history_limit + 50)
+                session.history_limit += 50
             self._refresh(session)
         with session.condition:
             session.timeline.update(self.view(identifier, attach=False))
@@ -351,7 +350,7 @@ class WslEntry:
 
     def full_history(self, identifier):
         session = self.session(identifier, attach=False)
-        session.history_limit = min(2000, session.history_limit + 50)
+        session.history_limit += 50
         self._refresh(session)
         return self.view(identifier, attach=False)
 
@@ -373,17 +372,27 @@ class WslEntry:
                          'turnId': last.get('id'), 'turnStatus': last.get('status')})
         return rows
 
+    @staticmethod
+    def _verify_thread(identifier, metadata, thread):
+        if (thread.get('id') != identifier or thread.get('parentThreadId') or
+                thread.get('threadSource') == 'subagent' or
+                any(metadata.get(saved) is not None and thread.get(native) != metadata[saved]
+                    for saved, native in (('cwd', 'cwd'), ('model_provider', 'modelProvider')))):
+            raise IPCError('原 WSL 会话身份或接入已变化，操作尚未发送，请重新查看原会话')
+
     def _target(self, identifier, activate=False):
-        self.store.get(identifier)
+        metadata = self.store.get(identifier)
         runtime = self.runtime(allow_start=activate)
         # Fresh native evidence, never a display cache. Explicit subscription is
         # allowed only to this already loaded thread on this original daemon.
         thread = runtime.request('thread/read', {'threadId': identifier, 'includeTurns': False})['thread']
+        self._verify_thread(identifier, metadata, thread)
         if (activate and thread.get('id') == identifier and not thread.get('parentThreadId')
                 and thread.get('threadSource') != 'subagent' and thread.get('status', {}).get('type') == 'notLoaded'):
             self.subscriptions.pop(identifier, None)
             self._subscribe(identifier, runtime, thread)
             thread = runtime.request('thread/read', {'threadId': identifier, 'includeTurns': False})['thread']
+            self._verify_thread(identifier, metadata, thread)
         if (thread.get('id') != identifier or thread.get('parentThreadId') or
                 thread.get('threadSource') == 'subagent' or
                 thread.get('canAcceptDirectInput') is not True or thread.get('status', {}).get('type') not in ('idle', 'active')):
@@ -436,28 +445,36 @@ class WslEntry:
         self.runtime(allow_start=True)
         return {'ok': True, 'host': self.host}
 
+    def project_environments(self):
+        self._require_open()
+        return [{'key': 'cli|' + self.host, 'type': 'cli', 'surface': 'cli', 'host': self.host,
+                 'hostLabel': self.row['label'], 'name': self.row['label']}]
+
     def projects(self):
         """History workspaces plus explicitly validated directory selections."""
         try:
             rows = self.store.list(limit=1000)
-        except StoreUnavailable:
+        except (StoreUnavailable, RemoteUnavailable):
             rows = []
         roots = sorted({row['cwd'] for row in rows if isinstance(row.get('cwd'), str) and row['cwd'].startswith('/')})
         registered = self.directory_projects.list({self.host})
         known = {row['cwd'] for row in registered}
-        return registered + [{'key': self.host + '|' + cwd, 'host': self.host, 'hostLabel': self.row['label'],
-                 'cwd': cwd, 'name': cwd.rstrip('/').rsplit('/', 1)[-1] or cwd} for cwd in roots if cwd not in known]
+        projects = registered + [{'key': self.host + '|' + cwd, 'host': self.host, 'hostLabel': self.row['label'],
+                    'cwd': cwd, 'name': cwd.rstrip('/').rsplit('/', 1)[-1] or cwd} for cwd in roots if cwd not in known]
+        return [{**project, 'type': 'cli', 'environment': 'cli|' + self.host} for project in projects]
 
     @_entry_write
-    def register_project(self, path, create=False, host=None):
+    def register_project(self, path, create=False, host=None, kind='desktop'):
         if host not in (None, self.host): raise ValueError('请选择当前 WSL 应用的目录')
+        if kind not in ('desktop', 'cli'): raise ValueError('请选择 WSL CLI 项目环境')
         # Explicit action can wake only this already registered distribution.
         self.runtime(allow_start=True)
         source = source_text('features/sessions/create.py')
         source += '\ntry:\n result=project_directory(**' + payload({'value': path, 'create': create}) + ')\nexcept ValueError as error: result={"error":str(error)}\nprint(json.dumps(result))\n'
         identity = self.read(self.row['distribution'], source)
         if identity.get('error'): raise ValueError(identity['error'])
-        return self.directory_projects.save(self.host, self.row['label'], identity)
+        project = self.directory_projects.save(self.host, self.row['label'], identity)
+        return {**project, 'type': 'cli', 'environment': 'cli|' + self.host}
 
     @_entry_write
     def project_directories(self, host, path=None, hidden=False, name=None, identity=None):

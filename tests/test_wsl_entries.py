@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from bridge.clients.codex.ipc import IPCError
+from bridge.clients.codex.remote import RemoteUnavailable
 from bridge.features.endpoints.wsl import WslEntry
 from bridge.features.endpoints.registry import Entries, entry_id
 from bridge.features.sessions.store import SessionStore
@@ -440,12 +441,42 @@ class WslSessionTests(unittest.TestCase):
         with patch.object(self.entry, 'read', return_value=identity) as read:
             project = self.entry.register_project('~/new-project', True, self.entry.host)
         self.assertEqual(project['host'], self.entry.host)
+        self.assertEqual(project['type'], 'cli')
+        self.assertEqual(project['environment'], 'cli|' + self.entry.host)
         self.assertEqual(project['directoryIdentity'], identity)
         self.assertIn('project_directory(**', read.call_args.args[1])
         self.assertEqual(read.call_args.args[0], self.row['distribution'])
         self.entry.store.list = lambda **k: []
         self.assertEqual(self.entry.projects()[0]['key'], project['key'])
         with self.assertRaises(ValueError): self.entry.register_project('/fixture', False, 'local')
+
+    def test_project_environment_exists_without_projects_and_does_not_start_runtime(self):
+        self.entry.store.list = Mock(return_value=[])
+        with patch.object(self.entry, 'runtime') as runtime:
+            self.assertEqual(self.entry.project_environments(), [{'key': 'cli|' + self.entry.host,
+                'type': 'cli', 'surface': 'cli', 'host': self.entry.host,
+                'hostLabel': self.row['label'], 'name': self.row['label']}])
+            self.assertEqual(self.entry.projects(), [])
+            runtime.assert_not_called()
+        with self.assertRaises(ValueError):
+            self.entry.register_project('/fixture', False, self.entry.host, kind='unregistered')
+
+    def test_cli_project_registration_retains_selected_wsl_host(self):
+        identity = {'cwd': '/home/fixture/new-project', 'device': 1, 'inode': 42}
+        with patch.object(self.entry, 'read', return_value=identity):
+            project = self.entry.register_project('/home/fixture/new-project', host=self.entry.host, kind='cli')
+        self.entry.store.list = lambda **options: []
+        self.assertEqual(self.entry.projects(), [project])
+
+    def test_stopped_wsl_keeps_registered_projects_and_environment_without_starting(self):
+        identity = {'cwd': '/home/fixture/project', 'device': 1, 'inode': 42}
+        project = self.entry.directory_projects.save(self.entry.host, self.row['label'], identity)
+        self.entry.store.list = Mock(side_effect=RemoteUnavailable('distribution stopped'))
+        with patch.object(self.entry, 'runtime') as runtime:
+            self.assertEqual(self.entry.projects(), [{**project, 'type': 'cli',
+                                                      'environment': 'cli|' + self.entry.host}])
+            self.assertEqual(self.entry.project_environments()[0]['host'], self.entry.host)
+            runtime.assert_not_called()
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT/'.tmp')
@@ -522,6 +553,8 @@ class WslSessionTests(unittest.TestCase):
     def test_restoring_history_cannot_silently_switch_to_a_different_default_provider(self):
         self.entry.server.thread.update(status={'type': 'notLoaded'}, canAcceptDirectInput=None,
                                         modelProvider='original-provider')
+        self.entry.store.get = lambda identifier: {'id': identifier, 'cwd': '/home/fixture/project',
+                                                   'model_provider': 'original-provider'}
         with self.assertRaisesRegex(IPCError, '提供商与当前接入不同'):
             self.entry.activate(self.identifier)
         self.assertFalse(any(m in ('thread/resume', 'turn/start') for m, _ in self.entry.server.calls))
@@ -591,6 +624,98 @@ class WslSessionTests(unittest.TestCase):
                     self.entry.send(self.identifier, 'do not send', str(uuid.uuid4()))
                 self.entry.server.thread.pop(field)
         self.assertFalse(any(m == 'turn/start' for m, _ in self.entry.server.calls))
+
+    def test_native_target_must_match_saved_workspace_provider_and_requested_thread(self):
+        for field, value in (('id', str(uuid.uuid4())), ('cwd', '/another/project'),
+                             ('modelProvider', 'another-provider')):
+            for operation in ('send', 'activate', 'interrupt', 'settings'):
+                with self.subTest(field=field, operation=operation):
+                    entry = self.make_entry()
+                    self.addCleanup(entry.close)
+                    entry.server.thread[field] = value
+                    if operation == 'send':
+                        action = lambda: entry.send(self.identifier, 'do not send', str(uuid.uuid4()))
+                    elif operation == 'settings':
+                        action = lambda: entry.settings(self.identifier, 'fixture-model', 'high')
+                    else:
+                        action = lambda: getattr(entry, operation)(self.identifier)
+                    with self.assertRaisesRegex(IPCError, '身份或接入已变化'):
+                        action()
+                    self.assertFalse(any(method in ('thread/resume', 'turn/start', 'turn/interrupt',
+                                                     'thread/settings/update') for method, _ in entry.server.calls))
+
+    def test_passive_refresh_keeps_saved_history_when_native_identity_differs(self):
+        self.entry.server.thread.update(id=str(uuid.uuid4()), cwd='/another/project')
+        self.entry.store.history = Mock(return_value={'id': self.identifier, 'cwd': '/home/fixture/project',
+                                                      'turns': []})
+        view = self.entry.view(self.identifier)
+        self.assertFalse(view['connected'])
+        self.assertEqual(view['cwd'], '/home/fixture/project')
+        self.entry.store.history.assert_called_once_with(self.identifier, turn_limit=20)
+        self.assertFalse(any(method in ('thread/turns/list', 'thread/resume')
+                             for method, _ in self.entry.server.calls))
+
+    def test_older_saved_metadata_without_provider_can_still_use_original_thread(self):
+        self.entry.store.get = lambda identifier: {'id': identifier, 'cwd': '/home/fixture/project'}
+        runtime, thread = self.entry._target(self.identifier)
+        self.assertIs(runtime, self.entry.server)
+        self.assertEqual(thread['modelProvider'], 'magpie')
+
+    def test_history_expands_native_pages_without_resuming_or_changing_config(self):
+        turns = [{'id': str(uuid.uuid4()), 'items': [], 'status': 'completed'} for _ in range(72)]
+        original = self.entry.server.request
+        def request(method, params):
+            if method != 'thread/turns/list':
+                return original(method, params)
+            self.entry.server.calls.append((method, copy.deepcopy(params)))
+            offset = int(params.get('cursor') or 0)
+            end = min(len(turns), offset + params['limit'])
+            return {'data': list(reversed(turns))[offset:end],
+                    'nextCursor': str(end) if end < len(turns) else None}
+        self.entry.server.request = request
+        initial = self.entry.view(self.identifier)
+        self.assertEqual([turn['id'] for turn in initial['turns']], [turn['id'] for turn in turns[-20:]])
+        self.assertFalse(initial['historyComplete'])
+        expanded = self.entry.full_history(self.identifier)
+        self.assertEqual([turn['id'] for turn in expanded['turns']], [turn['id'] for turn in turns[-70:]])
+        self.assertFalse(expanded['historyComplete'])
+        complete = self.entry.full_history(self.identifier)
+        self.assertEqual([turn['id'] for turn in complete['turns']], [turn['id'] for turn in turns])
+        self.assertTrue(complete['historyComplete'])
+        self.assertFalse(any(method in ('thread/resume', 'thread/start', 'turn/start', 'config/batchWrite')
+                             for method, _ in self.entry.server.calls))
+
+    def test_history_over_two_thousand_turns_can_reach_oldest_without_full_native_snapshot(self):
+        turns = [{'id': 'turn-' + str(index), 'status': 'completed',
+                  'items': [{'id': 'item-' + str(index), 'type': 'agentMessage', 'text': str(index)}]}
+                 for index in range(2001)]
+        newest = list(reversed(turns))
+        original = self.entry.server.request
+        def request(method, params):
+            if method != 'thread/turns/list':
+                return original(method, params)
+            self.entry.server.calls.append((method, copy.deepcopy(params)))
+            offset = int(params.get('cursor') or 0)
+            end = min(len(turns), offset + params['limit'])
+            return {'data': newest[offset:end], 'nextCursor': str(end) if end < len(turns) else None}
+        self.entry.server.request = request
+        initial = self.entry.view(self.identifier)
+        self.assertEqual(len(initial['turns']), 20)
+        self.assertFalse(initial['historyComplete'])
+        for _ in range(39):
+            self.entry.full_history(self.identifier)
+        page = self.entry.timeline_read(self.identifier)
+        self.assertTrue(page['before'])
+        self.entry.timeline_read(self.identifier, before=page['before'])
+        view = self.entry.view(self.identifier, attach=False)
+        self.assertTrue(view['historyComplete'])
+        self.assertEqual([turn['id'] for turn in view['turns']], [turn['id'] for turn in turns])
+        self.assertTrue(all(0 < params['limit'] <= 50 for method, params in self.entry.server.calls
+                            if method == 'thread/turns/list'))
+        self.assertTrue(all(params['includeTurns'] is False for method, params in self.entry.server.calls
+                            if method == 'thread/read'))
+        self.assertFalse(any(method in ('thread/resume', 'thread/start', 'turn/start')
+                             for method, _ in self.entry.server.calls))
 
     def test_subscription_setting_change_aborts_before_sending_or_persisting_receipt(self):
         original = self.entry.server.request

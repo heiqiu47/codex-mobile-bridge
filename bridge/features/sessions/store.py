@@ -168,13 +168,14 @@ class SessionStore:
             rows = conn.execute('SELECT DISTINCT ' + ','.join(fields) + ' FROM threads WHERE ' + ' AND '.join(where)).fetchall()
             return sorted({self._origin(dict(row)) for row in rows})
 
-    @staticmethod
-    def _source_filter(columns, source):
+    def _source_filter(self, columns, source):
         if source == 'desktop':
             originators = "originator IN ('Codex Desktop', 'codex_work_desktop', 'codex_mobile_bridge')" if 'originator' in columns else '0'
             legacy = "(originator IS NULL AND source = 'vscode')" if 'originator' in columns and 'source' in columns else "source = 'vscode'" if 'source' in columns else '0'
             return '(' + originators + ' OR ' + legacy + ')'
-        originators = "originator IN ('codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli', 'codex_mobile_bridge_wsl', 'codex_mobile_bridge')" if 'originator' in columns else '0'
+        origins = self.CLI_ORIGINATORS if self.source == 'cli' else tuple(
+            origin for origin in self.CLI_ORIGINATORS if origin != 'codex_mobile_bridge')
+        originators = 'originator IN (' + ','.join(repr(origin) for origin in origins) + ')' if 'originator' in columns else '0'
         legacy = "(originator IS NULL AND source = 'cli')" if 'originator' in columns and 'source' in columns else "source = 'cli'" if 'source' in columns else '0'
         return '(' + originators + ' OR ' + legacy + ')'
 
