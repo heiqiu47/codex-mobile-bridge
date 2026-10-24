@@ -251,6 +251,8 @@ class Runtime:
             return {}
         if method == 'config/read':
             return {'config': {'model_provider': 'magpie', 'model': 'group/fixture', 'model_providers': {'magpie': {}}}}
+        if method == 'account/read':
+            return {'account': None}
         if method == 'model/list':
             return {'data': [{'model': 'group/fixture'}]}
         if method == 'thread/goal/get':

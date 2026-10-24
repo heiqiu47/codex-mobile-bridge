@@ -21,6 +21,7 @@ from bridge.features.sessions.timeline import Timeline
 from bridge.features.sessions.store import StoreUnavailable
 from bridge.features.sessions.projects import Projects
 from bridge.features.endpoints.wsl_features import WslFeatures
+from bridge.features.endpoints.wsl_models import WslModelCatalog
 from bridge.features.workspace.uploads import Uploads
 from bridge.platforms.windows import wsl
 from bridge.resources import source_text
@@ -81,7 +82,7 @@ class Session:
 
     def view(self):
         with self.condition:
-            return {**normalize_state(self.state, self.connected), 'sequence': self.sequence,
+            return {**normalize_state(self.state, self.connected), 'permissionMode': linux_permissions.current_mode(self.state), 'sequence': self.sequence,
                     'loadingHistory': self.loading, 'activating': self.activating, 'error': self.error}
 
 
@@ -114,6 +115,7 @@ class WslEntry(WslFeatures):
         self.directory_projects = Projects(self.data_dir)
         self.uploads = Uploads(self.data_dir, lambda *args: upload_file(self.row['distribution'], *args, reader=self.read))
         self._init_features()
+        self.model_catalog = WslModelCatalog(self)
         self.worker = threading.Thread(target=self._maintain, daemon=True)
         self.worker.start()
 
@@ -142,6 +144,7 @@ class WslEntry(WslFeatures):
                 daemon = item.get('daemon') if item else None
                 if info['user'] != self.row['user'] or not daemon:
                     raise IPCError('WSL 共享服务暂不可用；打开聊天时会尝试启动已安装的 Codex 服务')
+                self.daemon_identity = dict(daemon)
                 stream = wsl.Stream(self.row['distribution'], self.row['user'], self.row['home'], daemon)
                 if self.closed.is_set():
                     stream.close()
@@ -258,6 +261,9 @@ class WslEntry(WslFeatures):
             with session.condition:
                 requests = session.state.get('requests', [])
                 stamp = hashlib.sha256(json.dumps([state, connected, error], sort_keys=True).encode()).hexdigest()
+                for key in ('turnPlan', 'latestCollaborationMode', 'latestTokenUsageInfo'):
+                    if key in session.state:
+                        state[key] = copy.deepcopy(session.state[key])
                 state['latestThreadSettings'] = copy.deepcopy(session.state.get('latestThreadSettings') or {})
                 if session.state.get('currentPermissions'):
                     state['currentPermissions'] = copy.deepcopy(session.state['currentPermissions'])
@@ -838,6 +844,13 @@ class WslEntry(WslFeatures):
             return {'kind': 'models', 'models': [], 'modelSource': 'codex',
                     'modelError': '此聊天的提供商与当前默认接入不同，请手动填写原提供商支持的模型 ID',
                     'fastMode': {'allowed': False}}
+        value = self.model_catalog.get(identifier, metadata, current, config, refresh,
+            lambda: self._models(runtime, metadata, current, config))
+        return {**value, 'currentModel': current.get('model') or metadata.get('model') or config.get('model'),
+                'currentEffort': current.get('reasoningEffort')}
+
+    def _models(self, runtime, metadata, current, config):
+        provider = config.get('model_provider') or 'openai'
         models, cursor = [], None
         for _ in range(10):
             page = runtime.request('model/list', {'limit': 100, 'cursor': cursor, 'includeHidden': False})
@@ -848,7 +861,7 @@ class WslEntry(WslFeatures):
             fast_mode = Catalog.fast_mode(runtime.request, metadata['cwd'], provider)
         except IPCError:
             fast_mode = {'allowed': False}
-        return {'kind': kind or 'models', 'models': Catalog.normalize_models(models), 'modelSource': 'codex', 'skills': [],
+        return {'kind': 'models', 'models': Catalog.normalize_models(models), 'modelSource': 'codex', 'skills': [],
                 'currentModel': current.get('model') or metadata.get('model') or config.get('model'),
                 'currentEffort': current.get('reasoningEffort'),
                 'fastMode': fast_mode, 'accessManagement': 'external'}
@@ -994,6 +1007,7 @@ class WslEntry(WslFeatures):
         with self.write_lock:
             self.closed.set()
             self._close_features()
+            self.model_catalog.close()
             server = self.server
             if server is not None:
                 server.close()

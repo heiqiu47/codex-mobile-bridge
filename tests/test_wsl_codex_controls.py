@@ -106,6 +106,55 @@ class WslControlsTests(unittest.TestCase):
         self.assertEqual(settings['approvalsReviewer'], 'guardian_subagent')
         self.assertFalse(any(m == 'config/batchWrite' for m, _ in self.entry.server.calls))
 
+    def test_model_cache_persists_twelve_hours_and_manual_refresh_fetches(self):
+        with patch.object(self.entry, 'read', return_value={'digest': 'auth-one'}):
+            first = self.entry.catalog(self.identifier, kind='models')
+            second = self.entry.catalog(self.identifier, kind='models')
+            self.assertEqual(first['models'], second['models'])
+            self.assertEqual(second['cache']['state'], 'fresh')
+            self.assertEqual(sum(m == 'model/list' for m, _ in self.entry.server.calls), 1)
+            restarted = self.make_entry()
+            self.addCleanup(restarted.close)
+            with patch.object(restarted, 'read', return_value={'digest': 'auth-one'}):
+                self.assertEqual(restarted.catalog(self.identifier, kind='models')['models'], first['models'])
+                self.assertFalse(any(m == 'model/list' for m, _ in restarted.server.calls))
+            self.entry.catalog(self.identifier, refresh=True, kind='models')
+            self.assertEqual(sum(m == 'model/list' for m, _ in self.entry.server.calls), 2)
+            self.assertEqual(len(self.entry.model_catalog.timers), 1)
+            interval = next(iter(self.entry.model_catalog.timers.values())).interval
+            self.assertTrue(43198 < interval <= 43200)
+
+    def test_model_cache_isolates_accounts_and_preserves_last_result_on_failure(self):
+        with patch.object(self.entry, 'read', return_value={'digest': 'auth-one'}):
+            first = self.entry.catalog(self.identifier, kind='models')
+        with patch.object(self.entry, 'read', return_value={'digest': 'auth-two'}):
+            second = self.entry.catalog(self.identifier, kind='models')
+            self.assertNotEqual(first['cache']['identity'], second['cache']['identity'])
+            original = self.entry.server.request
+            def unavailable(method, params):
+                if method == 'model/list':
+                    raise IPCError('metadata unavailable')
+                return original(method, params)
+            with patch.object(self.entry.server, 'request', side_effect=unavailable):
+                fallback = self.entry.catalog(self.identifier, refresh=True, kind='models')
+            self.assertEqual(fallback['models'], second['models'])
+            self.assertEqual(fallback['cache']['state'], 'stale')
+            self.assertIn('上次结果', fallback['modelError'])
+
+    def test_native_plan_and_settings_survive_polling(self):
+        self.entry.session(self.identifier)
+        mode = {'mode': 'plan', 'settings': {'model': 'group/fixture'}}
+        for method, params in [('thread/settings/updated', {'threadSettings': {
+            'collaborationMode': mode, 'approvalPolicy': 'on-request',
+            'approvalsReviewer': 'guardian_subagent', 'sandboxPolicy': {'type': 'workspaceWrite'}}}),
+            ('turn/plan/updated', {'plan': [{'step': 'fixture', 'status': 'inProgress'}]})]:
+            self.entry._event({'method': method, 'params': {'threadId': self.identifier, **params}}, self.entry.generation)
+        self.entry._refresh(self.entry.live[self.identifier])
+        state = self.entry.live[self.identifier].state
+        self.assertEqual(state['latestCollaborationMode'], mode)
+        self.assertEqual(state['turnPlan'], [{'step': 'fixture', 'status': 'inProgress'}])
+        self.assertEqual(self.entry.view(self.identifier, attach=False)['permissionMode'], 'auto-review')
+
     def test_permission_inspection_does_not_resume_and_unknown_policy_blocks_write(self):
         with patch.object(self.entry.server, 'request', wraps=self.entry.server.request):
             options = self.entry.linux_permission_options(self.identifier)
