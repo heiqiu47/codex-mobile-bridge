@@ -2,7 +2,7 @@
 
 // Drafts stay on this device. Every read requires a verified gateway and account scope.
 class ComposerDrafts {
-  constructor(storage=localStorage){this.storage=storage;}
+  constructor(storage=localStorage,coordinator=globalThis.indexedDB){this.storage=storage;this.coordinator=coordinator;this.temporaryPending=new Map();}
   key(scope,kind='draft'){
     if(!scope||!['gateway','provider','account','host','session'].every(name=>typeof scope[name]==='string'&&scope[name]))return null;
     return 'composer-v1:'+kind+':'+JSON.stringify([scope.gateway,scope.provider,scope.account,scope.host,scope.session]);
@@ -33,6 +33,65 @@ class ComposerDrafts {
     this.remove(this.key(scope,'pending'));
     if(this.load(scope)?.revision===revision)this.clear(scope);
     return true;
+  }
+  // Only coordinated clients use this key: an older page cannot silently join an
+  // attempt without registering it. Imported v1 requests remain untracked.
+  coordinate(update){
+    if(!this.coordinator)return Promise.resolve(null);
+    return new Promise(resolve=>{
+      let done=false,db,transaction,value;
+      const finish=result=>{if(done)return;done=true;clearTimeout(timer);db?.close();resolve(result);};
+      const timer=setTimeout(()=>{try{transaction?.abort();}catch{}finish(null);},2000);
+      let request;try{request=this.coordinator.open('composer-pending-v2',1);}catch{finish(null);return;}
+      request.onupgradeneeded=()=>request.result.createObjectStore('mutex');
+      request.onblocked=request.onerror=()=>finish(null);
+      request.onsuccess=()=>{
+        db=request.result;if(done){db.close();return;}
+        db.onversionchange=()=>db.close();
+        try{
+          transaction=db.transaction('mutex','readwrite');
+          transaction.oncomplete=()=>finish(value);
+          transaction.onabort=transaction.onerror=()=>finish(null);
+          transaction.objectStore('mutex').get('pending').onsuccess=()=>{
+            if(done)return;
+            try{value=update(true);}catch{transaction.abort();}
+          };
+        }catch{finish(null);}
+      };
+    });
+  }
+  pendingSend(scope){const saved=this.read(this.key(scope,'pending-v2'))??this.pending(scope);return saved&&typeof saved.id==='string'&&saved.id?saved:null;}
+  async beginSend(scope,body,id,attempt,imported=false){
+    if(!this.coordinator)return this.pendingSend(scope)?{blocked:true}:false;
+    const result=await this.coordinate(coordinated=>{
+      const key=this.key(scope,'pending-v2');if(!key)return null;
+      const saved=this.read(key),old=this.read(this.key(scope,'pending')),previous=saved??old;
+      const fingerprint=JSON.stringify(body);
+      if(previous?.body?.text===body.text&&previous.fingerprint!==fingerprint)return {...previous,blocked:true};
+      const same=previous?.fingerprint===fingerprint;
+      const pending=same?{...previous}:{id,fingerprint,body};
+      pending.attempts=[...(same&&Array.isArray(previous.attempts)?previous.attempts:[]),attempt];
+      pending.untracked=!!(same&&(previous.untracked||!saved)||imported||!coordinated);
+      return this.write(key,pending)?pending:false;
+    });
+    return result===null?(this.pendingSend(scope)?{blocked:true}:false):result;
+  }
+  settleSend(scope,id,attempt,action,revision){
+    return this.coordinate(coordinated=>{
+      if(!coordinated)return false;
+      const key=this.key(scope,'pending-v2'),pending=this.read(key)??(action==='ignore'?this.pending(scope):null);
+      if(pending?.id!==id)return false;
+      if(action==='reject'){
+        if(!pending.attempts?.includes(attempt))return false;
+        pending.attempts=pending.attempts.filter(value=>value!==attempt);
+        if(pending.untracked||pending.attempts.length){this.write(key,pending);return false;}
+      }
+      // A tombstone prevents reimporting v1 without racing an older page's writes.
+      if(!this.write(key,{cleared:true}))return false;
+      // Do not remove a legacy record written by a still-open older page.
+      if(action==='confirm'&&this.load(scope)?.revision===revision)this.clear(scope);
+      return true;
+    });
   }
   migrate(scope,temporary,keys){
     if(!this.key(scope)||this.load(scope))return this.load(scope);
