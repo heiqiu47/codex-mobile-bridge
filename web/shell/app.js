@@ -525,6 +525,25 @@ $('new-chat-form').onsubmit=async event=>{
 };
 const messageActions=new MessageActions({request:api,openChat,refresh:()=>loadList(true).catch(e=>toast(e.message)),uuid,notify:toast,busy:value=>{approvalBusy+=value?1:-1;setLanguageBusy();}});
 document.addEventListener('bridge-message-error',event=>toast(event.detail));
+function messageManagementTarget(){
+  if(clientNavigation.provider!=='codex'){
+    return desktopSessions.sid&&desktopSessions.draftScope?{scope:desktopSessions.draftScope,drafts:desktopSessions.composerDrafts,uuid}:null;
+  }
+  return currentId&&codexDraftScope?{scope:codexDraftScope,drafts:composerDrafts,temporary:sessionStorage,temporaryKey:'pending:'+chatKey(),
+    url:sessionUrl(currentId,'message-management',currentHost),sendUrl:sessionUrl(currentId,'send',currentHost),uuid}:null;
+}
+function messageManagementChanged(){
+  if(currentId&&clientNavigation.provider==='codex'){
+    renderQueue(state?.submissions||[]);
+    if(!composerDrafts.pendingSend(codexDraftScope)&&$('send-error').textContent===t('上次发送结果尚未确认，请检查聊天记录或先处理未确认记录。'))$('send-error').textContent='';
+  }
+}
+const messageManagement=typeof MessageManagementBinding==='function'?new MessageManagementBinding({target:messageManagementTarget,request:api,notify:toast,translate:t,
+  beforeOpen:()=>{document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close());},onChanged:messageManagementChanged}):null;
+function openMessageManagement(){if(!messageManagementTarget()){toast('请先打开聊天并等待账号确认');return;}return messageManagement?.open();}
+$('chat-message-management').onclick=$('open-message-management').onclick=openMessageManagement;
+desktopSessions.onManageMessages=openMessageManagement;
+
 $('fork-source').onclick=()=>{const source=state?.forkedFrom;if(source){$('chat-details-dialog').close();openChat(source.id,source.host).catch(e=>toast(e.message));}};
 codexQuotes=typeof ComposerQuotes==='function'?new ComposerQuotes({messages:$('messages'),input:$('message'),container:$('message').parentElement,scope:()=>desktopSessions.provider==='codex'&&currentId&&codexDraftScope?.gateway===draftGateway&&codexDraftScope?.session===currentId&&codexDraftScope?.host===currentHost?codexDraftScope:null,onChange:()=>{codexDraftTouched=true;saveDraft();},onError:text=>{$('send-error').textContent=text;},onPrompt:text=>{const input=$('message'),start=input.selectionStart,end=input.selectionEnd;input.value+=(input.value?'\n\n':'')+text;input.setSelectionRange(start,end);input.oninput();window.BridgePresentation?.resizeMessage();},translate:t}):null;
 
@@ -622,6 +641,7 @@ function bindCodexDraft(view){
   }else if(switching||!codexDraftTouched){codexQuotes?.reset();$('message').value='';$('send-mode').value='send';workModes.selection=null;workModes.render(state,'send',sending);selectedSkills.clear();renderSkillPills();}
   if(codexDraftTouched&&!switching)saveDraft();
   codexDraftTouched=false;
+  messageManagement?.reconcile();
 }
 $('message').oninput=()=>{codexDraftTouched=true;saveDraft();};
 $('message').addEventListener('keyup',saveDraft);
@@ -816,6 +836,8 @@ async function ignoreSubmission(value){
 }
 function renderQueue(rows){
   $('queued').replaceChildren();
+  const pending=codexDraftScope&&composerDrafts?.pendingRecords(codexDraftScope,{temporary:sessionStorage,temporaryKey:'pending:'+chatKey()})||[];
+  if(rows.length||pending.length){const manage=el('button','plain',t('消息管理'));manage.type='button';manage.onclick=openMessageManagement;$('queued').append(manage);}
   const target=currentId,host=currentHost;
   for(const row of rows){
     const card=el('div','queue-card'),reply=row.text.startsWith('<send_user_message_question_reply>');
@@ -858,9 +880,9 @@ $('composer').onsubmit=async event=>{
   let pending,usedDurable=false;
   sending=true;
   try{
-    if(matchingLegacy&&legacy.text===body.text&&!sameLegacy){$('send-error').textContent=t('上次发送结果尚未确认，请检查聊天记录或先处理未确认记录。');return;}
+    if(matchingLegacy&&legacy.text===body.text&&!sameLegacy){$('send-error').textContent=t('上次发送结果尚未确认，请检查聊天记录或先处理未确认记录。');renderQueue(state?.submissions||[]);messageManagement?.reconcile();return;}
     if(scope&&composerDrafts){pending=await composerDrafts.beginSend(scope,body,sameLegacy?legacy.id:uuid(),attempt,!!sameLegacy);usedDurable=!!pending;if(!pending&&composerDrafts.pendingSend(scope)){pending={blocked:true};}if(usedDurable&&sameLegacy&&!pending.blocked){composerDrafts.temporaryPending.delete(legacyKey);try{sessionStorage.removeItem(legacyKey);}catch{}}}
-    if(pending?.blocked){$('send-error').textContent=t('上次发送结果尚未确认，请检查聊天记录或先处理未确认记录。');return;}
+    if(pending?.blocked){$('send-error').textContent=t('上次发送结果尚未确认，请检查聊天记录或先处理未确认记录。');renderQueue(state?.submissions||[]);messageManagement?.reconcile();return;}
     if(!pending){pending=sameLegacy?legacy:{id:uuid(),gateway:draftGateway,target:submittedKey,account:scope?.account||'',...body};
       pending={...pending,attempts:[...(sameLegacy&&Array.isArray(legacy.attempts)?legacy.attempts:[]),attempt],untracked:!!(sameLegacy&&(legacy.untracked||!Array.isArray(legacy.attempts)))};composerDrafts.temporaryPending.set(legacyKey,pending);try{sessionStorage.setItem(legacyKey,JSON.stringify(pending));}catch{} }
     attachments.setLocked(true);workModes.render(state,mode,true);$('send').disabled=true;$('send-error').textContent='';

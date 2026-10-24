@@ -86,6 +86,8 @@ flowchart TD
 
 **Claude/DSH 会话操作：**共享页面模块 `web/features/clients/desktop-sessions.js` 调用 HTTP，`clients/manager.py` 处理客户端启用状态、并发只读合并及写入记录，再调用对应 `adapter.py`。Claude 的 mailbox 与 `connector.js`、DSH 的 `host.mjs` 是实际连接协议边界。某种模型或权限差异应在其客户端适配器内处理。
 
+消息排队、旧版未确认记录恢复和各接入支持范围见 [消息管理](../message-management.md)。
+
 历史首屏与实时控制的拆分、各接入分页能力及本地验证范围见 [历史与控制拆分](history-control-separation.md)。
 
 **扫描与启停：**`clients/discovery.py` 调用选中系统的 `discovery.py` 并补充账号、接入和能力信息；`desktop_app.py`/`lifecycle.py` 保留任务及进程归属规则，平台 `desktop.py` 只执行原生查询或启动退出。展示刷新可以共用一次进程清单；关闭、恢复和账号切换必须重新核验。

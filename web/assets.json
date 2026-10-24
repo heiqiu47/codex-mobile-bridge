@@ -7,7 +7,10 @@
   "/icon-touch.png": "icon-touch.png",
   "/icon-192.png": "icon-192.png",
   "/manifest.webmanifest": "manifest.webmanifest",
-  "/app.js": ["shared/dialog-dismiss.js", "shell/app.js"],
+  "/app.js": [
+    "shared/dialog-dismiss.js",
+    "shell/app.js"
+  ],
   "/bootstrap.js": "shared/bootstrap.js",
   "/style.css": [
     "shell/style.css",
@@ -16,10 +19,17 @@
     "layouts/compact/shell.css",
     "shell/content.css",
     "shared/output-directives.css",
-    "features/chat/composer-quotes.css"
+    "features/chat/composer-quotes.css",
+    "features/chat/message-management.css"
   ],
   "/activity.js": "features/chat/activity.js",
-  "/attachments.js": ["features/chat/composer-drafts.js", "features/chat/composer-quotes.js", "features/chat/attachments.js"],
+  "/attachments.js": [
+    "features/chat/composer-drafts.js",
+    "features/chat/composer-quotes.js",
+    "features/chat/attachments.js",
+    "features/chat/message-management.js",
+    "features/chat/message-management-binding.js"
+  ],
   "/fast-mode.js": "features/chat/fast-mode.js",
   "/list-sync.js": "features/chat/list-sync.js",
   "/message-actions.js": "features/chat/message-actions.js",
@@ -97,7 +107,10 @@
     "hosts/mobile-footer.css",
     "hosts/mobile-controls.css"
   ],
-  "/host.js": ["hosts/environment.js", "hosts/browser-navigation.js"],
+  "/host.js": [
+    "hosts/environment.js",
+    "hosts/browser-navigation.js"
+  ],
   "/layout.js": "layouts/viewport.js",
   "/file-actions.js": "features/workspace/file-actions.js",
   "/pdf-preview.js": "features/workspace/pdf-preview.js",
