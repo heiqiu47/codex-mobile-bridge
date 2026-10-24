@@ -161,6 +161,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     private var routeAttempted = false
     private var requestedRoute: URL?
     private var connectionError: UIView?
+    private var connectionDeadline: DispatchWorkItem?
     private var pendingStorage: String?
     private var clipboardToken = ""
     private var downloadState = DownloadManager.Snapshot()
@@ -375,7 +376,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
         let inbox = UIBarButtonItem(image: UIImage(systemName: "bell"), style: .plain, target: self, action: #selector(self.inbox)); inbox.accessibilityLabel = MobileStrings.text("通知")
         navigationItem.rightBarButtonItems = [settings, inbox]
     }
-    private func clear() { updateSystemBars(reset: true); connectionError = nil; pendingStorage = nil; nativeMainNavigation = nil; routeDiscovery?.cancel(); routeDiscovery = nil; cancelSync(); finishUpload(nil); stopComputerChecks(); computerStates.removeAll(); computerNotifications.removeAll(); gatewayMenuTop?.isActive = false; gatewayMenuTop = nil; generation += 1; web?.stopLoading(); web?.navigationDelegate = nil; web?.uiDelegate = nil; web = nil; for v in page.arrangedSubviews where v !== subtitle { page.removeArrangedSubview(v); v.removeFromSuperview() } }
+    private func clear() { connectionDeadline?.cancel(); connectionDeadline = nil; updateSystemBars(reset: true); connectionError = nil; pendingStorage = nil; nativeMainNavigation = nil; routeDiscovery?.cancel(); routeDiscovery = nil; cancelSync(); finishUpload(nil); stopComputerChecks(); computerStates.removeAll(); computerNotifications.removeAll(); gatewayMenuTop?.isActive = false; gatewayMenuTop = nil; generation += 1; web?.stopLoading(); web?.navigationDelegate = nil; web?.uiDelegate = nil; web = nil; for v in page.arrangedSubviews where v !== subtitle { page.removeArrangedSubview(v); v.removeFromSuperview() } }
     @objc func home() {
         clear(); navigation(home: true); subtitle.isHidden = true
         let container = UIView(); page.addArrangedSubview(container); let content = scrollContent(in: container)
@@ -559,6 +560,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
         }
     }
     private func loadNative(_ web: WKWebView, _ request: URLRequest) {
+        guard self.web === web, connectionError == nil else { return }
         nativeMainNavigation = request.url.map { (web, generation, $0.absoluteString) }
         web.load(request)
     }
@@ -634,6 +636,12 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
         let systemBarsScript = scripts.systemBars.replacingOccurrences(of: "__BRIDGE_CLIPBOARD_TOKEN__", with: clipboardToken)
         configuration.userContentController.addUserScript(WKUserScript(source: systemBarsScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         let web = WKWebView(frame: .zero, configuration: configuration); self.web = web; web.scrollView.contentInsetAdjustmentBehavior = .never; web.navigationDelegate = self; web.uiDelegate = self; web.allowsBackForwardNavigationGestures = true; web.customUserAgent = nil; page.addArrangedSubview(web); gatewayMenuTop = gatewayMenu.topAnchor.constraint(equalTo: web.topAnchor, constant: 4); gatewayMenuTop?.isActive = true; loadWithRecovery(web, url: url, address: address, ticket: generation)
+        let ticket = generation
+        let deadline = DispatchWorkItem { [weak self, weak web] in
+            guard let self, let web, ticket == self.generation, self.web === web, self.connectionError == nil else { return }
+            self.connectionDeadline = nil; web.stopLoading(); self.showConnectionError(status: nil); self.recoverConnection()
+        }
+        connectionDeadline = deadline; DispatchQueue.main.asyncAfter(deadline: .now() + 12, execute: deadline)
         web.scrollView.pinchGestureRecognizer?.isEnabled = false
     }
     @objc private func refresh() { routeAttempted = false; if let web { nativeMainNavigation = web.url.map { (web, generation, $0.absoluteString) }; web.reload() } }
@@ -673,6 +681,10 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
             let a = UIAlertController(title: MobileStrings.text("在浏览器打开外部链接？"), message: url.host, preferredStyle: .alert); a.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel)); a.addAction(UIAlertAction(title: MobileStrings.text("打开"), style: .default) { _ in UIApplication.shared.open(url) }); present(a, animated: true)
         }
     }
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        guard webView === web, connectionError == nil, let url = webView.url, GatewayURL.same(url, origin) else { return }
+        connectionDeadline?.cancel(); connectionDeadline = nil; subtitle.isHidden = true
+    }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { if nativeMainNavigation?.web === webView { nativeMainNavigation = nil }; guard webView === web, connectionError == nil, let url = webView.url, GatewayURL.same(url, origin) else { return }; subtitle.isHidden = true; registerNativePush(); rememberConnection()
         if let snapshot = pendingStorage { pendingStorage = nil; webView.evaluateJavaScript("(()=>{const data=" + snapshot + ";for(const [k,v] of Object.entries(data))if(typeof v==='string')localStorage.setItem(k,v);location.reload();})()", completionHandler: nil) }
     }
@@ -685,6 +697,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     }
     private func showConnectionError(status: Int?) {
         guard let web, connectionError == nil, let route = requestedRoute else { return }
+        connectionDeadline?.cancel(); connectionDeadline = nil
         let address = origin, ticket = generation
         updateSystemBars(reset: true); web.isHidden = true; subtitle.isHidden = true; gatewayMenu.isHidden = true
         let container = UIView(); page.addArrangedSubview(container); connectionError = container; let content = scrollContent(in: container)

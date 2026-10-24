@@ -79,7 +79,11 @@ Path(''' + repr(str(log)) + ''').write_text(json.dumps(calls), encoding='utf-8')
             bridge = self.bridge()
             self.old.unlink()
             find.return_value = self.new
-            with patch('bridge.features.sessions.create.subprocess.Popen', side_effect=launch) as popen, patch('bridge.app.service.open_in_desktop'):
+            # Capability discovery has its own subprocess; this regression counts
+            # creation runtimes and native thread/start calls only.
+            with patch('bridge.features.sessions.create._native_project_support', return_value=False), \
+                    patch('bridge.features.sessions.create.subprocess.Popen', side_effect=launch) as popen, \
+                    patch('bridge.app.service.open_in_desktop'):
                 first = bridge.create_chat('local|p', 'Windows test', request_id)
                 second = bridge.create_chat('local|p', 'Windows test', request_id)
             self.assertEqual(first['id'], tid)

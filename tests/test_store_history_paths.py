@@ -49,6 +49,47 @@ class StoreHistoryPathTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.history('thread')
 
+    def test_native_file_change_event_is_preserved_in_saved_history(self):
+        records = [
+            {'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 'native-turn'}},
+            {'type': 'event_msg', 'payload': {'type': 'item_completed', 'item': {
+                'type': 'FileChange', 'id': 'patch', 'changes': {
+                    '/repo/file.py': {'type': 'update', 'unified_diff': '@@ -1 +1 @@\n-old\n+new'}}}}},
+            {'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 'native-turn'}}]
+        self.rollout.write_text('\n'.join(json.dumps(record) for record in records) + '\n')
+        from bridge.features.sessions.model import normalize_state
+        result = normalize_state(self.store.history('thread'))
+        self.assertEqual(result['turns'][0]['fileChanges'][0]['path'], '/repo/file.py')
+        self.assertEqual(result['turns'][0]['fileChanges'][0]['added'], 1)
+        self.assertEqual(result['turns'][0]['fileChanges'][0]['removed'], 1)
+        # Full native patch projection is retained by the existing history read,
+        # even when the display window omits the patch item itself.
+        saved = self.store.history('thread')
+        saved['turns'][0]['items'].append({'type':'agentMessage','id':'last','text':'Done'})
+        recent = normalize_state(saved,item_limit=1)
+        self.assertEqual(recent['turns'][0]['fileChanges'][0]['path'],'/repo/file.py')
+
+
+    def test_native_index_partial_turn_cannot_publish_partial_file_totals(self):
+        db = self.home / 'thread_history_1.sqlite'
+        with closing(sqlite3.connect(db)) as conn, conn:
+            conn.execute('CREATE TABLE thread_items(thread_id,turn_id,rollout_ordinal,item_json)')
+            conn.execute('CREATE TABLE thread_turns(thread_id,turn_id,status,error_json,started_at,first_user_item_id)')
+            conn.execute('CREATE TABLE thread_history_projection_state(thread_id,next_rollout_byte_offset)')
+            conn.execute('INSERT INTO thread_history_projection_state VALUES(?,?)',('thread',self.rollout.stat().st_size))
+            conn.execute('INSERT INTO thread_turns VALUES(?,?,?,?,?,?)',('thread','t','completed',None,1,'user'))
+            for ordinal,path in enumerate(('omitted.py','tail.py')):
+                item={'id':str(ordinal),'type':'fileChange','changes':[{'path':path,'diff':'+new'}]}
+                conn.execute('INSERT INTO thread_items VALUES(?,?,?,?)',('thread','t',ordinal,json.dumps(item)))
+        from bridge.features.sessions.model import normalize_state
+        with patch.object(self.store,'_history',side_effect=AssertionError('no full-turn scan')):
+            partial=self.store.history('thread',item_limit=1)
+            self.assertFalse(partial['turns'][0]['_itemsComplete'])
+            self.assertEqual(normalize_state(partial)['turns'][0]['fileChanges'],[])
+            complete=self.store.history('thread',item_limit=2)
+            self.assertTrue(complete['turns'][0]['_itemsComplete'])
+            self.assertEqual(len(normalize_state(complete)['turns'][0]['fileChanges']),2)
+
     def test_ordinary_path_remains_readable_without_identity_fallback(self):
         with patch.object(Path, 'samefile', side_effect=AssertionError('unneeded fallback')):
             self.assert_readable()

@@ -69,3 +69,9 @@ Codex 的环境路由、目录登记和创建回执由 `codex-entries.browser.js
 同一个文件标签在账号身份改变后仍可查看原图片，但不能将旧图片加入新的草稿。
 附件上传由内存夹具接收，HTTP 服务拒绝所有非 GET 请求，不调用真实网关或模型。
 检查结果和截图保存在 `.tmp/v215-chat-feedback/image-workbench-check/`。
+
+## 输入区引用布局
+
+`composer-quotes.browser.js` 在加载生产 ComposerQuotes 与输入区样式的隔离页面中运行。
+调用并等待 `runComposerQuoteLayoutChecks()`，分别在实际 390、844、1440 px 视口执行；调整窗口后先等待 `innerWidth` 匹配目标宽度。
+它使用合成 Codex / Claude DOM 核验选区按钮紧邻上下文用量、窄屏独立行、引用预览单行省略与展开完整文本，以及选区点击和已有草稿保留；不发送消息。

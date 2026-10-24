@@ -1,5 +1,6 @@
 'use strict';
 const timelineText=source=>typeof BridgeI18n==='undefined'?source:BridgeI18n.t(source);
+const fileChangeLabel=row=>timelineText('已编辑 {count} 个文件').replace('{count}',row.fileSummary?.count||0);
 const recentTimelinePages=new Map();
 
 // History and live changes share stable keys, but never share a request queue.
@@ -160,13 +161,32 @@ class ChatTimeline {
     }
   }
   renderRow(row,open){
-    const activity=row.role==='activity',toolImages=activity&&row.attachments?.some(item=>item.type==='toolImage');
+    const activity=row.role==='activity'||row.role==='fileChanges',toolImages=activity&&row.attachments?.some(item=>item.type==='toolImage');
     const node=document.createElement(activity&&!toolImages?'details':'div');
     node.className=toolImages?'tool-images timeline-row':activity?'activity timeline-row':'message timeline-row '+row.role;
     const content=toolImages?document.createElement('details'):node;
     if(toolImages){content.className='activity';node.append(content);}
     const heading=document.createElement(activity?'summary':'span');heading.className=activity?'':'who';
     heading.textContent=activity?(row.title||row.kind)+(row.status==='inProgress'?timelineText(' · 进行中'):''):row.role==='user'?timelineText('你'):row.role==='error'?timelineText('执行错误'):['CODEX',row.model&&[row.model,row.effort].filter(Boolean).join(' ')].filter(Boolean).join(' · ');content.append(heading);
+    if(row.fileSummary){
+      node.classList.add('edited-files-card');
+      heading.replaceChildren();
+      const label=document.createElement('span');label.className='edited-files-label';label.textContent=fileChangeLabel(row);
+      const stats=document.createElement('span');stats.className='edited-files-stats';
+      const added=document.createElement('span');added.className='edited-files-added';added.textContent='+'+row.fileSummary.added;
+      const removed=document.createElement('span');removed.className='edited-files-removed';removed.textContent='−'+row.fileSummary.removed;
+      stats.append(added,removed);heading.append(label);
+      if(row.fileSummary.basis==='recorded'){
+        const basis=document.createElement('small');basis.className='edited-files-basis';basis.textContent=timelineText('累计修改');heading.append(basis);
+      }
+      heading.append(stats);
+      const list=document.createElement('ul');list.className='edited-files-list';
+      for(const file of row.fileSummary.files){
+        const item=document.createElement('li'),path=document.createElement('span'),counts=document.createElement('span');
+        path.textContent=file.path;path.className='edited-files-path';counts.textContent='+'+file.added+' −'+file.removed;counts.className='edited-files-stats';item.append(path,counts);list.append(item);
+      }
+      content.append(list);
+    }
     const body=document.createElement(activity?'pre':'div');body.className=activity?'activity-body':'message-body';
     body.__mermaidScope=this.mermaidScope;body.__mermaidIdentity=row.key;
     const more=document.createElement('button');more.className='plain detail-more';more.type='button';
@@ -256,8 +276,9 @@ class ChatTimeline {
     this.historyStatus();
     for(const [key,entry] of this.nodes){
       const row=this.rows.get(key)?.row;if(!row)continue;
-      const node=entry.node,heading=row.role==='activity'?(node.tagName==='DETAILS'?node.firstElementChild:node.querySelector('details.activity > summary')):node.firstElementChild;
-      if(heading)heading.textContent=row.role==='activity'?(row.title||row.kind)+(row.status==='inProgress'?timelineText(' · 进行中'):''):row.role==='user'?timelineText('你'):row.role==='error'?timelineText('执行错误'):['CODEX',row.model&&[row.model,row.effort].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
+      const node=entry.node,heading=(row.role==='activity'||row.role==='fileChanges')?(node.tagName==='DETAILS'?node.firstElementChild:node.querySelector('details.activity > summary')):node.firstElementChild;
+      if(row.fileSummary){const label=node.querySelector('.edited-files-label');if(label)label.textContent=fileChangeLabel(row);const basis=node.querySelector('.edited-files-basis');if(basis)basis.textContent=timelineText('累计修改');}
+      else if(heading)heading.textContent=(row.role==='activity'||row.role==='fileChanges')?(row.title||row.kind)+(row.status==='inProgress'?timelineText(' · 进行中'):''):row.role==='user'?timelineText('你'):row.role==='error'?timelineText('执行错误'):['CODEX',row.model&&[row.model,row.effort].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
       const more=node.querySelector('.detail-more');
       if(more&&!more.disabled)more.textContent=timelineText(this.details.has(key)?'继续加载正文':'展开完整内容');
       const attachment=node.querySelector('.timeline-attachments small.muted');

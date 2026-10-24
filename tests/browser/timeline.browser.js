@@ -185,3 +185,36 @@ async function runTimelineCacheTests() {
   check(!loggedOut.container.textContent.includes('Current reply'),'Logout/account cache clearing removes retained messages');loggedOut.dispose();
   return checks;
 }
+
+async function runTimelineNativeFileChangesTests(){
+  const checks=[];
+  const check=(value,label)=>{if(!value)throw Error(label);checks.push(label);};
+  document.getElementById('app').hidden=false;
+  document.getElementById('chat').hidden=false;
+  document.getElementById('app').classList.add('chat-open');
+  document.getElementById('timeline').style.cssText='height:400px;flex:none;overflow:auto;width:100%;padding:20px';
+  const frame=()=>new Promise(resolve=>requestAnimationFrame(resolve));
+  const until=async fn=>{const end=performance.now()+2500;while(!fn()){if(performance.now()>end)throw Error('Timed out waiting for native file card');await frame();}};
+  const page=(from,to,sequence)=>({rows:[],sequence,epoch:'native-fixture',before:null,hasMore:false,meta:{requests:[]},files:[]});
+  const timeline=new ChatTimeline({url:action=>'/fixture/'+action+'?host=local',request:async()=>{},renderMeta:()=>{},renderText:(node,text)=>node.textContent=text,status:()=>{}});
+  timeline.container.replaceChildren();
+  const nativePatch='@@ -1 +1 @@\n-old\n+new\n'+'+long patch line\n'.repeat(2000);
+  const nativeFooter={key:'native-footer',order:322,role:'fileChanges',kind:'fileChanges',version:'patch-v1',text:'',truncated:true,
+    fileSummary:{count:2,added:3,removed:1,basis:'recorded',files:[{path:'/repo/space name.py',added:2,removed:1},{path:'/repo/new.py',added:1,removed:0}]}};
+  timeline.apply({...page(0,0,4),rows:[nativeFooter]});
+  timeline.setVisibility({showProcess:false});
+  const card=timeline.nodes.get('native-footer').node;
+  check(!card.hidden&&card.classList.contains('edited-files-card'),'Native edited-files card stays visible with process hidden');
+  check(card.getBoundingClientRect().width>250&&card.scrollWidth<=card.clientWidth,'Native card fits the available message width');
+  check(card.querySelector('.edited-files-basis').textContent===timelineText('累计修改'),'Recorded patch totals are labeled separately from net edits');
+  check(!card.open&&card.querySelector('.edited-files-list').textContent.includes('/repo/space name.py'),'Native card starts collapsed and contains per-file paths and counts');
+  timeline.request=async()=>({key:'native-footer',version:'patch-v1',offset:0,text:nativePatch.slice(0,16000),next:16000});
+  check(!card.textContent.includes('long patch line'),'Initial native card excludes patch body');
+  card.open=true;
+  await until(()=>card.textContent.includes('long patch line'));
+  check(!card.querySelector('.detail-more').hidden,'Long native patch retains bounded continuation control');
+  timeline.apply({...page(0,0,5),rows:[{...nativeFooter,version:'patch-v2',fileSummary:{...nativeFooter.fileSummary,added:4}}]});
+  check(timeline.nodes.get('native-footer').node.querySelector('.edited-files-added').textContent==='+4','Native summary refreshes totals on update');
+  timeline.dispose();
+  return checks;
+}

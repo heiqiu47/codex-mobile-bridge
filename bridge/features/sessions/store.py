@@ -1,5 +1,6 @@
 """Read-only discovery and history for existing Codex chats."""
 import copy
+import re
 import os
 import threading
 from collections import OrderedDict
@@ -10,6 +11,101 @@ import sqlite3
 import tempfile
 from contextlib import closing, contextmanager, ExitStack
 from pathlib import Path
+
+
+def items_array(items):
+    if isinstance(items, list):
+        return items
+    if isinstance(items, dict):
+        entities = items.get("entitiesByKey", {})
+        if entities:
+            return [entities[e["value"]] for island in items.get("islands", []) for e in island.get("entries", []) if e.get("value") in entities]
+        return list(items.get("items", []))
+    return []
+
+
+def native_patch_counts(diff):
+    """File headers are metadata only before a hunk; hunk text can start +++/---."""
+    added = removed = 0
+    in_hunk = False
+    unified = diff.startswith(('diff --git ', '--- ', '+++ '))
+    for line in diff.splitlines():
+        if line.startswith('@@'):
+            in_hunk = True
+            continue
+        if line.startswith('diff --git '):
+            in_hunk = False
+            unified = True
+            continue
+        if unified and not in_hunk:
+            continue
+        added += line.startswith('+')
+        removed += line.startswith('-')
+    return added, removed
+
+
+def native_file_changes(items):
+    """Keep native patch evidence separate from tool prose and workspace state."""
+    files, seen = {}, set()
+    for item in items:
+        if item.get('type') not in ('fileChange', 'FileChange') or item.get('status') in ('failed', 'declined', 'inProgress'):
+            continue
+        identity = item.get('id')
+        if identity and identity in seen:
+            continue
+        if identity:
+            seen.add(identity)
+        changes = item.get('changes') or []
+        if isinstance(changes, dict):
+            changes = [dict(change, path=path) for path, change in changes.items() if isinstance(change, dict)]
+        for change in changes:
+            if not isinstance(change, dict) or not isinstance(change.get('path'), str):
+                continue
+            diff = change.get('diff', change.get('unified_diff', ''))
+            content_diff = not diff and change.get('type') in ('add', 'delete') and isinstance(change.get('content'), str)
+            if content_diff:
+                prefix = '+' if change['type'] == 'add' else '-'
+                diff = '\n'.join(prefix + line for line in change['content'].splitlines())
+            if not isinstance(diff, str):
+                continue
+            path = change['path']
+            entry = files.setdefault(path, {'path': path, 'added': 0, 'removed': 0, 'diff': ''})
+            if content_diff:
+                lines = len(change['content'].splitlines())
+                added, removed = (lines, 0) if change['type'] == 'add' else (0, lines)
+            else:
+                added, removed = native_patch_counts(diff)
+            entry['added'] += added
+            entry['removed'] += removed
+            entry['diff'] += ('\n' if entry['diff'] else '') + diff
+    return list(files.values())
+
+
+def native_turn_file_changes(turn):
+    if '_nativeFileChanges' in turn:
+        return turn['_nativeFileChanges']
+    diff = turn.get('diff')
+    if isinstance(diff, str) and diff.startswith('diff --git '):
+        changes = []
+        for section in re.split(r'(?=^diff --git )', diff, flags=re.MULTILINE):
+            if not section:
+                continue
+            target = re.search(r'^\+\+\+ (.+)$', section, re.MULTILINE)
+            original = re.search(r'^--- (.+)$', section, re.MULTILINE)
+            path = target.group(1) if target and target.group(1) != '/dev/null' else original.group(1) if original else None
+            if not path:
+                renamed = re.search(r'^rename to (.+)$', section, re.MULTILINE)
+                path = renamed.group(1) if renamed else None
+            if path and path.startswith('"'):
+                try:
+                    path = json.loads(path)
+                except ValueError:
+                    continue
+            if path:
+                changes.append({'path': path[2:] if path.startswith(('a/', 'b/')) else path, 'diff': section})
+        if changes:
+            return native_file_changes([{'type': 'fileChange', 'changes': changes}])
+    return native_file_changes(items_array(turn.get('items', [])))
 
 
 class StoreUnavailable(RuntimeError):
@@ -413,6 +509,7 @@ class SessionStore:
                         turns[row['turn_id']] = {'turnId': row['turn_id'], 'status': header['status'],
                                                 'turnStartedAtMs': header['started_at'],
                                                 '_firstUserItemId': header['first_user_item_id'],
+                                                '_itemsComplete': not (more and row['turn_id'] == rows[item_limit]['turn_id']),
                                                 'error': json.loads(header['error_json']) if header['error_json'] else None,
                                                 'items': []}
                     item = json.loads(row['item_json'])
@@ -535,6 +632,8 @@ class SessionStore:
                         turns.append(current)
                         items = current["items"]
                     items.append({"id": item.get("id", str(len(items))), "type": "ImageView", "path": item.get("path", "")})
+                elif isinstance(item, dict) and item.get("type") in ("FileChange", "fileChange") and current is not None:
+                    items.append({**item, "type": "fileChange", "status": item.get("status", "completed")})
             elif record.get("type") == "response_item":
                 if current is None:
                     current = {"turnId": "history", "status": "completed", "items": []}
@@ -550,6 +649,11 @@ class SessionStore:
                     items.append({"id": payload.get("id", str(len(items))), "type": "agentMessage", "text": payload.get("text", "")})
                 elif payload.get("type") in ("function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output"):
                     items.append({"id": payload.get("call_id", str(len(items))), "type": "storedToolEvent", **payload})
+        # Rollout parsing already visited these records. Retain the native patch
+        # projection once so a later bounded item window need not reopen bodies.
+        for turn in turns:
+            turn['_nativeFileChanges'] = native_turn_file_changes(turn)
+            turn['_nativeFileChangesBasis'] = 'recorded'
         result = {"id": thread_id, "title": meta.get("name") or meta.get("title"), "cwd": meta["cwd"],
                 "latestModel": meta.get('model') or next((t['params']['model'] for t in reversed(turns) if (t.get('params') or {}).get('model')), None),
                 "latestReasoningEffort": next((t['params']['effort'] for t in reversed(turns) if (t.get('params') or {}).get('effort')), None),

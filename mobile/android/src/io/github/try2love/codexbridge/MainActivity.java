@@ -16,6 +16,7 @@ public final class MainActivity extends Activity {
  private LinearLayout root,bar;private WebView web;private String origin="";private TextView status;private SystemBars systemBars;
  private android.content.SharedPreferences prefs;private final ExecutorService worker=Executors.newSingleThreadExecutor();
  private final ExecutorService probes=Executors.newFixedThreadPool(3);
+ private Future<?> connectionTask;private Runnable connectionDeadline;
  private final Handler homeHandler=new Handler(Looper.getMainLooper());
  private final Map<String,TextView> homeStates=new LinkedHashMap<>();
  private final Map<String,LinearLayout> homeNotifications=new LinkedHashMap<>();
@@ -54,9 +55,13 @@ public final class MainActivity extends Activity {
   }catch(Exception ignored){}});
  }
  void loadWithRecovery(String address,String url,WebView current,int ticket){
+  if(ticket!=generation||web!=current||!address.equals(origin)||!saved().contains(address))return;
   final String before=EventClient.sessionCookie(CookieManager.getInstance().getCookie(address+"/"),address);
-  worker.execute(()->{
-   DeviceBinding.Credential saved=DeviceBinding.load(this,address);
+  if(connectionTask!=null)connectionTask.cancel(true);
+  final DeviceBinding.Credential saved=DeviceBinding.load(this,address);
+  if(saved==null||saved.cookie().equals(before)){current.loadUrl(url);return;}
+  connectionTask=worker.submit(()->{
+   if(ticket!=generation||Thread.currentThread().isInterrupted())return;
    boolean recover=false;
    if(saved!=null&&!saved.cookie().equals(before)){
     Boolean existing=before.isEmpty()?false:DeviceBinding.verify(address,new DeviceBinding.Credential(before.substring(0,before.indexOf('=')),before.substring(before.indexOf('=')+1)));
@@ -113,7 +118,14 @@ public final class MainActivity extends Activity {
   status=text("",12);status.setTextColor(0xff6b7075);status.setGravity(Gravity.CENTER);root.addView(status);
   if(!openIntent(getIntent())){String active=prefs.getString("active","");if(saved().contains(active))connect(active+"/");else home();}monitor();root.post(this::requestStartupNotifications);restoreUpdate();
  }
- void clear(){if(preparingUpdate!=null){preparingUpdate.cancel();preparingUpdate=null;}pendingStorage=null;if(routeDiscovery!=null){routeDiscovery.cancel();routeDiscovery=null;}if(files!=null){files.onReceiveValue(null);files=null;fileView=null;}stopComputerChecks();homeStates.clear();homeNotifications.clear();resetExitGesture();generation++;if(web!=null){web.stopLoading();web.destroy();web=null;}systemBars.update(0xfff5f5f3,0xfff5f5f3);while(root.getChildCount()>2)root.removeViewAt(2);}
+ void cancelConnectionDeadline(){if(connectionDeadline!=null){homeHandler.removeCallbacks(connectionDeadline);connectionDeadline=null;}}
+ void watchConnection(String url,WebView current,int ticket){
+  cancelConnectionDeadline();connectionDeadline=()->{
+   if(ticket!=generation||web!=current)return;
+   connectionDeadline=null;status.setVisibility(View.VISIBLE);status.setText(L("连接失败，请在更多菜单中刷新"));recoverConnection(url);
+  };homeHandler.postDelayed(connectionDeadline,12000);
+ }
+ void clear(){cancelConnectionDeadline();if(connectionTask!=null){connectionTask.cancel(true);connectionTask=null;}if(preparingUpdate!=null){preparingUpdate.cancel();preparingUpdate=null;}pendingStorage=null;if(routeDiscovery!=null){routeDiscovery.cancel();routeDiscovery=null;}if(files!=null){files.onReceiveValue(null);files=null;fileView=null;}stopComputerChecks();homeStates.clear();homeNotifications.clear();resetExitGesture();generation++;if(web!=null){web.stopLoading();web.destroy();web=null;}systemBars.update(0xfff5f5f3,0xfff5f5f3);while(root.getChildCount()>2)root.removeViewAt(2);}
  void home(){clear();header(false);status.setVisibility(View.GONE);ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);LinearLayout content=column();content.setPadding(dp(20),dp(16),dp(20),dp(24));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
   ImageView icon=new ImageView(this);icon.setImageResource(getResources().getIdentifier("ic_computer","drawable",getPackageName()));icon.setScaleType(ImageView.ScaleType.FIT_CENTER);LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(dp(64),dp(58));ip.gravity=Gravity.CENTER;ip.bottomMargin=dp(24);content.addView(icon,ip);
   TextView headline=text(L("电脑上的工作，\n带在身边。"),30);headline.setTypeface(null,android.graphics.Typeface.BOLD);headline.setGravity(Gravity.CENTER);add(headline,content,10);
@@ -171,9 +183,10 @@ public final class MainActivity extends Activity {
   s.setMinimumFontSize(6);s.setMinimumLogicalFontSize(6);
   web.setWebViewClient(new WebViewClient(){
    public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){String target=request.getUrl().toString();if(!request.isForMainFrame())return !htmlPreviewShell(target);if(htmlPreviewShell(target))return true;if(target.equals("codexbridge://home")&&request.hasGesture()&&GatewayURL.sameOrigin(view.getUrl(),origin)){home();return true;}if(ArtifactDownload.accepts(target,origin)&&request.hasGesture()){downloadArtifact(target);return true;}if(GatewayURL.sameOrigin(target,origin))return false;if(request.hasGesture()&&("https".equals(request.getUrl().getScheme())||"http".equals(request.getUrl().getScheme())))new AlertDialog.Builder(MainActivity.this).setMessage(L("在浏览器打开外部链接？\n")+request.getUrl().getHost()).setPositiveButton(L("打开"),(d,w)->startActivity(new Intent(Intent.ACTION_VIEW,request.getUrl()))).setNegativeButton(L("取消"),null).show();return true;}
-   public void onPageFinished(WebView view,String target){if(view==web&&GatewayURL.sameOrigin(target,origin)){CookieManager.getInstance().flush();view.evaluateJavascript("window.BridgeMobileCapabilities = Object.freeze({ diagnosticsExport: true });",null);view.evaluateJavascript(appearance,null);status.setVisibility(View.GONE);registerPushToken();rememberConnection();
+   public void onPageCommitVisible(WebView view,String target){if(view==web&&GatewayURL.sameOrigin(target,origin)){cancelConnectionDeadline();status.setVisibility(View.GONE);}}
+   public void onPageFinished(WebView view,String target){if(view==web&&GatewayURL.sameOrigin(target,origin)){cancelConnectionDeadline();CookieManager.getInstance().flush();view.evaluateJavascript("window.BridgeMobileCapabilities = Object.freeze({ diagnosticsExport: true });",null);view.evaluateJavascript(appearance,null);status.setVisibility(View.GONE);registerPushToken();rememberConnection();
     if(pendingStorage!=null){String snapshot=pendingStorage;pendingStorage=null;view.evaluateJavascript("(()=>{const data="+snapshot+";if(data&&typeof data==='object'){for(const [k,v] of Object.entries(data))if(typeof v==='string')localStorage.setItem(k,v);location.reload();}})()",null);}}}
-   public void onReceivedError(WebView view,WebResourceRequest req,WebResourceError e){if(view==web&&req.isForMainFrame()){status.setVisibility(View.VISIBLE);status.setText(L("连接失败，请在更多菜单中刷新"));recoverConnection(url);}}
+   public void onReceivedError(WebView view,WebResourceRequest req,WebResourceError e){if(view==web&&req.isForMainFrame()){cancelConnectionDeadline();status.setVisibility(View.VISIBLE);status.setText(L("连接失败，请在更多菜单中刷新"));recoverConnection(url);}}
    public void onReceivedHttpError(WebView view,WebResourceRequest req,WebResourceResponse response){if(view==web&&req.isForMainFrame()&&GatewayURL.sameOrigin(req.getUrl().toString(),origin)&&ConnectionDiscovery.retryableStatus(response.getStatusCode()))recoverConnection(url);}
   });
   web.setWebChromeClient(new WebChromeClient(){
@@ -219,7 +232,7 @@ public final class MainActivity extends Activity {
    }});
 
   web.setDownloadListener((target,agent,disposition,mime,length)->downloadArtifact(target));
-  loadWithRecovery(base,url,web,generation);monitor();
+  watchConnection(url,web,generation);loadWithRecovery(base,url,web,generation);monitor();
  }catch(Exception e){message(e.getMessage());}}
  void renderDownload(){downloadCard.render(downloadTask,savingDownload||choosingDownload!=null,openingDownload,updateSession!=null);}
  void downloadArtifact(String target){

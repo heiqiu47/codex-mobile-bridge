@@ -37,6 +37,11 @@ PREVIOUS_HISTORY_SOURCES = ('7ff9ce99e26c3b1b9e54ade4db4a634976096f3a429b6f4d81e
 PREVIOUS_PROJECT_SOURCES = ('2f71a8c64cdf798843386310c359e41b57c3b2b26130f448f97c6603b4fa5762',
                             '2ad4a7923d1d124d2c2c94a9f46e15ab45ef4e2b91a937abe45e0bdf0616831a')
 
+# Revision 4 shipped with the WSL/project preview, before native workspace
+# registration and forks. Keep both source encodings during an explicit upgrade.
+PREVIOUS_WORKSPACE_SOURCES = ('b7f3c05ec967e736897f068b9da2820f7ce98a151a12051691e641540174e640',
+                              '0d673a9d13fb7f32da07f36ff34e45d1fd48de555cb20661e4ab8192b1427582')
+
 
 def insertion(text):
     """Read only our JSON flow insertion, including Harness's line wrapping.
@@ -155,7 +160,7 @@ def verified_directory(entry, home):
         if digest not in current_sources and digest not in (
                 LEGACY_SOURCE, PREVIOUS_SOURCE, PREVIOUS_CLEANUP_SOURCE, PREVIOUS_CATALOG_SOURCE,
                 *PREVIOUS_QUIT_SOURCES, *PREVIOUS_CONTEXT_SOURCES, *PREVIOUS_HISTORY_SOURCES,
-                *PREVIOUS_PROJECT_SOURCES):
+                *PREVIOUS_PROJECT_SOURCES, *PREVIOUS_WORKSPACE_SOURCES):
             return None
         return directory, digest not in current_sources
     except (OSError, ValueError, KeyError, TypeError, IndexError):

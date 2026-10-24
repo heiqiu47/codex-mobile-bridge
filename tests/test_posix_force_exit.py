@@ -107,6 +107,17 @@ class PosixForceExitTests(unittest.TestCase):
         self.native.terminate.assert_not_called()
         self.assertTrue({701, 702}.issubset({call.args[0] for call in self.native.identity.call_args_list}))
 
+    def test_exit_confirmation_never_reads_commands_for_an_empty_inventory(self):
+        def commands(pids):
+            self.assertTrue(pids, 'empty inventory must not reach the native command reader')
+            return {pid: self.commands[pid] for pid in pids}
+        self.desktop.commands.side_effect = commands
+        force_stop(self.executable, self.commands)
+        self.assertEqual(self.live, {})
+        self.native.terminate.reset_mock()
+        force_stop(self.executable, self.commands)
+        self.native.terminate.assert_not_called()
+
     def test_gateway_and_ancestor_images_are_protected(self):
         with self.assertRaisesRegex(ValueError, '网关'):
             force_stop('/fixture/gateway', {})
@@ -181,3 +192,38 @@ class LinuxIdentityTests(unittest.TestCase):
             root.exists.return_value = True
             with self.assertRaises(FileNotFoundError):
                 Native.__new__(Native).identity(701)
+
+
+class LinuxAncestorTests(unittest.TestCase):
+    def test_unreadable_ancestor_image_keeps_parent_but_target_identity_stays_strict(self):
+        from bridge.platforms.linux.force_exit import Native
+        fields = ['S', '12', *(['0']*17), '99']
+        with patch('bridge.platforms.linux.force_exit.Path') as path:
+            root = path.return_value.__truediv__.return_value
+            stat, image = Mock(), Mock()
+            root.__truediv__.side_effect = lambda name: stat if name == 'stat' else image
+            stat.read_text.return_value = '701 (sshd) '+ ' '.join(fields)
+            image.resolve.side_effect = PermissionError(13, 'Permission denied')
+            native = Native.__new__(Native)
+            self.assertEqual(native.ancestor(701), {'parent': 12, 'image': ''})
+            with self.assertRaises(PermissionError):
+                native.identity(701)
+            fields[-1] = '100'
+            stat.read_text.side_effect = ['701 (sshd) '+' '.join(fields),
+                                          '701 (sshd) '+' '.join([*fields[:-1], '101'])]
+            with self.assertRaises(ProcessLookupError):
+                native.ancestor(701)
+
+    def test_linux_protection_walk_does_not_use_partial_ancestor_data_for_targets(self):
+        from bridge.platforms.posix.force_exit import force_stop
+        native = Mock()
+        native.ancestor.return_value = {'parent': 1, 'image': ''}
+        native.identity.side_effect = PermissionError(13, 'Target image unavailable')
+        with patch('bridge.platforms.posix.force_exit.sys.platform', 'linux'), \
+                patch('bridge.platforms.linux.force_exit.Native', return_value=native):
+            with self.assertRaisesRegex(ValueError, '权限'):
+                force_stop('/fixture/client', {701: '/fixture/client'})
+        native.ancestor.assert_called_once_with(os.getpid())
+        native.identity.assert_called_once_with(701)
+        native.open.assert_not_called()
+        native.terminate.assert_not_called()

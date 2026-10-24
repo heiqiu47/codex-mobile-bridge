@@ -13,6 +13,96 @@ def view(count=320, sequence=1):
 
 
 class TimelineTests(unittest.TestCase):
+    def test_native_completed_turn_file_summary_survives_history_and_updates(self):
+        state = {'turns': [{'turnId': 'patch-turn', 'status': 'inProgress', 'items': [
+            {'type': 'fileChange', 'id': 'patch', 'status': 'completed', 'changes': {
+                '/repo/a.py': {'type': 'update', 'unified_diff': '@@ -1 +1,2 @@\n-old\n+new\n+extra'},
+                '/repo/b.py': {'type': 'add', 'content': 'created\n'}}},
+            {'type': 'agentMessage', 'id': 'reply', 'text': 'Done'}]}]}
+        timeline = Timeline()
+        timeline.update({**normalize_state(state), 'sequence': 1})
+        before = timeline.page()
+        self.assertFalse(any(row['kind'] == 'fileChanges' for row in before['rows']))
+        state['turns'][0]['status'] = 'completed'
+        timeline.update({**normalize_state(state), 'sequence': 2})
+        footer = timeline.changes(1, before['epoch'], before['before'])['rows'][-1]
+        self.assertEqual(footer['role'], 'fileChanges')
+        self.assertEqual(footer['fileSummary']['count'], 2)
+        self.assertEqual(footer['fileSummary']['added'], 3)
+        self.assertEqual(footer['fileSummary']['removed'], 1)
+        self.assertEqual(footer['text'], '')
+        self.assertIn('/repo/a.py', timeline.detail(timeline.cursor(footer['key']))['text'])
+        self.assertIn('+extra', timeline.detail(timeline.cursor(footer['key']))['text'])
+        timeline.update({**normalize_state(state), 'sequence': 2},limit=1)
+        self.assertNotEqual(timeline.source_anchor[2] if timeline.source_anchor else None,'fileChanges')
+        self.assertEqual(timeline.rows[-1]['fileSummary']['basis'],'recorded')
+
+    def test_native_turn_diff_is_authoritative_over_individual_patch_totals(self):
+        state = {'turns': [{'turnId': 'patch-turn', 'status': 'completed', 'diff':
+            'diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-before\n+after\n',
+            'items': [{'type': 'fileChange', 'changes': [{'path': 'a.py', 'diff': '+intermediate\n+temporary'}]}]}]}
+        changes = normalize_state(state)['turns'][0]['fileChanges']
+        self.assertEqual([(c['path'], c['added'], c['removed']) for c in changes], [('a.py', 1, 1)])
+        self.assertEqual(normalize_state(state)['turns'][0]['fileChangesBasis'],'net')
+
+    def test_native_file_changes_deduplicate_ids_and_parse_paths(self):
+        from bridge.features.sessions.model import native_file_changes, native_turn_file_changes
+        item = {'id': 'same-event', 'type': 'FileChange', 'changes': {'/repo/a': {'type': 'add', 'content': 'one\n'}}}
+        self.assertEqual(native_file_changes([item, item])[0]['added'], 1)
+        self.assertEqual(native_file_changes([{'type':'FileChange','changes':{'a':{'type':'add','content':'++ heading\n-- text\n'}}}])[0]['added'],2)
+        diff = ('diff --git "a/space name.py" "b/space name.py"\n'
+                '--- "a/space name.py"\n+++ "b/space name.py"\n@@ -1 +1 @@\n-old\n+new\n'
+                'diff --git a/deleted.py b/deleted.py\n--- a/deleted.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone\n'
+                'diff --git a/old.py b/new name.py\nsimilarity index 100%\nrename from old.py\nrename to new name.py\n')
+        changes = native_turn_file_changes({'diff': diff})
+        self.assertEqual([(c['path'],c['added'],c['removed']) for c in changes],
+                         [('space name.py',1,1),('deleted.py',0,1),('new name.py',0,0)])
+
+    def test_native_file_footer_patch_is_bounded_and_stats_change_version(self):
+        turn = {'turnId':'patch-turn','status':'completed','items':[{'id':'patch','type':'fileChange','changes':[
+            {'path':'a.py','diff':'+line\n'*10000}]}]}
+        timeline=Timeline();timeline.update({**normalize_state({'turns':[turn]}),'sequence':1})
+        footer=timeline.rows[-1]
+        self.assertEqual(footer['text'],'')
+        self.assertLess(len(json.dumps(footer)),2000)
+        self.assertEqual(len(timeline.detail(timeline.cursor(footer['key']))['text']),DETAIL_CHARS)
+        version=footer['version']
+        turn['items'][0]['changes'][0]['diff']+='+extra\n'
+        timeline.update({**normalize_state({'turns':[turn]}),'sequence':2})
+        self.assertNotEqual(timeline.rows[-1]['version'],version)
+        self.assertEqual(timeline.rows[-1]['fileSummary']['added'],10001)
+
+    def test_native_patch_counts_distinguish_headers_from_hunk_content(self):
+        from bridge.features.sessions.model import native_patch_counts
+        hunk = '@@ -1,2 +1,2 @@\n---legitimate removed text\n-ordinary\n+++legitimate added text\n+ordinary\n'
+        self.assertEqual(native_patch_counts(hunk), (2,2))
+        self.assertEqual(native_patch_counts('diff --git a/a b/a\n--- a/a\n+++ b/a\n'+hunk), (2,2))
+        self.assertEqual(native_patch_counts('+++raw added content\n---raw deleted content\n'), (1,1))
+
+    def test_partial_turn_does_not_scan_omitted_native_patch_bodies(self):
+        class UnreadablePatch(str):
+            def splitlines(self, *args, **kwargs):
+                raise AssertionError('Omitted native patch was scanned')
+        state = {'turns':[{'turnId':'large-turn','status':'completed',
+            'diff':UnreadablePatch('diff --git a/huge b/huge\n'+'+hidden\n'*100000),
+            'items':[{'id':'old-patch','type':'fileChange','changes':[{'path':'huge','diff':UnreadablePatch('+hidden\n'*100000)}]},
+                     {'id':'latest','type':'agentMessage','text':'Recent reply'}]}]}
+        from unittest.mock import patch
+        with patch('bridge.features.sessions.model.native_turn_file_changes', side_effect=AssertionError('Partial turn summary rescanned')):
+            recent=normalize_state(state,item_limit=1)
+        self.assertEqual(recent['turns'][0]['fileChanges'],[])
+        self.assertEqual(recent['turns'][0]['messages'][0]['text'],'Recent reply')
+        self.assertTrue(recent['historyWindowMore'])
+
+    def test_native_items_pagination_does_not_publish_partial_fallback_totals(self):
+        turn={'turnId':'partial','status':'completed','itemsPagination':{'hasLoadedOldest':False},
+              'items':[{'type':'fileChange','changes':[{'path':'tail.py','diff':'+tail'}]}]}
+        self.assertEqual(normalize_state({'turns':[turn]})['turns'][0]['fileChanges'],[])
+        turn['diff']='diff --git a/net.py b/net.py\n--- a/net.py\n+++ b/net.py\n@@ -1 +1 @@\n-old\n+new'
+        self.assertEqual(normalize_state({'turns':[turn]})['turns'][0]['fileChanges'][0]['path'],'net.py')
+        turn.pop('diff');turn['_nativeFileChanges']=[{'path':'full.py','added':2,'removed':1,'diff':'full recorded patch'}]
+        self.assertEqual(normalize_state({'turns':[turn]})['turns'][0]['fileChanges'][0]['path'],'full.py')
+
     def test_recent_window_skips_old_bodies_and_expands_without_cursor_reset(self):
         from unittest.mock import patch
         import bridge.features.sessions.timeline as module
