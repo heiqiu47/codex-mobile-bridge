@@ -7,6 +7,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from functools import wraps
+from bridge.features.sessions.message_management import snapshot as management_snapshot, mutate as management_mutate
 from pathlib import Path
 
 from bridge.app.lifecycle import private_json
@@ -16,6 +17,7 @@ from bridge.clients.codex.shared_server import SharedServer
 from bridge.clients.codex.configuration import magpie_managed
 from bridge.clients.codex.catalog import Catalog, normalize_native_skills
 from bridge.features.sessions import linux_permissions
+from bridge.features.accounts.draft_identity import draft_identity
 from bridge.features.sessions.model import normalize_state, normalize_request, computer_use_approval
 from bridge.features.sessions.timeline import Timeline
 from bridge.features.sessions.store import StoreUnavailable
@@ -101,6 +103,8 @@ class WslEntry(WslFeatures):
         self.generation = None
         self.subscriptions = {}
         self.write_lock = threading.RLock()
+        self._draft_identity_cache = {}
+        self._draft_identity_pending = set()
         self.receipts_path = self.data_dir / 'operations.json'
         self.receipts = json.loads(self.receipts_path.read_text(encoding='utf-8')) if self.receipts_path.exists() else {}
         for key, receipt in self.receipts.items():
@@ -366,6 +370,7 @@ class WslEntry(WslFeatures):
     def view(self, identifier, **options):
         session = self.session(identifier, **options)
         result = session.view()
+        result['draftAccountIdentity'] = self._management_identity(identifier, refresh=True)
         result.update(host=self.host, endpointId=self.host, hostLabel=self.row['label'],
                       files=[], queue=self._queue(identifier), submissions=self._submissions(identifier), goalRuntimeAvailable=False,
                       capabilities=CAPABILITIES, access=self._access(session),
@@ -605,7 +610,8 @@ class WslEntry(WslFeatures):
             unknown = {'status': 'unknown', 'id': key, 'message': '结果待核对，请检查原 WSL 会话；不会重复发送'}
             self.receipts[key] = {'fingerprint': fingerprint, 'result': unknown}
             if ':send:' in key:
-                self.receipts[key]['entry'] = copy.deepcopy(value)
+                self.receipts[key]['entry'] = {**copy.deepcopy((old or {}).get('entry') or {}), **copy.deepcopy(value)}
+                self.receipts[key]['entry'].setdefault('at', time.time())
             private_json(self.receipts_path, self.receipts)
             try:
                 result = call()
@@ -671,7 +677,7 @@ class WslEntry(WslFeatures):
             selected = self._resolve_skills(identifier, runtime, thread, skills)
             if mode == 'queue' and not queued:
                 result = {'status': 'queued', 'id': submission_id}
-                self.receipts[key] = {'fingerprint': hashlib.sha256(json.dumps([identifier, value], sort_keys=True).encode()).hexdigest(), 'result': result, 'entry': {**value, 'target': {k: thread.get(k) for k in ('cwd', 'modelProvider')}}}
+                self.receipts[key] = {'fingerprint': hashlib.sha256(json.dumps([identifier, value], sort_keys=True).encode()).hexdigest(), 'result': result, 'entry': {**value, 'at': time.time(), 'attachmentNames': [f['name'] for f in files], 'target': {k: thread.get(k) for k in ('cwd', 'modelProvider')}}}
                 self.data_dir.mkdir(parents=True, exist_ok=True)
                 private_json(self.receipts_path, self.receipts)
                 return result
@@ -734,6 +740,100 @@ class WslEntry(WslFeatures):
             return [{**copy.deepcopy(row['entry']), **row['result']} for key, row in self.receipts.items()
                     if key.startswith(identifier + ':send:') and row['result'].get('status') == 'queued']
 
+    def _management_identity(self, identifier, refresh=False):
+        with self.lock:
+            session = self.live.get(identifier)
+        if session is None:
+            return ''
+        with session.condition:
+            provider = session.state.get('modelProvider')
+        if not provider:
+            return ''
+        with self.lock:
+            cached = self._draft_identity_cache.get(provider)
+            fresh = cached and time.monotonic() - cached[0] < 30
+            if refresh and not fresh and provider not in self._draft_identity_pending:
+                self._draft_identity_pending.add(provider)
+                threading.Thread(target=self._probe_draft_identity, args=(provider,), daemon=True,
+                                 name='wsl-draft-identity').start()
+            return cached[1] if fresh else ''
+
+    def _probe_draft_identity(self, provider):
+        identity = ''
+        try:
+            source = source_text('features/accounts/draft_identity.py')
+            source += '\nimport os,json\nfrom pathlib import Path\n'
+            source += 'home=os.environ.get("CODEX_HOME") or str(Path.home()/".codex")\n'
+            source += 'print(json.dumps({"identity":codex_account_identity(home,' + payload(provider) + ',os.environ)}))\n'
+            owner = self.read(self.row['distribution'], source).get('identity')
+            if owner:
+                identity = draft_identity('codex', self.host, provider, owner)
+        except (OSError, ValueError, RemoteUnavailable, IPCError):
+            pass
+        with self.lock:
+            self._draft_identity_cache[provider] = (time.monotonic(), identity)
+            self._draft_identity_pending.discard(provider)
+            sessions = list(self.live.values())
+        for session in sessions:
+            with session.condition:
+                if session.state.get('modelProvider') == provider:
+                    session.changed()
+
+    def message_management(self, identifier, receipt_ids=()):
+        uuid.UUID(identifier)
+        with self.write_lock:
+            self._require_open()
+            rows = [(k.split(':send:', 1)[1], {**copy.deepcopy(v.get('entry') or {}), **v['result']})
+                    for k, v in self.receipts.items() if k.startswith(identifier + ':send:')]
+            identity = self._management_identity(identifier, refresh=True)
+            result = management_snapshot(rows, receipt_ids, scope=[self.host, identifier, identity])
+            result['draftAccountIdentity'] = identity
+            result['identityPending'] = not identity and (bool(self._draft_identity_pending) or
+                                                        bool(self._management_identity(identifier)))
+            if not identity:
+                result['capabilities'] = dict.fromkeys(result['capabilities'], False)
+            return result
+
+    @_entry_write
+    def manage_messages(self, identifier, body):
+        uuid.UUID(identifier)
+        with self.lock:
+            session = self.live.setdefault(identifier, Session(identifier))
+        with session.action_lock:
+            identity = self._management_identity(identifier)
+            if not identity or body.get('expectedAccount') != identity:
+                raise ValueError('账号接入已变化，请刷新会话后重试')
+            body = {k: v for k, v in body.items() if k != 'expectedAccount'}
+            prefix = identifier + ':send:'
+            rows = [(k[len(prefix):], {**copy.deepcopy(v.get('entry') or {}), **v['result']})
+                    for k, v in self.receipts.items() if k.startswith(prefix)]
+            updated, result = management_mutate(rows, body, scope=[self.host, identifier, identity])
+            old = dict(self.receipts); ordered = []
+            for key, value in updated:
+                item = copy.deepcopy(old[prefix + key]); item['result']['status'] = value['status']
+                item.setdefault('entry', {})['_managementRevision'] = value['_managementRevision']
+                if body['action'] == 'edit' and key == body['id']:
+                    item['entry']['text'] = value['text']
+                    item['entry']['_editId'] = value['_editId']
+                    original = item['entry']
+                    send_value = {'text': original['text'], 'mode': original['mode'], 'attachments': original.get('attachments', [])}
+                    if original.get('skills'):
+                        send_value['skills'] = sorted(set(original['skills']))
+                    for field in ('workMode', 'goalActivation'):
+                        if original.get(field) is not None:
+                            send_value[field] = original[field]
+                    item['fingerprint'] = hashlib.sha256(json.dumps([identifier, send_value], sort_keys=True).encode()).hexdigest()
+                ordered.append((prefix + key, item))
+            values = iter(ordered)
+            self.receipts = dict(next(values) if k.startswith(prefix) else (k, v) for k, v in old.items())
+            try:
+                private_json(self.receipts_path, self.receipts)
+            except Exception:
+                self.receipts = old
+                raise
+            result.update(self.message_management(identifier))
+            return result
+
     @_entry_write
     def cancel_queued(self, identifier, submission_id):
         uuid.UUID(identifier); uuid.UUID(submission_id)
@@ -747,23 +847,24 @@ class WslEntry(WslFeatures):
 
     @_entry_write
     def _dispatch_queued(self, identifier):
-        rows = self._queue(identifier)
-        if not rows:
-            return
-        try:
-            _, thread = self._target(identifier)
-            if thread.get('status', {}).get('type') != 'idle':
+        with self.session(identifier, attach=False).action_lock:
+            rows = self._queue(identifier)
+            if not rows:
                 return
-            row = rows[0]
-            if any(thread.get(k) != v for k, v in row.get('target', {}).items()):
+            try:
+                _, thread = self._target(identifier)
+                if thread.get('status', {}).get('type') != 'idle':
+                    return
+                row = rows[0]
+                if any(thread.get(k) != v for k, v in row.get('target', {}).items()):
+                    return
+                self._send(identifier, row['text'], row['id'], mode='queue', skills=row.get('skills'),
+                           work_mode=row.get('workMode'), attachments=row.get('attachments'), queued=True,
+                           goal_activation=row.get('goalActivation'))
+            except (IPCError, RemoteUnavailable, ValueError):
+                # A queued operation may wait for the original target to return.
+                # Once dispatch writes bytes its durable status is already unknown.
                 return
-            self._send(identifier, row['text'], row['id'], mode='queue', skills=row.get('skills'),
-                       work_mode=row.get('workMode'), attachments=row.get('attachments'), queued=True,
-                       goal_activation=row.get('goalActivation'))
-        except (IPCError, RemoteUnavailable, ValueError):
-            # A queued operation may wait for the original target to return.
-            # Once dispatch writes bytes its durable status is already unknown.
-            return
 
     def _permission_options(self, identifier):
         runtime, thread = self._target(identifier)

@@ -59,7 +59,7 @@ def _prepared_static(data, content_type, use_gzip):
     etag = '"sha256-' + hashlib.sha256(data).hexdigest() + '"'
     return digest, data, compressed, etag
 
-THREAD_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})(?:/(events|send|stop|history|respond|reconnect|queue|catalog|settings|permissions|poll|timeline|changes|detail|notifications|uploads|message-action|rename))?$")
+THREAD_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})(?:/(events|send|stop|history|respond|reconnect|queue|catalog|settings|permissions|poll|timeline|changes|detail|notifications|uploads|message-action|message-management|rename))?$")
 UPLOAD_PREVIEW_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/uploads/([0-9a-f-]{36})/preview$")
 UPLOAD_THUMB_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/uploads/([0-9a-f-]{36})/thumb$")
 DESKTOP_IMAGE_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/desktop-images/([0-9a-f]{64})$")
@@ -1094,6 +1094,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.output(200, {'available': False, 'watching': False, 'notifyOnCompletion': False})
                 body = self.read_json() if write else {}
                 return self.output(200, self.server.notifications.policy(thread_id, bridge.host, body if write else None))
+            if action == 'message-management':
+                if not hasattr(bridge, 'message_management'):
+                    return self.output(400, {'error': '此接入暂不支持消息管理'})
+                return self.output(200, bridge.manage_messages(thread_id, self.read_json()) if write else bridge.message_management(thread_id, query.get('id', [])))
             if not write:
                 if action == 'permissions':
                     return self.output(200, bridge.linux_permission_options(thread_id))

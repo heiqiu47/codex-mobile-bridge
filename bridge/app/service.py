@@ -15,6 +15,7 @@ import unicodedata
 from pathlib import Path
 
 from bridge.resources import source_text
+from bridge.features.sessions.message_management import snapshot as management_snapshot, mutate as management_mutate
 
 from bridge.features.terminals.manager import TerminalManager
 from bridge.features.sessions.side_chat import SideChats
@@ -2698,6 +2699,74 @@ class Bridge:
             raise ValueError('请输入 1–4000 字的目标内容')
         return self._goal_control(thread_id, request_id, 'edit', objective=objective, expected=expected)
 
+    def _management_identity(self, thread_id, refresh=False):
+        with self.lock:
+            session = self.live.get(thread_id)
+        if session is None:
+            return ''
+        with session.condition:
+            provider = (session.state or {}).get('modelProvider') or session.saved_provider
+        if not provider:
+            return ''
+        if self.host == 'local':
+            return self._draft_account_identity({'provider': provider})
+        alias = self.cli_sessions.alias
+        home = str(self.cli_sessions.remote_home) if self.cli_sessions.remote_home else None
+        with self._draft_remote_lock:
+            cached = self._draft_remote_cache.get((self.host, alias, home, provider))
+            fresh = cached and time.monotonic() - cached[0] < 30
+            identity = cached[1] if fresh else ''
+        if refresh and not fresh:
+            # Probe only account files, never native history or attachment.
+            self._draft_account_identity({'provider': provider})
+        return identity
+
+    def message_management(self, thread_id, receipt_ids=()):
+        uuid.UUID(thread_id)
+        identity = self._management_identity(thread_id, refresh=True)
+        with self.goal_lock, self.submit_lock:
+            rows = [(k.split(':', 1)[1], copy.deepcopy(v)) for k, v in self.submissions.items() if k.startswith(thread_id + ':')]
+            result = management_snapshot(rows, receipt_ids, self._goal_activation_ids(thread_id), scope=[self.host, thread_id, identity])
+            for receipt in result['receipts']:
+                command = self.goal_commands.get(thread_id + ':' + receipt['id'])
+                if command and command.get('action') == 'create':
+                    state = command.get('state')
+                    receipt['status'] = 'accepted' if state == 'confirmed' else 'failed' if state == 'failed' else 'unknown'
+        result['draftAccountIdentity'] = identity
+        result['identityPending'] = not identity and (bool(getattr(self, '_draft_remote_pending', ())) or
+                                                    (self.host != 'local' and bool(self._management_identity(thread_id))))
+        if not identity:
+            result['capabilities'] = dict.fromkeys(result['capabilities'], False)
+        return result
+
+    @operation
+    def manage_messages(self, thread_id, body):
+        uuid.UUID(thread_id)
+        # Do not load history or attach merely to edit the durable queue.
+        with self.lock:
+            session = self.live.setdefault(thread_id, LiveSession(thread_id))
+        with session.action_lock, self.goal_lock, self.submit_lock:
+            identity = self._management_identity(thread_id)
+            if not identity or body.get('expectedAccount') != identity:
+                raise ValueError('账号接入已变化，请刷新会话后重试')
+            body = {k: v for k, v in body.items() if k != 'expectedAccount'}
+            rows = [(k.split(':', 1)[1], copy.deepcopy(v)) for k, v in self.submissions.items() if k.startswith(thread_id + ':')]
+            updated, result = management_mutate(rows, body, self._goal_activation_ids(thread_id), scope=[self.host, thread_id, identity])
+            keys = [k for k in self.submissions if k.startswith(thread_id + ':')]
+            values = iter((thread_id + ':' + k, v) for k, v in updated)
+            previous = self.submissions
+            self.submissions = dict(next(values) if k in keys else (k, v) for k, v in previous.items())
+            try:
+                self._save_ledger()
+            except Exception:
+                self.submissions = previous
+                raise
+            result.update(management_snapshot(updated, hidden=self._goal_activation_ids(thread_id), scope=[self.host, thread_id, identity]))
+            result['draftAccountIdentity'] = identity
+        with session.condition:
+            session.changed()
+        return result
+
     def cancel_queued(self, thread_id, submission_id):
         uuid.UUID(submission_id)
         session = self.session(thread_id, attach=False)
@@ -2833,8 +2902,10 @@ class Bridge:
                     return
             with self.goal_lock:
                 with self.submit_lock:
-                    if self.submissions[key]["status"] != "queued":
+                    queued = [(k, v) for k, v in self.submissions.items() if k.startswith(session.id + ':') and v.get('status') == 'queued']
+                    if not queued or queued[0][0] != key:
                         return
+                    entry = copy.deepcopy(queued[0][1])
                     activation = entry.get("goalActivation")
                     cancelled = False
                     if activation:
