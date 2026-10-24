@@ -3,9 +3,10 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 function fixture({storage=new Map(),sessionStore=new Map()}={}){
  const listeners={};let document;
  class Node {
-  constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.parentElement=null;this.dataset={};this.attributes={};this.hidden=false;this.disabled=false;this.value='';this.className='';this._text='';this.style={setProperty(){}};this.scrollHeight=100;this.scrollTop=0;this.clientHeight=100;this.clientWidth=1000;this.open=false;this.options=this.children;this.classList={contains:n=>this.className.split(' ').includes(n),add:(...ns)=>this.className=[...new Set([...this.className.split(' ').filter(Boolean),...ns])].join(' '),remove:(...ns)=>this.className=this.className.split(' ').filter(n=>!ns.includes(n)).join(' '),toggle:(n,v)=>{v=v??!this.classList.contains(n);this.classList[v?'add':'remove'](n);return v;}};}
+  constructor(tag='div'){this.nodeType=tag==='#text'?3:1;this.tagName=tag.toUpperCase();this.children=[];this.parentElement=null;this.dataset={};this.attributes={};this.hidden=false;this.disabled=false;this.value='';this.className='';this._text='';this.style={setProperty(){}};this.scrollHeight=100;this.scrollTop=0;this.clientHeight=100;this.clientWidth=1000;this.open=false;this.options=this.children;this.classList={contains:n=>this.className.split(' ').includes(n),add:(...ns)=>this.className=[...new Set([...this.className.split(' ').filter(Boolean),...ns])].join(' '),remove:(...ns)=>this.className=this.className.split(' ').filter(n=>!ns.includes(n)).join(' '),toggle:(n,v)=>{v=v??!this.classList.contains(n);this.classList[v?'add':'remove'](n);return v;}};}
   get textContent(){return this._text+this.children.map(n=>n.textContent).join('');}set textContent(v){this._text=String(v??'');this.children=[];this.options=this.children;}
   getBoundingClientRect(){return {width:this.clientWidth,top:0,bottom:this.clientHeight};}
+  get ownerDocument(){return document;}
   get firstElementChild(){return this.children[0];}get lastChild(){return this.children.at(-1);}get childNodes(){return this.children;}get isConnected(){return !!this.parentElement;}
   append(...nodes){for(let n of nodes){if(typeof n==='string')n=document.createTextNode(n);n.remove();n.parentElement=this;this.children.push(n);}}
   prepend(...nodes){for(const n of [...nodes].reverse()){n.remove();n.parentElement=this;this.children.unshift(n);}}
@@ -16,16 +17,16 @@ function fixture({storage=new Map(),sessionStore=new Map()}={}){
   add(option){this.append(option);if(this.children.length===1)this.value=option.value;}
   setAttribute(k,v){this.attributes[k]=String(v);if(k==='class')this.className=v;if(k.startsWith('data-'))this.dataset[k.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=v;}
   getAttribute(k){return this.attributes[k];}removeAttribute(k){delete this.attributes[k];}addEventListener(type,fn){this['on'+type]=fn;}removeEventListener(type,fn){if(this['on'+type]===fn)this['on'+type]=null;}
-  matches(selector){return selector.split(',').some(s=>{s=s.trim();if(s==='input:checked')return this.tagName==='INPUT'&&this.checked;if(s.startsWith('.'))return this.classList.contains(s.slice(1));if(s.startsWith('#'))return this.id===s.slice(1);const attr=s.match(/^\[([^=\]]+)(?:="?([^"\]]+)"?)?\]$/);if(attr)return attr[2]===undefined?this.attributes[attr[1]]!==undefined:this.attributes[attr[1]]===attr[2];return this.tagName===s.toUpperCase();});}
+  matches(selector){return selector.split(',').some(s=>{s=s.trim();if(s==='input:checked')return this.tagName==='INPUT'&&this.checked;if(s.startsWith('.'))return s.slice(1).split('.').every(name=>this.classList.contains(name));if(s.startsWith('#'))return this.id===s.slice(1);const attr=s.match(/^\[([^=\]]+)(?:="?([^"\]]+)"?)?\]$/);if(attr)return attr[2]===undefined?this.attributes[attr[1]]!==undefined:this.attributes[attr[1]]===attr[2];return this.tagName===s.toUpperCase();});}
   closest(selector){return this.matches(selector)?this:this.parentElement?.closest(selector)||null;}
   querySelectorAll(selector){return this.children.flatMap(n=>[...(n.matches(selector)?[n]:[]),...n.querySelectorAll(selector)]);}querySelector(selector){return this.querySelectorAll(selector)[0]||null;}
-  showModal(){this.open=true;}close(){this.open=false;this.onclose?.();}focus(){document.activeElement=this;}select(){}setSelectionRange(){}click(){return this.onclick?.({preventDefault(){}});}contains(n){return n===this||this.children.some(c=>c.contains(n));}
+  showModal(){this.open=true;}close(){this.open=false;this.onclose?.();}focus(){document.activeElement=this;}select(){}setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;}click(){return this.onclick?.({preventDefault(){}});}contains(n){return n===this||this.children.some(c=>c.contains(n));}
  }
- document={body:new Node('body'),documentElement:new Node('html'),hidden:false,activeElement:null,createElement:tag=>new Node(tag),createElementNS:(_,tag)=>new Node(tag),createTextNode:text=>{const n=new Node('#text');n.textContent=text;return n;},querySelectorAll:s=>document.body.querySelectorAll(s),querySelector:s=>document.body.querySelector(s),getElementById:id=>document.body.querySelector('#'+id),addEventListener:(type,fn)=>listeners[type]=fn,dispatchEvent:event=>listeners[event.type]?.(event)};
+ document={body:new Node('body'),documentElement:new Node('html'),hidden:false,activeElement:null,getSelection:()=>null,createElement:tag=>new Node(tag),createElementNS:(_,tag)=>new Node(tag),createTextNode:text=>{const n=new Node('#text');n.textContent=text;return n;},querySelectorAll:s=>document.body.querySelectorAll(s),querySelector:s=>document.body.querySelector(s),getElementById:id=>document.body.querySelector('#'+id),addEventListener:(type,fn)=>listeners[type]=fn,dispatchEvent:event=>listeners[event.type]?.(event)};
  const root=new Node('div');root.className='app';document.body.append(root);const select=new Node('select'),calls=[],notices=[];let uploadHandler=async()=>({ok:true,status:200,json:async()=>({image:true,size:16,name:'image.png'})}),handler=async(url,body)=>body?{status:'accepted'}:url.includes('/detail')?{session:{id:'a',title:'Chat',model:'model-a',effort:'high',status:'idle',capabilities:{}},messages:[]}:url.includes('/workspace')?{entries:[],total:0,project:'/project'}:{sessions:[]};
  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},location:{pathname:'/'},history:{replaceState(){}},localStorage:{get length(){return storage.size;},key:i=>[...storage.keys()][i],getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},sessionStorage:{get length(){return sessionStore.size;},key:i=>[...sessionStore.keys()][i],getItem:k=>sessionStore.get(k),setItem:(k,v)=>sessionStore.set(k,v),removeItem:k=>sessionStore.delete(k)},crypto:{getRandomValues:array=>webcrypto.getRandomValues(array)},Uint8Array,TextEncoder,Option:class extends Node{constructor(text,value){super('option');this.textContent=text;this.value=value;}},ResizeObserver:class{observe(){}},MutationObserver:class{observe(){}},AbortController,URLSearchParams,requestAnimationFrame:fn=>fn(),cancelAnimationFrame(){},getComputedStyle:()=>({getPropertyValue:()=>8}),setTimeout(){return 1;},clearTimeout(){},fetch:async(url,options)=>{calls.push({url,upload:options});return uploadHandler(url,options);},renderMarkdown:(node,text)=>node.textContent=text,CustomEvent:class{constructor(type,options){this.type=type;Object.assign(this,options);}}});
  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/shell/app.js'),'utf8').match(/^function uuid\(\).*$/m)[0],context);
- for(const file of ['web/layouts/viewport.js','web/features/chat/activity.js','web/features/chat/composer-drafts.js','web/features/chat/attachments.js','web/shared/i18n.js','web/features/clients/client-lifecycle.js','web/features/chat/message-actions.js','web/features/chat/permissions.js','web/features/workspace/workbench.js','web/features/chat/list-sync.js','web/features/clients/desktop-sessions.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+ for(const file of ['web/layouts/viewport.js','web/features/chat/activity.js','web/features/chat/composer-drafts.js','web/features/chat/composer-quotes.js','web/features/chat/attachments.js','web/shared/i18n.js','web/features/clients/client-lifecycle.js','web/features/chat/message-actions.js','web/features/chat/permissions.js','web/features/workspace/workbench.js','web/features/chat/list-sync.js','web/features/clients/desktop-sessions.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
  const View=vm.runInContext('DesktopSessionsView',context),view=new View({root,select,request:(url,body)=>{calls.push({url,body});return handler(url,body);},notify:text=>notices.push(text),onSelect(){},csrf:()=>'csrf-test',onUnauthorized(){}});
  return {view,root,document,calls,notices,storage,sessionStore,setHandler:fn=>handler=fn,setUploadHandler:fn=>uploadHandler=fn,run:s=>vm.runInContext(s,context),text:n=>n.textContent};
 }
@@ -852,4 +853,64 @@ test('Claude WSL rows and project groups preserve distribution identity at the s
  const ui=fixture();ui.setHandler(async()=>({sessions:[{id:'a',title:'WSL A',backend:'cli',runtime:'wsl',host:'wsl-claude:a',hostLabel:'Ubuntu A',cwd:'/home/user/project'},{id:'b',title:'WSL B',backend:'cli',runtime:'wsl',host:'wsl-claude:b',hostLabel:'Ubuntu B',cwd:'/home/user/project'}]}));
  await ui.view.choose('claude');assert.match(ui.view.rowsRoot.textContent,/CLI · WSL/);assert.match(ui.view.rowsRoot.textContent,/Ubuntu A/);assert.match(ui.view.rowsRoot.textContent,/Ubuntu B/);
  ui.view.listMode.value='project';ui.view.renderList();assert.equal(ui.view.rowsRoot.querySelectorAll('details').length,2);
+});
+
+async function quoteChat(provider='claude'){
+ const ui=fixture();await ui.view.choose(provider);await ui.view.open('a');ui.view.bindDraftGateway('gateway-a');
+ ui.view.applyDetail({session:{id:'a',title:'Chat',status:'idle'},draftAccountIdentity:'account-a',capabilities:{send:true},messages:[{id:'reply',role:'assistant',text:'Selected answer\nSecond line'}]});return ui;
+}
+
+test('selected assistant text becomes a removable quote without editing draft or intercepting native selection',async()=>{
+ const ui=await quoteChat(),view=ui.view;view.input.value='my draft';view.input.setSelectionRange(2,4);view.input.oninput();
+ const body=view.messages.querySelector('.message-body');ui.document.getSelection=()=>({isCollapsed:false,rangeCount:1,getRangeAt:()=>({startContainer:body,endContainer:body}),toString:()=>'Selected answer'});
+ ui.document.dispatchEvent({type:'selectionchange'});assert.equal(view.quotes.action.hidden,false);
+ let cancelled=false;view.quotes.action.onpointerdown({preventDefault(){cancelled=true;}});ui.document.getSelection=()=>null;ui.document.activeElement=null;ui.document.dispatchEvent({type:'selectionchange'});assert.equal(view.quotes.action.hidden,false);view.quotes.action.click();
+ assert.equal(cancelled,false);assert.equal(view.input.value,'my draft');assert.equal(view.input.selectionStart,2);assert.equal(view.input.selectionEnd,4);assert.equal(view.quotes.quotes[0].text,'Selected answer');assert.equal(view.quotes.quotes[0].provider,'claude');assert.ok(view.quotes.quotes[0].source);
+ assert.equal(view.quotes.root.querySelector('details').querySelector('div').textContent,'Selected answer');
+ view.quotes.root.querySelector('.composer-quote').querySelector('button').click();assert.equal(view.quotes.quotes.length,0);assert.equal(view.composerDrafts.load(view.draftScope).quotes.length,0);assert.equal(ui.calls.filter(call=>call.body).length,0);
+});
+
+test('quote-only drafts restore per provider and session and serialize only on explicit submit',async()=>{
+ for(const provider of ['claude','deepseek']){
+  const ui=await quoteChat(provider),view=ui.view;view.quotes.add('A\nB','reply');const original=view.draftScope;
+  assert.equal(view.input.value,'');assert.equal(view.composerDrafts.load(original).quotes.length,1);assert.equal(ui.calls.filter(call=>call.body).length,0);
+  view.prepareChat('b');view.bindDraftScope({draftAccountIdentity:'account-a'});assert.equal(view.quotes.quotes.length,0);
+  view.prepareChat('a');view.applyDetail({session:{id:'a',status:'idle'},draftAccountIdentity:'account-a',capabilities:{send:true},messages:[]});assert.equal(view.quotes.quotes[0].text,'A\nB');
+  await view.submit();const sent=ui.calls.filter(call=>call.body);assert.equal(sent.length,1);assert.equal(sent[0].body.text,'> A\n> B');assert.equal(view.quotes.quotes.length,0);assert.equal(view.composerDrafts.load(original),null);
+ }
+});
+
+test('unknown quote send keeps the same id and new draft revisions survive an earlier acknowledgement',async()=>{
+ const ui=await quoteChat(),view=ui.view;view.input.value='draft';view.input.oninput();view.quotes.add('quote','reply');
+ ui.setHandler(async(url,body)=>body?{status:'unknown'}:{sessions:[]});await view.submit();const first=ui.calls.filter(call=>call.body)[0].body;
+ assert.equal(first.text,'> quote\n\ndraft');assert.equal(view.quotes.quotes.length,1);assert.equal(view.input.value,'draft');
+ view.freshDetail=true;let resolve;ui.setHandler((url,body)=>body?new Promise(done=>resolve=done):Promise.resolve({sessions:[]}));const retry=view.submit();view.quotes.add('later','reply-2');resolve({status:'accepted'});await retry;
+ assert.equal(ui.calls.filter(call=>call.body)[1].body.id,first.id);assert.equal(view.quotes.quotes.length,2);assert.equal(view.input.value,'draft');assert.equal(view.composerDrafts.load(view.draftScope).quotes.length,2);
+});
+
+test('followup prompt events append editable text only in the connected current assistant message',async()=>{
+ const ui=await quoteChat(),view=ui.view;view.input.value='keep';view.input.setSelectionRange(1,3);view.input.oninput();const body=view.messages.querySelector('.message-body'),button=ui.document.createElement('button');body.append(button);
+ view.messages['onbridge-compose-prompt']({target:button,detail:{text:'Follow up'}});assert.equal(view.input.value,'keep\n\nFollow up');assert.equal(view.input.selectionStart,1);assert.equal(view.input.selectionEnd,3);assert.equal(ui.calls.filter(call=>call.body).length,0);
+ view.prepareChat('b');view.bindDraftScope({draftAccountIdentity:'account-a'});view.messages['onbridge-compose-prompt']({target:button,detail:{text:'stale'}});assert.equal(view.input.value,'');
+ view.clear();view.messages['onbridge-compose-prompt']({target:button,detail:{text:'logged out'}});assert.equal(view.quotes.quotes.length,0);assert.equal(view.input.value,'');
+});
+
+test('cross-message and user selections and detached streaming reply snapshots cannot become quotes',async()=>{
+ const ui=await quoteChat(),view=ui.view,body=view.messages.querySelector('.message-body'),other=ui.document.createElement('div');view.messages.append(other);
+ ui.document.getSelection=()=>({isCollapsed:false,rangeCount:1,getRangeAt:()=>({startContainer:body,endContainer:other}),toString:()=>'cross boundary'});view.quotes.capture();assert.equal(view.quotes.action.hidden,true);
+ ui.document.getSelection=()=>({isCollapsed:false,rangeCount:1,getRangeAt:()=>({startContainer:body,endContainer:body}),toString:()=>'snapshot'});view.quotes.capture();view.quotes.action.onpointerdown();body.remove();view.quotes.action.click();assert.equal(view.quotes.quotes.length,0);
+ const user=ui.document.createElement('article');user.className='message user';const userBody=ui.document.createElement('div');userBody.className='message-body';user.append(userBody);view.messages.append(user);ui.document.getSelection=()=>({isCollapsed:false,rangeCount:1,getRangeAt:()=>({startContainer:userBody,endContainer:userBody}),toString:()=>'user text'});view.quotes.capture();assert.equal(view.quotes.action.hidden,true);
+});
+
+test('combined quote and draft limit blocks a send without truncating or clearing either',async()=>{
+ const ui=await quoteChat(),view=ui.view;view.input.value='x'.repeat(99999);view.input.oninput();view.quotes.add('quote');await view.submit();assert.match(view.error.textContent,/100000/);assert.equal(ui.calls.filter(call=>call.body).length,0);assert.equal(view.input.value.length,99999);assert.equal(view.quotes.quotes.length,1);
+});
+
+test('failed durable storage cannot let an acknowledgement erase a later quote-only edit',async()=>{
+ for(const provider of ['claude','deepseek']){
+  const ui=await quoteChat(provider),view=ui.view;ui.run("localStorage.setItem=()=>{throw Error('quota');}");view.quotes.add('first','reply');
+  let resolve;ui.setHandler((url,body)=>body?new Promise(done=>resolve=done):Promise.resolve(url.includes('/detail')?{session:{id:'a',status:'idle'},draftAccountIdentity:'account-a',capabilities:{send:true},messages:[]}:{sessions:[]}));const sending=view.submit();assert.equal(view.composerDrafts.pending(view.draftScope),null);
+  view.quotes.add('later','reply-2');assert.equal(view.input.value,'');resolve({status:'accepted'});await sending;
+  assert.equal(view.input.value,'');assert.deepEqual(Array.from(view.quotes.quotes,row=>row.text),['first','later']);assert.deepEqual(Array.from(view.provisionalDrafts.get(provider+':a').quotes,row=>row.text),['first','later']);
+ }
 });

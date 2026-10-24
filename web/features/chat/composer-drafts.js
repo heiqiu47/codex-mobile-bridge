@@ -14,7 +14,7 @@ class ComposerDrafts {
   save(scope,fields){
     const key=this.key(scope);if(!key)return null;
     const previous=this.load(scope),text=String(fields.text||'').slice(0,100000);
-    const draft={text,selectionStart:Math.max(0,Math.min(text.length,Number(fields.selectionStart)||0)),selectionEnd:Math.max(0,Math.min(text.length,Number(fields.selectionEnd)||0)),sendMode:fields.sendMode||'send',workMode:fields.workMode||'default',skills:Array.isArray(fields.skills)?fields.skills.filter(value=>typeof value==='string').slice(0,8):[],revision:previous?.revision||0};
+    const draft={text,selectionStart:Math.max(0,Math.min(text.length,Number(fields.selectionStart)||0)),selectionEnd:Math.max(0,Math.min(text.length,Number(fields.selectionEnd)||0)),sendMode:fields.sendMode||'send',workMode:fields.workMode||'default',quotes:Array.isArray(fields.quotes)?fields.quotes.filter(value=>value&&typeof value.text==='string'&&value.text.trim()).slice(0,8).map(value=>({text:value.text.slice(0,100000),source:typeof value.source==='string'?value.source.slice(0,500):'',provider:typeof value.provider==='string'?value.provider.slice(0,40):''})):[],skills:Array.isArray(fields.skills)?fields.skills.filter(value=>typeof value==='string').slice(0,8):[],revision:previous?.revision||0};
     if(JSON.stringify({...draft,revision:0})!==JSON.stringify({...previous,revision:0}))draft.revision++;
     return this.write(key,draft)?draft:null;
   }

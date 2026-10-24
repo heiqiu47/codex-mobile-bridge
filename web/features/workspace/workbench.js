@@ -436,12 +436,16 @@ class Workbench {
     button.dataset.i18nAriaLabel = description; button.dataset.i18nTitle = description;
     button.setAttribute('aria-label', BridgeI18n.t(description)); button.title = BridgeI18n.t(description);
   }
+  async openSourceLocation(session, path, start, end = start) {
+    if (session !== this.current || !path || !Number.isInteger(start) || start < 1 || start > 1000000 || !Number.isInteger(end) || end < start || end > 1000000) return;
+    await this.preview(session, {path, name:path.split('/').pop(), sourceLocation:{start,end}});
+  }
   async preview(session, entry) {
     if (session !== this.current) return;
     const id = 'file:' + entry.path;
-    if (session.files.some(t => t.id === id)) { this.select(id); return; }
+    if (session.files.some(t => t.id === id)) { this.select(id); const tab=session.files.find(t=>t.id===id); if(entry.sourceLocation) {tab.sourceLocation=entry.sourceLocation;tab.showSourceLocation?.();} return; }
     if (session.files.filter(t => t.id.startsWith('file:')).length >= 8) { this.notify(BridgeI18n.t('最多同时打开 8 个文件，请先关闭一个标签')); return; }
-    const tab = {id, name: entry.name, body: this.node('div', 'wb-preview'), controller: new AbortController()}; session.files.push(tab);
+    const tab = {id, name: entry.name, sourceLocation:entry.sourceLocation, body: this.node('div', 'wb-preview'), controller: new AbortController()}; session.files.push(tab);
     tab.body.append(this.node('p', 'wb-status', BridgeI18n.t('正在读取文件…'))); this.select(id);
     try {
       const pdf = /\.pdf$/i.test(entry.name);
@@ -461,7 +465,7 @@ class Workbench {
         content.classList.add('wb-pdf-content'); content.append(tab.pdf.element);
       } else if (result.kind === 'image') { const image = this.node('img'); image.src = 'data:' + result.mime + ';base64,' + result.data; image.alt = result.name; window.BridgeImageViewer?.registerWorkspaceImage(image, result); content.append(image); }
       else if (result.kind === 'text') {
-        if (/\.md$/i.test(result.name)) {content.__mermaidScope=this.mermaidScope;content.__mermaidIdentity=session.key+'|'+id;renderMarkdown(content, result.text);}
+        if (/\.md$/i.test(result.name) && !tab.sourceLocation) {content.__mermaidScope=this.mermaidScope;content.__mermaidIdentity=session.key+'|'+id;renderMarkdown(content, result.text);}
         else if (/\.html?$/i.test(result.name)) {
           modes = this.node('div', 'wb-preview-modes');
           const preview = this.button('预览', () => show('preview'));
@@ -475,14 +479,15 @@ class Workbench {
             source.setAttribute('aria-pressed', String(mode === 'source'));
             copy.hidden = mode !== 'source';
             if (mode === 'preview') { tab.html = BridgeHtmlPreview.create({text:result.text, onEscape:() => { if (this.previewFullscreen?.tab === tab) this.closePreviewFullscreen(); }}); content.replaceChildren(tab.html.element); }
-            else content.replaceChildren(BridgeSourceView.create({name:result.name, text:result.text}));
+            else content.replaceChildren(BridgeSourceView.create({name:result.name, text:result.text, location:tab.sourceLocation}));
           };
-          show('preview');
+          tab.showSourceLocation = () => { show('source'); BridgeSourceView.locate(content.firstChild, tab.sourceLocation.start, tab.sourceLocation.end); };
+          show(tab.sourceLocation ? 'source' : 'preview');
         }
         else {
           const copy = this.button('复制', () => window.BridgeClipboard.copy(() => result.text, copy), '复制代码');
           copy.className = 'wb-source-copy'; copyAction = copy;
-          content.append(BridgeSourceView.create({name:result.name, text:result.text}));
+          content.append(BridgeSourceView.create({name:result.name, text:result.text, location:tab.sourceLocation}));
         }
       } else content.append(this.node('p', 'wb-empty', BridgeI18n.t(result.size > 512 * 1024 ? '文件超过 512 KB，无法在线预览。可下载后打开。' : '此文件不是 UTF-8 文本或可预览图片，可下载后打开。')));
       if (['pdf','image','text'].includes(result.kind)) {
@@ -491,6 +496,10 @@ class Workbench {
       }
       if (copyAction) actions.append(copyAction);
       tab.body.replaceChildren(...(modes ? [head, modes, content] : [head, content]));
+      if (result.kind === 'text') {
+        tab.showSourceLocation ||= () => { content.replaceChildren(BridgeSourceView.create({name:result.name, text:result.text, location:tab.sourceLocation})); BridgeSourceView.locate(content.firstChild, tab.sourceLocation.start, tab.sourceLocation.end); };
+        if (tab.sourceLocation) tab.showSourceLocation();
+      }
       if (tab.pdf) tab.pdf.load();
     } catch (error) { if (error.name !== 'AbortError') tab.body.replaceChildren(this.node('p', 'wb-status error', error.message), this.button(BridgeI18n.t('重试'), () => { this.close(id); this.preview(session, entry); })); }
   }

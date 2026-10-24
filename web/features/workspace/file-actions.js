@@ -33,6 +33,10 @@ window.BridgeFileActions = (() => {
       status.textContent=info.name+(info.kind==='directory'?'':' · '+workbench.size(info.size));
       const locate=node('button',t('定位并打开所在文件夹'),'plain');locate.type='button';locate.disabled=!info.locatable||!info.path;
       locate.onclick=()=>{box.close();workbench.locate(session,info.path).catch(error=>workbench.notify(t(error.message)));};box.append(locate);
+      const start=Number(anchor.dataset.sourceLine),end=Number(anchor.dataset.sourceEnd||anchor.dataset.sourceLine);
+      if(info.kind!=='directory'&&info.locatable&&info.path&&Number.isInteger(start)&&start>=1&&start<=1000000&&Number.isInteger(end)&&end>=start&&end<=1000000){
+        const source=node('button',t('查看代码位置'),'plain');source.type='button';source.onclick=()=>{box.close();workbench.openSourceLocation(session,info.path,start,end).catch(error=>workbench.notify(t(error.message)));};box.append(source);
+      }
       if(info.kind!=='directory'){
         if(info.size<=info.clickDownloadMiB*1024*1024)download(box,anchor.href,info.name);
         else box.append(node('p',t('文件超过点击下载阈值，请在文件标签页中定位后长按下载。'),'muted'));

@@ -3,6 +3,7 @@
   const markdown = window.markdownit({html:false, linkify:true, breaks:true});
   // Math delimiters must be consumed before Markdown removes backslash escapes.
   markdown.use(texmath, {engine:window.katex, delimiters:['brackets','dollars']});
+  window.BridgeOutputDirectives?.install(markdown);
   const tags = new Set(['p','h1','h2','h3','h4','h5','h6','ul','ol','li','strong','em','s','blockquote','hr','br','table','thead','tbody','tr','th','td']);
 
   // Build nodes from parsed tokens; model output never becomes executable HTML.
@@ -23,6 +24,7 @@
     function target(reference) {
       const file = artifacts.get(reference);
       if (file) return {url:fileUrl(file), file};
+      if (window.BridgeOutputDirectives?.isReviewTarget(reference)) return {url:reference, review:true};
       if (/^https?:\/\//i.test(reference)) return {url:reference};
       return null;
     }
@@ -31,6 +33,7 @@
       anchor.href = url;
       anchor.target = '_blank';
       anchor.rel = 'noopener noreferrer';
+      if (window.BridgeOutputDirectives?.isReviewTarget(url)) anchor.onclick=event=>{event.preventDefault();window.BridgeOutputDirectives?.review(url);};
       if (title) anchor.title = title;
       return anchor;
     }
@@ -71,6 +74,11 @@
             formula.append(number);
           }
           parent.append(formula);
+        } else if (token.type === 'output_directive') {
+          parent.append(window.BridgeOutputDirectives.create(token.meta, reference => {
+            const file=artifacts.get(markdown.normalizeLink(reference));
+            return file ? {url:fileUrl(file),file} : null;
+          }));
         } else if (token.type === 'text') {
           parent.append(document.createTextNode(token.content));
         } else if (token.type === 'softbreak' || token.type === 'hardbreak') {

@@ -2,6 +2,15 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"消息含引用超过 100000 字符，请缩短后发送":"Message including quotes exceeds 100000 characters. Shorten it before sending.",
+"复制批注源码":"Copy review source",
+"复制链接":"Copy link",
+"代码审查链接":"Code review link",
+"在 Codex 桌面打开":"Open in Codex Desktop",
+"在 GitHub 查看 PR":"View PR on GitHub",
+"引用所选文字":"Quote selected text",
+"移除引用":"Remove quote",
+"查看代码位置":"View code location",
 "更换目录":"Change folder",
 "选择其他目录…":"Choose another folder…",
 "新建文件夹":"New folder",

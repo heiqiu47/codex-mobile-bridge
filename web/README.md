@@ -64,3 +64,7 @@ Claude 账号面板的定时刷新只读已保存额度；只有显式 `details(
 ## CLI 能力展示
 
 列表与会话快照的 `access` 字段控制 CLI 历史阅读、显式连接和允许的操作。界面不自动接入 CLI；服务端独立校验相同能力，隐藏按钮不能替代权限检查。连接失败保留原因，连接成功后清除；诊断下载使用既有登录会话。无 `access` 的旧网关维持原桌面行为。
+
+## 回复交互
+
+审查卡片、后续操作、审查链接和选中片段引用见 [使用说明](../docs/output-interactions.md)。`shared/output-directives.js` 仅解析完整标记，文件入口仍依赖服务器授权的 artifact；`features/chat/composer-quotes.js` 观察原生选区并复用 `ComposerDrafts`，引用和操作按钮不自动发送。
