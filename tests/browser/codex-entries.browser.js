@@ -61,7 +61,7 @@ window.checkCodexEntries = async function checkCodexEntries() {
   assert(document.getElementById('new-chat-location-summary').textContent==='works / new fixture','WSL project path has a short summary');document.getElementById('new-chat-location').open=true;assert(document.getElementById('new-chat-path').textContent==='/home/fixture/works/new fixture','full WSL project path remains available');document.getElementById('new-chat-location').open=false;
   await document.getElementById('new-chat-form').onsubmit({preventDefault(){}});assert(!document.getElementById('new-chat-dialog').open,'directory-backed WSL chat is created');
   await openChat(sid,wsl);await until(()=>state?.model==='group/auto-gpt-6-1-sol');
-  assert(document.getElementById('skills-button').hidden&&document.getElementById('work-mode').hidden,'WSL unsupported controls remain hidden');
+  assert(!document.getElementById('skills-button').hidden&&!document.getElementById('work-mode').hidden,'WSL native CLI controls are available');
   await document.getElementById('model-button').onclick();
   const select=document.getElementById('model-select'),models=[...select.options].filter(option=>option.value!=='__custom__');
   assert(models.length===3&&models.every(option=>option.textContent.trim()),'every native model has a visible label');

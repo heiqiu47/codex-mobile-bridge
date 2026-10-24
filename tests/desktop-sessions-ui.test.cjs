@@ -846,3 +846,10 @@ test('Claude directory creation is scoped to the selected SSH environment and se
 test('a provider with no supported project environments cannot advertise directory creation',async()=>{
  const ui=fixture();await ui.view.choose('deepseek');ui.setHandler(async()=>({projects:[],environments:[]}));await ui.view.create();const dialog=ui.document.querySelector('dialog');assert.equal(dialog.querySelector('.project-picker-browse').hidden,true);assert.equal(dialog.querySelector('.primary').disabled,true);assert.equal(ui.calls.some(call=>call.body),false);
 });
+
+
+test('Claude WSL rows and project groups preserve distribution identity at the same path',async()=>{
+ const ui=fixture();ui.setHandler(async()=>({sessions:[{id:'a',title:'WSL A',backend:'cli',runtime:'wsl',host:'wsl-claude:a',hostLabel:'Ubuntu A',cwd:'/home/user/project'},{id:'b',title:'WSL B',backend:'cli',runtime:'wsl',host:'wsl-claude:b',hostLabel:'Ubuntu B',cwd:'/home/user/project'}]}));
+ await ui.view.choose('claude');assert.match(ui.view.rowsRoot.textContent,/CLI · WSL/);assert.match(ui.view.rowsRoot.textContent,/Ubuntu A/);assert.match(ui.view.rowsRoot.textContent,/Ubuntu B/);
+ ui.view.listMode.value='project';ui.view.renderList();assert.equal(ui.view.rowsRoot.querySelectorAll('details').length,2);
+});
