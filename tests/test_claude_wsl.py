@@ -124,6 +124,7 @@ class WslClaudeContract(unittest.TestCase):
         self.assertTrue(native_wsl_binary(shim))
         with patch.dict(os.environ, {'MOBILE_BRIDGE_WSL_NATIVE': '1'}), \
              patch('bridge.clients.claude.remote_worker.shutil.which', return_value='/mnt/c/npm/claude'), \
+             patch('bridge.clients.claude.remote_worker.Path.home', return_value=self.root), \
              patch('bridge.clients.claude.remote_worker.auth_fingerprint') as auth:
             self.assertIsNone(profile())
             auth.assert_not_called()
@@ -140,6 +141,42 @@ class WslClaudeContract(unittest.TestCase):
         self.assertEqual(manager._adapter_call('claude', 'list', None, {})['sessions'], [{'id': 'wsl'}])
         with self.assertRaises(ValueError):
             manager._adapter_call('claude', 'catalog', 'unknown', {})
+
+    def test_native_worker_falls_back_past_windows_path_shim(self):
+        binary = self.root/'.local/bin/claude'
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b'\x7fELFfixture')
+        binary.chmod(0o700)
+        with patch.dict(os.environ, {'MOBILE_BRIDGE_WSL_NATIVE': '1'}), \
+             patch('bridge.clients.claude.remote_worker.Path.home', return_value=self.root), \
+             patch('bridge.clients.claude.remote_worker.shutil.which', return_value='/mnt/c/npm/claude'), \
+             patch('bridge.clients.claude.remote_worker.auth_fingerprint', return_value='fixture'):
+            self.assertEqual(profile()['binary'], str(binary.resolve()))
+
+    def test_explicit_scan_discovers_claude_but_internal_scan_does_not(self):
+        manager = DesktopSessions(self.root/'manager')
+        self.addCleanup(manager.close)
+        manager.clients = Mock(return_value={'clients': []})
+        manager.claude_wsl.scan = Mock()
+        discovered = {name: {'installed': False} for name in ('claude', 'deepseek')}
+        with patch('bridge.clients.manager.sys.platform', 'win32'), \
+             patch('bridge.app.desktop.Desktop') as desktop, \
+             patch('bridge.clients.discovery.discover_clients', return_value=discovered):
+            desktop.return_value.preferences.return_value = {}
+            manager.scan(scan_wsl=False)
+            manager.claude_wsl.scan.assert_not_called()
+            manager.scan()
+            manager.claude_wsl.scan.assert_called_once_with()
+
+    def test_registered_cli_project_creates_without_desktop_connection(self):
+        from bridge.clients.claude.adapter import Claude
+        adapter = Claude(self.root/'adapter', auto_connect=False)
+        self.addCleanup(adapter.close)
+        adapter.create_cli = Mock(return_value={'status': 'ready', 'result': {'id': 'new'}})
+        project = {'surface': 'cli', 'host': self.identifier, 'cwd': '/work/new'}
+        body = {'directoryProject': project, 'firstMessage': 'fixture'}
+        self.assertEqual(adapter.call('create', body=body)['result']['id'], 'new')
+        adapter.create_cli.assert_called_once_with(project, body)
 
     def test_wsl_directory_operations_use_selected_native_transport(self):
         manager = DesktopSessions(self.root/'manager')

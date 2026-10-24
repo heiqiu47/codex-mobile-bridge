@@ -29,10 +29,10 @@ import json,os,pwd,shutil
 from pathlib import Path
 uid=os.getuid(); home=Path.home(); user=pwd.getpwuid(uid).pw_name
 binary=shutil.which('claude')
-if not binary:
+if not native_wsl_binary(binary):
     binary=next((str(p) for p in (home/'.local/bin/claude',Path('/usr/local/bin/claude'),home/'.npm-global/bin/claude',
                     *home.glob('.nvm/versions/node/*/bin/claude'))
-                 if p.is_file() and os.access(p,os.X_OK)),None)
+                 if p.is_file() and os.access(p,os.X_OK) and native_wsl_binary(p)),None)
 directories={str((home/'.claude').resolve())}
 for p in Path('/proc').iterdir():
     if not p.name.isdigit(): continue

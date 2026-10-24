@@ -893,7 +893,7 @@ class DesktopSessions:
         # it reloaded. Only an explicit restart can clear that uncertain case.
         return setup.get('restartConnected', True)
 
-    def scan(self, setup=True):
+    def scan(self, setup=True, *, scan_wsl=True):
         # Discovery only: neither a GUI refresh nor a manual rescan launches apps.
         # Keep the old setup argument for callers from older desktop packages.
         from bridge.app.desktop import Desktop
@@ -947,15 +947,17 @@ class DesktopSessions:
             private_json(self.config_path, self.config)
             self.client_cache = None
             entries = getattr(self.bridge, 'entries', None)
-            if entries is not None and sys.platform == 'win32':
-                entries.scan()
+            if scan_wsl and sys.platform == 'win32':
+                if entries is not None:
+                    entries.scan()
+                self.claude_wsl.scan()
             return self.clients(refresh=True)
 
     def start_enabled(self):
         """Start selected clients only after the gateway service has started."""
         if not self.gateway_running or self.closed.is_set():
             return
-        self.scan()
+        self.scan(scan_wsl=False)
         for provider in ('codex', 'claude', 'deepseek'):
             with self.client_lock:
                 if self.closed.is_set():
@@ -1170,7 +1172,7 @@ class DesktopSessions:
         from bridge.clients.deepseek.recovery import DeepSeekRecovery
         with self.client_lock, self._changing('deepseek'):
             if not self.config.get('discovered', {}).get('deepseek'):
-                self.scan()
+                self.scan(scan_wsl=False)
             descriptor, adapter = self._descriptor('deepseek'), self.adapters['deepseek']
             if self.deepseek_recovery is None:
                 self.deepseek_recovery = DeepSeekRecovery()
@@ -1731,7 +1733,7 @@ class DesktopSessions:
         if provider not in self.adapters:
             raise ValueError('不支持的桌面客户端')
         if provider not in self.config.get('discovered', {}):
-            self.scan()
+            self.scan(scan_wsl=False)
         descriptor = self._descriptor(provider)
         home = descriptor.get('dataDirectory')
         if not home or not descriptor.get('installed'):

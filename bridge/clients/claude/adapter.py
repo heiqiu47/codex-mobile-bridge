@@ -887,6 +887,8 @@ class Claude:
         return {'status': 'accepted'}
 
     def call(self, action, sid=None, body=None, *, timeout=100):
+        if action == 'create' and (body or {}).get('directoryProject', {}).get('surface') == 'cli':
+            return self.create_cli(body['directoryProject'], body)
         if self.loop is None:
             if action == 'list':
                 cli = self.cli.listing()

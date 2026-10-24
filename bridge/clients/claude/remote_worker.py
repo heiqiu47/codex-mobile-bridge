@@ -126,7 +126,12 @@ def profile():
     binary = shutil.which('claude') or next((str(p) for p in
         (Path.home()/'.local/bin/claude', Path('/usr/local/bin/claude'))
         if p.is_file() and os.access(p, os.X_OK)), None)
-    if not binary or os.environ.get('MOBILE_BRIDGE_WSL_NATIVE') == '1' and not native_wsl_binary(binary):
+    if os.environ.get('MOBILE_BRIDGE_WSL_NATIVE') == '1' and not native_wsl_binary(binary):
+        binary = next((str(p) for p in (Path.home()/'.local/bin/claude',
+            Path('/usr/local/bin/claude'), Path.home()/'.npm-global/bin/claude',
+            *Path.home().glob('.nvm/versions/node/*/bin/claude'))
+            if p.is_file() and os.access(p, os.X_OK) and native_wsl_binary(p)), None)
+    if not binary:
         return None
     explicit = os.environ.get('CLAUDE_CONFIG_DIR')
     directory = Path(explicit).expanduser().resolve() if explicit else Path.home()/'.claude'
