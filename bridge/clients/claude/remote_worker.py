@@ -136,9 +136,22 @@ def profile():
     explicit = os.environ.get('CLAUDE_CONFIG_DIR')
     directory = Path(explicit).expanduser().resolve() if explicit else Path.home()/'.claude'
     try:
-        digest = hashlib.sha256((directory/'settings.json').read_bytes()).hexdigest()
+        settings_bytes = (directory/'settings.json').read_bytes()
     except OSError:
         digest = 'none'
+    else:
+        if os.environ.get('MOBILE_BRIDGE_WSL_NATIVE') == '1':
+            try:
+                settings = json.loads(settings_bytes)
+            except (ValueError, UnicodeError):
+                pass  # Invalid settings retain their original byte identity.
+            else:
+                if isinstance(settings, dict):
+                    # WSL's native TUI writes its display theme at first launch.
+                    # Presentation changes must not replace the account scope.
+                    settings.pop('theme', None)
+                    settings_bytes = json.dumps(settings, sort_keys=True, separators=(',', ':')).encode()
+        digest = hashlib.sha256(settings_bytes).hexdigest()
     binary = str(Path(binary).resolve())
     auth = auth_fingerprint(binary, directory)
     return {'binary': binary, 'directory': str(directory),
