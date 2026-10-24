@@ -11,7 +11,10 @@ from tests import test_wsl_entries as fixtures
 
 class WslFeaturesTests(unittest.TestCase):
     setUp = fixtures.WslSessionTests.setUp
-    make_entry = fixtures.WslSessionTests.make_entry
+    def make_entry(self):
+        entry = fixtures.WslSessionTests.make_entry(self)
+        entry.store.history = lambda identifier, **kwargs: {'id': identifier, 'turns': []}
+        return entry
 
     def goals(self, value=None):
         state = {'goal': value, 'lost': False}
@@ -117,3 +120,29 @@ class WslFeaturesTests(unittest.TestCase):
                           'status': {'type': 'active'}}}, self.entry.generation)
         self.assertEqual(self.entry.notification_updates(), [{'id': self.identifier, 'host': self.row['id']}])
         self.assertEqual(self.entry.notification_updates(), [])
+
+    def test_queued_goal_activation_rechecks_native_goal_before_dispatch(self):
+        for replacement in ({'objective': 'fixture', 'status': 'paused', 'createdAt': 1},
+                            {'objective': 'fixture', 'status': 'active', 'createdAt': 2}, None):
+            with self.subTest(replacement=replacement):
+                self.entry = self.make_entry()
+                self.addCleanup(self.entry.close)
+                state = self.goals({'objective': 'fixture', 'status': 'paused', 'createdAt': 1})
+                self.entry.server.thread['status'] = {'type': 'active'}
+                resumed = self.entry.set_goal_status(self.identifier, 'active', str(uuid.uuid4()), expected=state['goal'])
+                self.assertEqual(resumed['activation']['status'], 'queued')
+                state['goal'] = replacement
+                self.entry.server.thread['status'] = {'type': 'idle'}
+                self.entry._dispatch_queued(self.identifier)
+                self.assertFalse(any(m == 'turn/start' for m, _ in self.entry.server.calls))
+                self.assertFalse(self.entry._queue(self.identifier))
+
+    def test_matching_queued_goal_activation_still_dispatches_once(self):
+        state = self.goals({'objective': 'fixture', 'status': 'paused', 'createdAt': 1})
+        self.entry.server.thread['status'] = {'type': 'active'}
+        resumed = self.entry.set_goal_status(self.identifier, 'active', str(uuid.uuid4()), expected=state['goal'])
+        self.assertEqual(resumed['activation']['status'], 'queued')
+        self.entry.server.thread['status'] = {'type': 'idle'}
+        self.entry._dispatch_queued(self.identifier)
+        self.entry._dispatch_queued(self.identifier)
+        self.assertEqual(sum(m == 'turn/start' for m, _ in self.entry.server.calls), 1)

@@ -634,7 +634,7 @@ class WslEntry(WslFeatures):
                                   attachments=attachments, ui_locale=options.get('ui_locale'))
         return self._send(identifier, text, submission_id, mode, skills, work_mode, attachments)
 
-    def _send(self, identifier, text, submission_id, mode='send', skills=None, work_mode=None, attachments=None, *, queued=False):
+    def _send(self, identifier, text, submission_id, mode='send', skills=None, work_mode=None, attachments=None, *, queued=False, goal_activation=None):
         uuid.UUID(identifier); uuid.UUID(submission_id)
         skills = skills or []
         if not isinstance(skills, list) or len(skills) > 8 or any(not isinstance(s, str) for s in skills):
@@ -652,6 +652,8 @@ class WslEntry(WslFeatures):
                 value['skills'] = sorted(set(skills))
             if work_mode is not None:
                 value['workMode'] = work_mode
+            if goal_activation is not None:
+                value['goalActivation'] = copy.deepcopy(goal_activation)
             key = identifier + ':send:' + submission_id
             previous = self._previous_send(identifier, key, value)
             if previous is not None and not (queued and previous.get('status') == 'queued'):
@@ -659,6 +661,13 @@ class WslEntry(WslFeatures):
             runtime, thread = self._target(identifier, activate=mode != 'queue')
             if (mode == 'send' or queued) and thread['status']['type'] == 'active':
                 raise ValueError('任务正在运行，请选择补充当前任务，或等待完成')
+            if goal_activation is not None:
+                from bridge.features.sessions.goal import goal_identity
+                current_goal = self._read_goal(identifier, runtime)
+                if not current_goal or current_goal.get('status') != 'active' or goal_identity(current_goal) != goal_activation:
+                    if queued:
+                        return self.cancel_queued(identifier, submission_id)
+                    raise ValueError('目标已暂停或发生变化，启动消息未发送')
             selected = self._resolve_skills(identifier, runtime, thread, skills)
             if mode == 'queue' and not queued:
                 result = {'status': 'queued', 'id': submission_id}
@@ -749,7 +758,8 @@ class WslEntry(WslFeatures):
             if any(thread.get(k) != v for k, v in row.get('target', {}).items()):
                 return
             self._send(identifier, row['text'], row['id'], mode='queue', skills=row.get('skills'),
-                       work_mode=row.get('workMode'), attachments=row.get('attachments'), queued=True)
+                       work_mode=row.get('workMode'), attachments=row.get('attachments'), queued=True,
+                       goal_activation=row.get('goalActivation'))
         except (IPCError, RemoteUnavailable, ValueError):
             # A queued operation may wait for the original target to return.
             # Once dispatch writes bytes its durable status is already unknown.

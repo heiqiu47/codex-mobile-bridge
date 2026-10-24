@@ -130,8 +130,9 @@ class WslFeatures:
                 response = {**response, 'activation': {'status': 'unknown', 'id': activation_id}}
                 self.receipts[key]['result'] = response
                 private_json(self.receipts_path, self.receipts)
-                activation = self.send(identifier, text, activation_id,
-                    mode='queue' if thread.get('status', {}).get('type') == 'active' else 'send')
+                activation = self._send(identifier, text, activation_id,
+                    mode='queue' if thread.get('status', {}).get('type') == 'active' else 'send',
+                    goal_activation=goal_identity(response['result']))
                 response = {**response, 'activation': activation}
                 self.receipts[key]['result'] = response
                 private_json(self.receipts_path, self.receipts)
