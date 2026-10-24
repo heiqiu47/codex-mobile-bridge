@@ -23,7 +23,8 @@ class ComposerDrafts {
   discardPending(scope,id){if(this.pending(scope)?.id===id)this.remove(this.key(scope,'pending'));}
   begin(scope,body,id){
     const key=this.key(scope,'pending');if(!key)return null;
-    const fingerprint=JSON.stringify(body),previous=this.pending(scope);
+    const fingerprint=JSON.stringify(body),raw=this.pending(scope),settled=this.read(this.key(scope,'pending-v2'));
+    const previous=settled?.legacyVersion===JSON.stringify(raw)?null:raw;
     if(previous?.fingerprint===fingerprint)return previous;
     if(previous?.body?.text===body.text)return {...previous,blocked:true};
     const pending={id,fingerprint,body};return this.write(key,pending)?pending:null;
@@ -103,6 +104,63 @@ class ComposerDrafts {
       if(action==='confirm'&&this.load(scope)?.revision===revision)this.clear(scope);
       return true;
     });
+  }
+  pendingRecords(scope,{temporary,temporaryKey='pending:'+scope?.host+'|'+scope?.session}={}){
+    if(!this.key(scope))return [];
+    const records=[],saved=this.read(this.key(scope,'pending-v2')),old=this.pending(scope);
+    const add=(source,value)=>{
+      if(!value||typeof value.id!=='string'||!value.id)return;
+      const body=value.body||Object.fromEntries(['text','mode','skills','workMode','attachments','uiLocale'].filter(key=>Object.prototype.hasOwnProperty.call(value,key)).map(key=>[key,value[key]]));
+      records.push({source,scopeKey:this.key(scope),id:value.id,version:JSON.stringify(value),body:JSON.parse(JSON.stringify(body)),fingerprint:value.fingerprint||JSON.stringify(body),accountUnverified:(source==='session'||source==='memory')&&!value.account});
+    };
+    if(old&&saved?.legacyVersion!==JSON.stringify(old))add('v1',old);
+    add('v2',saved);
+    const matches=value=>value?.gateway===scope.gateway&&value.target===scope.host+'|'+scope.session&&(!value.account||value.account===scope.account)&&(!value.provider||value.provider===scope.provider);
+    let session;try{session=JSON.parse(temporary?.getItem(temporaryKey)||'null');}catch{}
+    if(matches(session))add('session',session);
+    const memory=this.temporaryPending.get(temporaryKey);if(matches(memory))add('memory',memory);
+    return records;
+  }
+  recoveryReceiptMatches(scope,record,receipt){
+    if(receipt?.id!==record.id||!['accepted','cancelled','ignored','queued'].includes(receipt.status))return false;
+    if(receipt.account!==undefined&&receipt.account!==scope.account)return false;
+    if(receipt.scope&&this.key(receipt.scope)!==this.key(scope))return false;
+    if(receipt.fingerprint!==undefined&&receipt.fingerprint!==record.fingerprint)return false;
+    const canonical=value=>JSON.stringify(value,(_,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
+    return receipt.body===undefined||canonical(receipt.body)===canonical(record.body);
+  }
+  async reconcilePending(scope,envelope,options={}){
+    if(!this.key(scope)||this.key(scope)!==this.key(envelope?.scope))return {resolved:[],remaining:this.pendingRecords(scope,options)};
+    const records=options.records||this.pendingRecords(scope,options),receipts=Array.isArray(envelope.receipts)?envelope.receipts:[];
+    const selected=records.flatMap(record=>{const receipt=receipts.find(value=>this.recoveryReceiptMatches(scope,record,value));return receipt?[{...record,status:receipt.status}]:[];});
+    return this.consumePendingRecords(scope,selected,options);
+  }
+  ignoreLocalPending(scope,record,options={}){
+    return this.consumePendingRecords(scope,[{...record,status:'localIgnored'}],options);
+  }
+  async consumePendingRecords(scope,selected,options){
+    if(!this.key(scope))return {resolved:[],remaining:[]};
+    const matches=(record,current)=>record.scopeKey===current.scopeKey&&record.source===current.source&&record.id===current.id&&record.version===current.version;
+    const shared=await this.coordinate(()=>{
+      const current=this.pendingRecords(scope,options),eligible=selected.filter(record=>['v1','v2'].includes(record.source)&&current.some(value=>matches(record,value)));
+      if(!eligible.length)return [];
+      const key=this.key(scope,'pending-v2'),saved=this.read(key);
+      const legacy=eligible.find(record=>record.source==='v1'),active=eligible.some(record=>record.source==='v2');
+      const next=active?{cleared:true,legacyVersion:saved?.legacyVersion??null}:{...(saved||{cleared:true})};
+      if(legacy)next.legacyVersion=legacy.version;
+      return this.write(key,next)?eligible:[];
+    });
+    const resolved=Array.isArray(shared)?shared:[];
+    // Session storage and the memory fallback belong to this document. Never
+    // delete a replacement written since the UI captured its recovery snapshot.
+    for(const record of selected){
+      if(!['session','memory'].includes(record.source)||!this.pendingRecords(scope,options).some(value=>matches(record,value)))continue;
+      const key=options.temporaryKey||'pending:'+scope.host+'|'+scope.session;
+      if(record.source==='memory')this.temporaryPending.delete(key);
+      else {try{options.temporary.removeItem(key);}catch{continue;}}
+      resolved.push(record);
+    }
+    return {resolved:resolved.map(({source,id,status})=>({source,id,status})),remaining:this.pendingRecords(scope,options)};
   }
   migrate(scope,temporary,keys){
     if(!this.key(scope)||this.load(scope))return this.load(scope);
