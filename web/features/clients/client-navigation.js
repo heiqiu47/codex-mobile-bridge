@@ -182,7 +182,7 @@ class ClientNavigation {
     finally{if(this.swipePreview===preview)this.cancelListSwipe();}
   }
   visibleClients(){return this.clients.filter(client=>client.enabled&&this.preference('switch:'+client.id));}
-  icon(id){const n=document.createElement('span');n.className='client-icon client-'+id;n.setAttribute('aria-hidden','true');const img=document.createElement('img');img.src='/client-icons/'+(isCodexClient(id)?'codex':id)+'.png';img.alt='';n.append(img);return n;}
+  icon(id){const n=document.createElement('span');n.className='client-icon client-'+id;n.setAttribute('aria-hidden','true');const img=document.createElement('img');img.src='/client-icons/'+(isCodexClient(id)?'codex':id.startsWith('wsl-claude:')?'claude':id)+'.png';img.alt='';n.append(img);return n;}
   applyClients(data){
     this.clients=data.clients;this.wslSupported=data.wslSupported??this.wslSupported;this.gatewayRunning=data.gatewayRunning??this.gatewayRunning;
     this.windowsSession=data.windowsSession??this.windowsSession;
