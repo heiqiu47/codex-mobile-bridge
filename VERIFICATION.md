@@ -1,3 +1,38 @@
+<a id="v215-lifecycle-output"></a>
+
+# v2.1.5 生命周期、文件卡片与手机重连修订（2026-10-25，本地候选）
+
+**修订与复验：** 用户在 iPhone 实测否定了 `4927458` 的引用位置和文件卡片结果，首版简化夹具的通过不算这两项实机通过。后续提交 `c0cc4a2` 修复实际输入区换行和 native/saved 分页合并中的遗漏；安装后已在真实 Mac 8788 会话页面复验引用布局和原回复的 9 文件卡片，Windows/Ubuntu 更新恢复推进。手机真机仍待用户复测。
+
+分支 `fix/v2.1.5-lifecycle-output-regressions`，产品提交由 `4927458` 修订至 `c0cc4a2`，基于上一轮已验收的项目、WSL 与会话交互候选；没有推送 GitHub。内部版本仍为 2.1.4，不代表发布。
+
+- 宽屏引用按钮跟随上下文用量；窄屏使用工具栏后的紧凑独立行，不再让原有按钮折行。按输入区域实际宽度切换，分屏和窗口缩放时保留选区与草稿。折叠引用只显示一行省略预览，展开和原草稿保留。
+- Codex 原生 `FileChange` 历史生成完成回合的文件变更卡片，隐藏执行过程时仍可见。原生净差异优先；只有逐次补丁记录时明确标注“累计修改”，不冒充 Desktop 的最终净增删数。分页边界没有完整回合时不生成局部总计；详情继续按需分段读取。只读核对用户截图对应回合的 9 个文件，没有发送消息或调用模型。
+- DSH 迁移补齐上一版已验证接入脚本的 LF/CRLF 指纹，保留归属及配置核验。Mac 强制退出后不再为已空进程集合调用 `ps`。Linux 单独处理 SSH 父进程不可读取可执行路径的情况，保留祖先进程保护和目标 UID、可执行文件、出生时间、pidfd 的严格核验。
+- Android 已匹配的现有登录绑定直接进入网页，不再等待后台串行网络队列；身份不匹配的恢复仍经服务器核验。Android/iOS 初始文档加载设有有限等待与重试入口，提交文档后让网页接管加载状态；不重放聊天写入。
+
+| 检查 | 证据与边界 |
+| --- | --- |
+| 完整本地回归 | 后端 2370 项：2288 通过、82 平台/显式原生跳过；前端 988 项：987 通过、1 跳过；最后的分页完整性和资源检查 31 项：30 通过、1 Windows 跳过 |
+| 真实浏览器 | 1440px 时间线、缓存、可见性、文件卡片及引用 69 项；最新文件卡片另补宽度断言，宽/390px 均通过。使用合成内容，截图检查无溢出；首版简化 DOM 未覆盖用户问题。修订后复制完整生产输入区，320/390/844/1440px、区域缩放与草稿共 102 项通过，旧实现由同一夹具检出失败 |
+| 实际会话页面 | `c0cc4a2` 安装后，真实 B 会话在 1440px 下引用按钮紧邻上下文环，390px 下位于工具栏之后的紧凑独立行，草稿未改。通过页面原有上翻入口读取历史，原回复的“已编辑 9 个文件”卡片出现且能展开 9 条文件路径，手机宽度无横向溢出；不是合成卡片或手机真机验收 |
+| 实际文件卡片 API | 真实 B 会话原回合经 7 页读取返回完整 9 文件元数据，连接持续有效。保存的补丁累计为 +206/−15，标注“累计修改”；不将其声称为 Desktop 截图中的最终净差异 +199/−8 |
+| Windows 原生 | 在现有 Windows 设备执行 Python/Node 及自建进程退出夹具；独立进程与观察器存活。真实旧脚本 LF/CRLF 迁移通过。正式/Test/WSL Test 安装与 30 项配置保护记录一致；构建安装结果另记 |
+| Windows Test 安装 | 修订 `c0cc4a2` 在 F 盘串行构建并覆盖安装，713 个安装文件匹配。实际安装包编译模块 125 项、WSL/Claude 83 项通过；GUI、8788 健康归属及 8 个实际版本化资源/304 通过。原 Test 配置、账号、绑定及正式版/WSL Test 保留，原 Codex daemon 进程身份不变；只通过正常停网关结束已核对空闲的网关自有 Claude 执行。健康复验后清理本轮重复构建产物约 1.65 GiB，保留安装器和验收记录 |
+| Ubuntu 原生 | 271 项：270 通过、1 Windows 跳过；修复前真实退出夹具失败，修复后目标退出而旁路进程存活。正式/Test 配置、绑定、自启动和进程身份保留；构建安装结果另记 |
+| Ubuntu 修订包 | 用户安装 `c0cc4a2` 后，723 项文件逐一匹配（720 应用文件及 3 个 DEB 桌面/图标文件）；实际安装包编译回归 44 项：43 通过、1 Windows 跳过。8788 实例、局域网页面两次 200 及不同 nonce、1 项版本化 CSS 哈希/304 检查通过，正式版、账号绑定、自启动及原禁用 Cloudflare 状态保持。验收启动器首次使用的临时目录过长导致 Electron 单实例套接字失败，改短本次 GUI 进程的临时路径后桌面程序及渲染进程持续运行超过 3 分钟，网关没有重启；未改系统设置。远程 Wayland 窗口画面尚未完成视觉核验，不将进程运行算作截图验收 |
+| Mac Test | 完整离线构建、签名和覆盖安装通过，8788 健康实例归属正确；366 个包内网页资源与源码一致，8 个实际 HTTP 资源匹配、7 项条件缓存 304；包内编译模块 106 项检查，105 通过、1 平台跳过；正式版、配置、网络设置及原绑定摘要一致 |
+| Mac 后续修订 | `c0cc4a2` 编译模块 107 项：106 通过、1 平台跳过；安装启动、8 个实际资源和 7 项 304 检查通过。相同代码的本地 Test 改用已有固定开发证书，跨版本 designated requirement 一致，81 个 Mach-O 权限无变化。用户完成首次签名切换授权后，实际正常重启并自动读取钥匙串、启动新网关；启动命令约 0.10 秒返回，随后健康检查通过，无需再次人工授权。13 个原生客户端进程、正式版、原配置与绑定保持。后续本地构建复用同一签名，签名失败中止；未改变正式包签名或钥匙串权限规则 |
+| 手机构建 | Android 已签名 APK 完成；实际抽取 Android 导航方法的 Java 夹具验证匹配绑定不等待占用队列，陈旧身份不恢复。iOS 独立 Test 已签名覆盖安装并启动，6 个已存电脑和 16 项偏好前后逐字节一致；不声称导出或直接核验了钥匙串令牌 |
+
+手机真实后台停留后的体感等待仍需用户复测；原生进程检查使用自建夹具，没有强制退出用户正在使用的客户端。原生分页当前没有返回截图回合的净差异，因此其累计补丁数字与 Desktop 净差异可能不同，界面已明确区分。新 Test 启动通过后清理本轮旧 Test 副本与重复构建目录约 0.99 GiB，保留源码归档、手机包和验收记录。验收记录位于忽略目录 `.tmp/v215-lifecycle-output/`。
+
+后续 `c0cc4a2` 验收通过后另外清理 Mac 约 1.05 GB、Windows 约 1.77 GB、Ubuntu 本轮合计约 1.62 GB 的明确重复载荷（逻辑大小）；当前安装、远端当前/回滚安装包、源码归档及必要日志保留。Mac 固定签名工具保存在本机 `.local/test-apps/build-tools/`，不随临时构建目录清理，不纳入正式包或 GitHub。
+
+**English:** Initial phone acceptance reopened quote layout and the missing edited-file card despite simplified fixture passes. Follow-up c0cc4a2 separates compact quote actions from the complete toolbar and retains saved file metadata when native paging exposes a partial completed turn. The installed Mac gateway now exposes the actual nine-file card through its paging API and real session page; quote placement was visually checked at 390 and 1440 pixels with the draft unchanged. Recorded patch totals remain distinct from authoritative net diffs. This candidate also covers owned DSH connector migration, macOS/Linux shutdown regressions, and mobile connection-entry scheduling. After the user authorized the local-only transition to the existing development signing identity, an actual Test restart retrieved its Keychain credential and started automatically without another manual authorization. Original client processes, permissions, configuration and bindings remain intact. Physical-device layout and resume latency still require user acceptance. No GitHub publication occurred.
+
+---
+
 <a id="v215-chat-feedback"></a>
 
 # v2.1.5 项目与会话交互修订（2026-10-24，本地候选）
