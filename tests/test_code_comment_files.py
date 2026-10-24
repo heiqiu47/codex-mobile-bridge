@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bridge.features.workspace.files import code_comment_references, workspace_references
+from bridge.features.workspace.files import code_comment_references, file_citation_references, workspace_references
 
 
 class CodeCommentFilesTests(unittest.TestCase):
@@ -48,3 +48,27 @@ class CodeCommentFilesTests(unittest.TestCase):
             self.assertEqual(rows(str(target))[0]['path'], 'src/a.py')
             for path in ['../private.py', str(outside), 'alias.py', 'escape.py', 'https://example.com/a.py']:
                 self.assertEqual(rows(path), [], path)
+
+
+class FileCitationTests(unittest.TestCase):
+    def test_complete_citation_is_not_active_inside_code(self):
+        source = ':codex-file-citation{path="report.xls" artifact_kind="workbook" purpose="source"}'
+        self.assertEqual(list(file_citation_references(source)), ['report.xls'])
+        for text in ['`'+source+'`', '```\n'+source+'\n```', '\\'+source, '    '+source, source[:-1], source.replace('purpose="source"', 'unknown="source"'), source.replace('path="report.xls"', 'path=1'), source.replace('purpose="source"', 'purpose=1')]:
+            self.assertEqual(list(file_citation_references(text)), [], text)
+
+    def test_citation_grants_reuse_workspace_roots_and_deny_outside_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'project'
+            root.mkdir()
+            target = root / 'report.xls'
+            target.write_bytes(b'workbook')
+            outside = Path(directory) / 'private.xls'
+            outside.write_bytes(b'private')
+            (root / 'escape.xls').symlink_to(outside)
+            def rows(path):
+                return workspace_references([{'role':'assistant', 'text':':codex-file-citation{path="'+str(path)+'" artifact_kind="workbook" purpose="source"}'}], str(root))
+            self.assertEqual(rows(target)[0]['path'], 'report.xls')
+            self.assertEqual(rows('report.xls')[0]['path'], 'report.xls')
+            for path in [outside, '../private.xls', 'escape.xls', 'https://example.com/private.xls', 'file://remote/private.xls']:
+                self.assertEqual(rows(path), [], str(path))

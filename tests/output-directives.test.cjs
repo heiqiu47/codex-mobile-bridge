@@ -76,3 +76,16 @@ test('cards use authorized file URLs and followups dispatch prompt without sendi
   assert.equal(follow.event.detail.text,'Keep draft');
   assert.equal(follow.event.bubbles,true);
 });
+
+
+test('file citations render filenames only through existing authorized artifact grants',()=>{
+ const source=':codex-file-citation{path="/project/report.xls" artifact_kind="workbook" purpose="source"}';
+ const item=directives.read(source);assert.equal(item.kind,'file');assert.equal(item.end,source.length);assert.equal(item.attributes.path,'/project/report.xls');
+ const md=markdownit();directives.install(md);const children=value=>md.parse(value,{}).flatMap(token=>token.children||[]);
+ assert.equal(children(source).filter(token=>token.type==='output_directive').length,1);
+ for(const value of ['`'+source+'`','```\n'+source+'\n```','\\'+source])assert.equal(children(value).filter(token=>token.type==='output_directive').length,0);
+ for(const value of [source.slice(0,-1),source.replace('purpose="source"','extra="source"'),source.replace('path="/project/report.xls"','path=1'),source.replace('purpose="source"','purpose=1')])assert.equal(directives.read(value),null);
+ const window={};vm.runInNewContext(fs.readFileSync(path.join(root,'web/shared/output-directives.js'),'utf8'),{window,URL,document:{createElement:tag=>({tag,children:[],append(...items){this.children.push(...items);}})}});
+ const denied=window.BridgeOutputDirectives.create(item,()=>null);assert.equal(denied.tag,'span');assert.equal(denied.href,undefined);assert.equal(denied.textContent,'report.xls');
+ const allowed=window.BridgeOutputDirectives.create(item,()=>({url:'/api/sessions/authorized/files/id',file:{name:'report.xls'}}));assert.equal(allowed.tag,'a');assert.equal(allowed.href,'/api/sessions/authorized/files/id');assert.equal(allowed.textContent,'report.xls');
+});

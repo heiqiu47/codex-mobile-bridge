@@ -527,6 +527,63 @@ const messageActions=new MessageActions({request:api,openChat,refresh:()=>loadLi
 document.addEventListener('bridge-message-error',event=>toast(event.detail));
 $('fork-source').onclick=()=>{const source=state?.forkedFrom;if(source){$('chat-details-dialog').close();openChat(source.id,source.host).catch(e=>toast(e.message));}};
 codexQuotes=typeof ComposerQuotes==='function'?new ComposerQuotes({messages:$('messages'),input:$('message'),container:$('message').parentElement,scope:()=>desktopSessions.provider==='codex'&&currentId&&codexDraftScope?.gateway===draftGateway&&codexDraftScope?.session===currentId&&codexDraftScope?.host===currentHost?codexDraftScope:null,onChange:()=>{codexDraftTouched=true;saveDraft();},onError:text=>{$('send-error').textContent=text;},onPrompt:text=>{const input=$('message'),start=input.selectionStart,end=input.selectionEnd;input.value+=(input.value?'\n\n':'')+text;input.setSelectionRange(start,end);input.oninput();window.BridgePresentation?.resizeMessage();},translate:t}):null;
+
+function imageComposerTarget(){
+  if($('app').hidden||!$('app').classList.contains('chat-open'))return null;
+  const codex=isCodexClient(clientNavigation.provider),view=desktopSessions;
+  const quotes=codex?codexQuotes:view.quotes,panel=codex?attachments:view.attachments,workspace=codex?workbench:view.workbench;
+  const id=codex?currentId:view.sid,provider=codex?'codex':view.provider,host=codex?currentHost:'local';
+  if(!id||!quotes?.available()||!panel||panel.locked)return null;
+  const key=codex?chatKey(id,host):JSON.stringify([provider,id]);
+  if(panel.key!==key||!workspace?.current||workspace.current.id!==id||workspace.current.host!==host||(workspace.current.provider||'codex')!==provider)return null;
+  if(codex){if(view.provider!=='codex'||$('chat').hidden||sending||!state||state.loadingHistory||state.activating||!currentAccess().canSend)return null;}
+  else if(clientNavigation.provider!==provider||view.container.hidden||view.conversation.hidden||view.busy||!view.canMutate()||view.state?.capabilities?.attachments!==true)return null;
+  return {provider,id,host,key,panel,workspace,scope:quotes.identity()};
+}
+function composerImageSource(value,target,capture=false){
+  if(!value||!target)return null;
+  if(value.context){
+    const context=value.context;
+    if(context.provider!==target.provider||context.id!==target.id||context.host!==target.host)return null;
+    if(capture&&!value.url)return true;
+    return value.composerScope===target.scope&&window.BridgeImageViewer.isRegisteredSource(value)&&/^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value.url)?value.url:null;
+  }
+  let url;try{url=new URL(value.url,location.href);}catch{return null;}
+  if(url.origin!==location.origin||url.username||url.password||url.hash)return null;
+  const path=window.BridgeRelayPath?.(url.pathname)??url.pathname;
+  const codex=/^\/api\/sessions\/([0-9a-f-]{36})\/(uploads\/[0-9a-f-]{36}\/preview|desktop-images\/[a-f0-9]{64}|files\/[a-f0-9]{64})$/.exec(path);
+  const desktop=/^\/api\/desktop-sessions\/(claude|deepseek)\/uploads\/[0-9a-f-]{36}\/preview$/.exec(path);
+  const identityKey=codex?'host':'sessionId',identity=codex?target.host:target.id;
+  if(codex?target.provider!=='codex'||codex[1]!==target.id:!desktop||desktop[1]!==target.provider)return null;
+  if(url.searchParams.getAll(identityKey).length!==1||url.searchParams.get(identityKey)!==identity)return null;
+  const variants=url.searchParams.getAll('variant');
+  if(variants.length>1||variants.some(value=>!['thumb','original'].includes(value))||codex&&!codex[2].startsWith('uploads/')&&variants.length)return null;
+  if([...url.searchParams.keys()].some(key=>key!==identityKey&&key!=='variant'))return null;
+  return url.href;
+}
+window.BridgeImageViewer?.configureComposer({
+  scope:()=>imageComposerTarget()?.scope??null,
+  canReuse:value=>!!composerImageSource(value,imageComposerTarget(),true),
+  async add(value,scope){
+    const target=imageComposerTarget(),source=composerImageSource(value,target);
+    if(!source||scope!==target.scope)return false;
+    const response=await fetch(source,{credentials:'same-origin',redirect:'error'});
+    if(!response.ok||response.redirected)throw Error(t('附件上传失败，请重试'));
+    if(Number(response.headers.get('Content-Length'))>20*1024*1024)throw Error(t('每个附件需为 1 字节至 20 MB'));
+    const blob=await response.blob();
+    if(!/^image\/(?:png|jpeg|gif|webp)$/.test(blob.type))throw Error(t('此应用的消息附件仅支持图片；其他文件请使用文件传输。'));
+    if(!blob.size||blob.size>20*1024*1024)throw Error(t('每个附件需为 1 字节至 20 MB'));
+    const current=imageComposerTarget();
+    if(!current||current.scope!==scope||current.panel!==target.panel||current.key!==target.key||!composerImageSource(value,current))return false;
+    const file=new File([blob],value.name||t('图片附件'),{type:blob.type}),count=current.panel.rows.length;
+    current.panel.add([file]);
+    if(current.panel.rows.length===count){if(current.panel.error)throw Error(t(current.panel.error));return false;}
+    current.workspace.select('chat');
+    if(current.provider==='codex')window.BridgePresentation?.openChat();else desktopSessions.collapseComposer(false);
+    return true;
+  }
+});
+
 function saveDraft(){
   if(!currentId||restoringComposer)return null;
   const fields={quotes:codexQuotes?.quotes.map(quote=>({...quote}))||[],text:$('message').value,selectionStart:$('message').selectionStart,selectionEnd:$('message').selectionEnd,sendMode:$('send-mode').value,workMode:workModes.selection||$('work-mode').value,skills:[...selectedSkills]};

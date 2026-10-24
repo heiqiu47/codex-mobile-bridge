@@ -2,8 +2,8 @@
 
 // Selection is observed, never cancelled: native copy and touch callouts remain available.
 class ComposerQuotes {
-  constructor({messages,input,container,scope,onChange,onPrompt,onError=()=>{},translate=text=>text}){
-    Object.assign(this,{messages,input,scope,onChange,onPrompt,onError,translate});this.quotes=[];this.snapshot=null;
+  constructor({messages,input,container,scope,onChange,onPrompt,onError=()=>{},canQuote=()=>true,translate=text=>text}){
+    Object.assign(this,{messages,input,scope,onChange,onPrompt,onError,canQuote,translate});this.quotes=[];this.snapshot=null;
     const doc=input.ownerDocument;this.doc=doc;
     this.root=doc.createElement('div');this.root.className='composer-quotes';this.root.hidden=true;
     this.action=doc.createElement('button');this.action.type='button';this.action.className='composer-quote-selection';this.action.hidden=true;
@@ -12,6 +12,10 @@ class ComposerQuotes {
     this.action.addEventListener('pointercancel',()=>{this.pressed=null;this.capture();});
     this.action.addEventListener('click',()=>{const selected=this.pressed||this.snapshot;this.pressed=null;if(this.valid(selected))this.add(selected.text,selected.source);this.snapshot=null;this.action.hidden=true;this.visibility();});
     doc.addEventListener('selectionchange',()=>this.capture());
+    messages.addEventListener('bridge-compose-quote',event=>{
+      if(!messages.contains(event.target)||!event.target.isConnected||!event.target.closest('.message.assistant,.message.user'))return;
+      this.quoteMessage(event.detail?.getText,event.detail?.source,event.target);
+    });
     input.addEventListener('focus',()=>{this.snapshot=null;this.action.hidden=true;this.visibility();});
     messages.addEventListener('bridge-compose-prompt',event=>{
       if(!this.available()||!messages.contains(event.target)||!event.target.isConnected||!event.target.closest('.message.assistant'))return;
@@ -21,10 +25,10 @@ class ComposerQuotes {
   }
   identity(){return JSON.stringify(this.scope()||null);}
   available(){return !!this.scope()&&this.messages.isConnected&&!this.messages.closest('[hidden]');}
-  valid(value){return !!value&&this.available()&&value.scope===this.identity()&&value.body.isConnected&&this.messages.contains(value.body);}
+  valid(value){return !!value&&this.canQuote()&&this.available()&&value.scope===this.identity()&&value.body.isConnected&&this.messages.contains(value.body);}
   capture(){
     const selection=this.doc.getSelection();
-    if(!this.available()||!selection||selection.isCollapsed||!selection.rangeCount){
+    if(!this.canQuote()||!this.available()||!selection||selection.isCollapsed||!selection.rangeCount){
       if(!this.pressed&&this.doc.activeElement!==this.action){this.snapshot=null;this.action.hidden=true;this.visibility();}return;
     }
     const element=node=>node?.nodeType===1?node:node?.parentElement;
@@ -33,7 +37,15 @@ class ComposerQuotes {
     const text=selection.toString().trim();if(!text)return;
     this.pressed=null;this.snapshot={text,body,scope:this.identity(),source:String(body.__mermaidIdentity||'')};this.action.textContent=this.translate('引用所选文字');this.action.hidden=false;this.visibility();
   }
-  add(text,source=''){if(!this.available()||!text.trim()||this.quotes.length>=8)return;if(text.length>100000){this.onError(this.translate('消息含引用超过 100000 字符，请缩短后发送'));return;}this.quotes.push({text:text.slice(0,100000),source:String(source).slice(0,500),provider:this.scope().provider});this.onChange();this.render();}
+  async quoteMessage(getText,source='',target){
+    if(!this.canQuote()||!this.available()||typeof getText!=='function'||!target?.isConnected||!this.messages.contains(target))return;
+    const scope=this.identity();
+    try{
+      const text=await getText();
+      if(this.identity()===scope&&target.isConnected&&this.messages.contains(target)&&typeof text==='string')this.add(text,source);
+    }catch(error){if(this.identity()===scope&&target.isConnected)this.onError(error.message||this.translate('读取完整正文失败，请重试'));}
+  }
+  add(text,source=''){if(!this.canQuote()||!this.available()||!text.trim()||this.quotes.length>=8)return;if(text.length>100000){this.onError(this.translate('消息含引用超过 100000 字符，请缩短后发送'));return;}this.quotes.push({text:text.slice(0,100000),source:String(source).slice(0,500),provider:this.scope().provider});this.onChange();this.render();}
   restore(quotes=[]){this.reset();this.quotes=ComposerQuotes.normalize(quotes);this.render();}
   reset(){this.quotes=[];this.snapshot=null;this.pressed=null;this.action.hidden=true;this.render();}
   render(){

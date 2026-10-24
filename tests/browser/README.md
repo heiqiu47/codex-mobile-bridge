@@ -59,3 +59,13 @@ Codex 的环境路由、目录登记和创建回执由 `codex-entries.browser.js
 `checkCodexProjectCreation()` 可在原生 Codex 接入已启用时单独检查本机与 SSH CLI 项目流程。
 合成服务核验 `environments`、目录 `host`、WSL `entry`、`kind:'cli'`、目录身份和创建请求；
 这些聊天创建只返回内存中的合成会话，不发送消息、不调用模型。修改服务端夹具后应重启服务，重新加载页面不能更新旧进程的路由。
+
+
+## 图片添加到当前对话
+
+`image-composer.browser.js` 配合 `scripts/smoke-image-composer.cjs`，使用已安装的 Electron 执行隔离检查。
+它加载生产 Workbench、ComposerQuotes、ChatAttachments、图片预览器、样式和 `app.js` 中的实际回调，
+以合成图片验证 Codex、Claude、DSH 在 390 px 和宽屏下的文件标签、图片预览、“添加到对话”、返回聊天、可见附件和草稿保留。
+同一个文件标签在账号身份改变后仍可查看原图片，但不能将旧图片加入新的草稿。
+附件上传由内存夹具接收，HTTP 服务拒绝所有非 GET 请求，不调用真实网关或模型。
+检查结果和截图保存在 `.tmp/v215-chat-feedback/image-workbench-check/`。

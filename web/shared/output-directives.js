@@ -3,26 +3,27 @@
   const t = value => typeof BridgeI18n === 'undefined' ? value : BridgeI18n.t(value);
   const maxLength=64*1024;
   function read(source, offset = 0) {
-    if(!source.startsWith('::code-comment{',offset) && !source.startsWith(':codex-followup[',offset))return null;
+    if(!source.startsWith('::code-comment{',offset) && !source.startsWith(':codex-followup[',offset) && !source.startsWith(':codex-file-citation{',offset))return null;
     const item=readBounded(source.slice(offset,offset+maxLength));
     if(item)item.end+=offset;
     return item;
   }
   function readBounded(source, offset = 0) {
     const comment = source.startsWith('::code-comment{', offset);
-    const follow = !comment && /^:codex-followup\[([^\]\n]+)\]\{/.exec(source.slice(offset));
-    if (!comment && !follow) return null;
-    let cursor = offset + (comment ? 15 : follow[0].length);
+    const citation = source.startsWith(':codex-file-citation{', offset);
+    const follow = !comment && !citation && /^:codex-followup\[([^\]\n]+)\]\{/.exec(source.slice(offset));
+    if (!comment && !citation && !follow) return null;
+    let cursor = offset + (comment ? 15 : citation ? 21 : follow[0].length);
     const attributes = {};
     while (cursor < source.length) {
       while (/\s/.test(source[cursor] || '') && cursor < source.length) cursor++;
       if (source[cursor] === '}') {
         const keys = Object.keys(attributes);
-        if (comment ? !attributes.title || !attributes.body || !attributes.file || keys.some(key => !['title','body','file','start','end','priority'].includes(key)) : !attributes.prompt || keys.some(key => key !== 'prompt')) return null;
+        if (citation ? !attributes.path || typeof attributes.path !== 'string' || keys.some(key => !['path','artifact_kind','purpose'].includes(key) || typeof attributes[key] !== 'string') : comment ? !attributes.title || !attributes.body || !attributes.file || keys.some(key => !['title','body','file','start','end','priority'].includes(key)) : !attributes.prompt || keys.some(key => key !== 'prompt')) return null;
         if (comment && (['title','body','file'].some(key => typeof attributes[key] !== 'string') || ['start','end'].some(key => attributes[key] !== undefined && (!Number.isSafeInteger(attributes[key]) || attributes[key] < 1 || attributes[key] > 1000000)) || attributes.end !== undefined && (attributes.start === undefined || attributes.end < attributes.start) || attributes.priority !== undefined && (!Number.isInteger(attributes.priority) || attributes.priority < 0 || attributes.priority > 3))) return null;
-        return {kind:comment ? 'comment' : 'followup', label:follow?.[1], attributes, source:source.slice(offset, cursor + 1), end:cursor + 1};
+        return {kind:comment ? 'comment' : citation ? 'file' : 'followup', label:follow?.[1], attributes, source:source.slice(offset, cursor + 1), end:cursor + 1};
       }
-      const key = /^([a-z]+)=/.exec(source.slice(cursor));
+      const key = /^([a-z_]+)=/.exec(source.slice(cursor));
       if (!key || Object.hasOwn(attributes,key[1])) return null;
       cursor += key[0].length;
       let value;
@@ -49,7 +50,7 @@
     return null;
   }
   function readState(state,offset) {
-    if(!state.src.startsWith('::code-comment{',offset) && !state.src.startsWith(':codex-followup[',offset))return null;
+    if(!state.src.startsWith('::code-comment{',offset) && !state.src.startsWith(':codex-followup[',offset) && !state.src.startsWith(':codex-file-citation{',offset))return null;
     if(state.outputDirectiveBudget === undefined)state.outputDirectiveBudget=state.src.length*4+maxLength;
     if(state.outputDirectiveBudget <= 0)return null;
     const item=read(state.src,offset);
@@ -88,6 +89,13 @@
     if(item.kind === 'followup') {
       const action=button(item.label,event=>event.currentTarget.dispatchEvent(new CustomEvent('bridge-compose-prompt',{bubbles:true,detail:{text:item.attributes.prompt}})));
       action.textContent=item.label;action.className+=' output-followup';return action;
+    }
+    if(item.kind === 'file') {
+      const destination=resolve?.(item.attributes.path);
+      const file=document.createElement(destination ? 'a' : 'span');file.className='output-file-citation';
+      file.textContent=destination?.file?.name || item.attributes.path.split(/[\\/]/).pop() || item.attributes.path;
+      if(destination)file.href=destination.url;
+      return file;
     }
     const card=document.createElement('div');card.className='output-code-comment';
     const {title,body,file,start,end,priority}=item.attributes;

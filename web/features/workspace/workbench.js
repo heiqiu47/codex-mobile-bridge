@@ -442,6 +442,8 @@ class Workbench {
   }
   async preview(session, entry) {
     if (session !== this.current) return;
+    const imageContext={provider:session.provider||'codex',id:session.id,host:session.host||'local'};
+    const imageComposerScope=window.BridgeImageViewer?.composerScope(imageContext);
     const id = 'file:' + entry.path;
     if (session.files.some(t => t.id === id)) { this.select(id); const tab=session.files.find(t=>t.id===id); if(entry.sourceLocation) {tab.sourceLocation=entry.sourceLocation;tab.showSourceLocation?.();} return; }
     if (session.files.filter(t => t.id.startsWith('file:')).length >= 8) { this.notify(BridgeI18n.t('最多同时打开 8 个文件，请先关闭一个标签')); return; }
@@ -463,7 +465,7 @@ class Workbench {
       if (result.kind === 'pdf') {
         tab.pdf = BridgePdfPreview.create({url:downloadUrl, info:result});
         content.classList.add('wb-pdf-content'); content.append(tab.pdf.element);
-      } else if (result.kind === 'image') { const image = this.node('img'); image.src = 'data:' + result.mime + ';base64,' + result.data; image.alt = result.name; window.BridgeImageViewer?.registerWorkspaceImage(image, result); content.append(image); }
+      } else if (result.kind === 'image') { const image = this.node('img'); image.src = 'data:' + result.mime + ';base64,' + result.data; image.alt = result.name; window.BridgeImageViewer?.registerWorkspaceImage(image, result, imageContext, imageComposerScope); content.append(image); }
       else if (result.kind === 'text') {
         if (/\.md$/i.test(result.name) && !tab.sourceLocation) {content.__mermaidScope=this.mermaidScope;content.__mermaidIdentity=session.key+'|'+id;renderMarkdown(content, result.text);}
         else if (/\.html?$/i.test(result.name)) {

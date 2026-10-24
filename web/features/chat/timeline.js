@@ -27,12 +27,20 @@ class ChatTimeline {
       if(upward&&this.nearTop()&&!this.retryCount)this.loadOlder(100);
     };
     this.viewport.addEventListener('scroll',this.onScroll,{passive:true});
+    // At the scroll boundary wheel/touch intent produces no scroll event.
+    this.atHistoryEdge=()=>!this.suppress&&this.viewport.clientHeight&&this.viewport.scrollTop<=1&&!this.retryCount;
+    this.onWheel=event=>{if(event.deltaY<0&&this.atHistoryEdge())this.loadOlder(100);};
+    this.onTouchStart=event=>{this.touchY=event.touches.length===1?event.touches[0].clientY:null;};
+    this.onTouchMove=event=>{if(this.touchY===null||event.touches.length!==1)return;const y=event.touches[0].clientY;if(y-this.touchY>12&&this.atHistoryEdge()){this.touchY=y;this.loadOlder(100);}};
+    this.viewport.addEventListener('wheel',this.onWheel,{passive:true});
+    this.viewport.addEventListener('touchstart',this.onTouchStart,{passive:true});
+    this.viewport.addEventListener('touchmove',this.onTouchMove,{passive:true});
     this.older.onclick=()=>this.sequence<0||this.cached?this.start():this.loadOlder(this.retryCount||100);
     this.newer.onclick=()=>{this.jumpBottom();this.anchor=this.capture();};
     this.resize=new ResizeObserver(()=>this.restore(this.anchor,this.following));
     this.resize.observe(this.container);
   }
-  dispose(){this.abort.abort();window.BridgeMermaidCards?.clearScope(this.mermaidScope);clearTimeout(this.startRetry);this.resize.disconnect();this.viewport.removeEventListener('scroll',this.onScroll);this.newer.hidden=true;}
+  dispose(){this.abort.abort();window.BridgeMermaidCards?.clearScope(this.mermaidScope);clearTimeout(this.startRetry);this.resize.disconnect();this.viewport.removeEventListener('scroll',this.onScroll);this.viewport.removeEventListener('wheel',this.onWheel);this.viewport.removeEventListener('touchstart',this.onTouchStart);this.viewport.removeEventListener('touchmove',this.onTouchMove);this.newer.hidden=true;}
   atBottom(){return this.viewport.scrollHeight-this.viewport.scrollTop-this.viewport.clientHeight<110;}
   nearTop(){const nodes=[...this.container.children].filter(n=>!n.hidden);return nodes.length>0&&nodes.slice(0,11).some(n=>n.getBoundingClientRect().bottom>=this.viewport.getBoundingClientRect().top);}
   capture(accept=()=>true){if(!this.viewport.clientHeight)return this.anchor;const top=this.viewport.getBoundingClientRect().top;const nodes=[...this.container.children].filter(n=>!n.hidden&&accept(n));const node=nodes.find(n=>n.getBoundingClientRect().bottom>top)||nodes[nodes.length-1];return node?{key:node.dataset.key,offset:node.getBoundingClientRect().top-top}:null;}
@@ -89,14 +97,22 @@ class ChatTimeline {
   historyStatus(){this.older.hidden=!this.hasMore;this.older.disabled=this.busy;this.older.textContent=this.busy?timelineText('正在读取更早内容…'):this.retryCount?timelineText('历史加载失败，点击重试'):timelineText('查看更早内容');}
   async loadOlder(count){
     if(this.cached||this.busy||!this.hasMore||this.abort.signal.aborted)return;
-    const generation=this.generation,before=this.before;
     this.busy=true;this.retryCount=0;this.historyStatus();
     try{
-      const page=await this.read('timeline',{before,limit:count});
-      if(this.abort.signal.aborted||generation!==this.generation)return;
-      if(page.reset||page.epoch!==this.epoch){this.apply(page,true);return;}
-      this.apply(page,false,true);
-    }catch(e){if(this.abort.signal.aborted||generation!==this.generation)return;this.retryCount=count;}
+      // Keep the user's history intent across a concurrent live reset. A page
+      // of hidden tool activity may otherwise leave scrollTop stuck at zero.
+      for(let attempt=0;attempt<3;attempt++){
+        const generation=this.generation,before=this.before;
+        const page=await this.read('timeline',{before,limit:count});
+        if(this.abort.signal.aborted)return;
+        if(generation!==this.generation)continue;
+        if(page.reset||page.epoch!==this.epoch){this.apply(page,true);if(!this.hasMore)return;continue;}
+        if(page.hasMore&&(!page.rows.length||page.before===before)){this.retryCount=count;return;}
+        const visible=page.rows.some(row=>!this.rows.has(row.key)&&this.rowVisible(row));
+        this.apply(page,false,true);
+        if(visible||!this.hasMore||!this.active()||!this.nearTop())return;
+      }
+    }catch(e){if(this.abort.signal.aborted)return;this.retryCount=count;}
     finally{this.busy=false;if(!this.abort.signal.aborted)this.historyStatus();}
   }
   apply(page,reset=false,history=false,cached=false){
@@ -179,6 +195,7 @@ class ChatTimeline {
     if(row.role==='user'||row.role==='assistant'){
       const actions=document.createElement('div');actions.className='message-actions';
       const copy=document.createElement('button');copy.type='button';copy.className='plain message-copy';copy.textContent=timelineText('复制');copy.onclick=()=>window.BridgeClipboard?.copy(()=>this.fullText(row),copy);actions.append(copy);node.append(actions);
+      const quote=document.createElement('button');quote.type='button';quote.className='plain message-quote';quote.textContent=timelineText('引用');quote.onclick=()=>node.dispatchEvent(new CustomEvent('bridge-compose-quote',{bubbles:true,detail:{getText:()=>this.fullText(row),source:row.key}}));actions.append(quote);
     }
     if(row.attachments?.length){
       const attachments=document.createElement('div');attachments.className='timeline-attachments';
@@ -234,6 +251,7 @@ class ChatTimeline {
   relabel(){
     this.refreshActions();
     this.container.querySelectorAll('.message-copy').forEach(n=>n.textContent=timelineText('复制'));
+    this.container.querySelectorAll('.message-quote').forEach(n=>n.textContent=timelineText('引用'));
     this.container.querySelectorAll('.code-copy').forEach(n=>n.textContent=timelineText('复制代码'));
     this.historyStatus();
     for(const [key,entry] of this.nodes){

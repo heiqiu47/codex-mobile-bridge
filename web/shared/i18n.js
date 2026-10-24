@@ -2,6 +2,7 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"添加到对话":"Add to conversation",
 "消息含引用超过 100000 字符，请缩短后发送":"Message including quotes exceeds 100000 characters. Shorten it before sending.",
 "复制批注源码":"Copy review source",
 "复制链接":"Copy link",
@@ -121,6 +122,17 @@ const en={
 "Claude Code 未保留原会话权限模式":"Claude Code did not retain the original permission mode.",
 "Claude Code 未确认权限模式":"Claude Code did not confirm the permission mode.",
 "Claude 会话记录过大，无法读取":"This Claude transcript is too large to read.",
+"原生项目登记结果尚未确认，请在电脑 App 完成目录确认后重试同一请求；尚未创建聊天":"Project registration is unconfirmed. Confirm the folder in the desktop app, then retry this request. No chat has been created.",
+"原生项目打开结果尚未确认，请检查电脑 App；尚未创建聊天，不会重复登记":"Opening the project is unconfirmed. Check the desktop app. No chat has been created; registration will not be repeated.",
+"请在电脑 App 完成项目目录确认后重试同一请求；尚未创建聊天，不会重复登记":"Confirm the project folder in the desktop app, then retry this request. No chat has been created; registration will not be repeated.",
+"请先在电脑 Codex App 添加此 SSH 项目，再重新选择；当前接入尚不支持远程侧栏项目登记":"Add this SSH project in Codex Desktop first, then select it again. This connection cannot register remote sidebar projects yet.",
+"电脑 App 项目与运行时尚未对应，请检查所用 Codex App 和运行时配置后重试":"The desktop project and runtime do not match yet. Check the Codex app and runtime configuration, then retry.",
+"此目录对应多个原生项目，请在电脑 App 确认项目归属后重试":"This folder matches multiple native projects. Confirm the project in the desktop app before retrying.",
+"聊天已创建但原生项目归属未确认，请检查电脑 App，不要重复创建":"The chat was created, but its project is unconfirmed. Check the desktop app; do not create it again.",
+"聊天已创建但项目归属未持久化确认，请检查电脑 App，不要重复创建":"The chat was created, but its saved project assignment is unconfirmed. Check the desktop app; do not create it again.",
+"此 Codex 版本不支持原生项目关联，请更新电脑 Codex App 后重试，或在 App 中添加项目后重新选择":"This Codex runtime does not support native project assignment. Update Codex Desktop, or add the project in the app and select it again.",
+"请选择原会话中可分支的消息":"Select a message that supports branching in the original chat.",
+"当前 Claude 接入未提供原生分支接口":"This Claude connection does not provide native branching.",
 "Claude 会话身份或工作目录不一致":"The Claude chat identity or working directory does not match.",
 "不支持的 Claude Code 操作":"This Claude Code operation is not supported.",
 "原 Claude Code 账号配置已变化或不可用":"The original Claude Code account configuration has changed or is unavailable.",
@@ -503,6 +515,7 @@ const en={
 "上下文":"Context",
 "上下文使用量":"Context usage",
 "最近一次模型输入":"Latest model input",
+"请先在 Claude Desktop 的 Code 页面打开此目录并确认“信任工作区”，再返回重试。首条消息已保留。":"Open this folder in Claude Desktop Code and approve workspace trust, then return and retry. Your first message has been preserved.",
 "最近一次压缩后统计。":"Measured after the latest compaction.",
 "统计最近一次请求的输入与缓存 Token；不包含尚未发送的内容。":"Latest request input and cached tokens; unsent content is not included.",
 "当前客户端或会话模式未提供上下文用量接口。":"This client or session mode does not expose context usage.",

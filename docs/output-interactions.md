@@ -14,9 +14,13 @@ Web 和手机 App 共用回复渲染与编辑区。Codex 的桌面、CLI、SSH �
 
 ## 选中片段引用
 
-在回复中用鼠标或手机长按选中文字，再点编辑区上方的“引用所选文字”。引用片段可展开查看、单独移除，已有文字不被覆盖。手机的系统复制和选择菜单保持可用。
+Codex 和 Claude 的消息提供“引用”操作；也可在回复中用鼠标或手机长按选中文字，再点编辑区上方的“引用所选文字”。DSH 不显示消息引用和选中引用操作。引用片段可展开查看、单独移除，已有文字不被覆盖。手机的系统复制和选择菜单保持可用。
 
 引用和输入文字一起保存在当前设备的草稿中，按电脑、账号、应用、主机和会话区分。返回列表或切换会话后，再次进入会恢复对应草稿。引用只在主动发送时转换为普通引用文本；选择或添加引用不会发起模型请求。
+
+已授权的文件引用标记显示文件名，可通过当前会话的文件链接打开；不可访问的路径只显示文件名。
+
+图片预览中的“添加到对话”可将当前会话的图片添加到附件，保留已有文字和附件；添加后仍需主动发送。切换电脑、账号、应用、主机或会话后，旧预览不能向新的草稿添加图片。
 
 Mermaid 图表继续支持预览、源码复制和全屏缩放。
 
@@ -34,6 +38,10 @@ Authorized file links offer **View code location** in a file tab. Files outside 
 
 `codex://review` links retain their full target for copying or opening in Codex Desktop. Recognized GitHub pull requests also offer a web link. Desktop-only review state is not exposed as an arbitrary file.
 
-Select part of a reply and choose **Quote selected text** above the composer. Each quote can be expanded or removed. Native mobile selection and copy menus remain available. Quotes persist with the draft, scoped by gateway, account, application, host and chat. They are converted to ordinary quoted text only when you explicitly send.
+Codex and Claude messages offer **Quote**. You can also select part of a reply and choose **Quote selected text** above the composer. DSH does not offer message or selection quoting. Each quote can be expanded or removed. Native mobile selection and copy menus remain available. Quotes persist with the draft, scoped by gateway, account, application, host and chat. They are converted to ordinary quoted text only when you explicitly send.
+
+Authorized file citations display the filename and open through the current chat's file link. Inaccessible paths remain plain filenames.
+
+**Add to conversation** in an image preview adds an image from the current chat to its attachments, preserving existing text and attachments. Sending remains a separate action. Changing the gateway, account, application, host or chat invalidates an old preview's add action.
 
 Mermaid preview, source copying and full-screen zoom remain available.

@@ -7,13 +7,15 @@ await mkdir('.tmp',{recursive:true});
 const folder=await mkdtemp(join('.tmp','dsh-project-directory-'));
 const endpoint=join(folder,'endpoint.json'),configPath=join(folder,'config.json');
 await writeFile(configPath,JSON.stringify({token:'project-fixture',endpoint}));
-const calls=[],disposers=[];
+const calls=[],disposers=[],workspaces=[];
 const ctx={
   sessionController:{list:async()=>({items:[]}),
-    create:async value=>{calls.push(value);return value;},
+    create:async value=>{calls.push(value);const workspace=workspaces.find(row=>row.id===value.workspaceId);assert.ok(workspace,'Native project creation must include workspaceId');workspace.sessionIds.push(value.sessionId);return {sessionId:value.sessionId};},
     rename:async value=>calls.push(value),
     prompt:async()=>{throw Error('Project creation must not call a model');}},
-  workspaceRegistry:{list:()=>[]},
+  workspaceRegistry:{list:()=>workspaces,
+    resolveByPath:async path=>workspaces.find(row=>row.path===path),
+    create:async path=>{const row={id:'native-workspace',path,title:'Project',sessionIds:[]};workspaces.push(row);return row;}},
   on:()=>{},effect:setup=>disposers.push(setup()),
 };
 await apply(ctx,{configPath});
@@ -30,7 +32,14 @@ try{
   const projectDirectory={cwd,device:identity.dev,inode:identity.ino};
   const created=await request('create',{id:'explicit-project',title:'New project',projectDirectory});
   assert.equal(created.status,200);
-  assert.deepEqual(calls,[{sessionId:'session-explicit-project',cwd},{sessionId:'session-explicit-project',title:'New project'}]);
+  assert.deepEqual(calls,[{sessionId:'session-explicit-project',workspaceId:'native-workspace'},{sessionId:'session-explicit-project',title:'New project'}]);
+  assert.equal(workspaces.length,1);
+  assert.equal(workspaces[0].path,cwd);
+  assert.deepEqual(workspaces[0].sessionIds,['session-explicit-project']);
+  assert.equal((await(await request('projects')).json()).projects[0].workspaceId,'native-workspace');
+  await request('create',{id:'same-project',projectDirectory});
+  assert.equal(workspaces.length,1,'A second chat reuses the native workspace');
+  assert.deepEqual(workspaces[0].sessionIds,['session-explicit-project','session-same-project']);
   const before=calls.length;
   assert.equal((await request('create',{id:'changed-directory',projectDirectory:{...projectDirectory,inode:identity.ino+1}})).status,400);
   assert.equal((await request('create',{id:'missing-directory',projectDirectory:{...projectDirectory,cwd:join(cwd,'missing')}})).status,400);

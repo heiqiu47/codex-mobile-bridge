@@ -5,9 +5,17 @@ async function runImageZoomTests() {
   const settle=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
   const wait=async fn=>{for(let i=0;i<150;i++){if(fn())return;await new Promise(r=>setTimeout(r,20));}throw Error('Image preview did not settle');};
   const source='/api/sessions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/uploads/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/preview?host=local&variant=original';
+  let composerScope='fixture-draft';const addedImages=[];
+  BridgeImageViewer.configureComposer({scope:()=>composerScope,canReuse:value=>value.context?.id==='a'||value.url?.includes('/api/sessions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/'),add:async(value,scope)=>{if(scope!==composerScope)return false;addedImages.push(value.name);}});
   const opener=document.createElement('img');opener.dataset.imagePreview=source;opener.alt='Zoom fixture';opener.tabIndex=0;document.body.append(opener);
   const opened=async target=>{target.click();await wait(()=>document.querySelector('#image-preview-dialog')?.open&&document.querySelector('#image-preview-dialog img')?.naturalWidth>0);await settle();};
   const close=async()=>{document.querySelector('#image-preview-close').click();await settle();};
+  await opened(opener);
+  check(!document.querySelector('#image-preview-reuse').hidden&&addedImages.length===0,'Viewing an approved image offers an explicit Add to conversation action');
+  const originalDraft=document.querySelector('#message').value;document.querySelector('#image-preview-reuse').click();await settle();
+  check(addedImages.length===1&&!document.querySelector('#image-preview-dialog').open&&document.querySelector('#message').value===originalDraft,'Adding a viewed image preserves draft text and closes only after adding');
+  await opened(opener);composerScope='different-account';document.querySelector('#image-preview-reuse').click();await settle();
+  check(addedImages.length===1,'Changing the current draft identity invalidates an open image reuse action');await close();composerScope='fixture-draft';
   await opened(opener);
   const content=document.querySelector('.image-preview-content'),scale=()=>Number(document.querySelector('#image-preview-scale').textContent.replace('%',''))/100;
   const bounds=()=>{const b=content.querySelector('img').getBoundingClientRect(),c=content.getBoundingClientRect();return {left:b.left,top:b.top,width:b.width,height:b.height,cx:c.left+c.width/2,cy:c.top+c.height/2,c};};

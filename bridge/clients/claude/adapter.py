@@ -13,7 +13,7 @@ import bridge.clients.claude.model as model
 from bridge.clients.claude.context import context_fields
 from bridge.clients.claude.setup import inspect_installation, console_source, developer_mode_enabled, native_action, running_app, claude_data_home, background_running_app
 from bridge.clients.errors import BridgeUnavailable
-from bridge.clients.claude.mailbox import FileDesktop, MAX_REQUEST, CONNECTOR_REVISION
+from bridge.clients.claude.mailbox import FileDesktop, MAX_REQUEST, CONNECTOR_REVISION, workspace_trust_rejection
 from bridge.clients.claude.cli_session import ClaudeCli, project_account_identity
 from bridge.clients.claude.remote import RemoteClaudeCli
 from bridge.clients.claude.wsl import ClaudeCliRemotes
@@ -611,6 +611,7 @@ class Claude:
         return {'models': 'setModel' in methods, 'effort': 'setEffort' in methods,
                 'permissions': 'setPermissionMode' in methods, 'attachments': 'sendMessage' in methods,
                 'skills': 'getSupportedCommands' in methods, 'queue': kind == 'code', 'steer': kind == 'code',
+                'fork': kind == 'code' and 'mobileFork' in methods,
                 'contextUsage': any(method in methods for method in ('getContextUsageSummary', 'getContextUsage'))}
 
     def cli_projects(self, include_remote=True):
@@ -664,6 +665,19 @@ class Claude:
         return self.remote_cli.create(project['host'], project['alias'], project['origin'],
                                       project['cwd'], message, project.get('directoryIdentity'))
 
+    async def _start_desktop_project(self, project, options):
+        try:
+            value = await self.desktop.call(project['surface'], 'start', options)
+        except BridgeUnavailable as exc:
+            # Only a native workspace-trust rejection is a known blocked start.
+            # A disconnect or timeout keeps the usual uncertain write outcome.
+            if project['surface'] != 'code' or not workspace_trust_rejection(str(exc)):
+                raise
+            return {'status': 'blocked', 'code': 'workspace-trust-required',
+                    'workspace': project['cwd'],
+                    'message': '请先在 Claude Desktop 的 Code 页面打开此目录并确认“信任工作区”，再返回重试。首条消息已保留。'}
+        return {'status': 'ready', 'result': {'id': model.gateway_id(project['surface'], value['sessionId'])}}
+
     async def dispatch(self, action, sid, body):
         if action == 'create' and body.get('directoryProject'):
             project = body['directoryProject']
@@ -679,8 +693,7 @@ class Claude:
                 options.update(cwd=project['cwd'], useWorktree=False)
             else:
                 options['userSelectedFolders'] = [project['cwd']]
-            value = await self.desktop.call(project['surface'], 'start', options)
-            return {'status': 'ready', 'result': {'id': model.gateway_id(project['surface'], value['sessionId'])}}
+            return await self._start_desktop_project(project, options)
         if action == 'list':
             cli = await asyncio.to_thread(self.cli.listing)
             remote = await asyncio.to_thread(self.remote_cli.listing)
@@ -743,8 +756,7 @@ class Claude:
                 options.update(cwd=project['cwd'], useWorktree=False)
             else:
                 options['userSelectedFolders'] = project['folders']
-            value = await self.desktop.call(project['surface'], 'start', options)
-            return {'status': 'ready', 'result': {'id': model.gateway_id(project['surface'], value['sessionId'])}}
+            return await self._start_desktop_project(project, options)
         if sid not in self.index:
             await self.listing()
         saved = self.index.get(sid)
@@ -782,10 +794,10 @@ class Claude:
             row['contextUsageStatus'] = (usage_status if usage_status in ('available', 'unavailable', 'unsupported') else
                                          'available' if row['contextUsage'] is not None else
                                          'unavailable' if self.session_capabilities(kind)['contextUsage'] else 'unsupported')
-            if row['contextUsage'] is None:
-                observed = context_fields(raw)
-                if observed['contextUsage'] is not None:
-                    row.update(observed)
+            # Transcript request counters describe the last prompt, not the
+            # current context after compaction/replacement. Keep them separate
+            # when Desktop cannot provide its current context summary.
+            row['lastPromptContextUsage'] = context_fields(raw)['contextUsage']
             capabilities = self.session_capabilities(kind)
             if row['contextUsage'] is not None:
                 capabilities = {**capabilities, 'contextUsage': True}
@@ -794,9 +806,26 @@ class Claude:
             if before:
                 payload = json.dumps({'sid': sid, 'kind': kind, 'uuid': before}, separators=(',', ':')).encode()
                 before = 'claude.' + base64.urlsafe_b64encode(payload).decode().rstrip('=')
-            return {'connected': True, 'session': row, 'messages': model.transcript(raw), 'turns': model.turns(raw), 'notice': model.transcript_notice(raw),
+            messages = model.transcript(raw)
+            if capabilities['fork']:
+                anchors = {event.get('uuid') for event in model.rows(raw)
+                           if event.get('type') == 'assistant' and isinstance(event.get('uuid'), str)
+                           and not any(event.get(key) for key in ('isSynthetic', 'isMeta', 'isSidechain', 'parent_tool_use_id', 'isCompactSummary'))}
+                for message in messages:
+                    if message['role'] == 'assistant' and message.get('eventId') in anchors:
+                        message['forkMessageId'] = message['eventId']
+            return {'connected': True, 'session': row, 'messages': messages, 'turns': model.turns(raw), 'notice': model.transcript_notice(raw),
                     'history': {'before': before, 'hasMore': bool(history.get('hasMore'))},
                     'capabilities': capabilities, 'maxRequestBytes': MAX_REQUEST}
+        if action == 'fork':
+            if not self.session_capabilities(kind)['fork']:
+                raise ValueError('当前 Claude 接入未提供原生分支接口')
+            value = await self.desktop.call(kind, 'mobileFork', native,
+                                            {'id': body['id'], 'messageId': body['messageId']})
+            child = value.get('sessionId') if isinstance(value, dict) else None
+            if not isinstance(child, str) or not child or child == native:
+                raise BridgeUnavailable('Claude 尚未确认分支结果，请在桌面核对')
+            return {'status': 'ready', 'result': {'id': model.gateway_id(kind, child)}}
         if action == 'catalog':
             if body.get('section') == 'selection':
                 return {'currentModel': row.get('model'), 'currentEffort': row.get('effort')}

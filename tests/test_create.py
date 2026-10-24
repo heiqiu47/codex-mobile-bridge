@@ -94,9 +94,15 @@ class CreationTests(unittest.TestCase):
         path = self.root/'chosen-project'
         project = self.bridge.register_project(str(path.resolve()), True)
         self.assertTrue(path.is_dir())
-        with patch('bridge.app.service.create_empty', return_value=self.tid) as create, patch('bridge.app.service.open_in_desktop'):
+        def registered(cwd):
+            self.bridge.hosts.projects = lambda: [{'key': 'local|chosen', 'host': 'local',
+                'name': 'chosen-project', 'cwd': cwd}]
+        with patch('bridge.app.service.create_empty', return_value=self.tid) as create, \
+             patch('bridge.app.service.open_in_desktop'), \
+             patch('bridge.app.service.open_project_in_desktop', side_effect=registered) as opened_project:
             self.bridge.create_chat(project['key'], 'Chosen directory', str(uuid.uuid4()))
             self.assertEqual(Path(create.call_args.args[2]), path.resolve())
+            opened_project.assert_called_once_with(str(path.resolve()))
         self.bridge.close()
         self.bridge = Bridge(self.root, self.root/'data')
         self.assertEqual(self.bridge.projects()[0]['cwd'], str(path.resolve()))

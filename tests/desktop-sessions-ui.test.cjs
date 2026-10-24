@@ -871,7 +871,7 @@ test('selected assistant text becomes a removable quote without editing draft or
 });
 
 test('quote-only drafts restore per provider and session and serialize only on explicit submit',async()=>{
- for(const provider of ['claude','deepseek']){
+ for(const provider of ['claude']){
   const ui=await quoteChat(provider),view=ui.view;view.quotes.add('A\nB','reply');const original=view.draftScope;
   assert.equal(view.input.value,'');assert.equal(view.composerDrafts.load(original).quotes.length,1);assert.equal(ui.calls.filter(call=>call.body).length,0);
   view.prepareChat('b');view.bindDraftScope({draftAccountIdentity:'account-a'});assert.equal(view.quotes.quotes.length,0);
@@ -907,10 +907,70 @@ test('combined quote and draft limit blocks a send without truncating or clearin
 });
 
 test('failed durable storage cannot let an acknowledgement erase a later quote-only edit',async()=>{
- for(const provider of ['claude','deepseek']){
+ for(const provider of ['claude']){
   const ui=await quoteChat(provider),view=ui.view;ui.run("localStorage.setItem=()=>{throw Error('quota');}");view.quotes.add('first','reply');
   let resolve;ui.setHandler((url,body)=>body?new Promise(done=>resolve=done):Promise.resolve(url.includes('/detail')?{session:{id:'a',status:'idle'},draftAccountIdentity:'account-a',capabilities:{send:true},messages:[]}:{sessions:[]}));const sending=view.submit();assert.equal(view.composerDrafts.pending(view.draftScope),null);
   view.quotes.add('later','reply-2');assert.equal(view.input.value,'');resolve({status:'accepted'});await sending;
   assert.equal(view.input.value,'');assert.deepEqual(Array.from(view.quotes.quotes,row=>row.text),['first','later']);assert.deepEqual(Array.from(view.provisionalDrafts.get(provider+':a').quotes,row=>row.text),['first','later']);
  }
+});
+
+
+test('message quote uses complete text and rejects late results after draft identity changes',async()=>{
+ const ui=await quoteChat(),view=ui.view,node=view.messages.querySelector('.message');view.input.value='keep';view.input.oninput();
+ view.messages['onbridge-compose-quote']({target:node,detail:{getText:()=>Promise.resolve('complete answer'),source:'reply'}});await new Promise(setImmediate);
+ assert.equal(view.quotes.quotes[0].text,'complete answer');assert.equal(view.input.value,'keep');assert.equal(ui.calls.filter(call=>call.body).length,0);
+ let finish;const pending=view.quotes.quoteMessage(()=>new Promise(resolve=>finish=resolve),'reply',node);
+ view.prepareChat('b');view.bindDraftScope({draftAccountIdentity:'account-a'});finish('stale answer');await pending;assert.equal(view.quotes.quotes.length,0);
+});
+
+test('DSH hides quote actions and selection while preserving editable followup prompts',async()=>{
+ const ui=await quoteChat('deepseek'),view=ui.view,body=view.messages.querySelector('.message-body');
+ assert.equal(view.messages.querySelector('.message-actions').children.length,1);assert.equal(view.quotes.available(),true);
+ view.quotes.add('unsupported quote','reply');assert.equal(view.quotes.quotes.length,0);
+ ui.document.getSelection=()=>({isCollapsed:false,rangeCount:1,getRangeAt:()=>({startContainer:body,endContainer:body}),toString:()=>'Selected answer'});view.quotes.capture();assert.equal(view.quotes.action.hidden,true);
+ const button=ui.document.createElement('button');body.append(button);view.messages['onbridge-compose-prompt']({target:button,detail:{text:'Follow up'}});assert.equal(view.input.value,'Follow up');assert.equal(ui.calls.filter(call=>call.body).length,0);
+});
+
+test('last-prompt counters never become a current context percentage',async()=>{
+ const ui=await opened();
+ ui.view.applyDetail({session:{id:'a',title:'A',contextUsage:null,contextUsageStatus:'unavailable',lastPromptContextUsage:{usedTokens:112973,contextWindow:200000,measurement:'lastPrompt'}},messages:[]});
+ assert.ok(ui.view.contextRing.classList.contains('unknown'));assert.doesNotMatch(ui.view.contextButton.title,/56%/);
+ ui.view.contextDetails();const dialog=ui.document.querySelector('dialog');assert.match(dialog.textContent,/112,973/);assert.match(dialog.textContent,/最近一次模型输入/);assert.doesNotMatch(dialog.textContent,/56\.5%/);dialog.close();
+ ui.view.applyDetail({session:{id:'a',title:'A',contextUsage:{usedTokens:112973,contextWindow:200000,measurement:'lastPrompt'}},messages:[]});
+ assert.ok(ui.view.contextRing.classList.contains('unknown'));
+ ui.view.applyDetail({session:{id:'a',title:'A',contextUsage:{usedTokens:67500,contextWindow:200000}},messages:[]});assert.match(ui.view.contextButton.title,/34%/);
+});
+
+test('native branch actions require capability and canonical message identity and preserve source draft',async()=>{
+ const ui=await opened(),message={id:'display-id',role:'assistant',text:'Answer',forkMessageId:'native-uuid'};
+ ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:false},messages:[message]});
+ assert.equal(ui.view.messages.querySelectorAll('button').some(b=>b.textContent==='从这里分支'),false);
+ ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:true},messages:[{...message,forkMessageId:null}]});
+ assert.equal(ui.view.messages.querySelectorAll('button').some(b=>b.textContent==='从这里分支'),false);
+ ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:true},messages:[message]});
+ ui.view.input.value='source draft';let saved=0,openedChild;ui.view.saveDraft=()=>{saved++;};ui.view.open=async id=>{openedChild=id;};
+ ui.setHandler(async(url,body)=>body?{status:'ready',result:{id:'child'}}:{sessions:[]});
+ await ui.view.messages.querySelectorAll('button').find(b=>b.textContent==='从这里分支').click();
+ const branch=ui.calls.find(c=>c.url.endsWith('/fork'));assert.equal(branch.body.sessionId,'a');assert.equal(branch.body.messageId,'native-uuid');assert.equal(Object.hasOwn(branch.body,'text'),false);assert.equal(openedChild,'child');assert.ok(saved>0);assert.equal(ui.view.input.value,'source draft');
+});
+
+test('uncertain branch retries keep the same receipt and a late result cannot switch chats',async()=>{
+ const ui=await opened();ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:true},messages:[]});ui.view.refresh=async()=>{};let finish;const ids=[];
+ ui.setHandler(async(url,body)=>{if(body){ids.push(body.id);return {status:'unknown',message:'Check Desktop'};}return {sessions:[]};});
+ await ui.view.fork('native-uuid');ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:true},messages:[]});await ui.view.fork('native-uuid');assert.equal(ids.length,2);assert.equal(ids[0],ids[1]);
+ ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:true},messages:[]});let selected;ui.view.open=async id=>{selected=id;};ui.setHandler((url,body)=>body?new Promise(resolve=>finish=resolve):Promise.resolve({sessions:[]}));
+ const branch=ui.view.fork('other-native-uuid');ui.view.sid='b';finish({status:'ready',result:{id:'child'}});await branch;assert.equal(selected,undefined);
+});
+
+test('Claude trust refusal preserves creation fields and explicit retry uses a new receipt',async()=>{
+ const ui=await opened(),ids=[];let attempts=0;
+ ui.setHandler(async(url,body)=>{
+  if(url.includes('/projects')&&!body)return {projects:[{key:'p',surface:'code',cwd:'/trusted-later',name:'Project'}],environments:[{key:'code',surface:'code',createRequiresMessage:true}]};
+  if(url.endsWith('/create')){ids.push(body.id);attempts++;return {status:'blocked',code:'workspace-trust-required',message:'请先在 Claude Desktop 的 Code 页面打开此目录并确认“信任工作区”，再返回重试。首条消息已保留。'};}
+  return {sessions:[]};
+ });
+ await ui.view.create();const dialog=ui.document.querySelector('dialog'),form=dialog.querySelector('form'),message=dialog.querySelector('textarea'),title=dialog.querySelector('input');title.value='Preserved title';message.value='Preserved first instruction';
+ await form.onsubmit({preventDefault(){}});assert.equal(dialog.open,true);assert.match(dialog.textContent,/信任工作区/);assert.equal(title.value,'Preserved title');assert.equal(message.value,'Preserved first instruction');
+ await form.onsubmit({preventDefault(){}});assert.equal(attempts,2);assert.notEqual(ids[0],ids[1]);assert.equal(message.value,'Preserved first instruction');
 });

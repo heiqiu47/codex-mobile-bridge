@@ -17,7 +17,16 @@ IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
 
 def code_comment_references(text):
     """Extract directives outside code, preserving their quoted Markdown content."""
-    candidates = {start: (end, path) for start, end, path in _code_comment_candidates(text)}
+    yield from _directive_references(text, _code_comment_candidates(text))
+
+
+def file_citation_references(text):
+    """Extract complete file citations; grant resolution still enforces its roots."""
+    yield from _directive_references(text, _code_comment_candidates(text, citation=True))
+
+
+def _directive_references(text, matches):
+    candidates = {start: (end, path) for start, end, path in matches}
     fence, inline, consumed, base = None, None, 0, 0
     for line in text.splitlines(keepends=True):
         offset = max(0, consumed - base)
@@ -61,23 +70,25 @@ def code_comment_references(text):
         base += len(line)
 
 
-def _code_comment_candidates(value):
+def _code_comment_candidates(value, citation=False):
     """Forward-only bounded parsing; Markdown context is checked by the caller."""
-    attribute = re.compile(r'\s*([a-zA-Z]+)=')
+    attribute = re.compile(r'\s*([a-zA-Z_]+)=')
+    marker = ':codex-file-citation{' if citation else '::code-comment{'
+    allowed = ('path', 'artifact_kind', 'purpose') if citation else ('title', 'body', 'file', 'start', 'end', 'priority')
     offset = 0
     while True:
-        offset = value.find('::code-comment{', offset)
+        offset = value.find(marker, offset)
         if offset < 0:
             return
         beginning = offset
-        cursor, attrs, valid = offset + 15, {}, True
+        cursor, attrs, valid = offset + len(marker), {}, True
         limit = min(len(value), offset + 65536)
         while cursor < limit:
             if value[cursor] == '}':
                 cursor += 1
                 break
             field = attribute.match(value, cursor)
-            if not field or field[1] in attrs or field[1] not in ('title', 'body', 'file', 'start', 'end', 'priority'):
+            if not field or field[1] in attrs or field[1] not in allowed:
                 valid = False
                 break
             key, cursor = field[1], field.end()
@@ -110,8 +121,13 @@ def _code_comment_candidates(value):
                 cursor += 1
         else:
             valid = False
-        offset = max(offset + 15, cursor)
-        if not valid or not all(isinstance(attrs.get(key), str) and attrs[key].strip() for key in ('title', 'body', 'file')):
+        offset = max(offset + len(marker), cursor)
+        required = ('path',) if citation else ('title', 'body', 'file')
+        if not valid or not all(isinstance(attrs.get(key), str) and attrs[key].strip() for key in required):
+            continue
+        if citation:
+            if all(isinstance(value, str) for value in attrs.values()):
+                yield beginning, cursor, attrs['path']
             continue
         if any(key in attrs and (not isinstance(attrs[key], int) or not 1 <= attrs[key] <= 1000000) for key in ('start', 'end')):
             continue
@@ -245,6 +261,7 @@ def artifact_paths(state, codex_home):
                 for match in MARKDOWN_PATH.finditer(item.get('text', '')):
                     candidates.add(match[1] or match[2])
                 comments.update(code_comment_references(item.get('text', '')))
+                candidates.update(file_citation_references(item.get('text', '')))
             for attachment in item.get('content', []) if isinstance(item.get('content'), list) else []:
                 if isinstance(attachment, dict) and attachment.get('type') in ('localImage', 'image', 'file'):
                     value = attachment.get('path', attachment.get('url'))

@@ -13,10 +13,10 @@ from bridge.clients.errors import BridgeUnavailable
 from bridge.clients.deepseek.setup import MARKER, insertion, verified_directory, legacy_account_configured
 
 PLUGIN_ID = re.compile(r'''["']?id["']?\s*:\s*["']?codex-mobile-desktop(?:["'\s,}]|$)''')
-BRIDGE_REVISION = 4
-# Revisions 3 and 4 share the complete native-agent lifecycle schema. Revision
-# 4 only adds presentation fields; a verified revision 3 can prove safe restart.
-LIFECYCLE_REVISIONS = (3, BRIDGE_REVISION)
+BRIDGE_REVISION = 5
+# Revisions 3–5 share the complete native-agent lifecycle schema; presentation
+# and fork capability additions do not invalidate an older idle snapshot.
+LIFECYCLE_REVISIONS = (3, 4, BRIDGE_REVISION)
 UPDATE_REASON = 'Harness 接入需要更新，请结束任务后点击“重启并接入”'
 
 
@@ -263,10 +263,19 @@ def turns(records):
 
 def messages(records):
     result = []
+    final_assistant = None
     for item in records:
         event = item.get('event', {})
         data = event.get('data') or {}
         kind = event.get('type')
+        if kind == 'turn/start':
+            final_assistant = None
+        if kind == 'turn/end':
+            if (final_assistant is not None and isinstance(data.get('reason'), dict)
+                    and data['reason'].get('kind') == 'completed'
+                    and type(event.get('seq')) is int and event['seq'] >= 0):
+                final_assistant['forkMessageId'] = str(event['seq'])
+            final_assistant = None
         if kind in ('user/message', 'assistant/message'):
             content = data.get('message', data).get('content', [])
             if isinstance(content, str):
@@ -275,6 +284,8 @@ def messages(records):
                 text = block.get('text') or block.get('thinking') or ('[图片]' if block.get('type') == 'image' else '')
                 if text:
                     result.append({'id': str(event.get('seq'))+':'+str(i), 'role': 'reasoning' if block.get('type') in ('thinking', 'reasoning') else kind.split('/')[0], 'text': text})
+                    if kind == 'assistant/message' and result[-1]['role'] == 'assistant':
+                        final_assistant = result[-1]
         elif kind in ('tool/call', 'tool/result', 'todo/write'):
             result.append({'id': str(event.get('seq')), 'role': 'activity', 'title': data.get('name') or data.get('toolName') or kind, 'text': json.dumps(data, ensure_ascii=False, indent=2)})
     return result

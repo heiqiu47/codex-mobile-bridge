@@ -31,7 +31,7 @@ from bridge.clients.codex.catalog import Catalog, CatalogError, ModelStore, MODE
 from bridge.platforms.codex_daemon_env import DaemonEnvironmentUnavailable
 from bridge.clients.codex.remote import AppHosts, RemoteStore, RemoteCatalog, RemoteUnavailable, ssh_read, ssh_download, payload
 from bridge.features.sessions.create import (
-    rename_thread, independent_directory, create_empty, fork_copy, open_in_desktop,
+    rename_thread, independent_directory, create_empty, fork_copy, open_in_desktop, open_project_in_desktop,
     CreationError, CreationUnavailable, ForkUnavailable, project_directory,
     project_directory_listing,
 )
@@ -540,12 +540,19 @@ class Bridge:
     def projects(self):
         projects = [dict(project, type=project.get('type', 'desktop'))
                     for project in self.directory_projects.list({'local', *self.hosts.hosts()})]
-        known = {(project['host'], project.get('cwd'), project.get('type', 'desktop')) for project in projects}
+        def identity(project):
+            cwd = project.get('cwd') or ''
+            cwd = os.path.normcase(os.path.realpath(cwd)) if project['host'] == 'local' else cwd.rstrip('/')
+            return project['host'], cwd, project.get('type', 'desktop')
+        known = {identity(project): project for project in projects}
         for project in self.hosts.projects():
-            identity = (project['host'], project.get('cwd'), 'desktop')
-            if identity not in known:
-                projects.append(dict(project, type='desktop'))
-                known.add(identity)
+            key = identity(project)
+            if key in known:
+                known[key]['nativeProject'] = True
+            else:
+                row = dict(project, type='desktop', nativeProject=True)
+                projects.append(row)
+                known[key] = row
         candidates = [(self.host, self)]
         if self.host == 'local':
             for host in self.hosts.hosts():
@@ -607,6 +614,33 @@ class Bridge:
         source += '\nprint(json.dumps(project_directory_listing(**' + payload({'value':path,'hidden':hidden,'name':name,'identity':identity}) + ')))\n'
         return ssh_read(info['alias'], source)
 
+    def _saved_desktop_project(self, cwd):
+        canonical = os.path.normcase(os.path.realpath(cwd))
+        return next((row for row in self.hosts.projects() if row['host'] == 'local' and
+                     os.path.normcase(os.path.realpath(row['cwd'])) == canonical), None)
+
+    def _confirm_desktop_project(self, project, entry):
+        cwd = project_directory(project['cwd'], expected=project['directoryIdentity'])['cwd']
+        native = self._saved_desktop_project(cwd)
+        if native is None:
+            if entry.get('phase') in ('registering-project', 'project-ready'):
+                raise CreationError('原生项目登记结果尚未确认，请在电脑 App 完成目录确认后重试同一请求；尚未创建聊天')
+            entry['phase'] = 'registering-project'
+            self._save_creations()
+            try:
+                open_project_in_desktop(cwd)
+            except (OSError, CreationError, subprocess.SubprocessError) as exc:
+                raise CreationError('原生项目打开结果尚未确认，请检查电脑 App；尚未创建聊天，不会重复登记') from exc
+            deadline = time.monotonic() + 12
+            while native is None and time.monotonic() < deadline:
+                time.sleep(.25)
+                native = self._saved_desktop_project(cwd)
+            if native is None:
+                raise CreationError('请在电脑 App 完成项目目录确认后重试同一请求；尚未创建聊天，不会重复登记')
+        entry['phase'] = 'project-ready'
+        self._save_creations()
+        return dict(project, nativeProject=True, name=native.get('name') or project.get('name'))
+
     @operation
     def create_chat(self, project_key, title, request_id, kind='desktop'):
         if not isinstance(request_id, str):
@@ -630,7 +664,7 @@ class Bridge:
                         entry.get('kind', 'desktop') != kind or
                         entry.get('cwd', project['cwd']) != project['cwd']):
                     raise ValueError('同一创建请求不能用于不同内容')
-                if not entry.get('id'):
+                if not entry.get('id') and entry.get('phase') not in ('registering-project', 'project-ready'):
                     raise CreationError('上次创建结果尚不确定，请先刷新聊天列表并检查电脑 App，避免重复创建')
             else:
                 if project.get('hostIdentity') and self.hosts.hosts().get(project['host'], {}).get('alias') != project['hostIdentity']:
@@ -641,12 +675,18 @@ class Bridge:
                             cli_bridge.cli_sessions.alias != self.hosts.hosts()[project['host']]['alias']):
                         raise ValueError('原 SSH 主机配置已变化，请重启网关后重新选择项目')
                 if kind == 'desktop':
+                    if project['host'] != 'local' and project.get('directoryIdentity') and not project.get('nativeProject'):
+                        raise CreationUnavailable('请先在电脑 Codex App 添加此 SSH 项目，再重新选择；当前接入尚不支持远程侧栏项目登记')
                     self.ipc.connect()
                 entry = {'project': project_key, 'title': title, 'kind': kind,
                          'cwd': project['cwd'], 'host': project['host'],
                          'directoryIdentity': project.get('directoryIdentity'), 'at': time.time()}
                 self.creations[request_id] = entry
                 self._save_creations()
+            if not entry.get('id'):
+                if (kind == 'desktop' and project.get('directoryIdentity') and
+                        (not project.get('nativeProject') or entry.get('phase') in ('registering-project', 'project-ready'))):
+                    project = self._confirm_desktop_project(project, entry)
                 if kind == 'cli':
                     def mark_started():
                         entry['started'] = True
@@ -680,11 +720,20 @@ class Bridge:
                     try:
                         cwd = (project_directory(project['cwd'], expected=project['directoryIdentity'])['cwd']
                                if project.get('directoryIdentity') else project['cwd']) or independent_directory(self.data_dir, request_id)
-                        thread_id = create_empty(self.catalog_reader.executable, self.codex_home, cwd, title)
+                        native_project = ({'name': project.get('name'),
+                            'required': bool(project.get('directoryIdentity') and not project.get('nativeProject'))} if project['cwd'] else None)
+                        if entry.get('phase') == 'project-ready':
+                            entry['phase'] = 'creating-thread'
+                            self._save_creations()
+                        thread_id = create_empty(self.catalog_reader.executable, self.codex_home, cwd, title,
+                                                 project=native_project)
                     except CreationUnavailable:
-                        # No process started: retrying this request cannot create
-                        # a duplicate. Keep uncertain post-start results recorded.
-                        del self.creations[request_id]
+                        # No thread mutation happened: retrying this request cannot
+                        # create a duplicate. Keep uncertain post-start results recorded.
+                        if entry.get('phase') == 'creating-thread':
+                            entry['phase'] = 'project-ready'
+                        else:
+                            del self.creations[request_id]
                         self._save_creations()
                         raise
                 else:

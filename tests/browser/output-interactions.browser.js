@@ -25,6 +25,7 @@ window.checkOutputInteractions=async function(){
   assert(body.querySelector('code').textContent.includes(':codex-followup'),provider+'/'+host+' fenced example stays source');
   const follow=[...body.querySelectorAll('button')].find(n=>n.textContent==='补充回归测试');follow.click();
   assert(input.value.startsWith(draft)&&input.value.endsWith('请补充草稿保留的回归测试，但先给我查看方案。'),provider+'/'+host+' followup appends editable draft');
+  if(provider==='deepseek'){assert(quotes.action.hidden&&!quotes.quotes.length,'deepseek selection quoting stays hidden');continue;}
   const text=body.querySelector('p').firstChild,range=document.createRange();range.setStart(text,0);range.setEnd(text,10);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);document.dispatchEvent(new Event('selectionchange'));
   assert(!quotes.action.hidden,provider+'/'+host+' selection offers quote');
   const before=input.value;quotes.action.dispatchEvent(new Event('pointerdown'));quotes.action.click();

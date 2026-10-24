@@ -1,3 +1,30 @@
+<a id="v215-chat-feedback"></a>
+
+# v2.1.5 项目与会话交互修订（2026-10-24，本地候选）
+
+分支 `fix/v2.1.5-chat-feedback`，基于已安装的 `5e6dd00` Test。没有推送、合并 main 或发布。
+
+- Codex 新本机项目通过 App 自身登记目录，再创建并核对聊天的原生项目归属；DSH 通过原生工作区 ID 创建聊天。仅选择目录不会触发登记。Claude 的明确工作区信任拒绝改为可操作提示，保留首条消息；其他未知写入结果仍禁止重放。
+- Codex 补齐消息引用；当前会话的授权图片可从预览添加回原草稿。DSH 隐藏无效引用入口。文件引用标记按既有文件权限显示文件名，不扩展路径访问权限。
+- Claude Desktop Code、DSH 仅在原生能力可用时显示“从这里分支”，使用原生消息边界并保留原草稿和写操作回执。Claude 当前上下文只使用原生摘要；最近一次请求用量单独标注，不再充当当前占用百分比。
+- 上翻历史处理触顶手势、隐藏工具记录和并发实时重置，单次请求意图最多补三页，保持阅读锚点。真实“筛选国考可报考岗位”会话的只读索引和原生跟随检查均可取得 355 条记录；没有激活、发送或调用模型。
+
+| 检查 | 结果与边界 |
+| --- | --- |
+| Node 前端回归 | 984 项，983 通过、1 平台跳过，无失败 |
+| Python 定向回归 | 160 项，159 通过、1 Windows URL 启动器跳过；覆盖项目登记回执、信任拒绝、分支、上下文、文件边界、历史和资源清单 |
+| 真实 Chromium 浏览器 | 既有时间线/缓存/可见性 43 项；新增窄/宽屏历史与引用 20 项；输出交互 130 项；使用合成内容，不访问真实聊天写接口 |
+| 真实 Electron 图片交互 | 预览布局 55 项；生产 Workbench、草稿、附件集成 54 项，390/1280px；没有发送或 HTTP 写请求 |
+| 原生接口证据 | 只读核对本机 Codex、Claude、DSH 安装包中的登记、分支及上下文接口。隔离 Codex 运行时创建空聊天验证存储关联；该检查不等同于桌面侧栏的完整实测 |
+
+真实桌面新项目分组、Claude/DSH 原生分支以及用户指定会话的上下文数值仍需 Test 实测；不把合成接口检查记为原生端到端通过。新 SSH Desktop 目录尚无已验证的原生项目登记入口，需先在电脑 App 添加项目；已有 SSH 项目和 CLI 创建保留。Claude Cowork 没有已确认的原生分支接口，不显示该操作。手机触摸和系统输入法结果以真机复测为准。
+
+本机诊断、浏览器结果与构建记录保存在忽略目录 `.tmp/v215-chat-feedback/`。不改正式版、账号、原会话连接、配置和手机绑定，不自动确认工作区信任。
+
+**English:** This local candidate fixes native project association, known Claude workspace-trust refusals, message/image reuse, native Code/Harness branching, context measurement semantics, and in-place history pagination. Frontend and targeted backend regressions pass, with real-browser synthetic coverage at narrow and wide widths. Installed native sources establish the interface contracts; native sidebar/branch behavior and the reported live context count still require user acceptance. No messages or model requests were sent, and no GitHub publication occurred.
+
+---
+
 <a id="v214"></a>
 
 # v2.1.4 正式发布验收（2026-10-24）

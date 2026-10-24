@@ -29,7 +29,7 @@ from bridge.clients.codex.remote import ssh_read, payload
 from bridge.resources import source_text
 
 READS = {'list', 'detail', 'catalog', 'projects', 'account', 'access'}
-WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume'}
+WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume', 'fork'}
 
 
 class TaskStateUnavailable(ValueError):
@@ -751,6 +751,10 @@ class DesktopSessions:
             raise ValueError('请输入 1–100000 字的消息')
         if action == 'create' and (not isinstance(body.get('title', ''), str) or len(body.get('title', '')) > 120):
             raise ValueError('聊天名称不能超过 120 字')
+        if action == 'fork' and (set(body) - {'id', 'messageId'} or
+                                 not isinstance(body.get('messageId'), str) or
+                                 not body['messageId'].strip() or len(body['messageId']) > 512):
+            raise ValueError('请选择原会话中可分支的消息')
         fingerprint = hashlib.sha256(json.dumps([provider, action, sid, body], sort_keys=True).encode()).hexdigest()
         # Normal chat writes keep progress reads available; account/lifecycle
         # operations additionally invalidate the connector binding.

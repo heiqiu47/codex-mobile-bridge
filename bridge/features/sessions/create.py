@@ -21,7 +21,7 @@ class CreationError(RuntimeError):
 
 
 class CreationUnavailable(CreationError):
-    """The runtime never started, so no thread mutation could have happened."""
+    """No thread mutation could have happened."""
 
 
 class ForkUnavailable(CreationUnavailable):
@@ -203,13 +203,66 @@ def project_directory_listing(value=None, hidden=False, name=None, identity=None
         raise ValueError('无法浏览此目录，请检查访问权限') from exc
 
 
-def create_empty(executable, codex_home, cwd, title):
+def _native_project_support(executable, required):
+    """Inspect this runtime before a new-directory operation can mutate it."""
+    kwargs = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
+    try:
+        with tempfile.TemporaryDirectory(prefix='project-schema-') as folder:
+            result = subprocess.run([str(executable), 'app-server', 'generate-json-schema', '--experimental', '--out', folder],
+                                    capture_output=True, timeout=30, **kwargs)
+            def schema(name):
+                paths = list(Path(folder).rglob(name + '.json'))
+                return json.loads(paths[0].read_text(encoding='utf-8')) if paths else {}
+            supported = (result.returncode == 0 and
+                         'projectId' in schema('ThreadStartParams').get('properties', {}) and
+                         bool(schema('ProjectListResponse').get('properties', {}).get('data')))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        supported = False
+    if required and not supported:
+        raise CreationUnavailable('此 Codex 版本不支持原生项目关联，请更新电脑 Codex App 后重试，或在 App 中添加项目后重新选择')
+    return supported
+
+
+def _native_project(request, cwd, project):
+    canonical = lambda value: os.path.normcase(os.path.realpath(value))
+    matches = []
+    cursor = None
+    seen = set()
+    while True:
+        page = request('project/list', {'cursor': cursor, 'limit': 100})
+        matches.extend(row for row in page['data'] if any(
+            canonical(root['path']) == canonical(cwd) for root in row.get('roots', [])))
+        cursor = page.get('nextCursor')
+        if cursor is None:
+            break
+        if cursor in seen:
+            raise CreationError('原生项目列表游标无效，请在电脑 App 检查项目')
+        seen.add(cursor)
+    named = [row for row in matches if row.get('name') == project.get('name')]
+    selected = named if named else matches
+    if len(selected) > 1:
+        raise CreationError('此目录对应多个原生项目，请在电脑 App 确认项目归属后重试')
+    if selected:
+        return selected[0]['id']
+    raise CreationUnavailable('电脑 App 项目与运行时尚未对应，请检查所用 Codex App 和运行时配置后重试')
+
+
+def create_empty(executable, codex_home, cwd, title, project=None):
+    supported = project is not None and _native_project_support(executable, project.get('required', False))
     def create(request):
-        result = request('thread/start', {'cwd': cwd, 'ephemeral': False})
+        project_id = _native_project(request, cwd, project) if supported else None
+        params = {'cwd': cwd, 'ephemeral': False}
+        if project_id is not None:
+            params['projectId'] = project_id
+        result = request('thread/start', params)
         thread_id = result['thread']['id']
         uuid.UUID(thread_id)
+        if project_id is not None and result['thread'].get('projectId') != project_id:
+            raise CreationError('聊天已创建但原生项目归属未确认，请检查电脑 App，不要重复创建')
         request('thread/name/set', {'threadId': thread_id, 'name': title})
-        request('thread/read', {'threadId': thread_id, 'includeTurns': True})
+        saved = request('thread/read', {'threadId': thread_id, 'includeTurns': True})
+        if project_id is not None and saved['thread'].get('projectId') != project_id:
+            raise CreationError('聊天已创建但项目归属未持久化确认，请检查电脑 App，不要重复创建')
         return thread_id
     return _runtime_operation(executable, codex_home, cwd, create)
 
@@ -250,11 +303,21 @@ def fork_copy(executable, codex_home, cwd, source_id, turn_id, title, settings):
     return _runtime_operation(executable, codex_home, cwd, fork)
 
 
+def open_project_in_desktop(cwd):
+    # Native newThread navigation registers the folder and opens an empty
+    # composer. Never include a prompt, message, or submit instruction.
+    _open_desktop_url('codex://threads/new?' + urlencode({'path': cwd}))
+
+
 def open_in_desktop(thread_id, host):
     uuid.UUID(thread_id)
     url = 'codex://threads/' + thread_id
     if host != 'local':
         url += '?' + urlencode({'hostId': host})
+    _open_desktop_url(url)
+
+
+def _open_desktop_url(url):
     if sys.platform == 'darwin':
         subprocess.run(['open', url], check=True, timeout=10,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

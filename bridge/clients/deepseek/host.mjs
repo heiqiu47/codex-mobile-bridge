@@ -30,7 +30,7 @@ export async function apply(ctx,config){
   const list=async()=> (await ctx.sessionController.list({},signal())).items;
   const find=async id=>{const row=(await list()).find(r=>r.sessionId===id);if(!row)throw Error('DeepSeek 会话不存在');return row;};
   const values=row=>row.projections?.values||{};
-  const capabilities=()=>({models:typeof ctx.sessionController.selectModel==='function',effort:typeof ctx.sessionController.selectModel==='function',permissions:typeof ctx.permissionPresets?.set==='function',attachments:typeof ctx.sessionController.prompt==='function',skills:typeof ctx.sessionSkillCatalog?.list==='function',queue:typeof ctx.sessionController.prompt==='function',steer:typeof ctx.sessionController.prompt==='function'});
+  const capabilities=()=>({models:typeof ctx.sessionController.selectModel==='function',effort:typeof ctx.sessionController.selectModel==='function',permissions:typeof ctx.permissionPresets?.set==='function',attachments:typeof ctx.sessionController.prompt==='function',skills:typeof ctx.sessionSkillCatalog?.list==='function',queue:typeof ctx.sessionController.prompt==='function',steer:typeof ctx.sessionController.prompt==='function',fork:typeof ctx.sessionController.fork==='function'});
   const contextUsage=row=>{
     const pressure=values(row).contextPressure||{},used=pressure.projectedTokens??pressure.pressureTokens,limit=pressure.contextWindow;
     return Number.isFinite(used)&&used>=0&&Number.isFinite(limit)&&limit>0
@@ -107,12 +107,12 @@ export async function apply(ctx,config){
   function lifecycle(){
       // The runtime registry includes child agents omitted from the chat list.
       // This snapshot is requested only before a native quit/restart.
-      if(typeof ctx.agents.list!=='function')return {connected:true,bridgeRevision:4,complete:false,sessions:[]};
+      if(typeof ctx.agents.list!=='function')return {connected:true,bridgeRevision:5,complete:false,sessions:[]};
       const agents=ctx.agents.list();
-      if(!Array.isArray(agents))return {connected:true,bridgeRevision:4,complete:false,sessions:[]};
+      if(!Array.isArray(agents))return {connected:true,bridgeRevision:5,complete:false,sessions:[]};
       const sessions=agents.map(agent=>({id:agent.id,status:agent.status==='running'?'active':agent.status==='idle'?'idle':'unknown',runtimeKnown:['idle','running'].includes(agent.status),requests:[...questions.values()].filter(q=>q.sid===agent.id).map(q=>q.public)}));
       for(const question of questions.values())if(!sessions.some(s=>s.id===question.sid))sessions.push({id:question.sid,status:'waiting',runtimeKnown:true,requests:[question.public]});
-      return {connected:true,bridgeRevision:4,complete:sessions.every(s=>typeof s.id==='string'&&s.id.length>0),sessions};
+      return {connected:true,bridgeRevision:5,complete:sessions.every(s=>typeof s.id==='string'&&s.id.length>0),sessions};
   }
   const idle=runtime=>runtime.complete&&runtime.sessions.every(s=>s.runtimeKnown&&s.status==='idle'&&!s.requests.length);
   const quitFailed=error=>{quitting=false;ctx.logger?.error?.('Harness native quit failed: '+String(error.message||error));};
@@ -135,10 +135,10 @@ export async function apply(ctx,config){
       quitting=true;
       return {status:'accepted',pid:process.pid,generation};
     }
-    if(action==='status')return {connected:true,bridgeRevision:4,projectDirectories:true,nativeQuit:typeof ctx.get?.('appExit')==='function',configured:(await account()).status==='configured'};
+    if(action==='status')return {connected:true,bridgeRevision:5,projectDirectories:true,nativeQuit:typeof ctx.get?.('appExit')==='function',configured:(await account()).status==='configured'};
     if(action==='account')return account(sid);
-    if(action==='list')return {connected:true,sessions:(await list()).filter(r=>!r.parentSessionId).map(r=>({...normalize(r),archived:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(r.sessionId)})).sort((a,b)=>Number(a.archived)-Number(b.archived))};
-    if(action==='projects'){const seen=new Map();for(const row of await list())if(row.cwd)seen.set(row.cwd,{key:row.cwd,cwd:row.cwd,name:row.cwd.replaceAll('\\','/').split('/').pop()});for(const w of ctx.workspaceRegistry.list())seen.set(w.path,{key:w.path,cwd:w.path,name:w.name||w.path});return {projects:[...seen.values()]};}
+    if(action==='list')return {connected:true,sessions:(await list()).filter(r=>r.origin!=='subagent').map(r=>({...normalize(r),archived:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(r.sessionId)})).sort((a,b)=>Number(a.archived)-Number(b.archived))};
+    if(action==='projects'){const seen=new Map();for(const row of await list())if(row.cwd)seen.set(row.cwd,{key:row.cwd,cwd:row.cwd,name:row.cwd.replaceAll('\\','/').split('/').pop()});for(const w of ctx.workspaceRegistry.list())seen.set(w.path,{key:w.path,cwd:w.path,name:w.title||w.name||w.path,workspaceId:w.id});return {projects:[...seen.values()]};}
     if(action==='create'){
       let project;
       if(body.projectDirectory){
@@ -147,11 +147,28 @@ export async function apply(ctx,config){
         project={cwd};
       }else project=(await dispatch('projects')).projects.find(p=>p.key===body.projectKey);
       if(!project)throw Error('请选择项目目录');
-      const result=await ctx.sessionController.create({sessionId:'session-'+body.id,cwd:project.cwd});
+      // cwd alone deliberately creates an ungrouped native session. Use the
+      // registry's durable workspace identity so Desktop owns membership too.
+      if(typeof ctx.workspaceRegistry.resolveByPath!=='function'||typeof ctx.workspaceRegistry.create!=='function')throw Error('当前 Harness 不支持原生项目关联，请更新 Harness 后重试');
+      const canonical=await realpath(project.cwd);
+      const workspace=await ctx.workspaceRegistry.resolveByPath(canonical)||await ctx.workspaceRegistry.create(canonical);
+      if(!workspace?.id||workspace.path!==canonical)throw Error('原生项目目录未确认，请在 Harness 检查工作区');
+      const result=await ctx.sessionController.create({sessionId:'session-'+body.id,workspaceId:workspace.id});
       if(body.title)await ctx.sessionController.rename({sessionId:result.sessionId,title:body.title});
       return {status:'ready',result:{id:result.sessionId,title:body.title||'新会话'}};
     }
     const row=await find(sid);
+    if(action==='fork'){
+      if(!capabilities().fork)throw Error('当前 Harness 未提供原生分支接口');
+      const atSeq=Number(body.messageId);
+      if(typeof body.messageId!=='string'||!/^\d+$/.test(body.messageId)||!Number.isSafeInteger(atSeq)||atSeq<0)throw Error('分支消息标识无效');
+      const page=await ctx.sessionController.page({address:{kind:'session',sessionId:sid},throughSeq:atSeq,maxMessages:1},signal());
+      const anchor=page.records?.find(record=>record.event?.seq===atSeq)?.event;
+      if(anchor?.type!=='turn/end'||anchor.data?.reason?.kind!=='completed')throw Error('原回复尚未完成或已不可用，请刷新聊天后重试');
+      const child=await ctx.sessionController.fork({sessionId:sid,atSeq,allowMigration:false});
+      if(typeof child?.sessionId!=='string'||!child.sessionId||child.sessionId===sid)throw Error('Harness 尚未确认分支结果，请在桌面核对');
+      return {status:'ready',result:{id:child.sessionId}};
+    }
     if(action==='rename'){const title=String(body.title||'').trim();if(!title||title.length>120)throw Error('标题为 1–120 字');await ctx.sessionController.rename({sessionId:sid,title});return {status:'accepted'};}
     if(action==='archive'){if(body.confirmed!==true)throw Error('请确认归档');await ctx.workspaceRegistry.archiveSession(sid,{stopActivity:true});return {status:'accepted'};}
     if(action==='open')return {ok:true};
@@ -177,7 +194,7 @@ export async function apply(ctx,config){
     const credential=String(req.headers.authorization||'').replace(/^Bearer /,'');const a=Buffer.from(credential),b=Buffer.from(token);
     if(req.method!=='POST'||req.url!=='/mobile'||req.headers.origin||a.length!==b.length||!timingSafeEqual(a,b)){res.writeHead(403);res.end();return;}
     let size=0,chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxRequestBytes)throw Error('请求过大');chunks.push(chunk);}const {action,sid,body={}}=JSON.parse(Buffer.concat(chunks));
-    const mutating=['create','rename','archive','stop','send','respond','settings'].includes(action)||(action==='access'&&Boolean(body?.mode));
+    const mutating=['create','fork','rename','archive','stop','send','respond','settings'].includes(action)||(action==='access'&&Boolean(body?.mode));
     if(mutating&&quitting)throw Error('Harness 正在退出，请稍后重试');
     let result;
     if(mutating)activeMutations++;

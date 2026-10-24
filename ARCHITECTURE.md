@@ -42,13 +42,15 @@ Codex 列表下拉刷新使用浮层提示与按动画帧更新的位移，不�
 
 ## 新建聊天
 
-登录后的 `GET /api/projects` 返回 App 已保存的本机及 SSH 项目；`POST /api/sessions` 接受项目键、名称和请求 UUID。服务端重新解析已保存项目，创建线程接口不接受客户端任意目录、主机、程序路径或配置覆盖。用户先用 POST /api/projects/browse 的目录浏览器选择目录或在当前目录中新建，再使用带登录、Origin 和 CSRF 校验的 POST /api/projects 明确登记：主机必须已登记，在目标系统验证绝对路径、可读写性并规范化；勾选创建时仅在已存在的父目录下创建最后一层。网关自己的 projects.json 保存 canonical cwd 与目录身份，创建前再次核对，不修改 App 全局项目配置。创建接口沿用 Host、Origin、登录和 CSRF 校验。
+登录后的 `GET /api/projects` 返回 App 已保存的本机及 SSH 项目；`POST /api/sessions` 接受项目键、名称和请求 UUID。服务端重新解析已保存项目，创建线程接口不接受客户端任意目录、主机、程序路径或配置覆盖。用户先用 POST /api/projects/browse 的目录浏览器选择目录或在当前目录中新建，再使用带登录、Origin 和 CSRF 校验的 POST /api/projects 明确登记：主机必须已登记，在目标系统验证绝对路径、可读写性并规范化；勾选创建时仅在已存在的父目录下创建最后一层。网关自己的 projects.json 保存 canonical cwd 与目录身份，创建前再次核对；此登记只保存目录选择。显式创建 Codex App 项目聊天时，才通过原生项目接口创建或复用项目并关联新线程，不直接改写 App 全局项目配置文件。创建接口沿用 Host、Origin、登录和 CSRF 校验。
 
-`bridge/features/sessions/create.py` 使用所选主机的官方运行时完成 `initialize → thread/start → thread/name/set → thread/read(includeTurns=true)`，随后关闭 stdio 并等待进程退出。读取完整空历史是必需步骤：仅设置名称会留下目录元数据，却未必落盘可恢复的 rollout。整个辅助进程不调用 `turn/start`，不会发送模型任务。新线程使用该主机、工作目录的运行时默认配置；不克隆已有聊天的临时设置。
+`bridge/features/sessions/create.py` 使用所选主机的官方运行时完成 `initialize → thread/start → thread/name/set → thread/read(includeTurns=true)`，随后关闭 stdio 并等待进程退出。本机新目录先通过仅含 path 的 `codex://threads/new` 让原 App 完成原生项目登记并打开独立的空白输入区，不携带 prompt 或消息。确认 App 的 local-projects 已保存该目录后才创建线程；没有确认时不会报告成功。登记与线程创建阶段分别落盘：登记结果未知时仅重新读取原生记录，不重复打开登记链接；线程创建开始后结果未知则不再创建。支持原生项目归属的运行时先分页读取 `project/list`，匹配已登记项目，再把原生 `projectId` 传给 `thread/start`，并核对 start 与持久化 read 返回的归属；不会单独创建原生侧栏不可见的 app-server 项目。旧运行时保留已登记项目的 cwd 创建通路。项目列表按主机与规范目录去重，不重新分配已有线程。尚未核验 SSH 新目录的原生侧栏登记通路，因此这类请求在创建聊天前提示先在 App 添加项目；已有 SSH 项目和 CLI 创建沿用原通路。读取完整空历史是必需步骤：仅设置名称会留下目录元数据，却未必落盘可恢复的 rollout。整个辅助进程不调用 `turn/start`，不会发送模型任务。新线程使用该主机、工作目录的运行时默认配置；不克隆已有聊天的临时设置。
 
 创建结果按 UUID 写入网关自己的 `creations.json`，重试复用同一聊天；请求可能提交但结果未知时不自动重放。辅助进程退出后，通过 `codex://threads/<id>?hostId=...` 打开原桌面 App，桌面接管后才允许发送和审批。此步骤会切换桌面当前页面；打开失败保留已创建 ID。SSH 创建借助已有非交互 SSH 通道执行相同辅助代码，不在远端安装网关。
 
-新建入口与原生 IPC 均受 App/运行时版本影响。Mac 空聊天创建和实际 App 接管已验证；Windows 及 SSH 创建目前只有模拟路径检查，不能视为实机通过。
+DSH 项目聊天通过原生 workspace registry 的 `resolveByPath/create` 复用或登记工作区，再以 `workspaceId` 调用 `sessionController.create`。单独传入 cwd 不产生原生项目成员关系，因此不用于新建项目聊天。Claude Desktop Code 准确匹配已核验的原生 start 工作区信任拒绝时，标记为已阻止创建，界面保留目录、名称和首条消息，引导用户在 Desktop Code 亲自确认工作区信任后显式重试；网关不调用信任写接口。只有准确匹配的原生 start 信任拒绝可以解除该请求的未确认写入标记；断连、超时和其他错误仍保持结果未知，不自动重放。
+
+新建入口与原生 IPC 均受 App/运行时版本影响。Mac 空聊天创建和实际 App 接管已验证；本次新增原生项目接口及归属检查已通过安装版本的只读协议核验与合成回归，尚未执行真实项目创建或核验原生侧边栏刷新。Windows 及 SSH 创建目前只有模拟路径检查，不能视为实机通过。
 
 ## 原生 IPC
 
