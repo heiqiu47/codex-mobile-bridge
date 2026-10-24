@@ -1010,8 +1010,7 @@ class DesktopSessions:
             self.bridge.assert_desktop_idle()
             return
         adapter = self.adapters[provider]
-        if provider == 'claude' and (adapter.cli.busy() is True or
-                                     getattr(adapter, 'remote_cli', None) is not None and adapter.remote_cli.busy() is True):
+        if provider == 'claude' and self._claude_native_cli_busy():
             raise ValueError('有 Claude Code 任务运行或等待确认，请先结束任务再关闭客户端')
         try:
             status = adapter.call('status') if provider == 'deepseek' else adapter.status()
@@ -1226,6 +1225,8 @@ class DesktopSessions:
             if not self.gateway_running:
                 raise ValueError('请先启动网关，再重新连接 Claude')
             self.require_enabled('claude')
+            if not self.config.get('enabled', {}).get('claude', False):
+                raise ValueError('Claude Desktop 接入已关闭，请先开启原电脑接入')
             adapter = self.adapters['claude']
             if adapter.status().get('connected'):
                 try:
@@ -1257,10 +1258,18 @@ class DesktopSessions:
         except (ValueError, OSError, subprocess.SubprocessError):
             raise ValueError('Claude 进程已变化，请重新检查后再确认退出') from None
 
+    def _claude_native_cli_busy(self):
+        from bridge.clients.claude.wsl import ClaudeCliRemotes
+        adapter = self.adapters['claude']
+        remote = getattr(adapter, 'remote_cli', None)
+        if isinstance(remote, ClaudeCliRemotes):
+            remote = remote.ssh
+        return adapter.cli.busy() is True or remote is not None and remote.busy() is True
+
     def _claude_quit_evidence(self):
         adapter = self.adapters['claude']
         try:
-            if adapter.cli.busy() is True or getattr(adapter, 'remote_cli', None) is not None and adapter.remote_cli.busy() is True:
+            if self._claude_native_cli_busy():
                 return {'busy': True, 'unknown': False}
             if not adapter.status().get('connected'):
                 return {'busy': False, 'unknown': True}
@@ -1467,6 +1476,8 @@ class DesktopSessions:
                                                len(native_state.get('mainPids', [])) == 1 and not native_state.get('unknown', True) and
                                                row['setupStatus'] != 'connecting')
                     row['canConfirmQuit'] = bool(sys.platform in ('darwin', 'win32') and row['mainRunning'])
+                    if self._wsl_claude_enabled() and not self.config.get('enabled', {}).get('claude', False):
+                        row.update(canStartDesktop=False, canInitializeDesktop=False, canReconnect=False)
                 if not self.gateway_running and row['enabled'] and row['setupStatus'] != 'recovery-required':
                     if row['id'] == 'claude' and sys.platform == 'darwin':
                         row['reason'] = '已选择，启动网关后在后台打开 Claude 并尝试恢复已有连接；需要初始化时会提示。'
@@ -1618,7 +1629,7 @@ class DesktopSessions:
                 raise ValueError('WSL Claude Code 应用开关无效')
             if value.get('quitDesktop', False) is not False:
                 raise ValueError('请在原 WSL 终端退出 Claude Code；这里只停用手机访问')
-            with self.client_lock, self._changing('claude', rebind=False):
+            with self.client_lock, self._changing('claude'):
                 remote = self.adapters['claude'].remote_cli.wsl
                 with remote.lock:
                     active = [owned for sid, owned in remote.owned.items()
@@ -1709,9 +1720,7 @@ class DesktopSessions:
                     if not result.get('running'):
                         raise ValueError('客户端尚未启动，请在电脑端检查后重试')
             else:
-                if provider == 'claude' and (self.adapters[provider].cli.busy() is True or
-                                             getattr(self.adapters[provider], 'remote_cli', None) is not None and
-                                             self.adapters[provider].remote_cli.busy() is True):
+                if provider == 'claude' and self._claude_native_cli_busy():
                     raise ValueError('有 Claude Code 任务运行或等待确认，请先结束任务再关闭客户端')
                 self._stop_client(provider, descriptor, inspect_client(descriptor),
                                   native_confirmation=value.get('quitDesktop') is True,

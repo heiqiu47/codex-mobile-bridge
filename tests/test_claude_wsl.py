@@ -168,6 +168,71 @@ class WslClaudeContract(unittest.TestCase):
             manager.scan()
             manager.claude_wsl.scan.assert_called_once_with()
 
+    def test_wsl_only_selection_cannot_offer_or_run_native_reconnect(self):
+        manager = DesktopSessions(self.root/'manager', gateway_running=True)
+        self.addCleanup(manager.close)
+        manager.claude_wsl.entries = [{**self.row, 'enabled': True}]
+        manager.config['enabled'] = {'claude': False}
+        manager.config['discovered'] = {'claude': {'installed': True, 'executable': 'fixture'}}
+        manager._descriptor = Mock(return_value={'id': 'claude', 'executable': 'fixture'})
+        manager._claude_reconnect_supported = Mock(return_value=True)
+        manager.adapters['claude'].status = Mock(return_value={'connected': False, 'cliAvailable': True,
+            'automaticConnection': 'native-console', 'setupState': 'not-scanned'})
+        manager.adapters['deepseek'].call = Mock(return_value={'connected': False})
+        native = {'running': True, 'mainPids': [42], 'runtimePids': [], 'unknown': False}
+        with patch('bridge.clients.lifecycle.inspect_clients', return_value={'claude': native}), \
+             patch('bridge.clients.claude.wsl.wsl.running_distributions', return_value=['Ubuntu']):
+            row = next(row for row in manager.clients(refresh=True)['clients'] if row['id'] == 'claude')
+            self.assertTrue(row['enabled'])
+            self.assertFalse(row['nativeEnabled'])
+            self.assertFalse(row['canReconnect'])
+            self.assertFalse(row['canInitializeDesktop'])
+            self.assertFalse(row['canStartDesktop'])
+            with self.assertRaisesRegex(ValueError, 'Claude Desktop 接入已关闭'):
+                manager.reconnect_claude()
+            manager.config['enabled']['claude'] = True
+            row = next(row for row in manager.clients(refresh=True)['clients'] if row['id'] == 'claude')
+            self.assertTrue(row['canInitializeDesktop'])
+            self.assertTrue(row['canReconnect'])
+
+    def test_wsl_task_does_not_block_unrelated_native_lifecycle(self):
+        manager = DesktopSessions(self.root/'manager')
+        self.addCleanup(manager.close)
+        adapter = manager.adapters['claude']
+        adapter.cli.busy = Mock(return_value=False)
+        adapter.remote_cli.wsl.busy = Mock(return_value=True)
+        adapter.remote_cli.ssh.busy = Mock(return_value=False)
+        self.assertTrue(adapter.remote_cli.busy())
+        self.assertFalse(manager._claude_native_cli_busy())
+        adapter.remote_cli.ssh.busy.return_value = True
+        self.assertTrue(manager._claude_native_cli_busy())
+
+    def test_wsl_model_cache_identity_is_scoped_and_revoked_with_entry(self):
+        manager = DesktopSessions(self.root/'manager')
+        self.addCleanup(manager.close)
+        manager.claude_wsl.entries = [{**self.row, 'enabled': True}]
+        remote = manager.adapters['claude'].remote_cli.wsl
+        host = {**self.row, 'alias': self.identifier}
+        raw = {'nativeId': str(uuid.uuid4()), 'origin': 'account', 'cwd': '/work', 'projectConfig': 'settings'}
+        row = remote._row(self.identifier, host, raw)
+        remote.index[row['id']] = row
+        with patch('bridge.clients.claude.wsl.wsl.running_distributions', return_value=['Ubuntu']):
+            identity = manager._model_identity('claude', row['id'])
+            changed = {**raw, 'origin': 'other-account'}
+            other = remote._row(self.identifier, host, changed)
+            remote.index[other['id']] = other
+            self.assertNotEqual(identity, manager._model_identity('claude', other['id']))
+            owned = Mock(origin=raw['origin'], error=None, model_list_unsupported=True)
+            owned.process.poll.return_value = None
+            owned.close = Mock()
+            remote.owned[row['id']] = owned
+            self.assertTrue(manager._model_live('claude', row['id']))
+            self.assertTrue(manager._model_refresh_unsupported('claude', row['id']))
+            manager.claude_wsl.entries[0]['enabled'] = False
+            with self.assertRaises(BridgeUnavailable):
+                manager._cached_model_result('claude', row['id'], identity,
+                    (0, {'models': [{'id': 'fixture'}], 'capabilities': {'models': True}}))
+
     def test_registered_cli_project_creates_without_desktop_connection(self):
         from bridge.clients.claude.adapter import Claude
         adapter = Claude(self.root/'adapter', auto_connect=False)

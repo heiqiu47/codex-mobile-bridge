@@ -305,7 +305,7 @@ class ClientLifecycleTests(unittest.TestCase):
         try:
             with patch.object(reopened, 'scan') as scan, patch.object(reopened, 'toggle_client') as toggle:
                 reopened.start_enabled()
-            scan.assert_called_once_with()
+            scan.assert_called_once_with(scan_wsl=False)
             toggle.assert_not_called()
             self.assertEqual([row['enabled'] for row in reopened.clients(refresh=True)['clients']], [False] * 3)
             self.assertTrue(self.running)
