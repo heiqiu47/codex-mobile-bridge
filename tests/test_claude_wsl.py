@@ -1,0 +1,161 @@
+"""WSL transport parity without launching a real Claude/model."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+import uuid
+from unittest.mock import Mock, patch
+
+from bridge.clients.claude.remote import RemoteClaudeCli
+from bridge.clients.claude.remote_worker import native_wsl_binary, profile
+from bridge.clients.claude.wsl import ClaudeCliRemotes, WslClaudeCli, WslClaudeEntries, entry_id
+from bridge.clients.errors import BridgeUnavailable
+from bridge.clients.manager import DesktopSessions, WslClaudeWorkspace
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class WslClaudeContract(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(dir=ROOT/'.tmp')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.entries = WslClaudeEntries(self.root)
+        self.identifier = entry_id('Ubuntu', 'alice', '/home/alice/.claude')
+        self.row = {'id': self.identifier, 'distribution': 'Ubuntu', 'user': 'alice',
+                    'configDir': '/home/alice/.claude', 'label': 'WSL · Ubuntu · alice'}
+        self.entries.candidates[self.identifier] = self.row
+        self.entries.configure(self.identifier, True)
+
+    def test_identity_separates_distribution_user_and_config(self):
+        values = {self.identifier, entry_id('Debian', 'alice', '/home/alice/.claude'),
+                  entry_id('Ubuntu', 'bob', '/home/alice/.claude'),
+                  entry_id('Ubuntu', 'alice', '/home/alice/work-profile')}
+        self.assertEqual(len(values), 4)
+        restored = WslClaudeEntries(self.root)
+        self.assertEqual(restored.selected(self.identifier)['configDir'], self.row['configDir'])
+
+    def test_stopped_distribution_passive_listing_cannot_launch_worker(self):
+        cli = WslClaudeCli(self.entries)
+        self.addCleanup(cli.close)
+        with patch('bridge.clients.claude.wsl.wsl.running_distributions', return_value=[]), \
+             patch('bridge.clients.claude.wsl.subprocess.run') as process:
+            self.assertFalse(cli.available())
+            self.assertEqual(cli.listing()['sessions'], [])
+            self.assertEqual(cli.projects(), [])
+            self.assertEqual(cli.project_environments(), [])
+            self.assertEqual(self.entries.applications()[0]['running'], False)
+            process.assert_not_called()
+
+    def test_command_preserves_distro_user_config_and_native_guard(self):
+        cli = WslClaudeCli(self.entries)
+        with patch('bridge.clients.claude.wsl.wsl.command', return_value=['wsl.exe', '--exec', 'python3']) as command:
+            args = cli._command(self.identifier)
+        command.assert_called_once_with('Ubuntu', 'alice')
+        self.assertLess(len(subprocess.list2cmdline(args)), 30000)
+        # Exercise the real loader using Python, without running worker main.
+        import shlex
+        login_command = shlex.split(args[-1])[-1]
+        loader = shlex.split(login_command)[-1]
+        import base64, zlib
+        encoded = loader.split('b64decode(', 1)[1].split(')', 1)[0]
+        source = zlib.decompress(base64.b64decode(__import__('ast').literal_eval(encoded))).decode()
+        self.assertIn('os.environ["CLAUDE_CONFIG_DIR"]=\'/home/alice/.claude\'', source)
+        self.assertIn('os.environ["MOBILE_BRIDGE_WSL_NATIVE"]="1"', source)
+
+    def test_wsl_read_rechecks_selected_identity_and_retains_native_errors(self):
+        cli = WslClaudeCli(self.entries)
+        cli._command = Mock(return_value=['fixture'])
+        with patch('bridge.clients.claude.wsl.subprocess.run', return_value=Mock(returncode=0,
+                stdout=json.dumps({'ok': True, 'value': {'ready': True}}))) as run:
+            self.assertEqual(cli._remote(self.identifier, {'operation': 'auth'}), {'ready': True})
+            self.assertEqual(json.loads(run.call_args.kwargs['input']), {'operation': 'auth'})
+        with patch('bridge.clients.claude.wsl.subprocess.run', side_effect=OSError()):
+            with self.assertRaises(BridgeUnavailable):
+                cli._remote(self.identifier, {'operation': 'list'})
+        self.entries.configure(self.identifier, False)
+        with self.assertRaises(ValueError):
+            WslClaudeCli(self.entries)._command(self.identifier)
+
+    def test_same_native_session_isolated_from_ssh_and_other_wsl_accounts(self):
+        native = {'nativeId': str(uuid.uuid4()), 'origin': 'account', 'cwd': '/work'}
+        host = {**self.row, 'alias': self.identifier}
+        wsl_row = WslClaudeCli(self.entries)._row(self.identifier, host, native)
+        ssh_row = RemoteClaudeCli()._row(self.identifier, host, native)
+        self.assertNotEqual(wsl_row['id'], ssh_row['id'])
+        self.assertEqual((wsl_row['runtime'], wsl_row['distribution'], wsl_row['user']), ('wsl', 'Ubuntu', 'alice'))
+        host['alias'] = 'other'
+        changed = WslClaudeCli(self.entries)._row('other', host, native)
+        self.assertNotEqual(wsl_row['id'], changed['id'])
+
+    def test_combined_remotes_share_lock_and_keep_owned_lookup(self):
+        remotes = ClaudeCliRemotes(None, self.entries)
+        self.addCleanup(remotes.close)
+        remotes.ssh.index['ssh'] = {'id': 'ssh'}
+        remotes.wsl.index['wsl'] = {'id': 'wsl'}
+        self.assertIs(remotes.ssh.lock, remotes.wsl.lock)
+        self.assertEqual(set(remotes.index), {'ssh', 'wsl'})
+        remotes.wsl.call = Mock(return_value={'status': 'accepted'})
+        self.assertEqual(remotes.call('settings', 'wsl', {'model': 'fixture'}), {'status': 'accepted'})
+        remotes.wsl.call.assert_called_once_with('settings', 'wsl', {'model': 'fixture'})
+
+    def test_scan_is_explicit_and_only_probes_running_distros(self):
+        with patch('bridge.clients.claude.wsl.wsl.running_distributions', return_value=['Ubuntu']), \
+             patch('bridge.clients.claude.wsl.wsl.read', return_value={'user': 'alice', 'profiles': [
+                 {'configDir': '/home/alice/other'}]}) as read:
+            result = self.entries.scan()
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(read.call_args.args[0], 'Ubuntu')
+        other = entry_id('Ubuntu', 'alice', '/home/alice/other')
+        self.assertIn(other, self.entries.candidates)
+        self.assertFalse(any(row['id'] == other for row in self.entries.entries))
+
+    def test_windows_interop_binaries_and_shims_are_not_native(self):
+        shim = self.root/'claude'
+        shim.write_text('#!/bin/sh\nexec /mnt/c/Users/fixture/claude.exe "$@"\n')
+        self.assertFalse(native_wsl_binary(shim))
+        shim.write_bytes(b'MZfixture')
+        self.assertFalse(native_wsl_binary(shim))
+        self.assertFalse(native_wsl_binary('/mnt/c/Users/fixture/npm/claude'))
+        shim.write_bytes(b'\x7fELFfixture')
+        self.assertTrue(native_wsl_binary(shim))
+        with patch.dict(os.environ, {'MOBILE_BRIDGE_WSL_NATIVE': '1'}), \
+             patch('bridge.clients.claude.remote_worker.shutil.which', return_value='/mnt/c/npm/claude'), \
+             patch('bridge.clients.claude.remote_worker.auth_fingerprint') as auth:
+            self.assertIsNone(profile())
+            auth.assert_not_called()
+
+    def test_wsl_only_dispatch_excludes_local_and_unknown_sessions(self):
+        manager = DesktopSessions(self.root/'manager')
+        self.addCleanup(manager.close)
+        manager.claude_wsl.entries = [{**self.row, 'enabled': True}]
+        manager.config['enabled'] = {'claude': False}
+        remote = manager.adapters['claude'].remote_cli.wsl
+        remote.listing = Mock(return_value={'connected': True, 'sessions': [{'id': 'wsl'}], 'complete': True})
+        manager.adapters['claude'].cli.listing = Mock(side_effect=AssertionError('local CLI must not be read'))
+        self.assertTrue(manager.enabled('claude'))
+        self.assertEqual(manager._adapter_call('claude', 'list', None, {})['sessions'], [{'id': 'wsl'}])
+        with self.assertRaises(ValueError):
+            manager._adapter_call('claude', 'catalog', 'unknown', {})
+
+    def test_wsl_directory_operations_use_selected_native_transport(self):
+        manager = DesktopSessions(self.root/'manager')
+        self.addCleanup(manager.close)
+        manager.claude_wsl.read = Mock(return_value={'cwd': '/work/new'})
+        environment = {'host': self.identifier}
+        manager._project_alias = Mock(side_effect=AssertionError('must not use SSH'))
+        result = manager._project_directory(environment, '/work/new', True)
+        self.assertEqual(result['cwd'], '/work/new')
+        source = manager.claude_wsl.read.call_args.args[1]
+        self.assertIn('project_directory(**', source)
+        import ast, base64
+        encoded = source.rsplit("b64decode(", 1)[1].split(')', 1)[0]
+        arguments = json.loads(base64.b64decode(ast.literal_eval(encoded)))
+        self.assertEqual(arguments, {'value': '/work/new', 'create': True, 'expected': None})
+
+
+if __name__ == '__main__':
+    unittest.main()

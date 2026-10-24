@@ -16,6 +16,7 @@ from bridge.clients.errors import BridgeUnavailable
 from bridge.clients.claude.mailbox import FileDesktop, MAX_REQUEST, CONNECTOR_REVISION
 from bridge.clients.claude.cli_session import ClaudeCli, project_account_identity
 from bridge.clients.claude.remote import RemoteClaudeCli
+from bridge.clients.claude.wsl import ClaudeCliRemotes
 from bridge.app.lifecycle import private_json
 from bridge.platforms.windows import session as windows_session
 from bridge.platforms.windows.session import DesktopUnavailable
@@ -24,11 +25,11 @@ DESKTOP_WAIT_STATES = {'needs-screen-saver', 'needs-unlock', 'needs-desktop'}
 
 
 class Claude:
-    def __init__(self, directory, *, auto_connect=True, hosts=None):
+    def __init__(self, directory, *, auto_connect=True, hosts=None, wsl_entries=None):
         self.directory = Path(directory)
         self.hosts = hosts
         self.cli = ClaudeCli(self.directory.parent/'uploads')
-        self.remote_cli = RemoteClaudeCli(hosts)
+        self.remote_cli = ClaudeCliRemotes(hosts, wsl_entries) if wsl_entries is not None else RemoteClaudeCli(hosts)
         self.desktop = None
         self.index = {}
         self.loop = None

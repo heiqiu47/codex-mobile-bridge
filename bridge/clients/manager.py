@@ -75,9 +75,12 @@ class DesktopSessions:
         self.model_lock = threading.Lock()
         self.config_path = self.directory/'settings.json'
         self.config = json.loads(self.config_path.read_text()) if self.config_path.exists() else {}
+        from bridge.clients.claude.wsl import WslClaudeEntries
+        self.claude_wsl = WslClaudeEntries(self.directory)
         self.adapters = {'deepseek': DeepSeek(self.directory/'deepseek', self.config.get('deepseekHome')),
                          'claude': Claude(self.directory/'claude', auto_connect=False,
-                                          hosts=bridge.hosts if bridge is not None and hasattr(bridge, 'hosts') else None)}
+                                          hosts=bridge.hosts if bridge is not None and hasattr(bridge, 'hosts') else None,
+                                          wsl_entries=self.claude_wsl)}
         if bridge is not None and getattr(bridge, 'cli_access', None) is not None:
             bridge.desktop_sessions = self
             self.adapters['claude'].cli.profile_resolver = bridge.cli_access.claude_profile
@@ -161,7 +164,7 @@ class DesktopSessions:
                     self.reads[key] = future
         if owner:
             try:
-                value = adapter.call(action, sid, body)
+                value = self._adapter_call(provider, action, sid, body)
                 if action == 'detail' and isinstance(value, dict):
                     from bridge.features.workspace.files import workspace_references
                     value['files'] = workspace_references(value.get('messages', []), value.get('session', {}).get('cwd'))
@@ -200,7 +203,7 @@ class DesktopSessions:
                 host = adapter.remote_cli.hosts.hosts().get(remote['host']) if adapter.remote_cli.hosts else None
                 if not host or host['alias'] != remote['alias']:
                     raise BridgeUnavailable('SSH 主机配置已变化')
-                scope = ('ssh-cli', remote['host'], remote['alias'], remote['origin'], remote['cwd'],
+                scope = ('wsl-cli' if remote.get('runtime') == 'wsl' else 'ssh-cli', remote['host'], remote['alias'], remote['origin'], remote['cwd'],
                          remote.get('projectConfig'))
             elif local:
                 profile = adapter.cli.profile_resolver()
@@ -243,7 +246,7 @@ class DesktopSessions:
                 remote = adapter.remote_cli.index.get(sid)
             if remote:
                 owner = (detail.get('session') or {}).get('draftAccountIdentity')
-                return draft_identity('claude', 'ssh-cli', remote['host'], owner) if owner else ''
+                return draft_identity('claude', 'wsl-cli' if remote.get('runtime') == 'wsl' else 'ssh-cli', remote['host'], owner) if owner else ''
             if local:
                 profile = adapter.cli.profile_resolver()
                 if not profile or local['origin'] != profile['origin']:
@@ -637,7 +640,10 @@ class DesktopSessions:
         threading.Thread(target=refresh, daemon=True, name='desktop-activity-'+provider).start()
 
     def _project_environments(self, provider):
-        rows = self.adapters[provider].project_environments()
+        adapter = self.adapters[provider]
+        rows = (adapter.remote_cli.wsl.project_environments() if provider == 'claude' and
+                not self.config.get('enabled', {}).get('claude', False) and self._wsl_claude_enabled()
+                else adapter.project_environments())
         result = []
         for row in rows:
             scope = row['scope']
@@ -672,11 +678,15 @@ class DesktopSessions:
     def _project_directory(self, environment, path, create=False, expected=None):
         if environment['host'] == 'local':
             return project_directory(path, create, expected)
-        alias = self._project_alias(environment)
         source = source_text('features/sessions/create.py')
         source += '\nprint(json.dumps(project_directory(**' + payload({
             'value': path, 'create': create, 'expected': expected}) + ')))\n'
-        return ssh_read(alias, source)
+        return self._project_read(environment, source)
+
+    def _project_read(self, environment, source):
+        if environment['host'].startswith('wsl-claude:'):
+            return self.claude_wsl.read(environment['host'], source)
+        return ssh_read(self._project_alias(environment), source)
 
     def register_project(self, provider, environment, path, create=False):
         with self.locks[provider]:
@@ -695,7 +705,7 @@ class DesktopSessions:
             source = source_text('features/sessions/create.py')
             source += '\nprint(json.dumps(project_directory_listing(**' + payload({
                 'value': path, 'hidden': hidden, 'name': name, 'identity': identity}) + ')))\n'
-            return ssh_read(self._project_alias(selected), source)
+            return self._project_read(selected, source)
 
     def call(self, provider, action, sid=None, body=None):
         if provider not in self.adapters or action not in READS | WRITES:
@@ -745,7 +755,7 @@ class DesktopSessions:
         # Normal chat writes keep progress reads available; account/lifecycle
         # operations additionally invalidate the connector binding.
         with self._changing(provider, rebind=False):
-            if self.config.get('enabled', {}).get(provider) is False:
+            if self.config.get('enabled', {}).get(provider) is False and not (provider == 'claude' and self._wsl_claude_enabled()):
                 raise ValueError('此应用已关闭，请在应用管理中开启')
             with self.db_lock:
                 db = None
@@ -773,7 +783,7 @@ class DesktopSessions:
                         environment = self._project_environment(provider, project['environment'])
                         self._project_directory(environment, project['cwd'], expected=project['directoryIdentity'])
                         dispatched = {**body, 'directoryProject': {**environment, **project}}
-                result = adapter.call(action, sid, dispatched)
+                result = self._adapter_call(provider, action, sid, dispatched)
             except ResumePreflightBlocked as exc:
                 result = {'status': 'blocked', 'id': rid, 'message': str(exc)}
             except Exception as exc:
@@ -819,11 +829,36 @@ class DesktopSessions:
             result[provider] = value
         return result
 
+    def _wsl_claude_enabled(self):
+        with self.claude_wsl.lock:
+            return any(row.get('enabled', True) for row in self.claude_wsl.entries)
+
+    def _adapter_call(self, provider, action, sid, body):
+        adapter = self.adapters[provider]
+        if provider != 'claude' or self.config.get('enabled', {}).get('claude', False) or not self._wsl_claude_enabled():
+            return adapter.call(action, sid, body)
+        remote = adapter.remote_cli.wsl
+        if action == 'list':
+            return remote.listing()
+        if action == 'projects':
+            return {'projects': [{key: value for key, value in row.items() if key not in ('origin', 'alias')}
+                                 for row in remote.projects()], 'createRequiresMessage': True}
+        if action == 'create':
+            project = body.get('directoryProject') or next((row for row in remote.projects()
+                if row['key'] == body.get('projectKey')), None)
+            if not project or not project['host'].startswith('wsl-claude:'):
+                raise ValueError('请选择已开启的 WSL Claude Code 项目')
+            return adapter.create_cli(project, body)
+        if not remote.contains(sid):
+            raise ValueError('找不到已开启的 WSL Claude Code 会话')
+        return remote.call(action, sid, body)
+
     def enabled(self, provider):
         if isinstance(provider, str) and provider.startswith('wsl:'):
             entries = getattr(self.bridge, 'entries', None)
             return bool(entries and entries.enabled(provider))
-        return self.config.get('enabled', {}).get(provider, provider == 'codex')
+        native = self.config.get('enabled', {}).get(provider, provider == 'codex')
+        return bool(native or provider == 'claude' and self._wsl_claude_enabled())
 
     def require_enabled(self, provider):
         if provider == 'deepseek' and self.deepseek_restore_error:
@@ -925,7 +960,7 @@ class DesktopSessions:
             with self.client_lock:
                 if self.closed.is_set():
                     return
-                if not self.enabled(provider):
+                if not self.config.get('enabled', {}).get(provider, provider == 'codex'):
                     continue
                 try:
                     self.toggle_client({'provider': provider, 'enabled': True})
@@ -1448,6 +1483,11 @@ class DesktopSessions:
                 codex[field] = any(entry.get(field) is True for entry in codex_entries)
             if codex['configured'] and not native['configured']:
                 codex.update(setupStatus='ready', reason='WSL Codex 接入可用')
+            claude = next(row for row in rows if row['id'] == 'claude')
+            claude['nativeEnabled'] = self.config.get('enabled', {}).get('claude', False)
+            claude['entries'] = self.claude_wsl.applications()
+            if any(row['enabled'] for row in claude['entries']):
+                claude.update(enabled=True, selectable=True, configured=True)
             result = {'clients': rows, 'computer': socket.gethostname(), 'gatewayRunning': self.gateway_running,
                       'wslSupported': entries is not None and sys.platform == 'win32'}
             if sys.platform == 'win32':
@@ -1571,6 +1611,31 @@ class DesktopSessions:
 
     def toggle_client(self, value):
         provider, enabled = value.get('provider'), value.get('enabled')
+        if isinstance(provider, str) and provider.startswith('wsl-claude:'):
+            if type(enabled) is not bool or set(value) - {'action', 'provider', 'enabled', 'quitDesktop'}:
+                raise ValueError('WSL Claude Code 应用开关无效')
+            if value.get('quitDesktop', False) is not False:
+                raise ValueError('请在原 WSL 终端退出 Claude Code；这里只停用手机访问')
+            with self.client_lock, self._changing('claude', rebind=False):
+                remote = self.adapters['claude'].remote_cli.wsl
+                with remote.lock:
+                    active = [owned for sid, owned in remote.owned.items()
+                              if remote.index.get(sid, {}).get('host') == provider]
+                    for owned in active if not enabled else []:
+                        with owned.condition:
+                            if owned.process.poll() is None and (owned.active or owned.pending):
+                                raise ValueError('WSL Claude Code 有进行中的任务，请先结束任务')
+                self.claude_wsl.configure(provider, enabled)
+                if not enabled:
+                    with remote.lock:
+                        for sid, row in list(remote.index.items()):
+                            if row['host'] == provider:
+                                owned = remote.owned.pop(sid, None)
+                                if owned is not None:
+                                    owned.close()
+                                remote.index.pop(sid, None)
+                self.client_cache = None
+            return self.clients(refresh=True)
         if isinstance(provider, str) and provider.startswith('wsl:'):
             entries = getattr(self.bridge, 'entries', None)
             if entries is None or type(enabled) is not bool or set(value) - {'action', 'provider', 'enabled', 'quitDesktop'}:
@@ -1851,6 +1916,8 @@ class DesktopSessions:
                 self.workspace_roots[(provider, sid)] = (time.monotonic(), row, epoch)
         from bridge.features.workspace.workspace import Workspace
         root = row.get('cwd')
+        if provider == 'claude' and str(row.get('host', '')).startswith('wsl-claude:'):
+            return WslClaudeWorkspace(self, sid, row)
         Workspace(root)  # Reject unavailable and non-local workspaces (e.g. Cowork VM).
         return DesktopWorkspace(self, provider, sid, root)
 
@@ -1915,8 +1982,9 @@ class DesktopSessions:
             raise ValueError('当前电脑不支持 WSL 应用')
         with self.client_lock:
             result = entries.scan()
+            claude = self.claude_wsl.scan()
             self.client_cache = None
-            return {**self.clients(refresh=True), 'errors': result.get('errors', [])}
+            return {**self.clients(refresh=True), 'errors': result.get('errors', []) + claude.get('errors', [])}
 
     def close(self):
         self.closed.set()
@@ -1976,3 +2044,51 @@ class DesktopWorkspace:
         with self.manager.locks[self.provider]:
             self.manager.require_enabled(self.provider)
         return Bridge.terminal(self, self.identifier, owner, action, params)
+
+
+class WslClaudeWorkspace:
+    """Native Linux file boundaries with the same standalone workspace rules."""
+    host = 'local'
+
+    def __init__(self, manager, sid, row):
+        self.manager, self.sid, self.row = manager, sid, row
+        self.identifier = sid
+        self.store = self
+
+    def get(self, identifier):
+        if identifier != self.identifier:
+            raise ValueError('会话标识不一致')
+        return {'cwd': self.row['cwd']}
+
+    def workspace(self, sid, action, params):
+        with self.manager.locks['claude']:
+            self.manager.require_enabled('claude')
+            remote = self.manager.adapters['claude'].remote_cli.wsl
+            fresh = remote._get(self.sid)
+            if fresh['cwd'] != self.row['cwd'] or fresh['origin'] != self.row.get('origin', fresh['origin']):
+                raise ValueError('WSL Claude Code 工作目录或账号已变化')
+            source = source_text('features/workspace/workspace.py')
+            arguments = payload({'root': fresh['cwd'], 'action': action, 'params': params})
+            if action in ('download-stream', 'archive-stream'):
+                source += '\nimport json,sys\ntry:\n with operate(**'+arguments+') as (metadata, stream):\n  sys.stdout.buffer.write(json.dumps(metadata).encode()+b"\\n")\n  while True:\n   chunk=stream.read(65536)\n   if not chunk: break\n   sys.stdout.buffer.write(chunk)\nexcept (ValueError, PermissionError, OSError) as error:\n sys.stdout.buffer.write(json.dumps({"error":str(error),"permission":isinstance(error,PermissionError)}).encode()+b"\\n")\n'
+                return self._download(fresh['host'], source)
+            source += '\nimport json\ntry:\n result={"value":operate(**'+arguments+')}\nexcept (ValueError,PermissionError) as error:\n result={"error":str(error),"permission":isinstance(error,PermissionError)}\nprint(json.dumps(result))\n'
+            result = self.manager.claude_wsl.read(fresh['host'], source)
+            if 'error' in result:
+                if result.get('permission'):
+                    raise PermissionError(result['error'])
+                raise ValueError(result['error'])
+            return result['value']
+
+    @contextmanager
+    def _download(self, host, source):
+        from bridge.platforms.windows import wsl
+        with self.manager.locks['claude']:
+            self.manager.require_enabled('claude')
+            row = self.manager.claude_wsl.selected(host)
+            self.manager.adapters['claude'].remote_cli.wsl._get(self.sid)
+            with wsl.download(row['distribution'], source, row['user']) as value:
+                yield value
+
+    def terminal(self, sid, owner, action, params):
+        raise ValueError('WSL Claude Code 暂不提供手机终端')

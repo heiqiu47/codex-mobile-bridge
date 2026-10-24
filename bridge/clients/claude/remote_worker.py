@@ -97,11 +97,36 @@ def auth_fingerprint(binary, directory, environment=None):
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
+def native_wsl_binary(binary):
+    """A Windows npm shim is not a Linux Claude Code installation."""
+    if not binary:
+        return False
+    path = Path(binary).resolve()
+    if re.match(r'^/mnt/[a-zA-Z](?:/|$)', str(path)) or path.suffix.lower() in ('.exe', '.cmd', '.bat'):
+        return False
+    try:
+        with path.open('rb') as stream:
+            header = stream.read(8192)
+        if header.startswith(b'MZ'):
+            return False
+        if header.startswith(b'#!'):
+            text = header.decode('utf-8', errors='replace').lower()
+            if any(name in text for name in ('claude.exe', 'node.exe', 'cmd.exe', 'powershell.exe')):
+                return False
+            if 'node' in text.splitlines()[0]:
+                node = shutil.which('node')
+                if not node or not native_wsl_binary(node):
+                    return False
+        return True
+    except OSError:
+        return False
+
+
 def profile():
     binary = shutil.which('claude') or next((str(p) for p in
         (Path.home()/'.local/bin/claude', Path('/usr/local/bin/claude'))
         if p.is_file() and os.access(p, os.X_OK)), None)
-    if not binary:
+    if not binary or os.environ.get('MOBILE_BRIDGE_WSL_NATIVE') == '1' and not native_wsl_binary(binary):
         return None
     explicit = os.environ.get('CLAUDE_CONFIG_DIR')
     directory = Path(explicit).expanduser().resolve() if explicit else Path.home()/'.claude'

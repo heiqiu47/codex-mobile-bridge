@@ -43,6 +43,17 @@ def _remote(alias, request, timeout=30):
 
 
 class RemoteClaudeCli:
+    transport_kind = 'ssh'
+
+    def _command(self, alias):
+        return _command(alias)
+
+    def _process_options(self):
+        return {}
+
+    def _remote(self, alias, request, **options):
+        return _remote(alias, request, **options)
+
     def __init__(self, hosts=None):
         self.hosts = hosts
         self.lock = threading.RLock()
@@ -71,7 +82,7 @@ class RemoteClaudeCli:
     def _row(self, host_id, host, raw):
         native = raw['nativeId']
         origin = raw['origin']
-        sid = model.gateway_id('cli:ssh:'+host_id+':'+origin, native)
+        sid = model.gateway_id('cli:'+self.transport_kind+':'+host_id+':'+origin, native)
         return {**raw, 'id': sid, 'backend': 'cli', 'mode': 'cli', 'host': host_id,
                 'hostLabel': host.get('displayName') or host['alias'], 'alias': host['alias'],
                 'archived': False}
@@ -79,7 +90,7 @@ class RemoteClaudeCli:
     def _fetch(self, item):
         host_id, host = item
         try:
-            result = _remote(host['alias'], {'operation': 'list'}, timeout=20)
+            result = self._remote(host['alias'], {'operation': 'list'}, timeout=20)
             if not isinstance(result, dict):
                 raise ValueError('SSH Claude Code 列表格式无效')
             return host_id, host, result
@@ -154,7 +165,7 @@ class RemoteClaudeCli:
         def discover(host_id, host):
             cwds = {item['cwd'] for item in known if item.get('host') == host_id}
             try:
-                result = _remote(host['alias'], {'operation': 'projects'}, timeout=12)
+                result = self._remote(host['alias'], {'operation': 'projects'}, timeout=12)
                 found = result.get('profile')
                 if not found or not result.get('authReady'):
                     return []
@@ -166,7 +177,7 @@ class RemoteClaudeCli:
             for cwd in sorted(cwds):
                 if not cwd.startswith('/'):
                     continue
-                discovered.append({'key': model.gateway_id('cli:project:ssh:'+host_id+':'+found['origin'], cwd),
+                discovered.append({'key': model.gateway_id('cli:project:'+self.transport_kind+':'+host_id+':'+found['origin'], cwd),
                                    'name': Path(cwd).name+' · '+(host.get('displayName') or host['alias']),
                                    'cwd': cwd, 'surface': 'cli', 'host': host_id,
                                    'alias': host['alias'], 'origin': found['origin'],
@@ -185,7 +196,7 @@ class RemoteClaudeCli:
         rows = []
         for host_id, host in self.hosts.hosts().items():
             try:
-                result = _remote(host['alias'], {'operation': 'projects'}, timeout=12)
+                result = self._remote(host['alias'], {'operation': 'projects'}, timeout=12)
             except BridgeUnavailable:
                 continue
             found = result.get('profile')
@@ -209,9 +220,9 @@ class RemoteClaudeCli:
         host = self.hosts.hosts().get(row['host'])
         if not host or host['alias'] != row['alias']:
             raise ValueError('原 SSH 主机配置已变化')
-        fresh = _remote(row['alias'], {'operation': 'detail', 'native': row['nativeId'],
+        fresh = self._remote(row['alias'], {'operation': 'detail', 'native': row['nativeId'],
                                        'origin': row['origin']})
-        if model.gateway_id('cli:ssh:'+row['host']+':'+fresh['origin'], fresh['nativeId']) != sid:
+        if model.gateway_id('cli:'+self.transport_kind+':'+row['host']+':'+fresh['origin'], fresh['nativeId']) != sid:
             raise ValueError('原 SSH Claude Code 会话身份已变化')
         updated = self._row(row['host'], host, fresh)
         with self.lock:
@@ -251,7 +262,7 @@ class RemoteClaudeCli:
             if not 0 < len(data) <= 20*1024*1024:
                 raise ValueError('文件附件大小无效')
             digest = hashlib.sha256(data).hexdigest()
-            remote = _remote(row['alias'], {'operation': 'upload', 'origin': row['origin'],
+            remote = self._remote(row['alias'], {'operation': 'upload', 'origin': row['origin'],
                 'scope': scope, 'id': identifier, 'name': item['name'], 'sha256': digest,
                 'data': base64.b64encode(data).decode('ascii')}, timeout=90)
             result.append({'name': item['name'], 'path': remote['path']})
@@ -261,14 +272,14 @@ class RemoteClaudeCli:
         host = self.hosts.hosts().get(host_id) if self.hosts else None
         if not host or host['alias'] != alias:
             raise ValueError('原 SSH 主机配置已变化')
-        preflight = _remote(alias, {'operation': 'projects'}, timeout=12)
+        preflight = self._remote(alias, {'operation': 'projects'}, timeout=12)
         fresh = preflight.get('profile')
         if not fresh or fresh['origin'] != origin or not preflight.get('authReady'):
             raise BridgeUnavailable('原 SSH Claude Code 账号配置已变化或不可用')
         native = str(uuid.uuid4())
-        sid = model.gateway_id('cli:ssh:'+host_id+':'+origin, native)
-        process = subprocess.Popen(_command(alias), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL, text=True, encoding='utf-8', bufsize=1)
+        sid = model.gateway_id('cli:'+self.transport_kind+':'+host_id+':'+origin, native)
+        process = subprocess.Popen(self._command(alias), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, text=True, encoding='utf-8', bufsize=1, **self._process_options())
         try:
             process.stdin.write(json.dumps({'operation': 'create', 'origin': origin,
                 'native': native, 'cwd': cwd, 'directoryIdentity': directory_identity,
@@ -308,7 +319,7 @@ class RemoteClaudeCli:
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 try:
-                    saved = _remote(alias, {'operation': 'detail', 'origin': origin,
+                    saved = self._remote(alias, {'operation': 'detail', 'origin': origin,
                                             'native': native}, timeout=5)
                 except BridgeUnavailable:
                     saved = None
@@ -350,7 +361,7 @@ class RemoteClaudeCli:
                     raise ValueError('原 SSH 主机配置已变化')
                 page_key = (sid, before, limit)
                 try:
-                    page = _remote(row['alias'], {'operation': 'history', 'native': row['nativeId'],
+                    page = self._remote(row['alias'], {'operation': 'history', 'native': row['nativeId'],
                             'origin': row['origin'], 'scope': sid,
                             'historyBefore': before, 'historyLimit': limit})
                     if not isinstance(page, dict) or not isinstance(page.get('events'), list) or not isinstance(page.get('history'), dict):
@@ -397,7 +408,7 @@ class RemoteClaudeCli:
                 ready = False
                 if not live and row['permissionKnown']:
                     try:
-                        ready = _remote(row['alias'], {'operation': 'auth', 'origin': row['origin']}, timeout=12)['ready']
+                        ready = self._remote(row['alias'], {'operation': 'auth', 'origin': row['origin']}, timeout=12)['ready']
                     except BridgeUnavailable:
                         pass
                 return {'connected': True, 'session': public,
@@ -421,9 +432,9 @@ class RemoteClaudeCli:
                     return {'status': 'ready'}
                 if not row['permissionKnown'] or row['permissionMode'] not in MODES:
                     raise ResumePreflightBlocked('无法确认原会话权限模式')
-                process = subprocess.Popen(_command(row['alias']), stdin=subprocess.PIPE,
+                process = subprocess.Popen(self._command(row['alias']), stdin=subprocess.PIPE,
                                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                           text=True, encoding='utf-8', bufsize=1)
+                                           text=True, encoding='utf-8', bufsize=1, **self._process_options())
                 try:
                     process.stdin.write(json.dumps({'operation': 'resume', 'origin': row['origin'],
                         'native': row['nativeId'], 'cwd': row['cwd'], 'model': row['model'],
