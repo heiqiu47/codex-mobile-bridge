@@ -10,7 +10,7 @@
 
 Codex Desktop、本机 CLI、SSH CLI 和 WSL 的网关队列支持管理。Claude / DSH 已交给原生客户端的队列仍由原生客户端管理；页面会说明限制，不提供无效的排序。当前设备保存的未确认记录可以单独处理。
 
-旧版 Android App 需要重新进入连接以加载更新后的网关页面。它只核对该电脑、账号、接入及会话的记录，不会清空其他草稿，也不会自动发送。
+旧版 Android App 请在原电脑连接中选择“更多 → 刷新页面”，再打开会话；只切回前台可能仍在使用旧页面。它只核对该电脑、账号、接入及会话的记录，不会清空其他草稿，也不会自动发送。
 
 ## English
 
@@ -23,3 +23,5 @@ Open **More → Message management** in a chat. A shortcut also appears above th
 - Ambiguous operations are not retried automatically. Conflicts between pages require refreshing or reopening the manager.
 
 Gateway-owned Codex Desktop, local CLI, SSH CLI and WSL queues are supported. Claude / DSH native queues remain managed by their native clients; unsupported actions are not offered. Device-local unconfirmed records can still be managed.
+
+In older Android apps, choose **More → Refresh page** in the existing computer connection, then reopen the chat. Returning to the foreground alone may keep the old page running. No app reinstall or automatic resend is required.
