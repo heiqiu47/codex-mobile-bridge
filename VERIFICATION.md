@@ -1,3 +1,28 @@
+<a id="v215-pr70-integration"></a>
+
+# v2.1.5 PR #70 与文件变更摘要整合（2026-10-25，本地 Test）
+
+分支 `fix/v2.1.5-pr70-integration`，最终产品提交 `e0e087a`。通过 merge 保留 PR #70 作者 lanchengjiu 的原始提交 `d62002b`，UNC、发送竞态与混版网页修订分别提交；未推送 GitHub。内部版本仍为 2.1.4，不代表正式发布。
+
+- PR #70 的发送修复恢复持久化草稿保护引入回归之前的体验：网关明确确认未提交后，保留输入并允许切换为排队或补充。断网、其他错误和结果未知继续保留提交 ID，不自动重放。逐次登记同一提交的发送尝试，迟到拒绝不会移除其他标签页仍在途或结果未知的尝试；仍开着的旧版网页后来写入的未确认记录也不能被忽略。协调不可用时保守保留已有记录，新的私有请求仍可在明确拒绝后改方式。
+- Windows 项目比较补齐盘符、UNC 和扩展路径的分隔符与大小写处理；纯 `//` 路径由执行目标的平台消除歧义，单斜杠 POSIX 路径仍区分大小写。SSH 不依据网关操作系统猜测目标，保留原始 cwd、host 与原生项目成员关系。
+- “已编辑文件”卡片仅展示文件路径及新增/删除行数，展开不请求补丁正文；125 个文件完整列出，旧缓存卡片也不重新拉取补丁。原工具过程正文仍可按需查看；累计修改与原生净差异继续区分。
+
+| 检查 | 结果与边界 |
+| --- | --- |
+| 最终前端回归 | 1026 项：1025 通过、1 跳过。46 项发送/草稿定向检查覆盖明确拒绝、双标签页迟到回包、混版网页、存储不可用、账号/会话隔离、引用及后续草稿保护 |
+| 后端与编译模块 | 最终后端代码 155 项：153 通过、2 Windows 专属跳过，使用 Mac 打包编译模块和隔离本地 IPC/HTTP 夹具。末次仅修订网页脚本，154 个 Bridge 编译模块与已验收候选逐一相同，无需重复编译 |
+| 真实 Chromium | 文件摘要在 390/1440px 共 24 项；草稿真实 handler 与合成请求 24 项；最终脚本的双同源文档 10 项、两个真实顶层标签页 4 项、混版页面 7 项通过。没有发送真实聊天消息或调用模型；不将浏览器夹具计为手机真机或真实忙碌任务验收 |
+| Mac Test | 最终候选覆盖安装并自动启动 8788；366 个包内网页文件与归档一致，8 个实际 HTTP 资源匹配、7 个条件缓存 304。复用固定开发证书，本轮覆盖后无人工钥匙串授权。正式版文件/进程、原生客户端进程、原配置、网络凭据及原手机绑定保护检查通过 |
+| Windows Test | 最终安装 713 项文件逐一匹配；实际安装编译模块 138 项：137 通过、1 跳过，发送相关 Node 46 项与 WSL/Claude 包内检查通过。GUI 可见且无横向溢出，原用户会话启动 8788，实例归属正确；8 个实际版本化资源及 304 通过。正式版/WSL Test、配置与有效绑定、7 个原生 DSH 进程身份保持 |
+| Ubuntu Test | 用户安装后，723 项安装文件逐一匹配 DEB，dpkg 状态正常；59 项包内编译模块回归、Node 草稿/发送/引用、smoke/项目检查通过。原普通图形会话启动 GUI 与 8788 网关，健康实例归属正确；8 个实际版本化资源哈希及 304 通过，最终草稿模块包含在实际资源中。正式版、自启动、账号配置、原手机绑定和 1 个原生 Codex 进程保持，Cloudflare 启用数仍为 0；未做远程 GUI 截图视觉验收 |
+
+三台 Test 使用相同最终已提交源码归档；Mac/Windows 的最后一次网页修订在核对原生输入不变后复用已验收编译组件。Windows 临时文件与构建产物限定 F 盘，Windows/Ubuntu 重型构建串行。Mac 清理约 1.71 GiB、Windows 清理约 2.15 GiB 逻辑大小的本轮重复产物；Ubuntu 清理本轮重复源码、解包与临时目录。三端均保留最终安装或安装包、最终源码归档、本轮之前的一个 `c0cc4a2` 回滚副本及必要记录；清理后再次核验运行与保留状态。附加的原固定 HTTPS 地址只读静态请求返回 Cloudflare HTTP 403，尚未确认原因，因此不声称此次公网入口验收通过；没有修改该入口或放宽访问控制。记录位于忽略目录 `.tmp/v215-pr70-integration/` 与 `.tmp/v215-pr70-20261025/`。
+
+**English:** PR #70 retains its author's original commit. The send-mode change restores behavior regressed by durable draft protection: only a definitive pre-submission rejection releases the corresponding attempts. Unknown delivery, concurrent tabs, older open pages and later draft edits stay protected. UNC comparisons preserve target-host semantics and original paths. Edited-file cards now expose paths and line counts without downloading patches. Final frontend and real-browser synthetic checks passed. Mac, Windows and Ubuntu Test are installed and running; installed files, live assets, configuration and bindings were verified. Ubuntu GUI process startup is not screenshot-based visual acceptance. Redundant build outputs were removed while retaining final artifacts and one pre-round rollback per platform. A supplemental public HTTPS probe returned Cloudflare 403; LAN acceptance passed and the existing network configuration was preserved. No GitHub publication or real model request occurred.
+
+---
+
 # v2.1.5 文件变更摘要（2026-10-25，本地源码）
 
 按用户验收反馈，文件变更卡片收敛为文件路径和新增/删除行数。展开只显示已有清单，不再读取或展示补丁正文；超过 50 个文件也保留完整清单。分页卡片、详情以及旧状态响应中的文件变更 metadata 均不再携带补丁；原工具过程正文、原生会话与源文件保持原样。原生净差异与“累计修改”的统计来源区分保留。
