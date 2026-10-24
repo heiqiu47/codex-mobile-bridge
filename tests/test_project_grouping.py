@@ -1,9 +1,15 @@
 """Project display uses the execution host's path syntax without changing cwd."""
+import builtins
 import copy
+import contextlib
+import io
+import json
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from bridge.clients.codex.remote import AppHosts
+from bridge.clients.codex.remote import AppHosts, RemoteStore
 
 
 class ProjectGroupingTests(unittest.TestCase):
@@ -16,8 +22,11 @@ class ProjectGroupingTests(unittest.TestCase):
         }
         self.hosts.state = lambda: self.saved
 
-    def decorate(self, cwd, host='local', identifier='fixture'):
-        return self.hosts.decorate([{'id': identifier, 'cwd': cwd, 'origin': 'desktop'}], host, host)[0]
+    def decorate(self, cwd, host='local', identifier='fixture', target_style=None):
+        row={'id': identifier, 'cwd': cwd, 'origin': 'desktop'}
+        if target_style is not None:
+            row['_targetPathStyle']=target_style
+        return self.hosts.decorate([row], host, host)[0]
 
     def test_local_and_ssh_windows_prefixes_separators_case_and_subdirectories(self):
         before = copy.deepcopy(self.saved)
@@ -51,6 +60,58 @@ class ProjectGroupingTests(unittest.TestCase):
         self.assertEqual(self.decorate('D:/Work/Project')['projectKey'], 'local|assigned')
         self.assertEqual(self.decorate('C:/Work/Project', 'ssh')['projectKey'], 'ssh|remote')
         self.assertNotEqual(self.decorate('D:/Work/Project', 'other')['projectKey'], 'local|local')
+
+    def test_plain_forward_slash_unc_uses_target_platform_and_preserves_boundaries(self):
+        self.saved['local-projects']['local']['rootPaths']=['//server/share/Project']
+        self.saved['local-projects']['nested']={'id':'nested','name':'Nested','rootPaths':['//server/share/Project/child']}
+        self.saved['remote-projects']=[{'id':'remote','hostId':'ssh','label':'Remote','remotePath':'//server/share/Project'},
+                                       {'id':'nested','hostId':'ssh','label':'Nested','remotePath':'//server/share/Project/child'}]
+        before=copy.deepcopy(self.saved)
+        for host in ('local','ssh'):
+            # A local Windows target and remote Windows target behave alike,
+            # even when the gateway for SSH runs on a POSIX platform.
+            with patch('bridge.clients.codex.remote.os.name','nt' if host=='local' else 'posix'):
+                for cwd,project in [('//SERVER/share/project','local' if host=='local' else 'remote'),
+                                    ('//SERVER/SHARE/PROJECT/CHILD/src','nested')]:
+                    row=self.decorate(cwd,host,target_style='windows')
+                    self.assertEqual(row['projectKey'],host+'|'+project)
+                    self.assertEqual(row['cwd'],cwd)
+                    self.assertNotIn('_targetPathStyle',row)
+                self.assertNotIn(self.decorate('//server/share/Project2',host,target_style='windows')['projectKey'],
+                                 [host+'|local',host+'|remote',host+'|nested'])
+        self.assertEqual(self.saved,before)
+
+    def test_double_slash_posix_and_unknown_remote_paths_keep_case(self):
+        self.saved['local-projects']['local']['rootPaths']=['//server/share/Project']
+        self.saved['remote-projects'][0]['remotePath']='//server/share/Project'
+        for host,style,gateway_os in [('local',None,'posix'),('ssh','posix','nt'),('ssh',None,'nt')]:
+            with patch('bridge.clients.codex.remote.os.name',gateway_os):
+                expected=host+'|'+('local' if host=='local' else 'remote')
+                self.assertEqual(self.decorate('//server/share/Project/src',host,target_style=style)['projectKey'],expected)
+                self.assertNotEqual(self.decorate('//server/share/project/src',host,target_style=style)['projectKey'],expected)
+                self.assertEqual(self.decorate('/work/Project',host,target_style=style)['cwd'],'/work/Project')
+
+    def test_ssh_target_style_is_created_remotely_and_survives_list_cache(self):
+        source='from pathlib import Path\nimport json\nclass SessionStore:\n def __init__(self,home): pass\n def list(self,**kwargs): return [{"id":"fixture","cwd":"//SERVER/share/project"}]\n'
+        for target_os,style in [('nt','windows'),('posix','posix')]:
+            def remote_import(name,*args,**kwargs):
+                if name=='os':
+                    return types.SimpleNamespace(name=target_os,environ={})
+                return builtins.__import__(name,*args,**kwargs)
+            def read(alias,script,**kwargs):
+                namespace={'__builtins__':{**vars(builtins),'__import__':remote_import}}
+                output=io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    exec(script,namespace)
+                return json.loads(output.getvalue())
+            store=RemoteStore('fixture-ssh')
+            with patch('bridge.clients.codex.remote.source_text',return_value=source), \
+                    patch('bridge.clients.codex.remote.ssh_read',side_effect=read):
+                rows=store.list()
+            self.assertEqual(rows[0]['_targetPathStyle'],style)
+            self.hosts.decorate(rows,'ssh','ssh')
+            cached=store.list()
+            self.assertEqual(cached[0]['_targetPathStyle'],style)
 
     def test_unc_namespaces_match_without_touching_posix_case(self):
         for host in ['local', 'ssh']:

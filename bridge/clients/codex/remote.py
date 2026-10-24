@@ -86,6 +86,8 @@ class RemoteStore:
         suffix = ('\nimport os\nhome_source = "environment" if os.environ.get("CODEX_HOME") else "default"\n'
                   's = SessionStore(Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex"))))\n'
                   'result = s.' + method + '(**' + payload(args) + ')\n')
+        if method == 'list':
+            suffix += 'for row in result: row["_targetPathStyle"] = "windows" if os.name == "nt" else "posix"\n'
         if method == 'discovery_diagnostics':
             suffix += 'result["homeSource"] = home_source\n'
         return ssh_read(self.alias, source + suffix + 'print(json.dumps(result, ensure_ascii=False))\n', timeout=30)
@@ -98,7 +100,7 @@ class RemoteStore:
                 return [dict(row) for row in previous[1]]
             rows = self.call('list', kwargs)
             self.cache[key] = (time.monotonic(), rows)
-            return rows
+            return [dict(row) for row in rows]
 
     def available_sources(self):
         with self.lock:
@@ -396,8 +398,12 @@ class AppHosts:
                 return value.rstrip('/').casefold()
             return path.rstrip('/')
         for row in rows:
+            # A plain // path can also be POSIX. Only the execution host can
+            # disambiguate it; remote list rows carry that host's path style.
+            target_style = row.pop('_targetPathStyle', None)
+            windows_host = os.name == 'nt' if host == 'local' else target_style == 'windows'
             raw_cwd = row.get('cwd', '')
-            cwd = normalized(raw_cwd)
+            cwd = normalized(raw_cwd, windows_host)
             assigned = assignments.get(row['id'], {})
             project = next((p for p in projects if p['id'] == assigned.get('projectId') and assigned.get('hostId', host) == host), None)
             if project is None:
@@ -405,7 +411,7 @@ class AppHosts:
                 for candidate in projects:
                     for root in candidate['roots']:
                         # Infer the target path syntax, never the gateway's OS.
-                        windows = windows_path(root) or windows_path(raw_cwd)
+                        windows = windows_host or windows_path(root) or windows_path(raw_cwd)
                         prefix, target = normalized(root, windows), normalized(raw_cwd, windows)
                         if target == prefix or target.startswith(prefix + '/'):
                             matches.append((len(prefix), candidate))
