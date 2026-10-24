@@ -19,9 +19,9 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
   let nextPost,nextGet;
   const response=(data,status=200)=>({ok:status===200,status,json:async()=>data});
   let listResponse=()=>response({sessions:[],unavailableHosts:[]}),knownRows=[];
-  const context=vm.createContext({ClientNavigation:class{constructor(){this.provider="codex";this.clients=[];}async refresh(){}acknowledgeList(provider,value){acknowledgements.push({provider,value});}},DesktopSessionsView:class{bindListCache(){}previewCachedList(){return false;}clear(){}},Workbench:class{constructor(){this.current={};}open(){}reset(){}setThumbnails(){}relabel(){}},navigator:{userAgent:'test'},document:{addEventListener(){},documentElement:{},getElementById:id=>nodes.get(id),querySelector:selector=>selector==='.archive-filter'?archiveFilter:{disabled:false},querySelectorAll:selector=>selector==='[data-notification-channel]'?channelButtons:[],createElement:node},
+  const context=vm.createContext({ClientNavigation:class{constructor(){this.provider="codex";this.clients=[];}async refresh(){}acknowledgeList(provider,value){acknowledgements.push({provider,value});}},DesktopSessionsView:class{bindListCache(){}previewCachedList(){return false;}clear(){}},Workbench:class{constructor(){this.current={};}open(){}reset(){}setThumbnails(){}relabel(){}},navigator:{userAgent:'test'},document:{addEventListener(){},documentElement:{classList:{contains(){return false;}}},getElementById:id=>nodes.get(id),querySelector:selector=>selector==='.archive-filter'?archiveFilter:{disabled:false},querySelectorAll:selector=>selector==='[data-notification-channel]'?channelButtons:[],createElement:node},
     renderMarkdown(){},window:{addEventListener(){}},localStorage,sessionStorage:scopedStorage,
-    location:{hash:'',pathname:'/',search:''},history:{replaceState(){}},confirm:()=>true,setTimeout(){},clearTimeout(){},setInterval(){},
+    location:{hash:'',pathname:'/',search:''},history:{state:null,replaceState(state){this.state=state;},pushState(state){this.state=state;},back(){}},confirm:()=>true,setTimeout(){},clearTimeout(){},setInterval(){},
     ChatTimeline:class{constructor(){this.abort=new AbortController();}async start(){}dispose(){this.abort.abort();}relabel(){}refreshActions(){}},
     fetch:async(url,options={})=>{
       if(url.includes('/respond?')){writes.push({url,body:JSON.parse(options.body)});return response({status:'accepted'});}
@@ -62,7 +62,7 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
       return response(saved.get(url)||{available:true,watching:false,notifyOnCompletion:false,requests:'inherit',completion:'inherit'});
     }});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/clients/client-navigation.js'),'utf8').match(/^function isCodexClient.*$/m)[0],context);
-  for(const file of ['web/hosts/environment.js','web/shared/i18n.js','web/features/chat/list-sync.js','web/features/accounts/account.js','web/features/chat/modes.js','web/features/chat/attachments.js','web/features/chat/activity.js','web/features/chat/fast-mode.js','web/features/chat/message-actions.js','web/features/chat/permissions.js','web/shell/app.js']){
+  for(const file of ['web/hosts/environment.js','web/hosts/browser-navigation.js','web/shared/i18n.js','web/features/chat/list-sync.js','web/features/accounts/account.js','web/features/chat/modes.js','web/features/chat/attachments.js','web/features/chat/activity.js','web/features/chat/fast-mode.js','web/features/chat/message-actions.js','web/features/chat/permissions.js','web/shell/app.js']){
     let source=fs.readFileSync(path.join(__dirname,'..',file),'utf8');
     if(skipStartup&&file==='web/shell/app.js')source=source.replace('startFromLink(initialPairingToken);initialPairingToken=null;','initialPairingToken=null;');
     vm.runInContext(source,context);
@@ -602,7 +602,7 @@ test('list snapshot is restored only after matching authenticated gateway and se
   const sessionStore=new Map(),localStore=new Map(),first=await fixture({sessionStore,localStore,skipStartup:true});first.nodes.get('app').hidden=false;
   first.run("listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'"+'a'.repeat(64)+"'})");
   first.setList(()=>first.response({sessions:[{id:'saved',host:'local',title:'Saved',projectKey:'p',projectName:'P',recency:1}],remoteHosts:[],availableSources:['desktop'],unavailableHosts:[],complete:true}));
-  await first.run('loadList(true)');assert.equal(localStore.size,1);assert.equal(sessionStore.size,0);
+  await first.run('loadList(true)');assert.equal(localStore.size,1);assert.deepEqual([...sessionStore.keys()],['bridge-browser-navigation']);
   const second=await fixture({sessionStore,localStore,skipStartup:true});assert.equal(second.run('restoreListSnapshot()'),false);
   second.run("listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'"+'b'.repeat(64)+"'})");
   assert.equal(second.run('restoreListSnapshot()'),false);
@@ -610,7 +610,7 @@ test('list snapshot is restored only after matching authenticated gateway and se
   assert.equal(second.run('listIdentity'),first.run('listIdentity'));
   assert.equal(second.run('currentListFilter()'),first.run('currentListFilter()'));
   assert.equal(second.run('restoreListSnapshot()'),true);assert.equal(second.nodes.get('sessions').children[0].dataset.id,'saved');
-  second.run('clearListSnapshot()');assert.equal(sessionStore.size,0);assert.equal([...localStore.keys()].some(key=>key.startsWith('codex-list-v1:')),false);
+  second.run('clearListSnapshot()');assert.deepEqual([...sessionStore.keys()],['bridge-browser-navigation']);assert.equal([...localStore.keys()].some(key=>key.startsWith('codex-list-v1:')),false);
 });
 
 test('Codex list snapshot survives a new storage session and remains scoped to its authenticated computer',async()=>{
@@ -700,6 +700,7 @@ test('logout cache cleanup removes desktop provider snapshots with Codex snapsho
   const sessionStore=new Map([['desktop-list-v1:secret:gateway:claude','private'],['codex-list-v1:secret:all','private'],['unrelated','keep']]);
   const localStore=new Map([['desktop-list-v1:secret:gateway:claude','private'],['desktop-list-v1:secret:gateway:deepseek','private'],['codex-list-v1:secret:all','private'],['unrelated','keep']]);
   const ui=await fixture({sessionStore,localStore,skipStartup:true});ui.run('clearListSnapshot()');
-  assert.deepEqual([...sessionStore], [['unrelated','keep']]);
+  assert.ok(sessionStore.get('bridge-browser-navigation'));
+  assert.deepEqual([...sessionStore].filter(([key])=>key!=='bridge-browser-navigation'), [['unrelated','keep']]);
   assert.deepEqual([...localStore], [['unrelated','keep']]);
 });
