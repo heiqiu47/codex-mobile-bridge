@@ -25,6 +25,7 @@ STATIC = {"/file-actions.js": ("file-actions.js", "text/javascript; charset=utf-
           "/desktop-sessions.js": ("desktop-sessions.js", "text/javascript; charset=utf-8"),
           "/client-accounts.js": ("client-accounts.js", "text/javascript; charset=utf-8"),
           "/cli-access.js": ("cli-access.js", "text/javascript; charset=utf-8"),
+          "/wsl-accounts.js": ("wsl-accounts.js", "text/javascript; charset=utf-8"),
           "/desktop-sessions.css": ("desktop-sessions.css", "text/css; charset=utf-8"),
           "/vendor/xterm/xterm.js": ("vendor/xterm/xterm.js", "text/javascript; charset=utf-8"),
           "/vendor/xterm/addon-fit.js": ("vendor/xterm/addon-fit.js", "text/javascript; charset=utf-8"),

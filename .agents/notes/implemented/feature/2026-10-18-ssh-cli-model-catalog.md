@@ -9,3 +9,5 @@ Host, remote home, cwd, provider, config, account, auth-file digest and selected
 The source bundle includes both POSIX platform readers and their dependencies so a frozen Windows or Mac gateway can query a Linux target. Windows-over-SSH is outside the existing POSIX SSH execution contract; local Windows CLI uses its native reader.
 
 Validation: focused model/session/cache/resource tests; isolated standalone-source execution; a real Codex CLI 0.160.0 daemon on the authorized Linux SSH host using only a loopback mock upstream. Cold/warm reads, manual refresh, failed-refresh retention, credential rotation and cleanup passed with zero model messages. This does not claim public-upstream connectivity on a host without the required network access.
+
+[WSL account management](2026-10-25-wsl-account-management.md) reuses the model normalization and identity principles with separate target routing. SSH account writes and this SSH catalog transport remain unchanged.

@@ -50,3 +50,5 @@ Claude WSL 复用 RemoteClaudeCli 的历史、控制和配置协议，传输使�
 ## Consequences
 
 同类会话可以统一查看，同时保留配置和执行边界；无原生 App 时 WSL 不再被原生就绪条件阻断。代价是展示聚合状态与实际操作子项必须分开，所有写入门仍以具体 endpoint 为准。停用会等待已接受的写操作返回；操作结果不确定时继续保留待核对状态，关闭接入不会退出原 CLI 或迁移任务。
+
+Supported unmanaged WSL profiles now have [environment-scoped account management](../feature/2026-10-25-wsl-account-management.md). This supersedes only the earlier external-only account UI; target identity, passive reads and original runtime ownership remain unchanged.

@@ -24,9 +24,10 @@ function fixture({native=true,listSource='all',host='local'}={}){
  const entries=[{id:'desktop',kind:'desktop',enabled:native},{id:ubuntu,kind:'wsl-cli',enabled:true,name:'Ubuntu'},{id:debian,kind:'wsl-cli',enabled:true,name:'Debian'},{id:disabled,kind:'wsl-cli',enabled:false,name:'Stopped'}];
  let handler=async(url,body)=>url.startsWith('/api/projects')?{projects:[]}:{id:'created',host:new URL(url,'https://fixture').searchParams.get('entry')||'local'};
  const api=async(url,body)=>{calls.push({url,body:body===undefined?undefined:JSON.parse(JSON.stringify(body))});return handler(url,body);};
- class AccountsPanel{constructor(options){Object.assign(this,options);this.clears=0;}clear(){this.clears++;}refresh(){return this.read();}}
+ class AccountsPanel{constructor(options){Object.assign(this,options);this.clears=0;this.refreshButton=node('button');}clear(){this.clears++;}refresh(){return this.read();}}
  class CliAccessPanel{constructor(options){Object.assign(this,options);this.clears=0;this.refreshes=0;}clear(){this.clears++;}refresh(){this.refreshes++;return this.read();}}
- const close=node('button'),context=vm.createContext({$,api,Option,AccountsPanel,CliAccessPanel,URL,Event:class{constructor(type){this.type=type;}},window:{},BridgeI18n:{t:value=>value},document:{getElementById:$,createElement:node,querySelector:()=>close},
+ class WslAccountsPanel{constructor(options){Object.assign(this,options);}clear(){}select(entry){this.entry=entry;return this.read(entry);}}
+ const close=node('button'),context=vm.createContext({$,api,Option,AccountsPanel,CliAccessPanel,WslAccountsPanel,URL,Event:class{constructor(type){this.type=type;}},window:{},BridgeI18n:{t:value=>value},document:{getElementById:$,createElement:node,querySelector:()=>close},
   t:value=>value,el:(tag,_class='',text='')=>Object.assign(node(tag),{textContent:text}),
   clientNavigation:{provider:'codex',clients:[{id:'codex',entries}]},currentHost:host,currentId:null,listSource,listRows:[],
   uuid:()=> '11111111-1111-4111-8111-111111111111',setLanguageBusy(){},loadList:async()=>{},openChat:async(id,where)=>opened.push({id,host:where}),toast:message=>notices.push(message),isCodexClient:id=>id==='codex',
@@ -80,13 +81,13 @@ test('switching account environments routes WSL reads and edits without invoking
  const ui=fixture();ui.setHandler(async()=>({accounts:[],current:{kind:'external'},management:{external:true}}));
  ui.run("accountEntrySelect.value='"+ubuntu+"';accountEntrySelect.onchange();");await Promise.resolve();
  assert.equal(ui.run('codexCliDetails.hidden'),true);assert.ok(ui.run('codexCliAccessPanel.clears')>0);assert.equal(ui.calls.some(call=>call.url==='/api/cli-access'),false);
- await ui.run("accountsPanel.request({action:'account',operation:'save',name:'WSL account'})");assert.equal(ui.calls.at(-1).url,'/api/accounts/account?entry='+encodeURIComponent(ubuntu));assert.equal(ui.calls.at(-1).body.operation,'save');
- ui.run("accountEntrySelect.value='"+debian+"';accountEntrySelect.onchange();");await Promise.resolve();assert.equal(ui.calls.at(-1).url,'/api/accounts?entry='+encodeURIComponent(debian));assert.equal(ui.calls.some(call=>call.url==='/api/cli-access'),false);
+ await ui.run("codexWslAccounts.request({provider:'codex',entry:codexWslAccounts.entry,action:'switch',id:'saved'})");assert.equal(ui.calls.at(-1).url,'/api/wsl-accounts');assert.equal(ui.calls.at(-1).body.entry,ubuntu);assert.equal(ui.calls.at(-1).body.action,'switch');
+ ui.run("accountEntrySelect.value='"+debian+"';accountEntrySelect.onchange();");await Promise.resolve();assert.equal(ui.calls.at(-1).url,'/api/wsl-accounts?provider=codex&entry='+encodeURIComponent(debian));assert.equal(ui.calls.some(call=>call.url==='/api/cli-access'),false);
  ui.run("accountEntrySelect.value='desktop';accountEntrySelect.onchange();");await Promise.resolve();assert.equal(ui.run('codexCliDetails.hidden'),false);assert.equal(ui.calls.at(-1).url,'/api/cli-access');
 });
-test('opening accounts in WSL-only Codex selects WSL without a native account or CLI request',async()=>{
- const ui=fixture({native:false});ui.setHandler(async()=>({accounts:[],current:{kind:'external'},management:{external:true}}));assert.equal(ui.run('openCurrentAccounts()'),true);await Promise.resolve();
- assert.equal(ui.run('codexAccountEntry'),ubuntu);assert.equal(ui.run('codexCliDetails.hidden'),true);assert.equal(ui.calls.length,1);assert.equal(ui.calls[0].url,'/api/accounts?entry='+encodeURIComponent(ubuntu));
+test('opening accounts from an active WSL chat selects its environment without a local request',async()=>{
+ const ui=fixture({native:false,host:ubuntu});ui.setHandler(async()=>({accounts:[],current:{kind:'external'},management:{external:true}}));assert.equal(ui.run('openCurrentAccounts()'),true);await Promise.resolve();
+ assert.equal(ui.run('codexAccountEntry'),ubuntu);assert.equal(ui.run('codexCliDetails.hidden'),true);assert.equal(ui.calls.length,1);assert.equal(ui.calls[0].url,'/api/wsl-accounts?provider=codex&entry='+encodeURIComponent(ubuntu));
 });
 
 test('a stopped WSL can create an independent chat when passive project inventory fails',async()=>{

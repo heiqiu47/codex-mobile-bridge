@@ -761,12 +761,19 @@ class DesktopSessions:
         with self._changing(provider, rebind=False):
             if self.config.get('enabled', {}).get(provider) is False and not (provider == 'claude' and self._wsl_claude_enabled()):
                 raise ValueError('此应用已关闭，请在应用管理中开启')
+            scope = None
+            if provider == 'claude':
+                from bridge.features.accounts.wsl_account_guard import request_scope
+                scope = request_scope(self, provider, action, sid, body)
             with self.db_lock:
                 db = None
                 try:
                     db = self._receipts(adapter)
                     result = {'status': 'unknown', 'id': rid, 'message': '结果待核对，请检查桌面原会话；相同请求不会重复执行'}
                     inserted = db.execute('INSERT OR IGNORE INTO requests VALUES (?,?,?)', (rid, fingerprint, json.dumps(result))).rowcount
+                    if inserted and scope is not None:
+                        db.execute('CREATE TABLE IF NOT EXISTS request_scopes (id TEXT PRIMARY KEY, provider TEXT, host TEXT, sid TEXT)')
+                        db.execute('INSERT INTO request_scopes VALUES (?,?,?,?)', (rid, *scope))
                     db.commit()
                     if not inserted:
                         old = db.execute('SELECT fingerprint,result FROM requests WHERE id=?', (rid,)).fetchone()

@@ -43,6 +43,7 @@
       "web/features/accounts/accounts.js",
       "web/features/accounts/client-accounts.js",
       "web/features/accounts/cli-access.js",
+      "web/features/accounts/wsl-accounts.js",
       "web/features/clients/client-lifecycle.css",
       "web/features/clients/client-lifecycle.js",
       "web/features/accounts/account.css",

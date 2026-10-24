@@ -104,9 +104,9 @@ function codexEntries(){return clientNavigation.clients.find(row=>row.id==='code
 function wslEntries(){return codexEntries().filter(row=>row.kind==='wsl-cli'&&row.enabled);}
 function accountUrl(path){return codexAccountEntry==='desktop'?path:path+(path.includes('?')?'&':'?')+'entry='+encodeURIComponent(codexAccountEntry);}
 function refreshEntryAccounts(){
-  const entries=wslEntries(),native=codexEntries().find(row=>row.id==='desktop');
-  codexAccountEntry=currentHost.startsWith('wsl:')&&entries.some(row=>row.id===currentHost)?currentHost:native?.enabled===false&&entries.length?entries[0].id:'desktop';
-  accountsPanel?.clear();if($('accounts-dialog').open){renderAccountEntries();accountsPanel?.refresh();}
+  const entries=wslEntries();
+  codexAccountEntry=currentHost.startsWith('wsl:')&&entries.some(row=>row.id===currentHost)?currentHost:'desktop';
+  accountsPanel?.clear();if($('accounts-dialog').open){renderAccountEntries();refreshSelectedAccounts();}
 }
 clientNavigation.onApplicationChange=(previous,provider,{host}={})=>{
   if(host?.startsWith('wsl:')){preferredWslEntry=host;listSource='wsl';localStorage.setItem('codex-source-filter',listSource);}
@@ -1410,25 +1410,28 @@ $('pushplus-test').onclick=()=>notificationChannelAction(true);
 const codexCliRoot=el('div');
 const codexCliDetails=el('details','account-compact'),codexCliSummary=el('summary','',t('Codex CLI 接入'));codexCliSummary.dataset.i18n='Codex CLI 接入';codexCliDetails.append(codexCliSummary,codexCliRoot);$('accounts-dialog').append(codexCliDetails);
 const codexCliAccessPanel=typeof CliAccessPanel==='undefined'?null:new CliAccessPanel({root:codexCliRoot,provider:'codex',read:()=>api('/api/cli-access'),request:value=>api('/api/cli-access',value)});
-$('accounts-dialog').addEventListener('close',()=>codexCliAccessPanel?.clear());
+const codexWslRoot=el('div');$('accounts-dialog').append(codexWslRoot);
+const codexWslAccounts=typeof WslAccountsPanel==='undefined'?null:new WslAccountsPanel({root:codexWslRoot,provider:'codex',read:entry=>api('/api/wsl-accounts?provider=codex&entry='+encodeURIComponent(entry)),request:value=>api('/api/wsl-accounts',value)});
+function refreshSelectedAccounts(){if(codexAccountEntry==='desktop'){codexWslAccounts?.clear();accountsPanel?.refresh();codexCliAccessPanel?.refresh();}else codexWslAccounts?.select(codexAccountEntry);}
+$('accounts-dialog').addEventListener('close',()=>{codexCliAccessPanel?.clear();codexWslAccounts?.clear();});
 const accountEntryLabel=el('label','',t('运行环境')),accountEntrySelect=el('select');accountEntrySelect.setAttribute('aria-label',t('运行环境'));accountEntryLabel.append(accountEntrySelect);$('accounts-heading').after(accountEntryLabel);
 function renderAccountEntries(){
   const entries=wslEntries();
   accountEntrySelect.replaceChildren(new Option(t('此电脑'),'desktop'),...entries.map(row=>new Option(row.name||row.label,row.id)));
   if(codexAccountEntry!=='desktop'&&!entries.some(row=>row.id===codexAccountEntry))codexAccountEntry='desktop';
   accountEntrySelect.value=codexAccountEntry;accountEntryLabel.hidden=!entries.length;
-  codexCliDetails.hidden=codexAccountEntry!=='desktop';
+  codexCliDetails.hidden=codexAccountEntry!=='desktop';$('accounts-content').hidden=codexAccountEntry!=='desktop';codexWslRoot.hidden=codexAccountEntry==='desktop';if(typeof accountsPanel!=='undefined'&&accountsPanel)accountsPanel.refreshButton.hidden=codexAccountEntry!=='desktop';
   if(codexCliDetails.hidden)codexCliAccessPanel?.clear();
 }
-accountEntrySelect.onchange=()=>{codexAccountEntry=accountEntrySelect.value;accountsPanel?.clear();renderAccountEntries();accountsPanel?.refresh();if(codexAccountEntry==='desktop')codexCliAccessPanel?.refresh();};
+accountEntrySelect.onchange=()=>{codexAccountEntry=accountEntrySelect.value;accountsPanel?.clear();renderAccountEntries();refreshSelectedAccounts();};
 
 const accountsPanel=window.BridgeSharedRelay||typeof AccountsPanel==='undefined'?null:new AccountsPanel({root:$('accounts-content'),toolbar:$('accounts-heading'),read:()=>api(accountUrl('/api/accounts')),request:({action,...value})=>action==='ignoreSubmission'?ignoreSubmission(value):api(accountUrl(action==='account'?'/api/accounts/account':action==='details'?'/api/accounts/details':action==='reminders'?'/api/accounts/reminders':action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?'/api/accounts/desktop-update':'/api/accounts/switch'),action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?{action,...value}:value),onChanged:value=>{if(codexActiveAccountId!==undefined&&codexActiveAccountId!==value.activeId){browserNavigation.invalidate();if(typeof ChatTimeline!=='undefined')ChatTimeline.clearCache?.();clearCodexProvisionalDrafts();clearQuoteComposer();codexDraftScope=null;codexDraftTouched=false;}resetModelCatalog();},onUpdate:value=>{codexActiveAccountId=value.activeId;const label='账号管理';$('accounts-button').setAttribute('data-i18n',label);$('accounts-button').textContent=t(label);}});
 function openCurrentAccounts(){
-  const provider=clientNavigation.provider;
+  const activeProvider=clientNavigation.provider,provider=activeProvider?.startsWith('wsl-claude:')?'claude':activeProvider;
   if(!provider)return false;
   if(isCodexClient(provider)){
     if(!accountsPanel)return false;
-    refreshEntryAccounts();renderAccountEntries();$('accounts-dialog').showModal();accountsPanel.refresh();if(codexAccountEntry==='desktop')codexCliAccessPanel?.refresh();return true;
+    refreshEntryAccounts();renderAccountEntries();$('accounts-dialog').showModal();refreshSelectedAccounts();return true;
   }
   const name=clientNavigation.clients.find(row=>row.id===provider)?.name||provider;
   const dialog=desktopSessions.dialog('账号与接入'),content=el('div','provider-account');
@@ -1441,12 +1444,19 @@ function openCurrentAccounts(){
     readModels:(refresh=false)=>api('/api/desktop-sessions/'+provider+'/account'+(refresh?'?refresh=true':'')),
     onChanged:(value,previous)=>desktopSessions.accountChanged(provider,previous,value)
   });
+  let claudeWslAccounts=null,selectClaudeAccounts=null;
   if(provider==='claude'&&typeof CliAccessPanel!=='undefined'){
     const details=el('details','account-compact'),root=el('div'),summary=el('summary','',t('Claude Code CLI 接入'));summary.dataset.i18n='Claude Code CLI 接入';details.append(summary,root);dialog.append(details);
     claudeCliAccessPanel=new CliAccessPanel({root,provider:'claude',read:()=>api('/api/cli-access'),request:value=>api('/api/cli-access',value)});
-    claudeCliAccessPanel.refresh();
+    const selectorLabel=el('label','',t('运行环境')),selector=el('select'),wslRoot=el('div');selectorLabel.append(selector);toolbar.after(selectorLabel);dialog.append(wslRoot);
+    claudeWslAccounts=new WslAccountsPanel({root:wslRoot,provider:'claude',read:entry=>api('/api/wsl-accounts?provider=claude&entry='+encodeURIComponent(entry)),request:value=>api('/api/wsl-accounts',value)});
+    const entries=clientNavigation.clients.find(row=>row.id==='claude')?.entries||[];
+    const targets=entries.filter(row=>row.id?.startsWith('wsl-claude:'));
+    selector.append(new Option(t('此电脑'),'local'),...targets.map(row=>new Option(row.name||row.label||row.id,row.id)));selectorLabel.hidden=!targets.length;
+    const select=()=>{const local=selector.value==='local';content.hidden=!local;details.hidden=!local;panel.refreshButton.hidden=!local;if(local){claudeWslAccounts.clear();panel.resume();claudeCliAccessPanel.refresh();}else{panel.generation++;panel.modelsRevision++;clearTimeout(panel.timer);panel.loading=false;panel.busy=false;claudeCliAccessPanel.clear();claudeWslAccounts.select(selector.value);}};
+    selector.onchange=select;const activeEntry=desktopSessions.isChatOpen&&desktopSessions.state?.runtime==='wsl'?desktopSessions.state.host:activeProvider;if(targets.some(row=>row.id===activeEntry))selector.value=activeEntry;selectClaudeAccounts=select;
   }
-  dialog.addEventListener('close',()=>{panel.dispose();claudeCliAccessPanel?.dispose();claudeCliAccessPanel=null;});dialog.showModal();panel.resume();
+  dialog.addEventListener('close',()=>{panel.dispose();claudeWslAccounts?.dispose();claudeCliAccessPanel?.dispose();claudeCliAccessPanel=null;});dialog.showModal();if(selectClaudeAccounts)selectClaudeAccounts();else panel.resume();
   return true;
 }
 $('accounts-button').onclick=openCurrentAccounts;

@@ -43,6 +43,7 @@ from bridge.features.accounts.account import Account
 from bridge.features.accounts.accounts import Accounts, operation
 from bridge.features.accounts.draft_identity import codex_account_identity, draft_identity
 from bridge.features.accounts.cli_access import CliAccess
+from bridge.features.accounts.wsl_accounts import WslAccounts
 from bridge.features.sessions.goal import GoalRPC, GoalError, GoalUnavailable, GoalUnsupported, goal_activation, goal_identity, normalize_goal_result, normalize_ui_locale, goal_command_fingerprint, goal_state_confirms_command, native_goal_absent, normalize_goal, plan_goal_command, read_native_goal
 from bridge.features.workspace.uploads import Uploads, image_type
 from bridge.clients.codex.remote import upload_file
@@ -246,6 +247,7 @@ class Bridge:
         self.account = Account(codex_home, data_dir, codex_bin, executable_getter=executable_getter) if host == 'local' else None
         self.accounts = Accounts(self) if host == "local" else None
         self.cli_access = CliAccess(self) if host == "local" else None
+        self.wsl_accounts = WslAccounts(self) if host == "local" else None
         self.goal = goal_rpc or (GoalRPC(codex_home, codex_bin, executable_getter=executable_getter) if host == 'local' else None)
         self.owner_goal = owner_goal
         self.goal_transport = 'owner' if owner_goal else 'sidecar'
@@ -285,6 +287,36 @@ class Bridge:
                 self.live.setdefault(key.split(":")[0], LiveSession(key.split(":")[0]))
         threading.Thread(target=self._maintain, daemon=True).start()
         threading.Thread(target=self._upload_gc, daemon=True).start()
+
+    def cli_access_control(self, value):
+        """Local desktop control; credential mutations stay off the web route."""
+        if not isinstance(value, dict):
+            raise ValueError('CLI 接入请求无效')
+        if value.get('action') != 'wslAccounts':
+            return self.cli_access.control(value)
+        manager = self.wsl_accounts
+        if manager is None:
+            raise ValueError('此网关不支持 WSL 账号')
+        operation = value.get('operation')
+        if operation == 'environments':
+            if set(value) != {'action', 'operation', 'provider'}:
+                raise ValueError('WSL 环境查询参数无效')
+            return manager.environments(value['provider'])
+        request = {key: item for key, item in value.items() if key not in ('action', 'operation')}
+        request['action'] = 'read' if operation == 'list' else operation
+        return manager.change(request, desktop=True)
+
+    def wsl_account_sources(self, provider):
+        from bridge.features.accounts.wsl_account_sources import sources
+        return sources(self, provider)
+
+    def wsl_account_import(self, provider, value):
+        from bridge.features.accounts.wsl_account_sources import import_api
+        return import_api(self, provider, value)
+
+    def wsl_account_guard(self, provider, row):
+        from bridge.features.accounts.wsl_account_guard import account_guard
+        return account_guard(self, provider, row)
 
     def _goal_runtime_available(self):
         if self.host != "local":
@@ -3084,6 +3116,8 @@ class Bridge:
         self.side_chats.close()
         if self.cli_access:
             self.cli_access.close()
+        if getattr(self, 'wsl_accounts', None):
+            self.wsl_accounts.close()
         self.closed.set()
         if hasattr(self.catalog_reader, 'stop_model_refresh'):
             self.catalog_reader.stop_model_refresh()

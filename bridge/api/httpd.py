@@ -658,6 +658,35 @@ class Handler(BaseHTTPRequestHandler):
                 self.read_json()
                 self.server.auth.logout(self.token())
                 return self.output(200, {"ok": True}, cookie=self.cookie("", clear=True))
+            if path in ('/api/wsl-accounts', '/api/wsl-accounts/environments'):
+                manager = getattr(self.server.bridge, 'wsl_accounts', None)
+                if manager is None:
+                    return self.output(503, {'error': 'WSL 账号管理不可用'})
+                if write:
+                    if path != '/api/wsl-accounts' or query:
+                        raise ValueError('WSL 账号请求参数无效')
+                    body = self.read_json()
+                    fields = {'switch': {'provider', 'entry', 'action', 'id', 'expectedIdentity'},
+                              'models': {'provider', 'entry', 'action', 'id'}}
+                    required = fields.get(body.get('action')) if isinstance(body, dict) else None
+                    optional = {'refresh'} if isinstance(body, dict) and body.get('action') == 'models' else set()
+                    if required is None or not required <= set(body) or set(body) - required - optional:
+                        raise ValueError('浏览器只支持查看模型及切换已保存的 WSL 账号')
+                    if 'refresh' in body and type(body['refresh']) is not bool:
+                        raise ValueError('模型刷新参数无效')
+                    if body['action'] == 'switch' and self.server.auth.config.get('mode') == 'none':
+                        raise PermissionError('免密访问不能切换 WSL 账号')
+                    return self.output(200, manager.change(body, desktop=False))
+                fields = {'provider'} if path.endswith('/environments') else {'provider', 'entry'}
+                if set(query) != fields or any(len(values) != 1 or not values[0] for values in query.values()):
+                    raise ValueError('WSL 账号查询参数无效')
+                provider = query['provider'][0]
+                if path.endswith('/environments'):
+                    return self.output(200, manager.environments(provider))
+                result = manager.read(provider, query['entry'][0])
+                if self.server.auth.config.get('mode') == 'none':
+                    result = {**result, 'capabilities': {**result.get('capabilities', {}), 'switch': False}}
+                return self.output(200, result)
             if path == '/api/cli-access':
                 if query:
                     raise ValueError('CLI 接入请求包含不支持的参数')

@@ -1,0 +1,68 @@
+'use strict';
+// WSL credentials and account state are scoped to a registered environment.
+class WslAccountsPanel {
+  constructor({root,provider,read,request,desktop=false}){
+    Object.assign(this,{root,provider,read,request,desktop});this.entry='';this.generation=0;this.value=null;this.models=new Map();this.busy=false;
+    root.classList.add('wsl-accounts-panel');this.onLanguage=()=>this.render();document.addEventListener('bridge-language',this.onLanguage);this.render();
+  }
+  t(key){return BridgeI18n.t(key);}
+  node(tag,text='',className=''){const node=document.createElement(tag);node.className=className;node.textContent=text;return node;}
+  button(key,action){const node=this.node('button',this.t(key));node.type='button';node.onclick=action;node.disabled=this.busy;return node;}
+  clear(){this.generation++;this.value=null;this.models.clear();this.busy=false;this.entry='';this.error='';this.editRow=null;this.sources=null;if(this.key)this.key.value='';this.render();}
+  dispose(){this.clear();document.removeEventListener('bridge-language',this.onLanguage);}
+  select(entry){this.clear();this.entry=entry||'';this.root.hidden=!this.entry;if(this.entry)return this.refresh();}
+  async refresh(){if(!this.entry||this.busy)return;const generation=++this.generation,entry=this.entry;this.busy=true;this.error='';this.render();try{const value=await this.read(entry);if(generation!==this.generation)return;if(value.entry!==entry||value.provider!==this.provider)throw Error('WSL 账号结果与所选环境不一致');this.value=value;}catch(error){if(generation===this.generation)this.error=error.message;}finally{if(generation===this.generation){this.busy=false;this.render();}}}
+  async perform(action,fields={}){
+    if(this.busy||!this.entry||!this.value?.available)return;
+    const generation=++this.generation,entry=this.entry,payload={provider:this.provider,entry,action,...(action==='switch'?{expectedIdentity:this.value.identity}:{}),...fields};this.busy=true;this.error='';if(this.key)this.key.value='';this.render();
+    try{const result=await this.request(payload);if(generation!==this.generation)return;
+      if(result.entry&&result.entry!==entry||result.provider&&result.provider!==this.provider)throw Error('WSL 账号结果与所选环境不一致');
+      if(action==='models'){this.models.set(fields.id,result);}
+      else if(action==='import-sources'){this.sources=result.sources||[];}
+      else if(Array.isArray(result.accounts)){this.value=result;this.models.clear();this.editRow=null;}
+      else {this.busy=false;await this.refresh();}
+    }catch(error){if(generation===this.generation)this.error=error.message;}
+    finally{payload.apiKey='';if(generation===this.generation){this.busy=false;this.render();}}
+  }
+  field(form,key,type='text',value=''){const label=this.node('label'),input=this.node('input');input.type=type;input.value=value;input.disabled=this.busy;label.append(this.node('span',this.t(key)),input);form.append(label);return input;}
+  render(){
+    const root=this.root,data=this.value;root.replaceChildren();if(!this.entry)return;
+    const head=this.node('div','','wsl-account-actions');head.append(this.node('h3',this.t('WSL 账号与接入')),this.button('刷新',()=>this.refresh()));root.append(head);
+    if(this.error){const error=this.node('p',this.t(this.error),'error');error.setAttribute('role','alert');root.append(error);}
+    if(!data){root.append(this.node('p',this.t(this.busy?'正在读取…':'请选择 WSL 环境'),'account-muted'));return;}
+    const identity=data.target||data.identity||{},target=typeof identity==='object'?[identity.distribution,identity.user,identity.configDir].filter(Boolean).join(' · '):'';
+    root.append(this.node('p',target||this.entry,'wsl-account-target'));
+    const status=this.node('p',this.t(data.available?'WSL 配置已读取；登录有效性以核验结果为准。':'WSL 环境不可用；请启动发行版后刷新。'),'account-muted');status.setAttribute('role','status');root.append(status);
+    if(data.activeVerified===false)root.append(this.node('p',this.t('尚未验证登录有效性'),'account-muted'));
+    if(data.verification){root.append(this.node('p',this.t('核验状态')+': '+this.t(data.verification.status||data.verification),'account-muted'));}
+    if(data.sharedWithDesktop===false)root.append(this.node('p',this.t('此 WSL 配置独立于本机接入。'),'account-muted'));
+    if(data.sharedWithDesktop||data.shared)root.append(this.node('p',this.t('此配置目录与其他接入共用。'),'account-muted'));
+    for(const reason of data.blockers||[])root.append(this.node('p',this.t(typeof reason==='string'?reason:reason.message||reason.code),'error'));
+    if(data.loginGuidance)root.append(this.node('p',this.t(data.loginGuidance),'account-muted'));
+    const blocked=!data.available||(data.blockers||[]).length>0;
+    for(const row of data.accounts||[]){
+      const card=this.node('section','','wsl-account-row'),actions=this.node('div','','wsl-account-actions');card.append(this.node('strong',row.id==='native'?this.t(row.name):row.name||row.id),this.node('small',[this.t(row.kind==='api'?'API 接入':'原生登录'),row.baseUrl,row.model].filter(Boolean).join(' · ')));
+      if(row.id===data.activeId||row.active)actions.append(this.node('span',this.t('当前接入')));
+      else if(data.capabilities?.switch){const button=this.button('切换到此接入',()=>this.confirmSwitch(row));button.disabled=this.busy||blocked;actions.append(button);}
+      if(row.kind==='api'&&data.capabilities?.models){const button=this.button('查看上游模型',()=>this.perform('models',{id:row.id}));button.disabled=this.busy||!data.available;actions.append(button);}
+      if(this.desktop&&data.capabilities?.save&&row.id!=='native'){actions.append(this.button('编辑',()=>{this.editRow=row;this.render();}),this.button('重命名',()=>this.editName(row)));if(row.id!==data.activeId&&row.id!=='native')actions.append(this.button('删除',()=>this.confirmDelete(row)));}
+      card.append(actions);if(row.kind!=='api')card.append(this.node('p',this.t('原生登录的模型请在原 CLI 查看；已有聊天继续使用原模型。'),'account-muted'));
+      const result=this.models.get(row.id);if(result){const output=this.node('div','','wsl-account-models');const list=this.node('ul');for(const model of result.models||[]){const id=typeof model==='string'?model:model.id,name=typeof model==='string'?model:model.name||model.id,item=this.node('li',name+(name!==id?' · '+id:'')),efforts=typeof model==='object'?model.efforts:null;item.append(this.node('small',this.t('推理强度')+': '+(Array.isArray(efforts)&&efforts.length?efforts.map(effort=>this.t(typeof effort==='string'?effort:effort.name||effort.id)).join(' / '):this.t('上游未提供'))));list.append(item);}output.append(list);if(!(result.models||[]).length)output.append(this.node('p',this.t(result.modelError||'未返回模型列表')));if(result.cache?.updatedAt)output.append(this.node('small',this.t('更新于：')+new Date(result.cache.updatedAt*1000).toLocaleString(BridgeI18n.locale())));if(result.cache?.state)output.append(this.node('small',this.t('缓存状态')+': '+result.cache.state));output.append(this.button('刷新模型',()=>this.perform('models',{id:row.id,refresh:true})));card.append(output);}
+      root.append(card);
+    }
+    if(this.desktop&&data.capabilities?.save&&data.available){if(!(data.accounts||[]).some(row=>row.id==='native'))root.append(this.button('保存当前原生接入',()=>this.perform('import-current',{})));this.renderEditor(root);}
+  }
+  confirmSwitch(row){const box=this.node('div','','wsl-account-confirm');box.append(this.node('p',this.t('仅切换所选 WSL 环境的后续请求。请先结束该环境正在运行的任务。')),this.button('确认切换',()=>this.perform('switch',{id:row.id})),this.button('取消',()=>box.remove()));this.root.prepend(box);}
+  confirmDelete(row){const box=this.node('div','','wsl-account-confirm');box.append(this.node('p',this.t('删除此保存的接入？')+' '+row.name),this.button('删除',()=>this.perform('delete',{id:row.id})),this.button('取消',()=>box.remove()));this.root.prepend(box);}
+  editName(row){const form=this.node('form','','wsl-account-editor'),name=this.field(form,'名称','text',row.name);const save=this.node('button',this.t('保存名称'));save.type='submit';save.disabled=this.busy;form.append(save,this.button('取消',()=>form.remove()));form.onsubmit=event=>{event.preventDefault();this.perform('rename',{id:row.id,name:name.value});};this.root.prepend(form);name.focus();}
+  renderEditor(root){
+    const editing=this.editRow,details=this.node('details'),summary=this.node('summary',this.t(editing?'编辑 WSL API 接入':'添加 WSL API 接入')),form=this.node('form','','wsl-account-editor');details.open=!!editing;details.append(summary,form);
+    const name=this.field(form,'名称','text',editing?.name||''),baseUrl=this.field(form,'API 地址','url',editing?.baseUrl||''),model=this.field(form,'模型 ID','text',editing?.model||'');this.key=this.field(form,'API Key','password');this.key.autocomplete='new-password';const key=this.key;
+    const scheme=this.node('select');for(const value of ['x-api-key','bearer']){const option=this.node('option',value);option.value=value;scheme.append(option);}scheme.value=editing?.authScheme||'x-api-key';if(this.provider==='claude'){const label=this.node('label');label.append(this.node('span',this.t('认证方式')),scheme);form.append(label);}
+    const save=this.node('button',this.t('保存 API 接入'));save.type='submit';save.disabled=this.busy;form.append(save);if(editing)form.append(this.button('取消编辑',()=>{this.editRow=null;this.render();}));form.onsubmit=event=>{event.preventDefault();this.perform('save-api',{...(editing?{id:editing.id}:{}),name:name.value,baseUrl:baseUrl.value,model:model.value,apiKey:key.value,authScheme:scheme.value});};root.append(details);
+    if(this.value.capabilities?.import){
+      root.append(this.button('从本机导入 API 接入',()=>this.perform('import-sources')),this.node('p',this.t('导入的 localhost、127.0.0.1 和 ::1 地址指向所选 WSL 环境，地址保持原样。'),'account-muted'));
+      if(this.sources){const importForm=this.node('form','','wsl-account-editor'),label=this.node('label'),source=this.node('select');label.append(this.node('span',this.t('选择本机保存的 API 接入')),source);for(const row of this.sources){const option=this.node('option',[row.name,row.source].filter(Boolean).join(' · '));option.value=row.id;source.append(option);}const submit=this.node('button',this.t('导入指定 API 接入'));submit.type='submit';submit.disabled=this.busy||!this.sources.length;importForm.append(label,submit);if(!this.sources.length)importForm.append(this.node('p',this.t('本机暂无可导入的 API 接入'),'account-muted'));importForm.onsubmit=event=>{event.preventDefault();const selected=this.sources.find(row=>row.id===source.value);if(selected)this.perform('import-api',{sourceId:selected.id,sourceIdentity:selected.sourceIdentity});};root.append(importForm);}
+    }
+  }
+}

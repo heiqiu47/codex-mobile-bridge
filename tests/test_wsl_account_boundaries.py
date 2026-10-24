@@ -1,0 +1,349 @@
+"""Independent account transaction boundaries; synthetic target directories only."""
+import json
+import os
+from pathlib import Path
+import tempfile
+import threading
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+from bridge.features.accounts import wsl_account_worker as worker
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@unittest.skipUnless(os.name == 'posix', 'Target worker requires POSIX permissions/UID; native WSL runtime is verified separately')
+class WslAccountBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        from tests.test_wsl_accounts import install_target_toml
+        install_target_toml(self)
+        (ROOT / '.tmp').mkdir(exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.tmp')
+        self.addCleanup(self.temp.cleanup)
+        self.home = Path(self.temp.name).resolve()
+        (self.home / 'auth.json').write_text('{"token":"native-fixture"}')
+        (self.home / 'config.toml').write_text('model = "original"\n# keep original comment\n[history]\npersistence = "save-all"\n')
+        self.store = worker.AccountStore('codex', self.home, guard=lambda *_: [])
+        self.store.change({'action': 'save-api', 'name': 'Fixture', 'model': 'fixture-model',
+                           'baseUrl': 'https://fixture.invalid/v1', 'apiKey': 'fixture-secret'})
+        self.identifier = self.store.public()['accounts'][0]['id']
+
+    def switch(self, **options):
+        return self.store.change({'action': 'switch', 'id': self.identifier,
+                                  'expectedIdentity': self.store.public()['identity'], **options})
+
+    def test_stale_identity_rejects_before_creating_native_snapshot_or_touching_files(self):
+        before = self.store.files()
+        with self.assertRaises(worker.AccountError):
+            self.switch(expectedIdentity='stale')
+        self.assertEqual(self.store.files(), before)
+        self.assertNotIn('native', self.store.store)
+
+    def test_switch_public_metadata_and_native_restore_do_not_leak_secrets(self):
+        before = self.store.files()
+        result = self.switch()
+        rendered = json.dumps(result)
+        self.assertNotIn('fixture-secret', rendered)
+        self.assertNotIn('native-fixture', rendered)
+        self.assertFalse(result['activeVerified'])
+        self.store.change({'action': 'switch', 'id': 'native', 'expectedIdentity': result['identity']})
+        self.assertEqual(self.store.files(), before)
+
+    def test_external_edit_after_snapshot_blocks_write_and_retains_external_edit(self):
+        calls = []
+        def changing_guard(*_):
+            calls.append(True)
+            if len(calls) == 2:
+                (self.home / 'config.toml').write_text('model = "external"\n')
+            return []
+        self.store.guard = changing_guard
+        with self.assertRaises(worker.AccountError):
+            self.store.switch({'id': self.identifier, 'expectedIdentity': worker._identity(self.store.files())})
+        self.assertEqual((self.home / 'config.toml').read_text(), 'model = "external"\n')
+        self.assertEqual((self.home / 'auth.json').read_text(), '{"token":"native-fixture"}')
+
+    def test_partial_failure_rollback_preserves_external_writer(self):
+        original_write = worker._write
+        before = self.store.files()
+        def write(path, value):
+            if Path(path).name == 'auth.json':
+                (self.home / 'config.toml').write_text('model = "concurrent-writer"\n')
+                raise OSError('fixture failure')
+            return original_write(path, value)
+        with patch.object(worker, '_write', side_effect=write):
+            with self.assertRaises(worker.AccountError):
+                self.switch()
+        self.assertEqual((self.home / 'config.toml').read_text(), 'model = "concurrent-writer"\n')
+        self.assertEqual((self.home / 'auth.json').read_bytes(), before['auth.json'])
+
+    def test_root_bracket_in_comment_or_string_preserves_valid_unrelated_toml(self):
+        for prefix in ('# [retained comment]\n', 'model_reasoning_summary = "value[bracket"\n'):
+            with self.subTest(prefix=prefix):
+                (self.home / 'config.toml').write_text(prefix + 'model = "original"\n[history]\npersistence = "save-all"\n')
+                before = self.store.files()
+                after = self.store.prepared(self.store.row(self.identifier), before)
+                actual = worker._toml_loads(after['config.toml'].decode())
+                self.assertEqual(actual['model'], 'fixture-model')
+                self.assertEqual(actual['history']['persistence'], 'save-all')
+                self.assertIn(prefix, after['config.toml'].decode())
+
+    def test_proven_other_config_home_process_does_not_block_selected_environment(self):
+        proc = self.home / 'fixture-proc'
+        process = proc / '900001'
+        process.mkdir(parents=True)
+        (process / 'cmdline').write_bytes(b'/usr/bin/codex\0app-server\0')
+        (process / 'environ').write_bytes(b'CODEX_HOME=/home/fixture/other-codex\0')
+        (process / 'exe').symlink_to('/usr/bin/codex')
+        original_path = Path
+        def selected_path(value):
+            return proc if str(value) == '/proc' else original_path(value)
+        with patch.object(worker, 'Path', side_effect=selected_path), \
+                patch.object(worker.os.path, 'expanduser', return_value=str(self.home)), \
+                patch.dict(worker.os.environ, {}, clear=True):
+            self.assertEqual(worker.runtime_blockers('codex', self.home), [])
+            (process / 'environ').write_bytes(b'CODEX_HOME=' + str(self.home).encode() + b'\0')
+            self.assertTrue(worker.runtime_blockers('codex', self.home))
+
+    def test_read_has_no_disk_mutation_or_process_start(self):
+        before = {p.name: p.read_bytes() for p in self.home.iterdir() if p.is_file()}
+        with patch('subprocess.Popen', side_effect=AssertionError('must not spawn')), \
+                patch('subprocess.run', side_effect=AssertionError('must not spawn')):
+            self.store.public()
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.home.iterdir() if p.is_file()})
+
+
+class WslAccountRoutingBoundaries(unittest.TestCase):
+    def setUp(self):
+        from bridge.features.accounts.wsl_accounts import WslAccounts
+        from bridge.features.endpoints.registry import entry_id
+        (ROOT / '.tmp').mkdir(exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.tmp')
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name).resolve()
+        self.row = {'distribution': 'FixtureUbuntu', 'user': 'fixture', 'home': '/home/fixture/.codex',
+                    'label': 'Fixture', 'enabled': True}
+        self.row['id'] = entry_id(self.row['distribution'], self.row['user'], self.row['home'])
+        self.registry = SimpleNamespace(entries=[self.row], lock=threading.RLock(),
+                                        directory=self.directory, bridges={})
+        self.bridge = SimpleNamespace(data_dir=self.directory, entries=self.registry)
+        self.accounts = WslAccounts(self.bridge)
+        self.running = patch('bridge.features.accounts.wsl_accounts.wsl.running_distributions', return_value=['FixtureUbuntu'])
+        self.running.start()
+        self.addCleanup(self.running.stop)
+        call_patch = patch.object(self.accounts, '_call', return_value={'available': True, 'accounts': [],
+                                 'blockers': [], 'capabilities': {'save': True, 'switch': True}})
+        self.call = call_patch.start()
+        self.addCleanup(call_patch.stop)
+
+    def request(self, **values):
+        return {'provider': 'codex', 'entry': self.row['id'], 'action': 'switch',
+                'expectedIdentity': 'fixture-identity', 'id': 'saved', **values}
+
+    def test_invalid_cross_provider_disabled_and_tampered_targets_never_dispatch(self):
+        for entry in ('desktop', 'local', 'ssh:fixture', 'wsl:'+'f'*32, 'wsl-claude:'+'f'*32):
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                self.accounts.change(self.request(entry=entry))
+        self.row['enabled'] = False
+        with self.assertRaises(ValueError):
+            self.accounts.change(self.request())
+        self.row['enabled'] = True
+        self.row['home'] = '/home/fixture/other-home'
+        with self.assertRaises(ValueError):
+            self.accounts.change(self.request())
+        self.call.assert_not_called()
+
+    def test_web_credential_enrollment_fields_reject_before_dispatch(self):
+        for fields in ({'action': 'save-api'}, {'apiKey': 'fixture-secret'}, {'sourceId': 'local-saved'}):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                self.accounts.change(self.request(**fields))
+        self.call.assert_not_called()
+
+    def test_stopped_environment_read_remains_passive_and_change_never_dispatches(self):
+        with patch('bridge.features.accounts.wsl_accounts.wsl.running_distributions', return_value=[]):
+            result = self.accounts.read('codex', self.row['id'])
+            self.assertFalse(result['available'])
+            with self.assertRaises(ValueError):
+                self.accounts.change(self.request())
+        self.call.assert_not_called()
+
+    def test_unknown_and_queued_receipts_are_preserved_and_block_only_their_environment(self):
+        import copy
+        for status in ('unknown', 'queued', 'pending'):
+            with self.subTest(status=status):
+                receipts = {'fixture-request': {'result': {'status': status}, 'body': 'retained draft'}}
+                before = copy.deepcopy(receipts)
+                endpoint = SimpleNamespace(write_lock=threading.RLock(), lock=threading.RLock(),
+                                           receipts=receipts, server=None, live={})
+                self.registry.bridges[self.row['id']] = endpoint
+                with self.assertRaises(ValueError):
+                    self.accounts.change(self.request())
+                self.assertEqual(receipts, before)
+        self.call.assert_not_called()
+        self.registry.bridges = {'wsl:'+'a'*32: endpoint}
+        self.accounts.change(self.request())
+        self.call.assert_called_once()
+
+    def test_transport_uses_selected_user_private_stdin_and_never_retries_unknown_write(self):
+        from bridge.features.accounts.wsl_accounts import WslAccounts
+        with patch('bridge.features.accounts.wsl_accounts.wsl.read', side_effect=TimeoutError('fixture unknown')) as read:
+            with self.assertRaises(TimeoutError):
+                WslAccounts._call(self.accounts, 'codex', self.row,
+                                  {'action': 'save-api', 'apiKey': 'fixture-private-secret'})
+        read.assert_called_once()
+        args, kwargs = read.call_args
+        self.assertEqual(args[0], 'FixtureUbuntu')
+        self.assertEqual(args[2], 'fixture')
+        self.assertIn('fixture-private-secret', args[1])
+        self.assertFalse(kwargs['allow_start'])
+        # The platform transport's second argument is source stdin, never argv.
+
+    def test_unexpected_target_exception_cannot_echo_secret_details(self):
+        from bridge.features.accounts.wsl_accounts import WslAccounts
+        import contextlib
+        import io
+        source = "class AccountError(ValueError): pass\ndef execute(request): raise RuntimeError('fixture-private-secret')\n"
+        def execute_target(_distribution, source, _user, **_options):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exec(source, {'json': json})
+            return json.loads(output.getvalue())
+        with patch('bridge.features.accounts.wsl_accounts.worker_source', return_value=source), \
+                patch('bridge.features.accounts.wsl_accounts.wsl.read', side_effect=execute_target):
+            with self.assertRaises(ValueError) as error:
+                WslAccounts._call(self.accounts, 'codex', self.row, {'action': 'read'})
+        self.assertNotIn('fixture-private-secret', str(error.exception))
+
+    def test_model_identity_change_during_refresh_cannot_restore_old_cached_models(self):
+        from bridge.clients.codex.catalog import ModelStore
+        digest = 'old-profile-digest'
+        identity = ModelStore.key('wsl-saved-api', 'codex', self.row['id'], digest)
+        self.accounts.models_store.write(identity, {'models': [{'id': 'old-account-model'}]})
+        old = {'accounts': [{'id': 'saved', 'modelCatalogIdentity': digest}]}
+        changed = {'accounts': [{'id': 'saved', 'modelCatalogIdentity': 'new-profile-digest'}]}
+        state = {'changed': False}
+        def target(_provider, _row, request):
+            if request['action'] == 'read':
+                return changed if state['changed'] else old
+            state['changed'] = True
+            return {'models': [], 'modelError': '模型接入已变化', 'identityChanged': True}
+        self.call.side_effect = target
+        try:
+            result = self.accounts.change(self.request(action='models', refresh=True))
+        except ValueError:
+            return  # Explicit stale-identity rejection is the preferred outcome.
+        self.assertEqual(result.get('models', []), [])
+        self.assertNotEqual(result.get('cache', {}).get('state'), 'stale')
+
+    def test_persisted_unknown_receipt_blocks_after_restart_without_rewriting_it(self):
+        path = self.directory / self.row['id'][4:] / 'operations.json'
+        path.parent.mkdir()
+        original = b'{"fixture":{"result":{"status":"unknown"},"request":"retained"}}'
+        path.write_bytes(original)
+        with self.assertRaises(ValueError):
+            self.accounts.change(self.request())
+        self.assertEqual(path.read_bytes(), original)
+        self.call.assert_not_called()
+
+
+class ClaudeWslDurableGuardTests(unittest.TestCase):
+    def setUp(self):
+        from bridge.clients.manager import DesktopSessions
+        from bridge.clients.claude.wsl import entry_id
+        from bridge.features.accounts.wsl_account_guard import account_guard
+        (ROOT / '.tmp').mkdir(exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.tmp')
+        self.addCleanup(self.temp.cleanup)
+        self.manager = DesktopSessions(self.temp.name)
+        self.addCleanup(self.manager.close)
+        self.row = {'distribution': 'FixtureUbuntu', 'user': 'fixture', 'configDir': '/home/fixture/.claude',
+                    'label': 'Fixture', 'enabled': True}
+        self.row['id'] = entry_id(self.row['distribution'], self.row['user'], self.row['configDir'])
+        self.manager.claude_wsl.entries = [self.row]
+        self.remote = self.manager.adapters['claude'].remote_cli.wsl
+        self.remote.index['fixture-session'] = {'host': self.row['id']}
+        self.bridge = SimpleNamespace(desktop_sessions=self.manager, data_dir=self.temp.name)
+        self.bridge.wsl_account_guard = lambda provider, row: account_guard(self.bridge, provider, row)
+        self.guard = lambda: account_guard(self.bridge, 'claude', self.row)
+
+    def receipt(self, result, sid='fixture-session'):
+        import uuid
+        with patch.object(self.manager, '_adapter_call', return_value=result):
+            return self.manager.call('claude', 'send', sid, {'id': str(uuid.uuid4()), 'text': 'synthetic'})
+
+    def test_exact_unknown_scope_persists_and_blocks_without_mutating_receipt(self):
+        self.receipt({'status': 'unknown'})
+        before = self.manager.db.execute('SELECT * FROM requests').fetchall()
+        with self.assertRaises(ValueError), self.guard():
+            pass
+        self.assertEqual(before, self.manager.db.execute('SELECT * FROM requests').fetchall())
+        self.assertEqual(self.manager.db.execute('SELECT provider,host,sid FROM request_scopes').fetchone(),
+                         ('claude', self.row['id'], 'fixture-session'))
+
+    def test_other_host_known_rejection_and_legacy_unknown_are_not_reclassified(self):
+        self.remote.index['other-session'] = {'host': 'wsl-claude:' + 'f'*32}
+        self.receipt({'status': 'unknown'}, 'other-session')
+        self.receipt({'status': 'blocked'})
+        self.manager.db.execute('INSERT INTO requests VALUES (?,?,?)',
+                                ('legacy', 'irreversible-hash', '{"status":"unknown"}'))
+        self.manager.db.commit()
+        with self.guard():
+            pass
+        self.assertEqual(self.manager.db.execute('SELECT result FROM requests WHERE id="legacy"').fetchone()[0],
+                         '{"status":"unknown"}')
+
+    def test_local_and_missing_scope_keep_original_receipts_without_side_table(self):
+        self.receipt({'status': 'accepted'}, 'local-or-unloaded-session')
+        self.assertIsNone(self.manager.db.execute("SELECT name FROM sqlite_master WHERE name='request_scopes'").fetchone())
+        with self.guard():
+            pass
+
+    def test_missing_optional_scope_metadata_does_not_create_new_preflight_failure(self):
+        from bridge.features.accounts.wsl_account_guard import request_scope
+        with patch.object(self.manager.directory_projects, 'get', side_effect=ValueError('fixture missing')):
+            self.assertIsNone(request_scope(self.manager, 'claude', 'create', None, {'projectKey': 'fixture'}))
+        self.assertIsNone(request_scope(self.manager, 'deepseek', 'send', 'fixture', {}))
+
+    def test_active_pending_target_blocks_but_other_host_does_not(self):
+        from unittest.mock import Mock
+        owned = SimpleNamespace(process=Mock(), condition=threading.Condition(), active=True, pending={})
+        owned.process.poll.return_value = None
+        self.remote.owned['fixture-session'] = owned
+        with self.assertRaises(ValueError), self.guard():
+            pass
+        self.remote.index['fixture-session']['host'] = 'wsl-claude:'+'f'*32
+        with self.guard():
+            pass
+        self.remote.owned.clear()  # Synthetic owner has no native lifecycle.
+
+    def test_switch_waits_for_manager_before_holding_registry_or_remote_locks(self):
+        from bridge.features.accounts.wsl_accounts import WslAccounts
+        accounts = WslAccounts(self.bridge)
+        started, done = threading.Event(), threading.Event()
+        errors = []
+        def switching():
+            started.set()
+            try:
+                with accounts._change_scope('claude', self.row['id'], 'switch'):
+                    pass
+            except Exception as error:
+                errors.append(error)
+            finally:
+                done.set()
+        with self.manager._changing('claude', rebind=False):
+            thread = threading.Thread(target=switching, daemon=True)
+            thread.start()
+            self.assertTrue(started.wait(1))
+            self.assertFalse(done.wait(.05))
+            # Normal writes may still need registration while holding manager.
+            self.assertTrue(self.manager.claude_wsl.lock.acquire(timeout=1))
+            self.manager.claude_wsl.lock.release()
+            self.assertTrue(self.remote.lock.acquire(timeout=1))
+            self.remote.lock.release()
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+
+
+if __name__ == '__main__':
+    unittest.main()
