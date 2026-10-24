@@ -60,18 +60,24 @@ class ComposerDrafts {
       };
     });
   }
-  pendingSend(scope){const saved=this.read(this.key(scope,'pending-v2'))??this.pending(scope);return saved&&typeof saved.id==='string'&&saved.id?saved:null;}
+  pendingSend(scope){const saved=this.read(this.key(scope,'pending-v2')),old=this.pending(scope);return saved?.id?saved:old&&saved?.legacyVersion!==JSON.stringify(old)?old:null;}
   async beginSend(scope,body,id,attempt,imported=false){
     if(!this.coordinator)return this.pendingSend(scope)?{blocked:true}:false;
     const result=await this.coordinate(coordinated=>{
       const key=this.key(scope,'pending-v2');if(!key)return null;
-      const saved=this.read(key),old=this.read(this.key(scope,'pending')),previous=saved??old;
+      const saved=this.read(key),old=this.pending(scope),legacyVersion=old?JSON.stringify(old):null;
+      const unseenLegacy=old&&saved?.legacyVersion!==legacyVersion;
       const fingerprint=JSON.stringify(body);
+      // A still-open v1 page may write another unknown after v2 was settled.
+      // Never hide that new version behind a tombstone or an active v2 request.
+      if(unseenLegacy&&(saved?.id||old.fingerprint!==fingerprint))return {blocked:true};
+      const previous=unseenLegacy?old:saved;
       if(previous?.body?.text===body.text&&previous.fingerprint!==fingerprint)return {...previous,blocked:true};
       const same=previous?.fingerprint===fingerprint;
       const pending=same?{...previous}:{id,fingerprint,body};
       pending.attempts=[...(same&&Array.isArray(previous.attempts)?previous.attempts:[]),attempt];
-      pending.untracked=!!(same&&(previous.untracked||!saved)||imported||!coordinated);
+      pending.untracked=!!(same&&(previous.untracked||unseenLegacy)||imported||!coordinated);
+      pending.legacyVersion=unseenLegacy?legacyVersion:saved?.legacyVersion??null;
       return this.write(key,pending)?pending:false;
     });
     return result===null?(this.pendingSend(scope)?{blocked:true}:false):result;
@@ -79,15 +85,20 @@ class ComposerDrafts {
   settleSend(scope,id,attempt,action,revision){
     return this.coordinate(coordinated=>{
       if(!coordinated)return false;
-      const key=this.key(scope,'pending-v2'),pending=this.read(key)??(action==='ignore'?this.pending(scope):null);
+      const key=this.key(scope,'pending-v2'),saved=this.read(key),old=this.pending(scope),legacyVersion=old?JSON.stringify(old):null;
+      if(action==='ignore'&&old?.id===id&&saved?.id!==id){
+        return this.write(key,{...(saved||{cleared:true}),legacyVersion});
+      }
+      const pending=saved??(action==='ignore'?old:null);
       if(pending?.id!==id)return false;
       if(action==='reject'){
         if(!pending.attempts?.includes(attempt))return false;
         pending.attempts=pending.attempts.filter(value=>value!==attempt);
+        if(old&&pending.legacyVersion!==legacyVersion)pending.untracked=true;
         if(pending.untracked||pending.attempts.length){this.write(key,pending);return false;}
       }
       // A tombstone prevents reimporting v1 without racing an older page's writes.
-      if(!this.write(key,{cleared:true}))return false;
+      if(!this.write(key,{cleared:true,legacyVersion:action==='ignore'&&old?.id===id?legacyVersion:pending.legacyVersion??null}))return false;
       // Do not remove a legacy record written by a still-open older page.
       if(action==='confirm'&&this.load(scope)?.revision===revision)this.clear(scope);
       return true;

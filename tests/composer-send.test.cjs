@@ -215,3 +215,44 @@ test('a private unknown survives a later explicit rejection of its same-ID retry
   await ui.submit();const id=ui.pending().id;await ui.submit();assert.equal(ui.pending().id,id);
   ui.nodes['send-mode'].value='queue';await ui.submit();assert.equal(ui.calls.length,2);
 });
+
+test('a legacy second unknown is not hidden by a coordinated tombstone',async()=>{
+  const local=storage(),ui=fixture({local});const body={text:'first',mode:'send'};
+  ui.drafts.begin(ui.scope,body,'legacy-first');
+  await ui.drafts.beginSend(ui.scope,body,'unused','first-attempt');
+  await ui.drafts.settleSend(ui.scope,'legacy-first','first-attempt','confirm',0);
+  const old=new ComposerDrafts(local);old.confirm(ui.scope,'legacy-first',0);
+  old.begin(ui.scope,{text:'second',mode:'send'},'legacy-unknown');
+  assert.equal(ui.drafts.pendingSend(ui.scope).id,'legacy-unknown');
+  const changed=await ui.drafts.beginSend(ui.scope,{text:'second',mode:'queue'},'new-id','new-attempt');
+  assert.equal(changed.blocked,true);assert.equal(old.pending(ui.scope).id,'legacy-unknown');
+  const same=await ui.drafts.beginSend(ui.scope,{text:'second',mode:'send'},'another-id','same-attempt');
+  assert.equal(same.id,'legacy-unknown');assert.equal(same.untracked,true);
+  await ui.drafts.settleSend(ui.scope,same.id,'same-attempt','reject');
+  assert.equal(ui.drafts.pendingSend(ui.scope).id,'legacy-unknown');
+});
+
+test('a legacy write after active v2 blocks replacement and prevents rejection release',async()=>{
+  const local=storage(),ui=fixture({local});await ui.drafts.beginSend(ui.scope,{text:'same',mode:'send'},'active-id','active-attempt');
+  const old=new ComposerDrafts(local);old.begin(ui.scope,{text:'same',mode:'send'},'legacy-unknown');
+  const retry=await ui.drafts.beginSend(ui.scope,{text:'same',mode:'send'},'new-id','new-attempt');assert.equal(retry.blocked,true);
+  await ui.drafts.settleSend(ui.scope,'active-id','active-attempt','reject');
+  assert.equal(ui.drafts.pendingSend(ui.scope).id,'active-id');assert.equal(old.pending(ui.scope).id,'legacy-unknown');
+  await ui.drafts.settleSend(ui.scope,'legacy-unknown',null,'ignore');
+  assert.equal(ui.drafts.pendingSend(ui.scope).id,'active-id','Explicitly ignoring v1 preserves active v2');
+});
+
+test('real handler blocks queue after an old page writes its second unknown',async()=>{
+  const local=storage(),ui=fixture({local}),old=new ComposerDrafts(local);
+  const first={text:'first'};old.begin(ui.scope,first,'first-id');
+  await ui.drafts.beginSend(ui.scope,first,'unused','first-attempt');
+  await ui.drafts.settleSend(ui.scope,'first-id','first-attempt','confirm',0);old.confirm(ui.scope,'first-id',0);
+  const second={text:'same text',mode:'send',skills:['skill'],workMode:'default',attachments:['attachment'],uiLocale:'zh-CN'};
+  old.begin(ui.scope,second,'second-unknown');
+  // The old page's request delivered an unknown response, so it keeps v1 intact.
+  ui.nodes['send-mode'].value='queue';await ui.submit();
+  assert.equal(ui.calls.length,0);assert.equal(old.pending(ui.scope).id,'second-unknown');
+  ui.nodes['send-mode'].value='send';await ui.submit();
+  assert.equal(ui.calls.length,1);assert.equal(ui.calls[0].id,'second-unknown');
+  assert.equal(ui.drafts.pendingSend(ui.scope).id,'second-unknown');
+});
