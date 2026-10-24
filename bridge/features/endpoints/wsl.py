@@ -20,6 +20,7 @@ from bridge.features.sessions.model import normalize_state, normalize_request, c
 from bridge.features.sessions.timeline import Timeline
 from bridge.features.sessions.store import StoreUnavailable
 from bridge.features.sessions.projects import Projects
+from bridge.features.endpoints.wsl_features import WslFeatures
 from bridge.features.workspace.uploads import Uploads
 from bridge.platforms.windows import wsl
 from bridge.resources import source_text
@@ -27,8 +28,8 @@ from bridge.resources import source_text
 
 CAPABILITIES = {'send': True, 'stop': True, 'settings': True, 'approvals': True, 'queue': True,
                 'workspace': True, 'attachments': True, 'skills': True, 'permissions': True,
-                'plan': True, 'goal': False, 'terminal': False, 'sideChat': False,
-                'notifications': False, 'messageActions': False}
+                'plan': True, 'goal': True, 'terminal': True, 'sideChat': False,
+                'notifications': True, 'messageActions': False}
 
 
 def _entry_write(method):
@@ -71,6 +72,8 @@ class Session:
         self.history_limit = 20
         self.refreshing = False
         self.stamp = None
+        self.watched = False
+        self.notification_probe_until = 0
 
     def changed(self):
         self.sequence += 1
@@ -82,7 +85,7 @@ class Session:
                     'loadingHistory': self.loading, 'activating': self.activating, 'error': self.error}
 
 
-class WslEntry:
+class WslEntry(WslFeatures):
     capabilities = CAPABILITIES
     def __init__(self, row, directory):
         self.row = dict(row)
@@ -110,6 +113,7 @@ class WslEntry:
         self.store = WslStore(self)
         self.directory_projects = Projects(self.data_dir)
         self.uploads = Uploads(self.data_dir, lambda *args: upload_file(self.row['distribution'], *args, reader=self.read))
+        self._init_features()
         self.worker = threading.Thread(target=self._maintain, daemon=True)
         self.worker.start()
 
@@ -179,6 +183,8 @@ class WslEntry:
             session = self.live.get(params.get('threadId'))
         if session is None:
             return
+        with self.lock:
+            self.notification_dirty.add(session.id)
         with session.condition:
             if 'id' in message:
                 if normalize_request(message).get('supported'):
@@ -261,6 +267,7 @@ class WslEntry:
                     session.connected, session.error, session.loading = connected, error, False
                     session.stamp = stamp
                     session.changed()
+            self._refresh_features(session)
 
     def session(self, identifier, attach=True, background=False, force=False):
         uuid.UUID(identifier)
@@ -300,7 +307,7 @@ class WslEntry:
             for session in sessions:
                 if self.closed.is_set():
                     break
-                if session.viewers or time.monotonic() - session.touched < 20:
+                if session.viewers or session.watched or time.monotonic() - session.touched < 20:
                     with session.condition:
                         if session.refreshing:
                             continue
@@ -361,7 +368,7 @@ class WslEntry:
             turn['actionable'] = False
         if not result['connected']:
             result['readOnlyReason'] = result.get('error') or '点击重新连接以恢复 WSL 会话'
-        return result
+        return self._view_features(session, result)
 
     def timeline_read(self, identifier, mode='page', **options):
         session = self.session(identifier, background=True)
@@ -616,6 +623,9 @@ class WslEntry:
 
     @_entry_write
     def send(self, identifier, text, submission_id, mode='send', skills=None, work_mode=None, attachments=None, **options):
+        if work_mode == 'goal':
+            return self.send_goal(identifier, text, submission_id, mode=mode, skills=skills,
+                                  attachments=attachments, ui_locale=options.get('ui_locale'))
         return self._send(identifier, text, submission_id, mode, skills, work_mode, attachments)
 
     def _send(self, identifier, text, submission_id, mode='send', skills=None, work_mode=None, attachments=None, *, queued=False):
@@ -976,13 +986,14 @@ class WslEntry:
     def unsupported(*args, **kwargs):
         raise ValueError('此功能暂不支持 WSL CLI 入口，请在原终端操作')
 
-    terminal = side_chat = side_attachment = unsupported
-    cancel_goal = edit_goal = set_goal_status = message_action = unsupported
+    side_chat = side_attachment = unsupported
+    message_action = unsupported
     desktop_image_preview = unsupported
 
     def close(self):
         with self.write_lock:
             self.closed.set()
+            self._close_features()
             server = self.server
             if server is not None:
                 server.close()

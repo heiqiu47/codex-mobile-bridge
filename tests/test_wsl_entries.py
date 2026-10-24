@@ -253,6 +253,10 @@ class Runtime:
             return {'config': {'model_provider': 'magpie', 'model': 'group/fixture', 'model_providers': {'magpie': {}}}}
         if method == 'model/list':
             return {'data': [{'model': 'group/fixture'}]}
+        if method == 'thread/goal/get':
+            error = IPCError('unsupported goal')
+            error.rpc_error = {'code': -32601}
+            raise error
         raise AssertionError('Unexpected operation: ' + method)
 
     def write(self, value):

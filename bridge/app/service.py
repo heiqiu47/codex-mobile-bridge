@@ -1233,6 +1233,12 @@ class Bridge:
                 source.notification_cursor = cursor
             except (IPCError, RemoteUnavailable, StoreUnavailable):
                 pass  # Preserve the cursor so the next discovery can recover.
+        if self.host == 'local' and self.entries is not None:
+            for identifier in self.entries.hosts():
+                try:
+                    rows.extend(self.entries.get(identifier).notification_candidates())
+                except (IPCError, RemoteUnavailable, StoreUnavailable, KeyError):
+                    pass
         return rows
 
     def notification_updates(self):
@@ -1249,6 +1255,12 @@ class Bridge:
                     if session.connected and (session.watched or state.get('threadRuntimeStatus', {}).get('type') == 'active' or
                             any(t.get('status') == 'inProgress' for t in ordered_turns(state)) or pending_requests(state)):
                         rows.append({'id': session.id, 'host': source.host})
+        if self.host == 'local' and self.entries is not None:
+            # Existing instances only: a UI poll never registers or starts WSL.
+            with self.entries.lock:
+                entries = list(self.entries.bridges.values())
+            for entry in entries:
+                rows.extend(entry.notification_updates())
         return rows
 
     def release_notification_session(self, session):

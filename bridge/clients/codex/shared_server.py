@@ -23,6 +23,8 @@ class SharedServer:
         'thread/items/list', 'thread/resume', 'thread/start',
         'turn/start', 'turn/steer', 'turn/interrupt', 'thread/settings/update',
         'thread/name/set', 'model/list', 'config/read',
+        'skills/list', 'configRequirements/read', 'permissionProfile/list',
+        'experimentalFeature/list', 'account/read', 'thread/goal/get', 'thread/goal/set', 'thread/goal/clear',
     })
 
     def __init__(self, stream, event=lambda value: None):
