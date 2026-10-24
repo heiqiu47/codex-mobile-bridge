@@ -94,3 +94,9 @@ test('refresh preserves local edit and blocks save when original text changes or
 test('attachment-only queued messages may save an empty text in place',async()=>{
  const {m,sent}=fixture();await m.editRow({id:'queued',text:'old',attachments:['attachment']});m.editor.body.text='';await m.submitEditor();assert.equal(sent.length,1);assert.equal(sent[0].body.text,'');assert.equal(sent[0].body.id,'queued');
 });
+
+test('reopening after a failed editor save reloads current storage instead of rethrowing historical rejection',async()=>{
+ const {m}=fixture(),stored={id:'current',sourceId:'current',baseVersion:'v2',operation:'edit',status:'editing',body:{text:'stored draft'}};let shown=0;
+ m.editorSave=Promise.reject(Error('previous save conflict'));m.scope=()=>m.target;m.doc={activeElement:null};m.beforeOpen=()=>{};m.loadEditor=async()=>structuredClone(stored);m.dialog.showModal=()=>shown++;
+ await m.open();assert.equal(shown,1);assert.deepEqual(m.editor,stored);assert.deepEqual(m.persistedEditor,stored);assert.equal(m.refreshes,1);
+});

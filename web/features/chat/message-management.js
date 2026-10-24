@@ -22,7 +22,7 @@ class MessageManagement {
   async open(){
     if(this.busy)return;this.target=structuredClone(typeof this.scope==='function'?this.scope():this.scope);if(!this.target)return;
     const token=++this.generation;
-    this.opener=this.doc.activeElement;this.beforeOpen();await this.editorSave;this.editor=await this.loadEditor(this.target);this.persistedEditor=structuredClone(this.editor);if(token!==this.generation)return;
+    this.opener=this.doc.activeElement;this.beforeOpen();await Promise.resolve(this.editorSave).catch(()=>{});this.editor=await this.loadEditor(this.target);this.persistedEditor=structuredClone(this.editor);if(token!==this.generation)return;
     this.dialog.showModal();this.generation++;await this.refresh();
   }
   locked(){return this.busy||!!this.drag||!!this.editor||Date.now()<(this.scrollingUntil||0);}
