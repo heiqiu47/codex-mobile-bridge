@@ -72,6 +72,6 @@ Codex 的环境路由、目录登记和创建回执由 `codex-entries.browser.js
 
 ## 输入区引用布局
 
-`composer-quotes.browser.js` 在加载生产 ComposerQuotes 与输入区样式的隔离页面中运行。
+`composer-quotes.browser.js` 在 `bootstrap-fixture.py` 完整启动生产页面后运行。
 调用并等待 `runComposerQuoteLayoutChecks()`，分别在实际 390、844、1440 px 视口执行；调整窗口后先等待 `innerWidth` 匹配目标宽度。
-它使用合成 Codex / Claude DOM 核验选区按钮紧邻上下文用量、窄屏独立行、引用预览单行省略与展开完整文本，以及选区点击和已有草稿保留；不发送消息。
+它复制已初始化的完整 Codex / Claude 输入区（包括提醒、权限、上下文和收起按钮），不再手工简化工具栏。核验宽屏选区按钮紧邻上下文用量、窄屏独立紧凑行且原工具栏不换行、引用预览单行省略与展开完整文本，以及选区点击和已有草稿保留；不发送消息。布局依据实际输入区宽度，不能用全窗口宽度代替分屏宽度。

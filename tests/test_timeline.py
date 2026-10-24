@@ -171,6 +171,41 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual((rows[1]['model'],rows[1]['effort']),('gemini-fixture','high'))
         self.assertNotIn('model',rows[2]);self.assertNotIn('effort',rows[2])
 
+    def test_saved_native_file_footer_survives_partial_live_turn_outside_saved_text_window(self):
+        # Production API shape: the completed turn's tail is native-loaded while
+        # its complete rollout patch evidence predates the saved text window.
+        from bridge.features.sessions.store import native_turn_file_changes
+        patch_turn={'turnId':'edited-nine','status':'completed','items':[
+            {'type':'fileChange','id':'earlier','changes':[{'path':'earlier.py','diff':'+first'}]},
+            *[{'type':'commandExecution','id':'cmd-'+str(i),'command':'fixture'} for i in range(100)],
+            {'type':'fileChange','id':'tail','changes':[{'path':'tail.py','diff':'+last'}]},
+            {'type':'agentMessage','id':'final','text':'Done'}]}
+        patch_turn['_nativeFileChanges']=native_turn_file_changes(patch_turn)
+        current={'turnId':'current','status':'inProgress','items':[
+            {'type':'agentMessage','id':'current-'+str(i),'text':'Current'} for i in range(40)]}
+        session=LiveSession('chat')
+        with session.condition:
+            session.set_history({'id':'chat','turns':[patch_turn,current]})
+            self.assertNotIn('edited-nine',[turn['id'] for turn in session.saved_view['turns']])
+            native_turn={'turnId':'edited-nine','status':'completed','itemsPagination':{'hasLoadedOldest':False},
+                         'items':patch_turn['items'][-2:]}
+            session.state={'id':'chat','turns':[native_turn,current],'turnsPagination':{'hasLoadedOldest':False}}
+            session.connected=True
+            view=session.view(item_limit=60)
+        edited=next(turn for turn in view['turns'] if turn['id']=='edited-nine')
+        self.assertEqual([file['path'] for file in edited['fileChanges']],['earlier.py','tail.py'])
+        timeline=Timeline();timeline.update(view,limit=60)
+        footer=next(row for row in timeline.rows if row['kind']=='fileChanges')
+        self.assertEqual(footer['fileSummary']['count'],2)
+        self.assertIn('earlier.py',timeline.detail(timeline.cursor(footer['key']))['text'])
+        self.assertNotIn('fileChanges',session.state['turns'][0])
+        # An authoritative native net diff retains precedence over saved edits.
+        native_turn['diff']='diff --git a/net.py b/net.py\n--- a/net.py\n+++ b/net.py\n@@ -1 +1 @@\n-old\n+new'
+        with session.condition:
+            updated=session.view(item_limit=60)
+        self.assertEqual(updated['turns'][0]['fileChangesBasis'],'net')
+        self.assertEqual(updated['turns'][0]['fileChanges'][0]['path'],'net.py')
+
     def test_partial_desktop_snapshot_keeps_saved_prefix_without_changing_patch_state(self):
         session = LiveSession('chat')
         saved = {'id': 'chat', 'turns': [

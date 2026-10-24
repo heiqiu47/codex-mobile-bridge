@@ -9,7 +9,20 @@ class ComposerQuotes {
     this.action=doc.createElement('button');this.action.type='button';this.action.className='composer-quote-selection';this.action.hidden=true;
     this.action.textContent=translate('引用所选文字');
     const context=input.closest('.composer')?.querySelector('.composer-tools .context-usage');
-    if(context)context.after(this.action);else this.root.append(this.action);
+    if(context){
+      const tools=context.parentElement;
+      this.selectionRow=doc.createElement('div');this.selectionRow.className='composer-quote-actions';this.selectionRow.hidden=true;tools.after(this.selectionRow);
+      context.after(this.action);
+      // Measure the real pane: wrapping all toolbar controls can strand the
+      // collapse button on a third row, especially with longer model labels.
+      this.layoutObserver=new ResizeObserver(()=>{
+        if(!tools.clientWidth)return;
+        if(tools.clientWidth<=720){if(this.action.parentElement!==this.selectionRow)this.selectionRow.append(this.action);}
+        else if(this.action.previousElementSibling!==context)context.after(this.action);
+        this.visibility();
+      });
+      this.layoutObserver.observe(tools);
+    }else this.root.append(this.action);
     container.insertBefore(this.root,input);
     this.action.addEventListener('pointerdown',()=>{this.pressed=this.snapshot;});
     this.action.addEventListener('pointercancel',()=>{this.pressed=null;this.capture();});
@@ -56,7 +69,7 @@ class ComposerQuotes {
     this.quotes.forEach((quote,index)=>{const chip=this.doc.createElement('div');chip.className='composer-quote';const text=this.doc.createElement('details');const summary=this.doc.createElement('summary');summary.textContent=quote.text.slice(0,160);const full=this.doc.createElement('div');full.className='composer-quote-full';full.textContent=quote.text;text.append(summary,full);if(quote.source)text.title=[quote.provider,quote.source].filter(Boolean).join(' · ');const remove=this.doc.createElement('button');remove.type='button';remove.textContent='×';remove.setAttribute('aria-label',this.translate('移除引用'));remove.addEventListener('click',()=>{this.quotes.splice(index,1);this.onChange();this.render();});chip.append(text,remove);this.root.append(chip);});
     this.visibility();
   }
-  visibility(){this.root.hidden=(!this.root.contains(this.action)||this.action.hidden)&&!this.quotes.length;}
+  visibility(){this.root.hidden=(!this.root.contains(this.action)||this.action.hidden)&&!this.quotes.length;if(this.selectionRow)this.selectionRow.hidden=!this.selectionRow.contains(this.action)||this.action.hidden;}
   serialize(text){return ComposerQuotes.serialize(text,this.quotes);}
   static normalize(quotes){return Array.isArray(quotes)?quotes.filter(value=>value&&typeof value.text==='string'&&value.text.trim()).slice(0,8).map(value=>({text:value.text.slice(0,100000),source:typeof value.source==='string'?value.source.slice(0,500):'',provider:typeof value.provider==='string'?value.provider.slice(0,40):''})):[];}
   static serialize(text,quotes){const quoted=ComposerQuotes.normalize(quotes).map(value=>value.text.split('\n').map(line=>'> '+line).join('\n')).join('\n\n');return quoted?quoted+(text?'\n\n'+text:''):text;}

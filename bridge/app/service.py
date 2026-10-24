@@ -65,6 +65,7 @@ class LiveSession:
         self.state = None
         self.history_state = None
         self.saved_view = None
+        self.saved_file_changes = {}
         self.history_limit = 2
         self.timeline_limit = 40
         self.timeline_source = None
@@ -134,6 +135,14 @@ class LiveSession:
     def set_history(self, state):
         self.history_state = state
         self.saved_view = normalize_state(state, False, image_cache=self.tool_image_cache, item_limit=self.timeline_limit)
+        # Complete native patch evidence is retained by the saved reader even
+        # when its messages are outside the current presentation window.
+        self.saved_file_changes = {
+            turn.get('turnId'): (turn['_nativeFileChanges'], turn.get('_nativeFileChangesBasis', 'recorded'))
+            for turn in ordered_turns(state) if turn.get('status') == 'completed' and turn.get('_nativeFileChanges')}
+        for turn in self.saved_view['turns']:
+            if turn.get('status') == 'completed' and turn.get('fileChanges'):
+                self.saved_file_changes.setdefault(turn['id'], (turn['fileChanges'], turn.get('fileChangesBasis', 'recorded')))
         self.changed()
 
     def view(self, *, item_limit=None):
@@ -147,6 +156,10 @@ class LiveSession:
                 result['status'] = 'notLoaded'
             if self.runtime == 'cli' and self.connected:
                 result['permissionMode'] = linux_permissions.current_mode(self.state)
+            for turn in result['turns']:
+                saved_changes = self.saved_file_changes.get(turn['id'])
+                if turn.get('status') == 'completed' and not turn.get('fileChanges') and saved_changes:
+                    turn['fileChanges'], turn['fileChangesBasis'] = saved_changes
             if self.saved_view and result['contextUsage'] is None:
                 saved_usage = self.saved_view.get('contextUsage')
                 if saved_usage:
