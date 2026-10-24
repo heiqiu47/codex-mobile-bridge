@@ -268,6 +268,44 @@ class RemoteClaudeCli:
             result.append({'name': item['name'], 'path': remote['path']})
         return result
 
+    def _saved_user(self, alias, owned, message_id, scope):
+        """Confirm one original user UUID from durable, identity-checked history."""
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            try:
+                saved = self._remote(alias, {'operation': 'detail', 'origin': owned.origin,
+                                            'native': owned.native}, timeout=5)
+            except BridgeUnavailable:
+                saved = None
+            if saved:
+                if any(saved.get(key) != value for key, value in
+                       (('origin', owned.origin), ('nativeId', owned.native), ('cwd', owned.cwd))):
+                    raise BridgeUnavailable('原 Claude Code 会话身份或工作目录已变化，消息结果不明')
+                before = None
+                while time.monotonic() < deadline:
+                    try:
+                        page = self._remote(alias, {'operation': 'history', 'origin': owned.origin,
+                            'native': owned.native, 'scope': scope, 'historyBefore': before,
+                            'historyLimit': 100}, timeout=5)
+                    except BridgeUnavailable:
+                        break
+                    # Streaming appends change size/times, not file identity.
+                    if page['stamp'][:2] != saved['stamp'][:2]:
+                        break
+                    if any(event.get('type') == 'user' and event.get('uuid') == message_id
+                           and event.get('cwd') == owned.cwd and not event.get('isSidechain')
+                           for event in page.get('events', [])):
+                        return saved
+                    history = page.get('history') or {}
+                    if not history.get('hasMore') or not history.get('before') or history['before'] == before:
+                        break
+                    before = history['before']
+            with owned.condition:
+                if owned.error or owned.finished:
+                    break
+            time.sleep(.2)
+        return None
+
     def create(self, host_id, alias, origin, cwd, message, directory_identity=None):
         host = self.hosts.hosts().get(host_id) if self.hosts else None
         if not host or host['alias'] != alias:
@@ -311,25 +349,13 @@ class RemoteClaudeCli:
                 owned.active = True
                 owned.write({'type': 'user', 'uuid': message_id,
                              'message': {'role': 'user', 'content': message}})
-                acknowledged = owned.condition.wait_for(
-                    lambda: message_id in owned.user_acks or owned.finished or owned.error,
-                    timeout=20)
-                if not acknowledged or message_id not in owned.user_acks:
-                    raise BridgeUnavailable('SSH Claude Code 新建消息结果不明，请检查会话列表')
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                try:
-                    saved = self._remote(alias, {'operation': 'detail', 'origin': origin,
-                                            'native': native}, timeout=5)
-                except BridgeUnavailable:
-                    saved = None
-                if saved and saved['cwd'] == owned.cwd and saved['origin'] == origin:
-                    row = self._row(host_id, host, saved)
-                    with self.lock:
-                        self.index[sid] = row
-                    return {'status': 'ready', 'result': {'id': sid}}
-                time.sleep(.2)
-            raise BridgeUnavailable('SSH Claude Code 新建记录尚未出现，请检查会话列表')
+            saved = self._saved_user(alias, owned, message_id, sid)
+            if saved is None:
+                raise BridgeUnavailable('SSH Claude Code 新建消息结果不明，请检查会话列表')
+            row = self._row(host_id, host, saved)
+            with self.lock:
+                self.index[sid] = row
+            return {'status': 'ready', 'result': {'id': sid}}
         except Exception:
             with self.lock:
                 retained = sid in self.owned
@@ -492,11 +518,8 @@ class RemoteClaudeCli:
                     message_id = str(uuid.uuid4())
                     owned.write({'type': 'user', 'uuid': message_id,
                                  'message': {'role': 'user', 'content': content}})
-                    acknowledged = owned.condition.wait_for(
-                        lambda: message_id in owned.user_acks or owned.finished or owned.error,
-                        timeout=20)
-                    if not acknowledged or message_id not in owned.user_acks:
-                        raise BridgeUnavailable('SSH Claude Code 发送结果不明，请检查原会话')
+                if self._saved_user(row['alias'], owned, message_id, sid) is None:
+                    raise BridgeUnavailable('SSH Claude Code 发送结果不明，请检查原会话')
             elif action == 'stop':
                 owned.control({'subtype': 'interrupt'})
             elif action == 'settings':
