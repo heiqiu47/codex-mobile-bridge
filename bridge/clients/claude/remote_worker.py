@@ -303,7 +303,8 @@ def saved(path, found, *, include_events=False):
                     cwd = event['cwd']
                 if kind == 'assistant' and isinstance(event.get('message'), dict):
                     candidate = event['message'].get('model')
-                    if isinstance(candidate, str):
+                    if (isinstance(candidate, str) and candidate != '<synthetic>'
+                            and not event.get('isApiErrorMessage')):
                         model = candidate
                 if kind == 'mode' and event.get('mode') in MODES:
                     permission = event['mode']

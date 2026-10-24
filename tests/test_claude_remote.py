@@ -217,6 +217,41 @@ class RemoteWorkerContract(unittest.TestCase):
             self.assertNotEqual(remote_worker.profile()['origin'], first)
 
 
+    def test_saved_error_only_history_has_no_recorded_model(self):
+        user = json.loads(self.path.read_text().splitlines()[0])
+        errors = [
+            {'type': 'assistant', 'isApiErrorMessage': True,
+             'message': {'role': 'assistant', 'model': 'error-placeholder', 'content': 'rate limited'}},
+            {'type': 'assistant',
+             'message': {'role': 'assistant', 'model': '<synthetic>', 'content': 'rate limited'}},
+        ]
+        for error in errors:
+            with self.subTest(error=error):
+                self.path.write_text('\n'.join(json.dumps(event) for event in (user, error))+'\n')
+                before = self.path.read_bytes()
+                row = remote_worker.saved(self.path, {'directory': str(self.config), 'origin': 'fixture-origin'})
+                self.assertEqual(row['model'], '')
+                self.assertEqual(row['nativeId'], self.native)
+                self.assertEqual(self.path.read_bytes(), before)
+
+    def test_saved_api_error_preserves_previous_real_model(self):
+        original = self.path.read_text()
+        errors = [
+            {'type': 'assistant', 'isApiErrorMessage': True,
+             'message': {'role': 'assistant', 'model': 'error-placeholder', 'content': 'rate limited'}},
+            {'type': 'assistant',
+             'message': {'role': 'assistant', 'model': '<synthetic>', 'content': 'rate limited'}},
+        ]
+        for error in errors:
+            with self.subTest(error=error):
+                self.path.write_text(original+json.dumps(error)+'\n')
+                before = self.path.read_bytes()
+                row = remote_worker.saved(self.path, {'directory': str(self.config), 'origin': 'fixture-origin'})
+                self.assertEqual(row['model'], 'fixture-model')
+                self.assertEqual(row['nativeId'], self.native)
+                self.assertEqual(self.path.read_bytes(), before)
+
+
 class RemoteAdapterContract(unittest.TestCase):
     def setUp(self):
         self.native = str(uuid.uuid4())
