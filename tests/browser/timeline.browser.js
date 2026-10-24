@@ -189,12 +189,13 @@ async function runTimelineCacheTests() {
 async function runTimelineNativeFileChangesTests(){
   const checks=[];
   const check=(value,label)=>{if(!value)throw Error(label);checks.push(label);};
+  document.getElementById('login').hidden=true;
+  document.getElementById('welcome').hidden=true;
   document.getElementById('app').hidden=false;
   document.getElementById('chat').hidden=false;
   document.getElementById('app').classList.add('chat-open');
   document.getElementById('timeline').style.cssText='height:400px;flex:none;overflow:auto;width:100%;padding:20px';
   const frame=()=>new Promise(resolve=>requestAnimationFrame(resolve));
-  const until=async fn=>{const end=performance.now()+2500;while(!fn()){if(performance.now()>end)throw Error('Timed out waiting for native file card');await frame();}};
   const page=(from,to,sequence)=>({rows:[],sequence,epoch:'native-fixture',before:null,hasMore:false,meta:{requests:[]},files:[]});
   const timeline=new ChatTimeline({url:action=>'/fixture/'+action+'?host=local',request:async()=>{},renderMeta:()=>{},renderText:(node,text)=>node.textContent=text,status:()=>{}});
   timeline.container.replaceChildren();
@@ -208,13 +209,20 @@ async function runTimelineNativeFileChangesTests(){
   check(card.getBoundingClientRect().width>250&&card.scrollWidth<=card.clientWidth,'Native card fits the available message width');
   check(card.querySelector('.edited-files-basis').textContent===timelineText('累计修改'),'Recorded patch totals are labeled separately from net edits');
   check(!card.open&&card.querySelector('.edited-files-list').textContent.includes('/repo/space name.py'),'Native card starts collapsed and contains per-file paths and counts');
-  timeline.request=async()=>({key:'native-footer',version:'patch-v1',offset:0,text:nativePatch.slice(0,16000),next:16000});
+  let detailCalls=0;
+  timeline.request=async()=>{detailCalls++;return {key:'native-footer',version:'patch-v1',offset:0,text:nativePatch.slice(0,16000),next:16000};};
   check(!card.textContent.includes('long patch line'),'Initial native card excludes patch body');
   card.open=true;
-  await until(()=>card.textContent.includes('long patch line'));
-  check(!card.querySelector('.detail-more').hidden,'Long native patch retains bounded continuation control');
-  timeline.apply({...page(0,0,5),rows:[{...nativeFooter,version:'patch-v2',fileSummary:{...nativeFooter.fileSummary,added:4}}]});
+  await frame();await frame();
+  check(detailCalls===0,'Opening a file summary never fetches patch details, even with old cached metadata');
+  check(!card.querySelector('.activity-body')&&!card.querySelector('.detail-more'),'File summary contains no patch body or detail controls');
+  check(card.querySelectorAll('.edited-files-list li').length===2&&card.querySelector('.edited-files-list').textContent.includes('+2 −1'),'Expanded card shows file paths and line counts only');
+  card.open=false;await frame();card.open=true;await frame();
+  check(detailCalls===0,'Reopening the summary does not request any details');
+  timeline.apply({...page(0,0,5),rows:[{...nativeFooter,version:'patch-v2',fileSummary:{...nativeFooter.fileSummary,added:4,files:[{...nativeFooter.fileSummary.files[0],added:3},nativeFooter.fileSummary.files[1]]}}]});
   check(timeline.nodes.get('native-footer').node.querySelector('.edited-files-added').textContent==='+4','Native summary refreshes totals on update');
+  check(timeline.nodes.get('native-footer').node.open,'Summary updates retain the expanded state');
+  check(detailCalls===0,'Summary updates need no patch request');
   timeline.dispose();
   return checks;
 }

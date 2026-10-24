@@ -140,7 +140,7 @@ def extract_tool_images(output, *, remember=None):
 
 
 def public_turns(turns, *, image_previews=True):
-    """Hide tool-image bytes, and descriptors where previews have no route."""
+    """Hide private image bytes and patch metadata from presentation responses."""
     def message(row):
         attachments = row.get('attachments')
         if not isinstance(attachments, list) or not any(
@@ -157,7 +157,16 @@ def public_turns(turns, *, image_previews=True):
     for turn in turns:
         messages = [message(row) for row in turn.get('messages', [])]
         changed = any(new is not old for new, old in zip(messages, turn.get('messages', [])))
-        result.append({**turn, 'messages': messages} if changed else turn)
+        changes = turn.get('fileChanges')
+        if 'diff' in turn or isinstance(changes, list):
+            clean = {key: value for key, value in turn.items() if key != 'diff'}
+            if isinstance(changes, list):
+                clean['fileChanges'] = [{key: change[key] for key in ('path', 'added', 'removed') if key in change}
+                                        for change in changes]
+            clean['messages'] = messages
+            result.append(clean)
+        else:
+            result.append({**turn, 'messages': messages} if changed else turn)
     return result
 
 

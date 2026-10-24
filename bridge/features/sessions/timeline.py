@@ -53,8 +53,8 @@ class Timeline:
                 removed = sum(change['removed'] for change in changes)
                 summary = {'id': 'native-file-changes', 'kind': 'fileChanges', 'role': 'fileChanges',
                            'fileSummary': {'count': len(changes), 'added': added, 'removed': removed, 'basis': turn.get('fileChangesBasis', 'recorded'),
-                                           'files': [{k: c[k] for k in ('path', 'added', 'removed')} for c in changes[:50]]},
-                           'text': '\n\n'.join('%s  +%s -%s\n%s' % (c['path'], c['added'], c['removed'], c['diff']) for c in changes)}
+                                           'files': [{k: c[k] for k in ('path', 'added', 'removed')} for c in changes]},
+                           'text': ''}
                 entries.append(((turn['id'], summary['id'], summary['kind'], 0), turn, summary, False))
             if turn.get('error'):
                 entries.append(((turn['id'], 'error'), turn, None, False))
@@ -94,7 +94,7 @@ class Timeline:
                 if message.get('fileSummary'):
                     row['fileSummary'] = message['fileSummary']
                     row['text'] = ''
-                    row['truncated'] = bool(text)
+                    row['truncated'] = False
                 if message['role'] == 'assistant':
                     row.update({k:turn[k] for k in ('model','effort') if turn.get(k)})
                 if attachments:

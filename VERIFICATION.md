@@ -1,3 +1,15 @@
+# v2.1.5 文件变更摘要（2026-10-25，本地源码）
+
+按用户验收反馈，文件变更卡片收敛为文件路径和新增/删除行数。展开只显示已有清单，不再读取或展示补丁正文；超过 50 个文件也保留完整清单。分页卡片、详情以及旧状态响应中的文件变更 metadata 均不再携带补丁；原工具过程正文、原生会话与源文件保持原样。原生净差异与“累计修改”的统计来源区分保留。
+
+定向验证：后端时间线 22 项与公共投影 25 项通过；前端分页、消息详情与资源 9 项通过。真实 Chromium 使用生产资源及合成数据执行窄屏/宽屏文件卡片各 12 项，原时间线、可见性和缓存 43 项通过。展开、收起、再次展开及统计更新没有发起补丁详情请求；125 文件全列、巨大补丁不进入卡片、普通正文详情继续可读。单个异常大的路径清单沿用原有单行可达规则，未增加新的文件列表分页协议。
+
+本次仅修改本地源码，未重新编译或覆盖三台 Test；先前 c0cc4a2 的安装验收不能算本次摘要改动的实机验收。正式版、配置、账号与绑定未改。验收记录：`.tmp/v215-file-summary-pr70/`；未推送 GitHub。
+
+**English:** Edited-file cards now show paths and added/removed line counts only. Expanding a card never downloads a patch, including cards restored from older cache metadata. Timeline cards and public file-change metadata exclude patch bodies; original tool output and native state remain intact. Focused backend and frontend regressions plus 390/1440 px Chromium checks passed using synthetic data. This source-only revision has not been rebuilt or installed on the Test gateways.
+
+---
+
 <a id="v215-lifecycle-output"></a>
 
 # v2.1.5 生命周期、文件卡片与手机重连修订（2026-10-25，本地候选）

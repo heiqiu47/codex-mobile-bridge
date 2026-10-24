@@ -31,8 +31,8 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(footer['fileSummary']['added'], 3)
         self.assertEqual(footer['fileSummary']['removed'], 1)
         self.assertEqual(footer['text'], '')
-        self.assertIn('/repo/a.py', timeline.detail(timeline.cursor(footer['key']))['text'])
-        self.assertIn('+extra', timeline.detail(timeline.cursor(footer['key']))['text'])
+        self.assertEqual(timeline.detail(timeline.cursor(footer['key']))['text'], '')
+        self.assertFalse(footer['truncated'])
         timeline.update({**normalize_state(state), 'sequence': 2},limit=1)
         self.assertNotEqual(timeline.source_anchor[2] if timeline.source_anchor else None,'fileChanges')
         self.assertEqual(timeline.rows[-1]['fileSummary']['basis'],'recorded')
@@ -58,19 +58,45 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual([(c['path'],c['added'],c['removed']) for c in changes],
                          [('space name.py',1,1),('deleted.py',0,1),('new name.py',0,0)])
 
-    def test_native_file_footer_patch_is_bounded_and_stats_change_version(self):
-        turn = {'turnId':'patch-turn','status':'completed','items':[{'id':'patch','type':'fileChange','changes':[
-            {'path':'a.py','diff':'+line\n'*10000}]}]}
-        timeline=Timeline();timeline.update({**normalize_state({'turns':[turn]}),'sequence':1})
+    def test_native_file_footer_ignores_large_patch_bodies_and_versions_only_summary(self):
+        class PatchMustNotBeRead(dict):
+            def __getitem__(self, key):
+                if key == 'diff':
+                    raise AssertionError('File card read a patch body')
+                return super().__getitem__(key)
+        change=PatchMustNotBeRead(path='a.py',added=100000,removed=1,diff='PRIVATE_PATCH\n'*100000)
+        source={'sequence':1,'turns':[{'id':'patch-turn','status':'completed','messages':[],
+                                    'fileChanges':[change],'fileChangesBasis':'net'}]}
+        timeline=Timeline();timeline.update(source)
         footer=timeline.rows[-1]
         self.assertEqual(footer['text'],'')
-        self.assertLess(len(json.dumps(footer)),2000)
-        self.assertEqual(len(timeline.detail(timeline.cursor(footer['key']))['text']),DETAIL_CHARS)
+        self.assertFalse(footer['truncated'])
+        self.assertLess(len(json.dumps(timeline.page())),2000)
+        self.assertNotIn('PRIVATE_PATCH',json.dumps(timeline.page()))
+        detail=timeline.detail(timeline.cursor(footer['key']))
+        self.assertEqual(detail['text'],'')
+        self.assertIsNone(detail['next'])
         version=footer['version']
-        turn['items'][0]['changes'][0]['diff']+='+extra\n'
-        timeline.update({**normalize_state({'turns':[turn]}),'sequence':2})
+        change['diff']='DIFFERENT_PRIVATE_PATCH'
+        source['sequence']=2;timeline.update(source)
+        self.assertEqual(timeline.rows[-1]['version'],version)
+        change['added']=100001;source['sequence']=3;timeline.update(source)
         self.assertNotEqual(timeline.rows[-1]['version'],version)
-        self.assertEqual(timeline.rows[-1]['fileSummary']['added'],10001)
+
+    def test_file_summary_preserves_all_paths_beyond_fifty_and_generic_detail(self):
+        files=[{'path':'/repo/file-'+str(i)+'.py','added':i,'removed':1,'diff':'PRIVATE_PATCH'} for i in range(125)]
+        source={'sequence':1,'turns':[{'id':'many','status':'completed','fileChanges':files,'messages':[
+            {'id':'activity','kind':'commandExecution','role':'activity','text':'ordinary tool output'*1000},
+            {'id':'reply','kind':'agentMessage','role':'assistant','text':'ordinary reply'*1000}]}]}
+        timeline=Timeline();timeline.update(source)
+        page=timeline.page();footer=page['rows'][-1]
+        self.assertEqual(footer['fileSummary']['count'],125)
+        self.assertEqual([file['path'] for file in footer['fileSummary']['files']],[file['path'] for file in files])
+        self.assertLess(len(json.dumps(page).encode()),PAGE_BYTES)
+        self.assertNotIn('PRIVATE_PATCH',json.dumps(page))
+        for row in page['rows'][:-1]:
+            self.assertTrue(timeline.detail(timeline.cursor(row['key']))['text'].startswith('ordinary'))
+        self.assertEqual(timeline.detail(timeline.cursor(footer['key']))['text'],'')
 
     def test_native_patch_counts_distinguish_headers_from_hunk_content(self):
         from bridge.features.sessions.model import native_patch_counts
@@ -197,7 +223,8 @@ class TimelineTests(unittest.TestCase):
         timeline=Timeline();timeline.update(view,limit=60)
         footer=next(row for row in timeline.rows if row['kind']=='fileChanges')
         self.assertEqual(footer['fileSummary']['count'],2)
-        self.assertIn('earlier.py',timeline.detail(timeline.cursor(footer['key']))['text'])
+        self.assertEqual([file['path'] for file in footer['fileSummary']['files']],['earlier.py','tail.py'])
+        self.assertEqual(timeline.detail(timeline.cursor(footer['key']))['text'],'')
         self.assertNotIn('fileChanges',session.state['turns'][0])
         # An authoritative native net diff retains precedence over saved edits.
         native_turn['diff']='diff --git a/net.py b/net.py\n--- a/net.py\n+++ b/net.py\n@@ -1 +1 @@\n-old\n+new'

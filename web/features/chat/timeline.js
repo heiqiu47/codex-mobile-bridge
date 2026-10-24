@@ -186,6 +186,10 @@ class ChatTimeline {
         path.textContent=file.path;path.className='edited-files-path';counts.textContent='+'+file.added+' −'+file.removed;counts.className='edited-files-stats';item.append(path,counts);list.append(item);
       }
       content.append(list);
+      // File cards expand the supplied summary only, including old cached rows
+      // which may still advertise a patch body. Never request their details.
+      content.open=!!open;
+      return node;
     }
     const body=document.createElement(activity?'pre':'div');body.className=activity?'activity-body':'message-body';
     body.__mermaidScope=this.mermaidScope;body.__mermaidIdentity=row.key;
