@@ -113,6 +113,16 @@ class ProjectGroupingTests(unittest.TestCase):
             cached=store.list()
             self.assertEqual(cached[0]['_targetPathStyle'],style)
 
+    def test_windows_host_hint_does_not_fold_single_slash_posix_paths(self):
+        self.saved['local-projects']['local']['rootPaths']=['/work/Project']
+        self.saved['remote-projects'][0]['remotePath']='/work/Project'
+        for host,style in [('local',None),('ssh','windows'),('ssh','posix')]:
+            with patch('bridge.clients.codex.remote.os.name','nt'):
+                expected=host+'|'+('local' if host=='local' else 'remote')
+                self.assertEqual(self.decorate('/work/Project/src',host,target_style=style)['projectKey'],expected)
+                self.assertNotEqual(self.decorate('/work/project/src',host,target_style=style)['projectKey'],expected)
+                self.assertEqual(self.decorate('/other/Case',host,target_style=style)['projectKey'],host+'|/other/Case')
+
     def test_unc_namespaces_match_without_touching_posix_case(self):
         for host in ['local', 'ssh']:
             expected = 'local|local' if host == 'local' else 'ssh|remote'

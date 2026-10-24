@@ -403,7 +403,7 @@ class AppHosts:
             target_style = row.pop('_targetPathStyle', None)
             windows_host = os.name == 'nt' if host == 'local' else target_style == 'windows'
             raw_cwd = row.get('cwd', '')
-            cwd = normalized(raw_cwd, windows_host)
+            cwd = normalized(raw_cwd, windows_host and raw_cwd.startswith('//'))
             assigned = assignments.get(row['id'], {})
             project = next((p for p in projects if p['id'] == assigned.get('projectId') and assigned.get('hostId', host) == host), None)
             if project is None:
@@ -411,7 +411,7 @@ class AppHosts:
                 for candidate in projects:
                     for root in candidate['roots']:
                         # Infer the target path syntax, never the gateway's OS.
-                        windows = windows_host or windows_path(root) or windows_path(raw_cwd)
+                        windows = (windows_host and (root.startswith('//') or raw_cwd.startswith('//'))) or windows_path(root) or windows_path(raw_cwd)
                         prefix, target = normalized(root, windows), normalized(raw_cwd, windows)
                         if target == prefix or target.startswith(prefix + '/'):
                             matches.append((len(prefix), candidate))
