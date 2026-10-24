@@ -94,7 +94,7 @@
     "hosts/mobile-footer.css",
     "hosts/mobile-controls.css"
   ],
-  "/host.js": "hosts/environment.js",
+  "/host.js": ["hosts/environment.js", "hosts/browser-navigation.js"],
   "/layout.js": "layouts/viewport.js",
   "/file-actions.js": "features/workspace/file-actions.js",
   "/pdf-preview.js": "features/workspace/pdf-preview.js",

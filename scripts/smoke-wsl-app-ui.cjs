@@ -15,18 +15,28 @@ async function connect(url){
 async function main(){
  const browser=process.env.CMB_BROWSER||'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';if(!process.env.CMB_FIXTURE_ONLY)assert.ok(fs.existsSync(browser),'Set CMB_BROWSER to a Chromium browser executable');
  const fixture=fs.mkdtempSync(path.join(root,'.tmp/wsl-app-ui-')),debugPort=await port(),wsl='wsl:'+'a'.repeat(32),sid='12345678-1234-4234-9234-123456789012',cliSid='12345678-1234-4234-9234-123456789014',sshSid='12345678-1234-4234-9234-123456789015',sshHost='fixture-ssh';
- const assets=JSON.parse(fs.readFileSync(path.join(root,'web/assets.json'))),requests=[],unexpected=[];let scanned=false,enabled=false,nativeEnabled=true,cdp;
+ const navigationFixture=process.env.CMB_NAVIGATION_FIXTURE==='1';
+ const assets=JSON.parse(fs.readFileSync(path.join(root,'web/assets.json'))),requests=[],unexpected=[];let scanned=navigationFixture,enabled=navigationFixture,nativeEnabled=true,cdp;
  for(const match of fs.readFileSync(path.join(root,'bridge/api/assets.py'),'utf8').matchAll(/"(\/vendor\/[^"]+)": \("([^"]+)"/g))assets[match[1]]=match[2];
  const native=()=>({id:'desktop',name:'Codex',kind:'desktop',enabled:nativeEnabled,installed:true,configured:true,selectable:true,connected:nativeEnabled,running:true,canQuitDesktop:true});
  const entry=()=>({id:wsl,name:'WSL · Ubuntu · fixture',kind:'wsl-cli',icon:'codex',enabled,installed:true,configured:true,selectable:true,connected:enabled,running:enabled,canQuitDesktop:false,canForceQuit:false,reason:'账号与模型接入由 WSL 中的原工具管理。'});
- const clients=()=>({wslSupported:true,gatewayRunning:true,computer:'Synthetic Windows fixture',clients:[{...native(),id:'codex',name:'Codex',enabled:nativeEnabled||enabled,desktopEnabled:nativeEnabled,nativeConfigured:true,nativeSelectable:true,entries:[native(),...(scanned?[entry()]:[])]},{id:'claude',name:'Claude',enabled:false,installed:false,configured:false},{id:'deepseek',name:'DSH',enabled:false,installed:false,configured:false}]});
+ const clients=()=>({wslSupported:true,gatewayRunning:true,computer:'Synthetic Windows fixture',clients:[{...native(),id:'codex',name:'Codex',enabled:nativeEnabled||enabled,desktopEnabled:nativeEnabled,nativeConfigured:true,nativeSelectable:true,entries:[native(),...(scanned?[entry()]:[])]},...['claude','deepseek'].map(id=>({id,name:id==='claude'?'Claude':'DSH',enabled:navigationFixture,installed:navigationFixture,configured:navigationFixture,connected:navigationFixture,running:navigationFixture,selectable:navigationFixture}))]});
  const models=[{id:'group/auto-gpt-6-1-sol',name:'Magpie 分组模型',efforts:['low','medium','high'],defaultEffort:'high'},{id:'group/id-only',name:'group/id-only',efforts:['medium'],defaultEffort:'medium'},{id:'group/another',name:'另一分组',efforts:['high'],defaultEffort:'high'}];
  const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,'http://fixture'),pathname=url.pathname;let body='';for await(const chunk of req)body+=chunk;body=body?JSON.parse(body):undefined;
   const json=value=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
   if(pathname.startsWith('/api/')){
    requests.push({path:pathname,query:Object.fromEntries(url.searchParams),body});
-   if(pathname==='/api/auth')return json({authenticated:true,csrf:'fixture',uiLanguage:'zh',computer:{name:'Synthetic Windows fixture',platform:'win32'}});
+   if(navigationFixture&&pathname.startsWith('/api/desktop-sessions/')){
+    assert.equal(req.method,'GET','Navigation fixtures never accept session writes');
+    const [,provider,action]=pathname.match(/^\/api\/desktop-sessions\/(claude|deepseek)\/(.+)$/)||[];
+    const row={draftAccountIdentity:'navigation-fixture-'+provider,id:provider+'-fixture',title:provider+' fixture conversation',cwd:'/fixture',backend:'code',status:'idle',model:'fixture',requests:[],messages:[],capabilities:{send:false,stop:false}};
+    if(action==='list')return json({connected:true,complete:true,sessions:[row]});
+    if(action==='detail')return json({connected:true,session:row,messages:[],files:[],history:{hasMore:false}});
+    if(action==='accounts')return json({accounts:[],activeIds:[]});
+    if(action==='account')return json({visible:false});
+   }
+   if(pathname==='/api/auth')return json({authenticated:true,...(navigationFixture?{draftIdentity:'navigation-fixture-gateway',listCacheIdentity:'a'.repeat(64)}:{}),csrf:'fixture',uiLanguage:'zh',computer:{name:'Synthetic Windows fixture',platform:'win32'}});
    if(pathname==='/api/clients'){if(body?.action==='scan-wsl')scanned=true;else if(body){assert.ok([wsl,'codex'].includes(body.provider));assert.equal(body.quitDesktop||false,false);if(body.provider===wsl)enabled=body.enabled;else nativeEnabled=body.enabled;}return json(clients());}
    if(pathname==='/api/accounts')return json({accounts:[],current:{status:'ready',kind:'external',name:url.searchParams.has('entry')?'WSL Magpie':'Native fixture'},scope:url.searchParams.has('entry')?'wsl':'desktop',scopeLabel:'WSL fixture',management:{external:true},canSwitch:false,canManageDesktop:false,blockers:[]});
    if(pathname==='/api/cli-access')return json({codex:{accounts:[],activeId:null}});
@@ -63,7 +73,7 @@ async function main(){
     const host=url.searchParams.get('host')||'local',isWsl=host===wsl,source=url.searchParams.get('source')||'all',q=url.searchParams.get('q')||'',offset=Number(url.searchParams.get('offset')||0);
     const access=kind=>({source:kind==='desktop'?'desktop':'cli',runtime:isWsl?'wsl':kind,canSend:true,canReconnect:true,canChangeModel:true,canSelectSkills:true,canUseModes:true,canUseGoal:true});
     const row=(id,kind,title,recency)=>({id,host,hostLabel:isWsl?'WSL · Ubuntu · fixture':'此电脑',title,projectName:'fixture',projectKey:host+'|fixture',cwd:'/fixture',recency,access:access(kind)});
-    let rows=isWsl?(enabled?[row(sid,'cli','WSL fixture conversation',300)]:[]):nativeEnabled?[row(sid,'desktop','APP fixture conversation',200),row('12345678-1234-4234-9234-123456789013','cli','CLI fixture conversation',100)]:[];
+    let rows=isWsl?(enabled?[row(sid,'cli','WSL fixture conversation',300)]:[]):nativeEnabled?[row(sid,'desktop','APP fixture conversation',200),row(navigationFixture?cliSid:'12345678-1234-4234-9234-123456789013','cli','CLI fixture conversation',100)]:[];
     if(q==='paging-fixture')rows=isWsl&&enabled?Array.from({length:101},(_,i)=>row('12345678-1234-4234-9234-'+String(i).padStart(12,'0'),'cli','Paging fixture '+i,101-i)):[];
     else if(q)rows=rows.filter(row=>row.title.includes(q));
     if(source!=='all')rows=rows.filter(row=>source===(isWsl?'wsl':row.access.source));
@@ -71,7 +81,7 @@ async function main(){
    }
    if([sid,cliSid,sshSid].some(id=>pathname.startsWith('/api/sessions/'+id+'/'))){
     const detailId=[sid,cliSid,sshSid].find(id=>pathname.startsWith('/api/sessions/'+id+'/')),nativeCli=detailId===cliSid||detailId===sshSid;
-    const meta={id:detailId,host:url.searchParams.get('host')||wsl,hostLabel:'WSL fixture',endpointId:url.searchParams.get('host')===wsl?wsl:'desktop',access:{source:url.searchParams.get('host')===wsl||nativeCli?'cli':'desktop',runtime:url.searchParams.get('host')===wsl?'wsl':nativeCli?'cli':'desktop',canSend:true,canReconnect:true,canChangeModel:true,canSelectSkills:true,canUseModes:true,canUseGoal:true},title:'WSL fixture conversation',cwd:'/fixture',model:models[0].id,provider:'magpie',effort:'high',requests:[],status:'idle',connected:true,historyComplete:true,goalRuntimeAvailable:true,capabilities:{send:true,stop:true,settings:true,workspace:true,attachments:true,permissions:true,skills:true,notifications:true,queue:true,plan:true,goal:true,terminal:true,sideChat:false,messageActions:false}};
+    const meta={...(navigationFixture?{draftAccountIdentity:'navigation-fixture-codex'}:{}),id:detailId,host:url.searchParams.get('host')||wsl,hostLabel:'WSL fixture',endpointId:url.searchParams.get('host')===wsl?wsl:'desktop',access:{source:url.searchParams.get('host')===wsl||nativeCli?'cli':'desktop',runtime:url.searchParams.get('host')===wsl?'wsl':nativeCli?'cli':'desktop',canSend:true,canReconnect:true,canChangeModel:true,canSelectSkills:true,canUseModes:true,canUseGoal:true},title:'WSL fixture conversation',cwd:'/fixture',model:models[0].id,provider:'magpie',effort:'high',requests:[],status:'idle',connected:true,historyComplete:true,goalRuntimeAvailable:true,capabilities:{send:true,stop:true,settings:true,workspace:true,attachments:true,permissions:true,skills:true,notifications:true,queue:true,plan:true,goal:true,terminal:true,sideChat:false,messageActions:false}};
     if(pathname.endsWith('/timeline')||pathname.endsWith('/changes'))return json({sequence:0,epoch:'fixture',rows:[],files:[],hasMore:false,meta});
     if(pathname.endsWith('/reconnect'))return json(meta);
     if(pathname.endsWith('/catalog')){if(url.searchParams.get('kind')==='skills')return json({skills:[],errors:[],total:0});return json({kind:'models',models,currentModel:models[0].id,currentEffort:'high',modelSource:'codex',fastMode:{allowed:false}});}
