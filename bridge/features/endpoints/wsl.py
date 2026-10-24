@@ -14,7 +14,8 @@ from bridge.clients.codex.ipc import IPCError
 from bridge.clients.codex.remote import RemoteStore, RemoteUnavailable, payload, upload_file
 from bridge.clients.codex.shared_server import SharedServer
 from bridge.clients.codex.configuration import magpie_managed
-from bridge.clients.codex.catalog import Catalog
+from bridge.clients.codex.catalog import Catalog, normalize_native_skills
+from bridge.features.sessions import linux_permissions
 from bridge.features.sessions.model import normalize_state, normalize_request, computer_use_approval
 from bridge.features.sessions.timeline import Timeline
 from bridge.features.sessions.store import StoreUnavailable
@@ -24,9 +25,9 @@ from bridge.platforms.windows import wsl
 from bridge.resources import source_text
 
 
-CAPABILITIES = {'send': True, 'stop': True, 'settings': True, 'approvals': True, 'queue': False,
-                'workspace': True, 'attachments': True, 'skills': False, 'permissions': False,
-                'plan': False, 'goal': False, 'terminal': False, 'sideChat': False,
+CAPABILITIES = {'send': True, 'stop': True, 'settings': True, 'approvals': True, 'queue': True,
+                'workspace': True, 'attachments': True, 'skills': True, 'permissions': True,
+                'plan': True, 'goal': False, 'terminal': False, 'sideChat': False,
                 'notifications': False, 'messageActions': False}
 
 
@@ -98,6 +99,11 @@ class WslEntry:
         self.write_lock = threading.RLock()
         self.receipts_path = self.data_dir / 'operations.json'
         self.receipts = json.loads(self.receipts_path.read_text(encoding='utf-8')) if self.receipts_path.exists() else {}
+        for key, receipt in self.receipts.items():
+            if ':send:' in key and receipt.get('result', {}).get('status') == 'queued':
+                identifier = key.split(':send:', 1)[0]
+                uuid.UUID(identifier)
+                self.live.setdefault(identifier, Session(identifier))
         self.create_lock = threading.RLock()
         self.creations_path = self.data_dir / 'creations.json'
         self.creations = json.loads(self.creations_path.read_text(encoding='utf-8')) if self.creations_path.exists() else {}
@@ -189,6 +195,20 @@ class WslEntry:
                         if item.get('id') == params.get('itemId'):
                             key = 'text' if method == 'item/agentMessage/delta' else 'aggregatedOutput'
                             item[key] = item.get(key, '') + params.get('delta', '')
+            elif method == 'thread/settings/updated':
+                settings = params.get('threadSettings') or {}
+                session.state['latestThreadSettings'] = copy.deepcopy(settings)
+                if all(k in settings for k in ('approvalPolicy', 'approvalsReviewer', 'sandboxPolicy')):
+                    session.state['currentPermissions'] = {k: copy.deepcopy(settings[k]) for k in
+                        ('approvalPolicy', 'approvalsReviewer', 'sandboxPolicy', 'activePermissionProfile') if k in settings}
+                if settings.get('model'):
+                    session.state['latestModel'] = settings['model']
+                if settings.get('effort') is not None:
+                    session.state['latestReasoningEffort'] = settings['effort']
+                if settings.get('collaborationMode') is not None:
+                    session.state['latestCollaborationMode'] = copy.deepcopy(settings['collaborationMode'])
+            elif method == 'turn/plan/updated':
+                session.state['turnPlan'] = copy.deepcopy(params.get('plan') or [])
             elif method == 'thread/status/changed':
                 session.state['threadRuntimeStatus'] = copy.deepcopy(params.get('status') or {})
             elif method == 'thread/closed':
@@ -216,8 +236,8 @@ class WslEntry:
                         break
                 turns.reverse()
                 state = {'id': session.id, 'title': thread.get('name') or metadata.get('name') or metadata.get('display_title') or metadata.get('title'),
-                         'cwd': thread.get('cwd'), 'latestModel': thread.get('model'),
-                         'latestReasoningEffort': thread.get('reasoningEffort'), 'modelProvider': thread.get('modelProvider'),
+                         'cwd': thread.get('cwd'), 'latestModel': thread.get('model') or session.state.get('latestModel'),
+                         'latestReasoningEffort': thread.get('reasoningEffort') or session.state.get('latestReasoningEffort'), 'modelProvider': thread.get('modelProvider'),
                          'threadRuntimeStatus': thread.get('status') or {},
                          'turns': [{**t, 'turnId': t['id'], 'turnStartedAtMs': (t.get('startedAt') or 0) * 1000} for t in turns],
                          'turnHistory': {'history': {'isComplete': not bool(cursor)}}}
@@ -232,6 +252,9 @@ class WslEntry:
             with session.condition:
                 requests = session.state.get('requests', [])
                 stamp = hashlib.sha256(json.dumps([state, connected, error], sort_keys=True).encode()).hexdigest()
+                state['latestThreadSettings'] = copy.deepcopy(session.state.get('latestThreadSettings') or {})
+                if session.state.get('currentPermissions'):
+                    state['currentPermissions'] = copy.deepcopy(session.state['currentPermissions'])
                 state['requests'] = requests
                 if stamp != session.stamp or session.loading:
                     session.state = state
@@ -283,6 +306,11 @@ class WslEntry:
                             continue
                         session.refreshing = True
                     self._refresh_background(session)
+                try:
+                    self._dispatch_queued(session.id)
+                except IPCError:
+                    if self.closed.is_set():
+                        return
 
     def list(self, query='', limit=100, offset=0, archived=False, source='all', include_sources=False):
         available = ['wsl'] if include_sources and self.store.available_sources() else []
@@ -312,10 +340,10 @@ class WslEntry:
             'canApprove': connected,
             'canReconnect': True,
             'canConfigure': connected,
-            'canChangePermissions': False,
+            'canChangePermissions': connected,
             'canChangeModel': connected,
-            'canSelectSkills': False,
-            'canUseModes': False,
+            'canSelectSkills': connected,
+            'canUseModes': connected,
             'canUseGoal': False,
             'canUseSideChat': False,
             'canEditMessages': False,
@@ -326,7 +354,7 @@ class WslEntry:
         session = self.session(identifier, **options)
         result = session.view()
         result.update(host=self.host, endpointId=self.host, hostLabel=self.row['label'],
-                      files=[], queue=[], submissions=[], goalRuntimeAvailable=False,
+                      files=[], queue=self._queue(identifier), submissions=self._submissions(identifier), goalRuntimeAvailable=False,
                       capabilities=CAPABILITIES, access=self._access(session),
                       accessManagement='external', forkedFrom=None)
         for turn in result['turns']:
@@ -415,6 +443,20 @@ class WslEntry:
         if (runtime.closed or generation != self.generation or current.get('id') != identifier or
                 any(thread.get(k) is not None and current.get(k) != thread[k] for k in ('cwd', 'modelProvider', 'model'))):
             raise IPCError('原 WSL 会话设置或连接已变化，操作尚未发送，请重新查看原会话')
+        session = self.session(identifier, attach=False)
+        with session.condition:
+            permissions = {k: copy.deepcopy(result[k]) for k in ('approvalPolicy', 'approvalsReviewer', 'activePermissionProfile') if k in result}
+            if 'sandbox' in result:
+                permissions['sandboxPolicy'] = copy.deepcopy(result['sandbox'])
+            if result.get('model'):
+                session.state['latestModel'] = result['model']
+            if result.get('reasoningEffort') is not None:
+                session.state['latestReasoningEffort'] = result['reasoningEffort']
+            if result.get('collaborationMode') is not None:
+                session.state['latestCollaborationMode'] = copy.deepcopy(result['collaborationMode'])
+            if permissions:
+                session.state['currentPermissions'] = permissions
+                session.changed()
         self.subscriptions[identifier] = generation
 
     @_entry_write
@@ -544,10 +586,13 @@ class WslEntry:
             if old:
                 if old['fingerprint'] != fingerprint:
                     raise ValueError('相同请求标识不能用于不同操作')
-                return dict(old['result'])
+                if old['result'].get('status') != 'queued':
+                    return dict(old['result'])
             self.data_dir.mkdir(parents=True, exist_ok=True)
             unknown = {'status': 'unknown', 'id': key, 'message': '结果待核对，请检查原 WSL 会话；不会重复发送'}
             self.receipts[key] = {'fingerprint': fingerprint, 'result': unknown}
+            if ':send:' in key:
+                self.receipts[key]['entry'] = copy.deepcopy(value)
             private_json(self.receipts_path, self.receipts)
             try:
                 result = call()
@@ -571,25 +616,40 @@ class WslEntry:
 
     @_entry_write
     def send(self, identifier, text, submission_id, mode='send', skills=None, work_mode=None, attachments=None, **options):
+        return self._send(identifier, text, submission_id, mode, skills, work_mode, attachments)
+
+    def _send(self, identifier, text, submission_id, mode='send', skills=None, work_mode=None, attachments=None, *, queued=False):
         uuid.UUID(identifier); uuid.UUID(submission_id)
-        if skills:
-            raise ValueError('WSL Skill 选择尚未开放，请在原终端设置')
-        if work_mode not in (None, 'default'):
-            raise ValueError('此 WSL 入口暂不支持切换计划或目标模式')
-        if mode not in ('send', 'steer'):
-            raise ValueError('WSL 暂不支持网关排队，请直接发送或补充当前任务')
+        skills = skills or []
+        if not isinstance(skills, list) or len(skills) > 8 or any(not isinstance(s, str) for s in skills):
+            raise ValueError('最多选择 8 个 Skill')
+        if work_mode not in (None, 'default', 'plan'):
+            raise ValueError('工作模式无效')
+        if mode not in ('send', 'steer', 'queue'):
+            raise ValueError('发送方式无效')
         files = self.uploads.resolve(identifier, attachments or [])
         if not isinstance(text, str) or (not text.strip() and not files) or len(text) > 100000:
             raise ValueError('请输入 1–100000 字的消息')
         with self.session(identifier, attach=False).action_lock:
             value = {'text': text, 'mode': mode, 'attachments': attachments or []}
+            if skills:
+                value['skills'] = sorted(set(skills))
+            if work_mode is not None:
+                value['workMode'] = work_mode
             key = identifier + ':send:' + submission_id
             previous = self._previous_send(identifier, key, value)
-            if previous is not None:
+            if previous is not None and not (queued and previous.get('status') == 'queued'):
                 return previous
-            runtime, thread = self._target(identifier, activate=True)
-            if mode == 'send' and thread['status']['type'] == 'active':
+            runtime, thread = self._target(identifier, activate=mode != 'queue')
+            if (mode == 'send' or queued) and thread['status']['type'] == 'active':
                 raise ValueError('任务正在运行，请选择补充当前任务，或等待完成')
+            selected = self._resolve_skills(identifier, runtime, thread, skills)
+            if mode == 'queue' and not queued:
+                result = {'status': 'queued', 'id': submission_id}
+                self.receipts[key] = {'fingerprint': hashlib.sha256(json.dumps([identifier, value], sort_keys=True).encode()).hexdigest(), 'result': result, 'entry': {**value, 'target': {k: thread.get(k) for k in ('cwd', 'modelProvider')}}}
+                self.data_dir.mkdir(parents=True, exist_ok=True)
+                private_json(self.receipts_path, self.receipts)
+                return result
             self._subscribe(identifier, runtime, thread)
             items = [{'type': 'text', 'text': text}]
             for file in files:
@@ -597,6 +657,15 @@ class WslEntry:
                     items.append({'type': 'localImage', 'path': file['path']})
                 else:
                     items[0]['text'] += '\n\n用户提供的文件：' + file['path']
+            items.extend({'type': 'skill', 'name': s['name'], 'path': s['path']} for s in selected)
+            collaboration = None
+            if work_mode is not None:
+                state = self.session(identifier, attach=False).state
+                model = thread.get('model') or state.get('latestModel')
+                effort = thread.get('reasoningEffort') or state.get('latestReasoningEffort')
+                if not model:
+                    raise ValueError('尚未取得模型设置，请重新连接后再切换模式')
+                collaboration = {'mode': work_mode, 'settings': {'model': model, 'reasoning_effort': effort, 'developer_instructions': None}}
             def dispatch():
                 params = {'threadId': identifier, 'input': items}
                 if mode == 'steer':
@@ -607,11 +676,102 @@ class WslEntry:
                     result = runtime.request('turn/steer', params)
                 else:
                     params['clientUserMessageId'] = submission_id
+                    if collaboration is not None:
+                        params['collaborationMode'] = collaboration
                     result = runtime.request('turn/start', params)
                 return {'status': 'accepted', 'id': submission_id, 'turnId': (result.get('turn') or {}).get('id') or result.get('turnId')}
             result = self._mutation(identifier, key, value, dispatch)
             self.session(identifier, background=True)
             return result
+
+    @staticmethod
+    def _skills(runtime, thread, refresh=False):
+        cwd = thread['cwd']
+        raw = runtime.request('skills/list', {'cwds': [cwd], 'forceReload': bool(refresh)})
+        return normalize_native_skills(raw, cwd)
+
+    def _resolve_skills(self, identifier, runtime, thread, identifiers):
+        if not identifiers:
+            return []
+        rows, _ = self._skills(runtime, thread, True)
+        indexed = {r['id']: r for r in rows}
+        if any(key not in indexed for key in identifiers):
+            raise ValueError('Skill 不可用，请刷新列表')
+        return [indexed[key] for key in sorted(set(identifiers))]
+
+    def _submissions(self, identifier):
+        with self.write_lock:
+            return [{**row['result'], 'text': (row.get('entry') or {}).get('text', '')} for key, row in self.receipts.items()
+                    if key.startswith(identifier + ':send:') and row['result'].get('status') in ('queued', 'unknown')]
+
+    def _queue(self, identifier):
+        with self.write_lock:
+            return [{**copy.deepcopy(row['entry']), **row['result']} for key, row in self.receipts.items()
+                    if key.startswith(identifier + ':send:') and row['result'].get('status') == 'queued']
+
+    @_entry_write
+    def cancel_queued(self, identifier, submission_id):
+        uuid.UUID(identifier); uuid.UUID(submission_id)
+        with self.session(identifier, attach=False).action_lock:
+            row = self.receipts.get(identifier + ':send:' + submission_id)
+            if row is None or row['result'].get('status') != 'queued':
+                raise ValueError('排队消息已发送或不存在')
+            row['result'] = {'status': 'cancelled', 'id': submission_id}
+            private_json(self.receipts_path, self.receipts)
+            return dict(row['result'])
+
+    @_entry_write
+    def _dispatch_queued(self, identifier):
+        rows = self._queue(identifier)
+        if not rows:
+            return
+        try:
+            _, thread = self._target(identifier)
+            if thread.get('status', {}).get('type') != 'idle':
+                return
+            row = rows[0]
+            if any(thread.get(k) != v for k, v in row.get('target', {}).items()):
+                return
+            self._send(identifier, row['text'], row['id'], mode='queue', skills=row.get('skills'),
+                       work_mode=row.get('workMode'), attachments=row.get('attachments'), queued=True)
+        except (IPCError, RemoteUnavailable, ValueError):
+            # A queued operation may wait for the original target to return.
+            # Once dispatch writes bytes its durable status is already unknown.
+            return
+
+    def _permission_options(self, identifier):
+        runtime, thread = self._target(identifier)
+        facts = linux_permissions.read_permission_facts(runtime.request, thread['cwd'])
+        session = self.session(identifier, attach=False)
+        with session.condition:
+            current = linux_permissions.current_mode(session.state)
+        return facts, linux_permissions.permission_options(facts, {'fullAccess': True}, current, native=False)
+
+    def linux_permission_options(self, identifier):
+        return self._permission_options(identifier)[1]
+
+    @_entry_write
+    def permissions(self, identifier, preset, confirmed=False, *, expected_runtime=None):
+        if preset not in ('ask', 'auto-review', 'full-access'):
+            raise ValueError('权限设置无效')
+        if expected_runtime not in (None, 'cli', 'wsl'):
+            raise ValueError('会话运行时已变化，请重新打开权限面板')
+        if preset == 'full-access' and confirmed is not True:
+            raise ValueError('请确认完全访问权限')
+        session = self.session(identifier, attach=False)
+        with session.action_lock:
+            facts, options = self._permission_options(identifier)
+            linux_permissions.require_permission(options, preset)
+            runtime, thread = self._target(identifier)
+            self._subscribe(identifier, runtime, thread)
+            settings = linux_permissions.permission_settings(preset, facts)
+            with session.condition:
+                before = session.sequence
+            runtime.request('thread/settings/update', {'threadId': identifier, **settings})
+            with session.condition:
+                applied = session.condition.wait_for(lambda: session.sequence > before and linux_permissions.current_mode(session.state) == preset, timeout=5)
+                current = linux_permissions.current_mode(session.state)
+            return {'applied': True, 'confirmed': applied, 'permissionMode': current}
 
     @_entry_write
     def interrupt(self, identifier):
@@ -629,19 +789,37 @@ class WslEntry:
         if (not isinstance(model, str) or not model or len(model) > 200 or any(c in model for c in '\r\n\0')
                 or effort not in (None, 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')):
             raise ValueError('模型或推理强度无效')
-        if fast_mode is not None:
-            raise ValueError('此 WSL 入口不提供 Fast 设置')
+        if fast_mode is not None and not isinstance(fast_mode, bool):
+            raise ValueError('Fast 模式开关无效')
         with self.session(identifier, attach=False).action_lock:
-            runtime, _ = self._target(identifier)
-            runtime.request('thread/settings/update', {'threadId': identifier, 'model': model, 'effort': effort})
+            runtime, thread = self._target(identifier)
+            settings = {'model': model, 'effort': effort}
+            if fast_mode is not None:
+                catalog = self.catalog(identifier, refresh=True, kind='models')
+                known = next((m for m in catalog['models'] if m['id'] == model), None)
+                if not catalog.get('fastMode', {}).get('allowed') or not known or not known.get('fastTier'):
+                    raise ValueError('当前账号、模型或工作区不支持 Fast 模式，请刷新模型设置')
+                settings['serviceTier'] = known['fastTier'] if fast_mode else 'default'
+            self._subscribe(identifier, runtime, thread)
+            runtime.request('thread/settings/update', {'threadId': identifier, **settings})
             self._refresh(self.live[identifier])
             view = self.live[identifier].view()
-            return {'applied': True, 'confirmed': view.get('model') == model and view.get('effort') == effort}
+            return {'applied': True, 'confirmed': view.get('model') == model and view.get('effort') == effort and
+                    (fast_mode is None or (self.live[identifier].state.get('latestThreadSettings') or {}).get('serviceTier') == settings['serviceTier'])}
 
     def catalog(self, identifier, refresh=False, kind=None, **options):
         metadata = self.store.get(identifier)
+        if kind is None:
+            return {**self.catalog(identifier, refresh, 'models'), **self.catalog(identifier, refresh, 'skills', **options)}
         if kind == 'skills':
-            return {'kind': 'skills', 'skills': [], 'total': 0, 'hasMore': False}
+            runtime, thread = self._target(identifier)
+            rows, errors = self._skills(runtime, thread, refresh)
+            ids = set(options.get('ids') or [])
+            selected = [r for r in rows if r['id'] in ids]
+            query = (options.get('query') or '').strip().casefold()
+            rows = [r for r in rows if query in ' '.join(str(r.get(k) or '') for k in ('name', 'displayName', 'description')).casefold()]
+            offset, limit = max(0, int(options.get('offset', 0))), min(500, max(1, int(options.get('limit', 200))))
+            return {'kind': 'skills', 'skills': rows[offset:offset + limit], 'selectedSkills': selected, 'errors': errors, 'total': len(rows), 'offset': offset, 'limit': limit}
         runtime = self.runtime()
         current = runtime.request('thread/read', {'threadId': identifier, 'includeTurns': False}).get('thread') or {}
         config = runtime.request('config/read', {'includeLayers': False, 'cwd': metadata['cwd']}).get('config') or {}
@@ -656,10 +834,14 @@ class WslEntry:
             models.extend(page.get('data', [])); cursor = page.get('nextCursor')
             if not cursor:
                 break
+        try:
+            fast_mode = Catalog.fast_mode(runtime.request, metadata['cwd'], provider)
+        except IPCError:
+            fast_mode = {'allowed': False}
         return {'kind': kind or 'models', 'models': Catalog.normalize_models(models), 'modelSource': 'codex', 'skills': [],
                 'currentModel': current.get('model') or metadata.get('model') or config.get('model'),
                 'currentEffort': current.get('reasoningEffort'),
-                'fastMode': {'allowed': False}, 'accessManagement': 'external'}
+                'fastMode': fast_mode, 'accessManagement': 'external'}
 
     def access_summary(self):
         current = {'status': 'error', 'kind': 'external', 'id': None, 'name': 'WSL 外部管理'}
@@ -794,8 +976,8 @@ class WslEntry:
     def unsupported(*args, **kwargs):
         raise ValueError('此功能暂不支持 WSL CLI 入口，请在原终端操作')
 
-    terminal = side_chat = side_attachment = permissions = linux_permission_options = unsupported
-    cancel_goal = edit_goal = set_goal_status = cancel_queued = message_action = unsupported
+    terminal = side_chat = side_attachment = unsupported
+    cancel_goal = edit_goal = set_goal_status = message_action = unsupported
     desktop_image_preview = unsupported
 
     def close(self):

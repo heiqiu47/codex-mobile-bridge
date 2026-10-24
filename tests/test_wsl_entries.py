@@ -501,22 +501,23 @@ class WslSessionTests(unittest.TestCase):
         view = self.entry.view(self.identifier)
         self.assertTrue(view['connected'])
         self.assertEqual(view['provider'], 'magpie')
-        self.assertFalse(view['capabilities']['permissions'])
+        self.assertTrue(view['capabilities']['permissions'])
         self.assertEqual(view['access']['source'], 'cli')
         self.assertEqual(view['access']['runtime'], 'wsl')
         self.assertTrue(view['access']['canSend'])
-        self.assertFalse(view['access']['canChangePermissions'])
+        self.assertTrue(view['access']['canChangePermissions'])
         self.assertFalse(any(m == 'thread/resume' for m, _ in self.entry.server.calls))
         identifier = str(uuid.uuid4())
         result = self.entry.send(self.identifier, 'synthetic input', identifier, work_mode='default')
         self.assertEqual(result['status'], 'accepted')
         writes = [p for m, p in self.entry.server.calls if m == 'turn/start']
         self.assertEqual(writes, [{'threadId': self.identifier,
-            'input': [{'type': 'text', 'text': 'synthetic input'}], 'clientUserMessageId': identifier}])
+            'input': [{'type': 'text', 'text': 'synthetic input'}], 'clientUserMessageId': identifier,
+            'collaborationMode': {'mode': 'default', 'settings': {'model': 'group/fixture', 'reasoning_effort': 'high', 'developer_instructions': None}}}])
         self.assertFalse(any(m in ('thread/start', 'config/batchWrite') for m, _ in self.entry.server.calls))
         self.assertEqual([p for m, p in self.entry.server.calls if m == 'thread/resume'],
                          [{'threadId': self.identifier, 'excludeTurns': True}])
-        self.assertEqual(self.entry.send(self.identifier, 'synthetic input', identifier), result)
+        self.assertEqual(self.entry.send(self.identifier, 'synthetic input', identifier, work_mode='default'), result)
         self.assertEqual(sum(m == 'turn/start' for m, _ in self.entry.server.calls), 1)
 
     def test_fresh_not_loaded_evidence_blocks_even_when_display_says_connected(self):

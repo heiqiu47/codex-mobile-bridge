@@ -952,3 +952,22 @@ class Catalog:
             else:
                 self.cache[key] = (time.monotonic(), value)
             return value
+
+
+def normalize_native_skills(raw, cwd):
+    """Normalize enabled skills from the selected execution environment only."""
+    rows, errors = [], []
+    for entry in raw.get('data', []):
+        if entry.get('cwd') != cwd:
+            continue
+        errors.extend(entry.get('errors') or [])
+        for skill in entry.get('skills') or []:
+            if not skill.get('enabled', True) or not skill.get('path') or not skill.get('name'):
+                continue
+            path = skill['path']
+            rows.append({'id': hashlib.sha256(path.encode()).hexdigest(),
+                         'path': path, 'name': skill['name'],
+                         'description': skill.get('description', ''),
+                         'scope': skill.get('scope'),
+                         'displayName': (skill.get('interface') or {}).get('displayName') or skill['name']})
+    return rows, errors
