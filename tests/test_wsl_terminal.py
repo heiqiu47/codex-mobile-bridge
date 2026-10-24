@@ -11,7 +11,7 @@ class WslTerminalTests(unittest.TestCase):
     def setUp(self):
         self.terminals = WslTerminals()
         self.thread, self.identifier = str(uuid.uuid4()), str(uuid.uuid4())
-        self.entry = SimpleNamespace(host='wsl:fixture', row={'distribution': 'Ubuntu', 'user': 'fixture'},
+        self.entry = SimpleNamespace(host='wsl:fixture', row={'distribution': 'Ubuntu', 'user': 'fixture', 'home': '/home/fixture/独立配置'},
                                      store=Mock())
         self.entry.store.get.return_value = {'cwd': '/home/fixture/项目'}
         self.session = Mock()
@@ -32,7 +32,13 @@ class WslTerminalTests(unittest.TestCase):
         args, kwargs = factory.call_args
         self.assertEqual(args, (None, '/home/fixture/项目', 80, 24))
         with patch('bridge.features.endpoints.wsl_terminal.wsl.command', return_value=['wsl.exe', 'python3']) as command:
-            self.assertEqual(kwargs['transport']('UTF8 中文'), ['wsl.exe', 'python3', '-u', '-c', 'UTF8 中文'])
+            argv = kwargs['transport']('print("UTF8 中文")')
+            self.assertEqual(argv[:4], ['wsl.exe', 'python3', '-u', '-c'])
+            import os
+            with patch.dict(os.environ, {'HOME': '/home/fixture', 'CODEX_HOME': '/default'}, clear=True):
+                exec(argv[4], {})
+                self.assertEqual(os.environ['CODEX_HOME'], '/home/fixture/独立配置')
+                self.assertEqual(os.environ['HOME'], '/home/fixture')
         command.assert_called_once_with('Ubuntu', 'fixture')
         self.assertEqual(self.call('poll')['output'], '中文')
 

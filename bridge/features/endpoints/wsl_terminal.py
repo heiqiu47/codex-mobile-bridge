@@ -20,6 +20,7 @@ class WslTerminals:
             if action == 'info':
                 return {'cwd': root, 'host': entry.host, 'mode': 'pty', 'shell': None}
             def transport(source):
+                source = 'import os\nos.environ["CODEX_HOME"]=' + repr(entry.row['home']) + '\n' + source
                 return wsl.command(entry.row['distribution'], entry.row['user']) + ['-u', '-c', source]
             def factory(cwd, cols, rows):
                 return RemoteTerminalSession(None, cwd, cols, rows, transport=transport, transport_name='WSL')
