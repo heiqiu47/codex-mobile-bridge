@@ -13,8 +13,16 @@ def codex_updater(process, executable, args, environment, directory, expected=No
         return None
     uid = os.getuid()
     root = Path(directory).resolve()
-    selected = environment.get(b'CODEX_HOME')
-    if not selected or Path(os.fsdecode(selected)).resolve() != root or process.stat().st_uid != uid:
+    def configuration_home(values):
+        selected = values.get(b'CODEX_HOME')
+        if selected:
+            path = Path(os.fsdecode(selected))
+        elif values.get(b'HOME'):
+            path = Path(os.fsdecode(values[b'HOME']))/'.codex'
+        else:
+            return None
+        return path.resolve() if path.is_absolute() else None
+    if configuration_home(environment) != root or process.stat().st_uid != uid:
         return None
     boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     ticks = int((process/'stat').read_text().rsplit(')', 1)[1].split()[19])
@@ -60,10 +68,9 @@ def codex_updater(process, executable, args, environment, directory, expected=No
                 continue
             main_args = (main/'cmdline').read_bytes().split(b'\0')
             main_environment = dict(item.split(b'=', 1) for item in (main/'environ').read_bytes().split(b'\0') if b'=' in item)
-            selected = main_environment.get(b'CODEX_HOME')
             info = Path(os.readlink(main/'exe')).stat()
-            if (b'app-server' in main_args and b'--managed-daemon' in main_args and selected and
-                    Path(os.fsdecode(selected)).resolve() == root and
+            if (b'app-server' in main_args and b'--managed-daemon' in main_args and
+                    configuration_home(main_environment) == root and
                     (info.st_dev, info.st_ino) == (binary.st_dev, binary.st_ino)):
                 return value
         except FileNotFoundError:

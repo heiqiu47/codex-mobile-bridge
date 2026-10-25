@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import tempfile
 import uuid
@@ -114,6 +115,27 @@ def runtime_blockers(provider, directory, verified_updaters=()):
         except (OSError, UnicodeError):
             return ['WSL shell 认证配置无法核验']
     try:
+        native_claude = set()
+        if provider == 'claude':
+            user_home = Path(os.path.expanduser('~'))
+            candidates = [shutil.which('claude'), user_home/'.local/bin/claude', Path('/usr/local/bin/claude')]
+            versions = user_home/'.local/share/claude/versions'
+            if versions.is_dir():
+                candidates.extend(path for path in versions.glob('[0-9]*') if path.is_file())
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                path = Path(candidate).resolve()
+                if not path.is_absolute() or str(path).startswith('/mnt/') or path.suffix.lower() in ('.exe', '.cmd', '.bat'):
+                    continue
+                try:
+                    with path.open('rb') as stream:
+                        if stream.read(4) != b'\x7fELF':
+                            continue
+                    info = path.stat()
+                    native_claude.add((info.st_dev, info.st_ino))
+                except FileNotFoundError:
+                    continue
         processes = list(Path('/proc').iterdir())
         for process in processes:
             if not process.name.isdigit() or int(process.name) == os.getpid():
@@ -126,6 +148,9 @@ def runtime_blockers(provider, directory, verified_updaters=()):
                 relevant = ('codex' in names if provider == 'codex' else
                             any(n in ('claude', 'claude.js') for n in names) or
                             any(b'/@anthropic-ai/claude-code/' in a for a in args[:3]))
+                if provider == 'claude' and not relevant and native_claude:
+                    info = (process/'exe').stat()
+                    relevant = (info.st_dev, info.st_ino) in native_claude
                 if relevant:
                     executable = os.readlink(process/'exe')
                     if not executable.startswith('/') or executable.startswith('/mnt/') or executable.endswith('.exe'):

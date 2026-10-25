@@ -90,7 +90,7 @@ class NativeUpdaterIdentityTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.tmp')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
-        self.home = self.root / 'home'
+        self.home = self.root / '.codex'
         self.state = self.home / 'app-server-daemon'
         self.state.mkdir(parents=True)
         self.proc = self.root / 'proc'
@@ -158,4 +158,12 @@ class NativeUpdaterIdentityTests(unittest.TestCase):
         self.assertIsNone(self.check())
         self.args.pop()
         self.env[b'CODEX_HOME'] = b'/different/home'
+        self.assertIsNone(self.check())
+
+    def test_native_default_home_is_verified_from_each_process_own_home(self):
+        self.env = {b'HOME': os.fsencode(self.root)}
+        (self.main / 'environ').write_bytes(b'HOME=' + os.fsencode(self.root) + b'\0')
+        proof = self.check()
+        self.assertEqual(proof['home'], str(self.home))
+        self.env[b'HOME'] = b'relative-home'
         self.assertIsNone(self.check())

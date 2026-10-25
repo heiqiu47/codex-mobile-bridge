@@ -365,3 +365,68 @@ class WslOwnedAccountLifecycleTests(unittest.TestCase):
         self.assertEqual(switched['draftContinuations'][0]['previousAccountIdentity'], previous)
         self.assertEqual(switched['draftContinuations'][0]['accountIdentity'], after['draftAccountIdentity'])
         self.assertNotEqual(mapping['accountIdentity'], after['session']['draftAccountIdentity'])
+
+
+@unittest.skipUnless(os.name == 'posix', 'Synthetic native Linux Claude process identities')
+class NativeClaudeRuntimeIdentityTests(unittest.TestCase):
+    def setUp(self):
+        (boundaries.ROOT / '.tmp').mkdir(exist_ok=True)
+        import tempfile
+        self.temp = tempfile.TemporaryDirectory(dir=boundaries.ROOT / '.tmp')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.user_home = self.root / 'user'
+        self.user_home.mkdir()
+        self.config = self.user_home / '.claude'
+        self.config.mkdir()
+        self.binary = self.user_home / '.local/share/claude/versions/2.1.308'
+        self.binary.parent.mkdir(parents=True)
+        self.binary.write_bytes(b'\x7fELFfixture-native-claude')
+        self.link = self.user_home / '.local/bin/claude'
+        self.link.parent.mkdir(parents=True)
+        self.link.symlink_to(self.binary)
+        self.proc = self.root / 'proc'
+        self.process = self.proc / '900003'
+        self.process.mkdir(parents=True)
+        (self.process / 'cmdline').write_bytes(os.fsencode(self.binary) + b'\0-p\0--resume\0fixture\0')
+        (self.process / 'exe').symlink_to(self.binary)
+        (self.process / 'environ').write_bytes(b'CLAUDE_CONFIG_DIR=' + os.fsencode(self.config) + b'\0')
+        original = Path
+        def selected(value):
+            if str(value) == '/proc':
+                return self.proc
+            if str(value) == '/usr/local/bin/claude':
+                return self.root / 'missing-global'
+            return original(value)
+        self.scope = ExitStack()
+        self.addCleanup(self.scope.close)
+        self.scope.enter_context(patch.object(worker, 'Path', side_effect=selected))
+        self.scope.enter_context(patch.object(worker.shutil, 'which', return_value=str(self.link)))
+        self.scope.enter_context(patch.object(worker.os.path, 'expanduser', return_value=str(self.user_home)))
+        self.scope.enter_context(patch.dict(worker.os.environ, {}, clear=True))
+
+    def test_resolved_version_elf_process_is_busy_for_its_exact_config_directory(self):
+        self.assertEqual(worker.runtime_blockers('claude', self.config), [worker.ERROR_MESSAGES['runtime_running']])
+
+    def test_same_native_binary_using_other_config_does_not_block_selected_profile(self):
+        (self.process / 'environ').write_bytes(b'CLAUDE_CONFIG_DIR=' + os.fsencode(self.root / 'other-config') + b'\0')
+        self.assertEqual(worker.runtime_blockers('claude', self.config), [])
+
+    def test_unrelated_executable_with_same_version_basename_is_not_misclassified(self):
+        unrelated = self.root / 'other' / '2.1.308'
+        unrelated.parent.mkdir()
+        unrelated.write_bytes(b'\x7fELFunrelated-executable')
+        (self.process / 'exe').unlink()
+        (self.process / 'exe').symlink_to(unrelated)
+        self.assertEqual(worker.runtime_blockers('claude', self.config), [])
+
+    def test_missing_executable_identity_on_still_live_process_never_authorizes_write(self):
+        (self.process / 'exe').unlink()
+        self.assertTrue(worker.runtime_blockers('claude', self.config))
+
+    def test_older_installed_native_version_remains_busy_after_current_symlink_moves(self):
+        newer = self.binary.with_name('2.1.309')
+        newer.write_bytes(b'\x7fELFnewer-installed-native')
+        self.link.unlink()
+        self.link.symlink_to(newer)
+        self.assertEqual(worker.runtime_blockers('claude', self.config), [worker.ERROR_MESSAGES['runtime_running']])
