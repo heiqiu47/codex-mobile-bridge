@@ -430,3 +430,15 @@ class NativeClaudeRuntimeIdentityTests(unittest.TestCase):
         self.link.unlink()
         self.link.symlink_to(newer)
         self.assertEqual(worker.runtime_blockers('claude', self.config), [worker.ERROR_MESSAGES['runtime_running']])
+
+    def test_empty_argv_confirmed_zombie_without_executable_does_not_block_switch(self):
+        (self.process / 'cmdline').write_bytes(b'')
+        (self.process / 'stat').write_text('900003 (claude) Z 1 0 0')
+        (self.process / 'exe').unlink()
+        self.assertEqual(worker.runtime_blockers('claude', self.config), [])
+
+    def test_empty_argv_live_process_with_unknown_executable_still_blocks_switch(self):
+        (self.process / 'cmdline').write_bytes(b'')
+        (self.process / 'stat').write_text('900003 (claude) S 1 0 0')
+        (self.process / 'exe').unlink()
+        self.assertTrue(worker.runtime_blockers('claude', self.config))

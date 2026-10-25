@@ -149,6 +149,10 @@ def runtime_blockers(provider, directory, verified_updaters=()):
                             any(n in ('claude', 'claude.js') for n in names) or
                             any(b'/@anthropic-ai/claude-code/' in a for a in args[:3]))
                 if provider == 'claude' and not relevant and native_claude:
+                    if not any(args):
+                        fields = (process/'stat').read_text().rsplit(')', 1)[-1].split()
+                        if fields and fields[0] == 'Z':
+                            continue
                     info = (process/'exe').stat()
                     relevant = (info.st_dev, info.st_ino) in native_claude
                 if relevant:
