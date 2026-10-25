@@ -144,7 +144,13 @@ class WslCodexDraftLineageTests(unittest.TestCase):
         first = self.entry.complete_account_drafts(before, self.switch(1))
         middle = self.entry.capture_account_drafts('original_api')
         self.assertEqual(middle['accountIdentity'], first[0]['accountIdentity'])
-        self.entry.complete_account_drafts(middle, self.switch(2))
+        applied = self.switch(2)
+        self.entry.complete_account_drafts(middle, applied)
+        persisted = (self.entry.data_dir/'account-drafts.json').read_bytes()
+        # Recovery may repeat completion after persisting lineage but before
+        # the lifecycle transaction's final receipt reached disk or the client.
+        self.entry.complete_account_drafts(middle, applied)
+        self.assertEqual((self.entry.data_dir/'account-drafts.json').read_bytes(), persisted)
         hint = self.entry._account_draft_continuation(self.rows[0]['id'])
         self.assertEqual(hint['previousAccountIdentities'], [before['accountIdentity'], middle['accountIdentity']])
         self.entry.runtime.assert_not_called()

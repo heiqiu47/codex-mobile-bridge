@@ -448,10 +448,12 @@ class WslEntry(WslFeatures):
             if current != saved or saved['provider'] != provider:
                 raise IPCError('原 WSL 草稿会话身份或目录已变化')
             previous = value['sessions'].get(sid) or {}
-            prior = (previous.get('previousAccountIdentities') or []) if (
-                previous.get('cwd') == saved['cwd'] and previous.get('provider') == provider and
-                previous.get('appliedIdentity') == snapshot['identity'] and
-                previous.get('accountIdentity') == snapshot['accountIdentity']) else []
+            same_tuple = previous.get('cwd') == saved['cwd'] and previous.get('provider') == provider
+            preceding = (previous.get('appliedIdentity') == snapshot['identity'] and
+                         previous.get('accountIdentity') == snapshot['accountIdentity'])
+            repeated = (previous.get('appliedIdentity') == appliedIdentity and
+                        previous.get('accountIdentity') == state['accountIdentity'])
+            prior = (previous.get('previousAccountIdentities') or []) if same_tuple and (preceding or repeated) else []
             lineage = list(dict.fromkeys([*prior, snapshot['accountIdentity']]))
             lineage = [item for item in lineage if isinstance(item, str) and len(item) == 64
                        and item != state['accountIdentity']][-32:]
