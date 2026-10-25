@@ -72,6 +72,26 @@ class CliBridgeFixture(unittest.TestCase):
 
 
 class CliBridgeTests(CliBridgeFixture):
+    def test_cli_project_list_uses_target_path_names_without_connecting(self):
+        local_cwd = r'\\?\C:\Work\LocalProject'
+        remote_cwd = r'C:\Work\RemoteProject'
+        posix_cwd = r'/work/Project\notes'
+        self.bridge.store.list = Mock(return_value=[{'origin': 'cli', 'cwd': local_cwd}])
+        self.bridge.hosts.state = Mock(return_value={
+            'codex-managed-remote-connections': [{'hostId': 'ssh', 'alias': 'fixture', 'displayName': 'Server'}]})
+        remote = Mock()
+        remote.store.list.return_value = [{'origin': 'cli', 'cwd': remote_cwd},
+                                        {'origin': 'cli', 'cwd': posix_cwd}]
+        self.bridge.for_host = Mock(return_value=remote)
+        projects = self.bridge.projects()
+        self.assertEqual([(p['name'], p['cwd'], p['host']) for p in projects], [
+            ('LocalProject', local_cwd, 'local'), ('RemoteProject', remote_cwd, 'ssh'),
+            (r'Project\notes', posix_cwd, 'ssh')])
+        self.assertTrue(all(p['type'] == 'cli' for p in projects))
+        self.cli.attach.assert_not_called()
+        self.cli.call.assert_not_called()
+        self.bridge.ipc.connect.assert_not_called()
+
     def test_explicit_continue_reuses_inflight_absent_owner_probe(self):
         started, release, finished, waiting = (threading.Event() for _ in range(4))
         self.bridge.ipc.connect = Mock()

@@ -30,7 +30,7 @@ from bridge.features.workspace.files import artifact_paths, referenced_model_ima
 from bridge.features.workspace.workspace import operate as workspace_operation
 from bridge.clients.codex.catalog import Catalog, CatalogError, ModelStore, MODEL_REFRESH_SECONDS
 from bridge.platforms.codex_daemon_env import DaemonEnvironmentUnavailable
-from bridge.clients.codex.remote import AppHosts, RemoteStore, RemoteCatalog, RemoteUnavailable, ssh_read, ssh_download, payload
+from bridge.clients.codex.remote import AppHosts, RemoteStore, RemoteCatalog, RemoteUnavailable, ssh_read, ssh_download, payload, project_path_name
 from bridge.features.sessions.create import (
     rename_thread, independent_directory, create_empty, fork_copy, open_in_desktop, open_project_in_desktop,
     CreationError, CreationUnavailable, ForkUnavailable, project_directory,
@@ -624,7 +624,7 @@ class Bridge:
                 label = '此电脑' if host == 'local' else self.hosts.hosts()[host].get('displayName', host)
                 projects.append({'key': 'cli|' + host + '|' + hashlib.sha256(cwd.encode()).hexdigest()[:20],
                                  'type': 'cli', 'host': host, 'hostLabel': label,
-                                 'name': cwd.rstrip('/').rsplit('/', 1)[-1] or cwd, 'cwd': cwd})
+                                 'name': project_path_name(cwd) or cwd, 'cwd': cwd})
         for project in projects:
             project['environment'] = project.get('type', 'desktop') + '|' + project['host']
         return projects
