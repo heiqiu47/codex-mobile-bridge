@@ -30,7 +30,7 @@ def request_scope(manager, provider, action, sid, body):
 
 
 @contextmanager
-def account_guard(bridge, provider, row):
+def account_guard(bridge, provider, row, *, read_only=False):
     if provider != 'claude':
         yield
         return
@@ -38,7 +38,8 @@ def account_guard(bridge, provider, row):
     registry = manager.claude_wsl
     remote = manager.adapters['claude'].remote_cli.wsl
     # Match normal writes/toggles: manager -> registration -> remote -> receipts.
-    with manager._changing('claude', rebind=False), registry.lock, remote.lock:
+    scope = manager.locks['claude'] if read_only else manager._changing('claude', rebind=False)
+    with scope, registry.lock, remote.lock:
         current = registry.selected(row['id'])
         if any(current.get(key) != row.get(key) for key in ('distribution', 'user', 'configDir')):
             raise ValueError('WSL 登记身份已变化，请刷新')

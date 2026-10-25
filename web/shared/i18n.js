@@ -2,6 +2,10 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"暂不能切换接入":"Switching is currently unavailable",
+"尚未保存 WSL 接入":"No saved WSL profiles",
+"添加或导入只保存接入，不会切换当前账号。":"Adding or importing saves a profile without switching the current account.",
+"请在网关电脑端添加或导入 API 接入，再在这里选择。":"Add or import an API profile in the gateway desktop app, then select it here.",
 "上游未提供":"Not reported by upstream",
 "原生登录的模型请在原 CLI 查看；已有聊天继续使用原模型。":"View native sign-in models in the original CLI. Existing chats keep their models.",
 "导入的 localhost、127.0.0.1 和 ::1 地址指向所选 WSL 环境，地址保持原样。":"Imported localhost, 127.0.0.1, and ::1 addresses refer to the selected WSL environment. Addresses are kept unchanged.",
@@ -579,6 +583,15 @@ const en={
 "文件夹将打包为 ZIP，准备完成后显示下载总量。":"The folder will be prepared as a ZIP. The total size appears when ready.",
 "文件超过点击下载阈值，请在文件标签页中定位后长按下载。":"This file exceeds the click-to-download limit. Locate it in Files, then long-press to download.",
 "此文件位于聊天项目之外，无法在当前文件标签页中定位。":"This file is outside the chat workspace and cannot be located in this Files tab.",
+"文件路径无法定位":"This file path cannot be located.",
+"WSL 账号管理状态已变化，请退出原 WSL 服务后重新连接":"WSL account state changed. Exit the original WSL service, then reconnect.",
+"WSL 账号配置已变化，请在账号页面核验后重新连接":"WSL account configuration changed. Check it in Accounts, then reconnect.",
+"此历史会话的提供商与当前接入不同；请先选择原接入":"This chat uses a different provider. Select its original access profile first.",
+"此项目覆盖了已选择的 WSL API 地址或认证，请在原 CLI 修正项目配置后重新连接":"This project overrides the selected WSL API endpoint or authentication. Correct the project configuration in the original CLI, then reconnect.",
+"此 WSL 会话已由其他连接加载，无法核验原 API 路由；请退出原 WSL 服务后重新连接":"This WSL chat was loaded by another connection and its API route cannot be verified. Exit the original WSL service, then reconnect.",
+"新会话提供商与已选择的 WSL API 不一致":"The new chat provider does not match the selected WSL API.",
+"无法核验 WSL 切换条件，请刷新并检查运行状态及操作记录":"Unable to verify WSL switching conditions. Refresh and check running clients and pending operations.",
+"原生配置包含其他共享认证提供商或不支持的路由，历史会话可能固定此路由，请使用原 CLI 管理":"The native configuration contains other providers sharing authentication or unsupported routing. Manage it in the original CLI to preserve existing chats.",
 "浏览器存储不可用，无法暂存大文件；请使用手机 App 下载。":"Browser storage is unavailable for large files. Use the mobile app to download.",
 "无法暂存下载文件，请检查浏览器存储空间。":"Unable to store the download. Check browser storage space.",
 "下载阈值须为 1–1048576 MiB 的整数":"Enter a whole number from 1 to 1048576 MiB.",

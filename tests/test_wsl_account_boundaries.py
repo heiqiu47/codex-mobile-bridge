@@ -50,6 +50,94 @@ class WslAccountBoundaryTests(unittest.TestCase):
         self.store.change({'action': 'switch', 'id': 'native', 'expectedIdentity': result['identity']})
         self.assertEqual(self.store.files(), before)
 
+    def test_selected_custom_provider_keeps_history_route_with_new_endpoint_and_key(self):
+        native = ('model_provider = "original_api"\nmodel = "original-model"\n'
+                  '[model_providers.original_api]\nname = "Original API"\n'
+                  '# selected route comment\nbase_url = "https://original.invalid/v1"\n'
+                  'wire_api = "responses"\nrequires_openai_auth = true\n'
+                  '[model_providers.unrelated]\nname = "Public API"\n'
+                  'base_url = "https://public.invalid/v1"\nrequest_max_retries = 3\n')
+        (self.home / 'config.toml').write_text(native)
+        (self.home / 'auth.json').write_text('{"auth_mode":"apikey","OPENAI_API_KEY":"original-private"}')
+        # Saved session files and cwd are outside the credential transaction.
+        sessions = self.home / 'sessions'
+        sessions.mkdir()
+        history = sessions / 'existing.jsonl'
+        history.write_text('{"id":"same-thread","model_provider":"original_api","cwd":"/project"}\n')
+        original_history = history.read_bytes()
+        before = self.store.files()
+        self.assertTrue(self.store.public()['capabilities']['switch'])
+        result = self.switch()
+        config = worker._toml_loads(self.store.files()['config.toml'].decode())
+        self.assertEqual(config['model_provider'], 'original_api')
+        self.assertEqual(config['model_providers']['original_api']['base_url'], 'https://fixture.invalid/v1')
+        self.assertEqual(config['openai_base_url'], 'https://fixture.invalid/v1')
+        self.assertEqual(json.loads(self.store.files()['auth.json'])['OPENAI_API_KEY'], 'fixture-secret')
+        self.assertEqual(config['model_providers']['unrelated'], worker._toml_loads(native)['model_providers']['unrelated'])
+        self.assertIn('[model_providers.unrelated]\nname = "Public API"\nbase_url = "https://public.invalid/v1"\nrequest_max_retries = 3',
+                      self.store.files()['config.toml'].decode())
+        self.assertEqual(history.read_bytes(), original_history)
+        self.store.change({'action': 'save-api', 'name': 'Second', 'model': 'second-model',
+                           'baseUrl': 'https://second.invalid/v1', 'apiKey': 'second-secret'})
+        second = self.store.store['accounts'][-1]['id']
+        result = self.switch(id=second)
+        config = worker._toml_loads(self.store.files()['config.toml'].decode())
+        self.assertEqual(config['model_provider'], 'original_api')
+        self.assertEqual(config['model_providers']['original_api']['base_url'], 'https://second.invalid/v1')
+        self.assertEqual(json.loads(self.store.files()['auth.json'])['OPENAI_API_KEY'], 'second-secret')
+        self.store.change({'action': 'switch', 'id': 'native', 'expectedIdentity': result['identity']})
+        self.assertEqual(self.store.files(), before)
+        self.assertEqual(history.read_bytes(), original_history)
+
+    def test_legacy_managed_shared_auth_output_can_restore_exact_native_snapshot(self):
+        import base64
+        before = self.store.files()
+        self.store.store['native'] = {key: base64.b64encode(value).decode() if value is not None else None
+                                      for key, value in before.items()}
+        (self.home / 'config.toml').write_text(
+            'model_provider="bridge_wsl_api"\n[model_providers.openai]\nrequires_openai_auth=true\n'
+            '[model_providers.bridge_wsl_api]\nbase_url="https://fixture.invalid/v1"\nrequires_openai_auth=true\n')
+        (self.home / 'auth.json').write_text('{"OPENAI_API_KEY":"fixture-secret"}')
+        self.store.store.update(activeId=self.identifier, appliedIdentity=worker._identity(self.store.files()))
+        self.assertTrue(self.store.protected(self.store.files()))
+        public = self.store.public()
+        self.assertFalse(public['capabilities']['switch'])
+        self.assertTrue(public['capabilities']['restore'])
+        self.switch(id='native')
+        self.assertEqual(self.store.files(), before)
+
+    def test_restore_capability_requires_snapshot_matching_identity_and_clear_runtime(self):
+        self.assertFalse(self.store.public()['capabilities']['restore'])
+        self.switch()
+        self.assertTrue(self.store.public()['capabilities']['restore'])
+        self.store.guard = lambda *_: ['fixture runtime unknown']
+        self.assertFalse(self.store.public()['capabilities']['restore'])
+        self.store.guard = lambda *_: ['fixture runtime running']
+        self.assertFalse(self.store.public()['capabilities']['restore'])
+        self.store.guard = lambda *_: []
+        with (self.home / 'auth.json').open('a') as output:
+            output.write(' ')
+        self.assertFalse(self.store.public()['capabilities']['restore'])
+
+    def test_custom_provider_external_edit_blocks_native_restore(self):
+        (self.home / 'config.toml').write_text('model_provider="custom"\n[model_providers.custom]\nname="Custom"\nbase_url="https://original.invalid"\nrequires_openai_auth=true\n')
+        self.switch()
+        with (self.home / 'config.toml').open('a') as output:
+            output.write('# external edit\n')
+        before = self.store.files()
+        with self.assertRaises(worker.AccountError):
+            self.switch(id='native')
+        self.assertEqual(self.store.files(), before)
+
+    def test_busy_target_never_starts_a_native_transaction(self):
+        before = self.store.files()
+        self.store.guard = lambda *_: ['fixture runtime is still running']
+        with patch.object(worker, '_write', side_effect=AssertionError('must not write')):
+            with self.assertRaisesRegex(worker.AccountError, 'runtime'):
+                self.switch()
+        self.assertEqual(self.store.files(), before)
+        self.assertNotIn('native', self.store.store)
+
     def test_external_edit_after_snapshot_blocks_write_and_retains_external_edit(self):
         calls = []
         def changing_guard(*_):
@@ -132,7 +220,7 @@ class WslAccountRoutingBoundaries(unittest.TestCase):
         self.running.start()
         self.addCleanup(self.running.stop)
         call_patch = patch.object(self.accounts, '_call', return_value={'available': True, 'accounts': [],
-                                 'blockers': [], 'capabilities': {'save': True, 'switch': True}})
+                                 'blockers': [], 'capabilities': {'save': True, 'switch': True, 'restore': True}})
         self.call = call_patch.start()
         self.addCleanup(call_patch.stop)
 
@@ -183,6 +271,49 @@ class WslAccountRoutingBoundaries(unittest.TestCase):
         self.registry.bridges = {'wsl:'+'a'*32: endpoint}
         self.accounts.change(self.request())
         self.call.assert_called_once()
+
+    def test_read_masks_switch_and_restore_for_unknown_receipts_without_mutation(self):
+        import copy
+        for status in ('unknown', 'queued', 'pending'):
+            with self.subTest(status=status):
+                receipts = {'fixture': {'result': {'status': status}, 'body': 'retained'}}
+                original = copy.deepcopy(receipts)
+                self.registry.bridges[self.row['id']] = SimpleNamespace(
+                    write_lock=threading.RLock(), lock=threading.RLock(), receipts=receipts, server=None, live={})
+                self.call.return_value = {'available': True, 'accounts': [], 'blockers': [],
+                                         'capabilities': {'save': True, 'switch': True, 'restore': True}}
+                result = self.accounts.read('codex', self.row['id'])
+                self.assertFalse(result['capabilities']['switch'])
+                self.assertFalse(result['capabilities']['restore'])
+                self.assertTrue(result['capabilities']['save'])
+                self.assertEqual(receipts, original)
+        self.assertTrue(all(call.args[-1] == {'action': 'read'} for call in self.call.call_args_list))
+
+    def test_read_masks_persisted_unknown_and_failed_receipt_verification_neutrally(self):
+        path = self.directory / self.row['id'][4:] / 'operations.json'
+        path.parent.mkdir()
+        for original in (b'{"fixture":{"result":{"status":"unknown"}}}', b'invalid receipt json'):
+            with self.subTest(original=original):
+                path.write_bytes(original)
+                self.call.return_value = {'available': True, 'accounts': [], 'blockers': [],
+                                         'capabilities': {'save': True, 'switch': True, 'restore': True}}
+                result = self.accounts.read('codex', self.row['id'])
+                self.assertFalse(result['capabilities']['switch'])
+                self.assertFalse(result['capabilities']['restore'])
+                self.assertIn('无法核验', result['blockers'][-1])
+                self.assertNotIn('仍运行', result['blockers'][-1])
+                self.assertEqual(path.read_bytes(), original)
+
+    def test_successful_read_is_advisory_and_change_rechecks_receipts(self):
+        result = self.accounts.read('codex', self.row['id'])
+        self.assertTrue(result['capabilities']['restore'])
+        self.registry.bridges[self.row['id']] = SimpleNamespace(
+            write_lock=threading.RLock(), lock=threading.RLock(),
+            receipts={'later': {'result': {'status': 'unknown'}}}, server=None, live={})
+        self.call.reset_mock()
+        with self.assertRaises(ValueError):
+            self.accounts.change(self.request(id='native'))
+        self.call.assert_not_called()
 
     def test_transport_uses_selected_user_private_stdin_and_never_retries_unknown_write(self):
         from bridge.features.accounts.wsl_accounts import WslAccounts
@@ -263,7 +394,7 @@ class ClaudeWslDurableGuardTests(unittest.TestCase):
         self.remote = self.manager.adapters['claude'].remote_cli.wsl
         self.remote.index['fixture-session'] = {'host': self.row['id']}
         self.bridge = SimpleNamespace(desktop_sessions=self.manager, data_dir=self.temp.name)
-        self.bridge.wsl_account_guard = lambda provider, row: account_guard(self.bridge, provider, row)
+        self.bridge.wsl_account_guard = lambda provider, row, **options: account_guard(self.bridge, provider, row, **options)
         self.guard = lambda: account_guard(self.bridge, 'claude', self.row)
 
     def receipt(self, result, sid='fixture-session'):
@@ -315,6 +446,55 @@ class ClaudeWslDurableGuardTests(unittest.TestCase):
         with self.guard():
             pass
         self.remote.owned.clear()  # Synthetic owner has no native lifecycle.
+
+    def test_read_checks_claude_unknown_receipts_without_changing_epochs_or_records(self):
+        from bridge.features.accounts.wsl_accounts import WslAccounts
+        accounts = WslAccounts(self.bridge)
+        self.receipt({'status': 'unknown'})
+        epochs = (dict(self.manager.read_epochs), dict(self.manager.read_changes),
+                  dict(self.manager.binding_epochs), dict(self.manager.binding_changes))
+        before = list(self.manager.db.iterdump())
+        value = {'available': True, 'accounts': [], 'blockers': [],
+                 'capabilities': {'save': True, 'switch': True, 'restore': True}}
+        with patch.object(accounts, '_call', return_value=value) as call, \
+                patch('bridge.features.accounts.wsl_accounts.wsl.running_distributions', return_value=['FixtureUbuntu']):
+            result = accounts.read('claude', self.row['id'])
+        self.assertFalse(result['capabilities']['switch'])
+        self.assertFalse(result['capabilities']['restore'])
+        self.assertEqual(epochs, (dict(self.manager.read_epochs), dict(self.manager.read_changes),
+                                 dict(self.manager.binding_epochs), dict(self.manager.binding_changes)))
+        self.assertEqual(before, list(self.manager.db.iterdump()))
+        self.assertEqual(call.call_args.args[-1], {'action': 'read'})
+
+    def test_read_waits_for_claude_manager_without_holding_registry(self):
+        from bridge.features.accounts.wsl_accounts import WslAccounts
+        accounts = WslAccounts(self.bridge)
+        started, done = threading.Event(), threading.Event()
+        errors = []
+        value = {'available': True, 'accounts': [], 'blockers': [],
+                 'capabilities': {'save': True, 'switch': True, 'restore': True}}
+        def reading():
+            started.set()
+            try:
+                accounts.change({'provider': 'claude', 'entry': self.row['id'], 'action': 'read'})
+            except Exception as error:
+                errors.append(error)
+            finally:
+                done.set()
+        with patch.object(accounts, '_call', return_value=value), \
+                patch('bridge.features.accounts.wsl_accounts.wsl.running_distributions', return_value=['FixtureUbuntu']):
+            with self.manager._changing('claude', rebind=False):
+                thread = threading.Thread(target=reading, daemon=True)
+                thread.start()
+                self.assertTrue(started.wait(1))
+                self.assertFalse(done.wait(.05))
+                self.assertTrue(self.manager.claude_wsl.lock.acquire(timeout=1))
+                self.manager.claude_wsl.lock.release()
+                self.assertTrue(self.remote.lock.acquire(timeout=1))
+                self.remote.lock.release()
+            thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
 
     def test_switch_waits_for_manager_before_holding_registry_or_remote_locks(self):
         from bridge.features.accounts.wsl_accounts import WslAccounts

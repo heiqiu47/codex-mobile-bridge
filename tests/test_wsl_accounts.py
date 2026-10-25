@@ -198,21 +198,26 @@ class WslAccountWorkerTests(unittest.TestCase):
                 self.assertEqual(value['forced'], 'api')
                 self.assertIsNone(value['tier'])
                 self.assertEqual(value['history']['persistence'], 'save-all')
-                self.assertEqual(value['oldProvider'], {'name': 'Original OpenAI', 'requires_openai_auth': True})
+                self.assertEqual(value['oldProvider'], {'name': 'Original OpenAI', 'requires_openai_auth': True,
+                                 'base_url': 'https://fixture.invalid', 'wire_api': 'responses', 'supports_websockets': False})
 
-    def test_custom_codex_routing_or_history_auth_remains_readonly(self):
+    def test_complex_codex_routing_or_other_history_auth_remains_readonly(self):
         directory = self.temp/'codex-routing'
         directory.mkdir()
-        configs = ('model_provider = "custom"\n[model_providers.custom]\nbase_url="https://old.invalid"\n',
-                   '[model_providers.openai]\nbase_url="https://old.invalid"\n',
-                   '[model_providers.old_history]\nrequires_openai_auth=true\nbase_url="https://old.invalid"\n')
+        configs = ('model_provider="custom"\n[model_providers.custom]\nrequires_openai_auth=true\n[model_providers.openai]\nbase_url="https://old.invalid"\n',
+                   'model_provider = "custom"\n[model_providers.custom]\nbase_url="https://old.invalid"\nenv_key="CUSTOM_API_KEY"\n',
+                   '[model_providers.openai]\nhttp_headers={Authorization="Bearer old"}\n',
+                   '[model_providers.old_history]\nrequires_openai_auth=true\nbase_url="https://old.invalid"\n',
+                   'model_provider="custom"\n[model_providers.custom]\nwire_api="chat"\n',
+                   'profile="work"\n[profiles.work]\nmodel="example"\n',
+                   'cli_auth_credentials_store="keyring"\n')
         for text in configs:
             with self.subTest(config=text):
                 (directory/'config.toml').write_text(text)
                 store = worker.AccountStore('codex', str(directory), guard=lambda *_: [])
                 store.change({'action': 'save-api', 'name': 'new', 'baseUrl': 'https://new.invalid',
                               'model': 'fixture', 'apiKey': 'new-private'})
-                self.assertIn('自定义提供商', store.public()['blockers'][0])
+                self.assertFalse(store.public()['capabilities']['switch'])
                 with self.assertRaises(worker.AccountError):
                     store.change({'action': 'switch', 'id': store.store['accounts'][-1]['id'],
                                   'expectedIdentity': store.public()['identity']})

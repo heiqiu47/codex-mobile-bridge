@@ -156,6 +156,7 @@ Android v2.0.3 adds in-app APK updates with a phone/computer download choice. Ol
 - Compact chat navigation leaves more room for replies. Tap the title for the full name, project, device and model details.
 - Use the arrow beside Model, Notifications and Skill to hide or show the composer and send/stop controls. Drafts are retained; a successful send does not collapse the composer automatically, and a failed send reopens it to show the error.
 - Open **“··· → Display settings”** to independently toggle **Reasoning summaries** and **Execution activity**. Activity includes commands, tools, file changes and intermediate progress updates. Turn both off to focus on replies; user messages, errors and pending requests remain visible. Older replies without phase metadata are also retained.
+- “Edited X files” cards show file names and line counts only. Click a file name to locate and highlight it in the original chat’s Files tab; deleted files or paths outside the project show an unavailable message.
 - Choose light, dark or system theme, an accent color, text and code sizes, and reading spacing. Settings apply immediately and are saved in the current browser; they also work on desktop browsers.
 
 ### Multiple accounts and API connections

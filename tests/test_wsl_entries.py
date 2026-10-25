@@ -497,6 +497,7 @@ class WslSessionTests(unittest.TestCase):
         entry = WslEntry(self.row, self.temp.name)
         entry.server = Runtime(self.identifier)
         entry.generation = 'fixture-generation'
+        entry._account_route = lambda: {'managed': False}
         entry.server.response_callback = lambda value: entry._event({'method': 'serverRequest/resolved',
             'params': {'threadId': self.identifier, 'requestId': value['id']}}, entry.generation)
         entry.store = SimpleNamespace(get=lambda identifier: {'id': identifier, 'cwd': '/home/fixture/project',

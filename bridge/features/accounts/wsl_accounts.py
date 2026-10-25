@@ -90,12 +90,26 @@ class WslAccounts:
                 if row['distribution'] not in wsl.running_distributions():
                     return self._public(provider, row, {'available': False, 'identity': None, 'accounts': [],
                         'activeId': None, 'blockers': ['WSL 已停止，请在电脑端启动后查看账号'],
-                        'capabilities': {'save': False, 'import': False, 'switch': False, 'models': False}})
+                        'capabilities': {'save': False, 'import': False, 'switch': False, 'restore': False, 'models': False}})
                 value = self._call(provider, row, {'action': 'read'})
                 if not row.get('enabled', True):
                     value['blockers'].append('此 WSL 入口已关闭')
                     value['capabilities'] = {key: False for key in value['capabilities']}
-                return self._public(provider, row, value)
+                    return self._public(provider, row, value)
+            # Do not hold registration while waiting for the Claude manager.
+            # Eligibility is advisory; change() rechecks under the write gates.
+            try:
+                with self._change_scope(provider, entry, 'inspect-switch'):
+                    current = self._row(provider, entry, enabled=True)
+                    if self._target(current) != self._target(row):
+                        raise ValueError('WSL 登记身份已变化')
+                    with self._guard(provider, current):
+                        pass
+            except Exception:
+                # Failed verification is not evidence that the target is busy.
+                value['blockers'].append('无法核验 WSL 切换条件，请刷新并检查运行状态及操作记录')
+                value['capabilities'].update(switch=False, restore=False)
+            return self._public(provider, row, value)
 
     @contextlib.contextmanager
     def _guard(self, provider, row):
@@ -129,7 +143,7 @@ class WslAccounts:
     def _change_scope(self, provider, entry, action):
         registry = self._registry(provider)
         with contextlib.ExitStack() as locks:
-            if provider == 'claude' and action == 'switch':
+            if provider == 'claude' and action in ('switch', 'inspect-switch'):
                 with registry.lock:
                     row = self._row(provider, entry, enabled=True)
                 hook = getattr(self.bridge, 'wsl_account_guard', None)
@@ -137,7 +151,8 @@ class WslAccounts:
                     raise ValueError('WSL Claude Code 操作记录保护尚不可用')
                 # Manager mutation lock precedes registry/remote locks, matching
                 # normal Claude sends. The hook rechecks target registration.
-                locks.enter_context(hook(provider, row))
+                locks.enter_context(hook(provider, row, read_only=True) if action == 'inspect-switch'
+                                    else hook(provider, row))
             locks.enter_context(registry.lock)
             yield
 
@@ -160,11 +175,11 @@ class WslAccounts:
         with self.lock:
             if self.closed:
                 raise ValueError('网关正在停止')
+            if action == 'read':
+                return self.read(provider, entry)
             registry = self._registry(provider)
             with self._change_scope(provider, entry, action):
                 row = self._row(provider, entry, enabled=action != 'read')
-                if action == 'read':
-                    return self.read(provider, entry)
                 if action == 'import-sources':
                     return self._public(provider, row, {'sources': self.bridge.wsl_account_sources(provider)})
                 if row['distribution'] not in wsl.running_distributions():

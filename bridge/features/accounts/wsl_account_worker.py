@@ -20,7 +20,7 @@ ERROR_MESSAGES = {
     'external_change': '原生配置已被外部修改，请使用原工具处理',
     'runtime_running': '此 WSL 配置仍有客户端或共享服务运行，无法保证重新载入认证；请先在原终端退出后切换',
     'runtime_unknown': '无法核验 WSL 进程状态，暂不能切换账号',
-    'custom_routing': '原生配置包含自定义提供商路由或认证，历史会话可能固定此路由，请使用原 CLI 管理',
+    'custom_routing': '原生配置包含其他共享认证提供商或不支持的路由，历史会话可能固定此路由，请使用原 CLI 管理',
     'profile_managed': '此接入包含外部管理、配置 profile 或系统凭据，请使用 WSL 原工具管理',
     'claude_managed': '此 Claude Code 接入由外部认证或组织策略管理',
     'native_exists': '已保存原始登录；请保留现有快照',
@@ -181,20 +181,23 @@ class AccountStore:
             except (ImportError, ValueError, UnicodeError):
                 return ['需要支持 TOML 核验的 WSL Python，或配置无法解析']
             definitions = config.get('model_providers') or {}
-            official = definitions.get('openai') or {}
-            if (config.get('model_provider', 'openai') not in ('openai', 'bridge_wsl_api')
-                    or any(official.get(key) for key in ('base_url', 'env_key', 'experimental_bearer_token'))
-                    or official.get('requires_openai_auth') is False
-                    or official.get('wire_api', 'responses') != 'responses'
-                    or any(key not in ('openai', 'bridge_wsl_api') and isinstance(value, dict)
-                           and value.get('requires_openai_auth') for key, value in definitions.items())):
-                return ['原生配置包含自定义提供商路由或认证，历史会话可能固定此路由，请使用原 CLI 管理']
+            selected = config.get('model_provider', 'openai')
+            definition = definitions.get(selected) or {}
+            if (not isinstance(selected, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', selected)
+                    or (selected != 'openai' and selected not in definitions)
+                    or not isinstance(definition, dict)
+                    or definition.get('wire_api', 'responses') != 'responses'
+                    or any(key != selected and isinstance(value, dict)
+                           and (value.get('requires_openai_auth') or (key == 'openai' and value.get('base_url')))
+                           for key, value in definitions.items())):
+                return [ERROR_MESSAGES['custom_routing']]
             if ('magpie' in (files['config.toml'] or b'').decode().lower() or
                     re.search(r'(?i)https?://(?:localhost|127\.0\.0\.1|\[::1\]):3425\b', (files['config.toml'] or b'').decode()) or
                     config.get('model_catalog_json') or
                     config.get('cli_auth_credentials_store', 'file') != 'file' or
                     config.get('profile') or config.get('profiles') or config.get('credential_store') or config.get('api_key_helper') or
-                    any(isinstance(v, dict) and (v.get('env_key') or v.get('experimental_bearer_token'))
+                    any(isinstance(v, dict) and any(v.get(key) for key in ('env_key', 'experimental_bearer_token', 'http_headers',
+                            'env_http_headers', 'auth', 'aws', 'query_params', 'gateway_oauth'))
                         for v in config.get('model_providers', {}).values())):
                 return ['此接入包含外部管理、配置 profile 或系统凭据，请使用 WSL 原工具管理']
         else:
@@ -221,11 +224,30 @@ class AccountStore:
             rows.insert(0, {'id': 'native', 'name': '原始 WSL 登录', 'kind': 'native',
                             'active': active == 'native', 'keySaved': False,
                             'identity': _identity({k: base64.b64decode(v) if v is not None else None for k, v in self.store['native'].items()})})
-        blockers = self.protected(files) + self.guard(self.provider, self.directory)
+        protected = self.protected(files)
+        runtime = self.guard(self.provider, self.directory)
+        blockers = protected + runtime
+        restore = bool(self.store.get('native') and self.store.get('appliedIdentity') == identity and not runtime)
         return {'identity': identity, 'accounts': rows, 'activeId': active, 'available': True,
                 'activeVerified': False, 'blockers': blockers,
-                'capabilities': {'save': True, 'import': True, 'switch': not blockers, 'models': True},
+                'capabilities': {'save': True, 'import': True, 'capture': not protected, 'switch': not blockers, 'restore': restore, 'models': True},
                 'loginGuidance': '官方登录请在此 WSL 环境的原 CLI 完成；文件切换后请重新打开 CLI，登录有效性尚未验证。'}
+
+    def route_summary(self):
+        """No credentials, process inspection, model requests, or disk writes."""
+        identifier = self.store.get('activeId')
+        if identifier in (None, 'native'):
+            return {'managed': False}
+        files = self.files()
+        identity = _identity(files)
+        row = self.row(identifier)
+        if (not row or self.store.get('appliedIdentity') != identity
+                or self.store.get('appliedAccountIdentity') != _account_identity(row)):
+            return {'managed': True, 'valid': False}
+        config = _toml_loads((files['config.toml'] or b'').decode())
+        return {'managed': True, 'valid': not self.protected(files),
+                'appliedIdentity': identity, 'accountIdentity': _account_identity(row),
+                'provider': config.get('model_provider', 'openai'), 'baseUrl': row['baseUrl']}
 
     def _save(self):
         self.root.mkdir(mode=0o700, exist_ok=True)
@@ -313,7 +335,7 @@ class AccountStore:
             return {**before, 'settings.json': _json(settings)}
         text = (before['config.toml'] or b'').decode()
         config = _toml_loads(text)
-        # Limit edits to conventional root assignments and our own provider
+        # Limit edits to conventional root assignments and the selected provider
         # table; reject dotted/multiline constructs instead of rewriting TOML.
         first = re.search(r'^\s*\[', text, re.MULTILINE)
         root, section_text = (text[:first.start()], text[first.start():]) if first else (text, '')
@@ -326,19 +348,47 @@ class AccountStore:
                     raise AccountError('复杂 TOML 配置请使用原 CLI 管理')
                 continue
             clean.append(line)
-        if 'bridge_wsl_api' in config.get('model_providers', {}):
-            raise AccountError('配置包含同名外部 provider，请先恢复原始登录')
+        # Keep the selected provider ID so saved threads resume through the
+        # same route. Only that provider's endpoint/auth fields are retargeted.
+        selected = config.get('model_provider', 'openai')
+        definitions = config.get('model_providers', {})
+        definition = dict(definitions.get(selected) or {})
+        fields = {'base_url': row['baseUrl'], 'wire_api': 'responses',
+                  'requires_openai_auth': True, 'supports_websockets': False}
+        if not definition.get('name'):
+            fields['name'] = 'WSL API'
+        table = re.compile(r'^\s*\[model_providers\.(?:' + re.escape(selected)
+                           + r'|"' + re.escape(selected) + r'"|\'' + re.escape(selected)
+                           + r'\')\]\s*(?:#.*)?$', re.MULTILINE)
+        match = table.search(section_text)
+        body = ''
+        if match:
+            following = re.search(r'^\s*\[', section_text[match.end():], re.MULTILINE)
+            end = match.end() + following.start() if following else len(section_text)
+            body = section_text[match.end():end]
+            retained = []
+            for line in body.splitlines(keepends=True):
+                if any(re.match(r'^\s*' + key + r'\s*=', line) for key in fields):
+                    if line.count('"""') or line.count("'''"):
+                        raise AccountError('复杂 TOML 配置请使用原 CLI 管理')
+                    continue
+                retained.append(line)
+            body = ''.join(retained)
+            section_text = section_text[:match.start()] + section_text[end:]
         result = ''.join(clean).rstrip()+'\n'
-        result += 'model_provider = "bridge_wsl_api"\ncli_auth_credentials_store = "file"\n'
+        result += 'model_provider = '+json.dumps(selected)+'\ncli_auth_credentials_store = "file"\n'
         result += 'model = '+json.dumps(row['model'])+'\nopenai_base_url = '+json.dumps(row['baseUrl'])+'\n'
         if config.get('forced_login_method'):
             result += 'forced_login_method = "api"\n'
-        result += section_text.rstrip()+'\n[model_providers.bridge_wsl_api]\nname = "WSL API"\nwire_api = "responses"\nrequires_openai_auth = true\nbase_url = '+json.dumps(row['baseUrl'])+'\n'
+        result += section_text.rstrip()+'\n[model_providers.'+selected+']\n'+body.strip()+'\n'
+        for key, value in fields.items():
+            result += key+' = '+json.dumps(value)+'\n'
         parsed = _toml_loads(result)
         expected = {key: value for key, value in config.items() if key not in keys and key != 'model_providers'}
         actual = {key: value for key, value in parsed.items() if key not in keys and key != 'model_providers'}
-        if actual != expected or any(parsed.get('model_providers', {}).get(key) != value
-                                     for key, value in config.get('model_providers', {}).items()):
+        expected_definitions = dict(definitions)
+        expected_definitions[selected] = {**definition, **fields}
+        if actual != expected or parsed.get('model_providers') != expected_definitions:
             raise AccountError('复杂 TOML 配置请使用原 CLI 管理')
         return {'config.toml': result.encode(), 'auth.json': _json({'auth_mode': 'apikey', 'OPENAI_API_KEY': row['key']})}
 
@@ -346,7 +396,9 @@ class AccountStore:
         before = self.files()
         if value.get('expectedIdentity') != _identity(before):
             raise AccountError('账号身份已变化，请刷新后重新选择')
-        blockers = self.protected(before) + self.guard(self.provider, self.directory)
+        restoring = (value.get('id') == 'native' and self.store.get('native')
+                     and self.store.get('appliedIdentity') == _identity(before))
+        blockers = ([] if restoring else self.protected(before)) + self.guard(self.provider, self.directory)
         if blockers:
             raise AccountError(blockers[0])
         if self.store.get('native') and self.store.get('appliedIdentity') != _identity(before):

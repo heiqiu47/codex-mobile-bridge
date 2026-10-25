@@ -314,9 +314,9 @@ class Bridge:
         from bridge.features.accounts.wsl_account_sources import import_api
         return import_api(self, provider, value)
 
-    def wsl_account_guard(self, provider, row):
+    def wsl_account_guard(self, provider, row, *, read_only=False):
         from bridge.features.accounts.wsl_account_guard import account_guard
-        return account_guard(self, provider, row)
+        return account_guard(self, provider, row, read_only=read_only)
 
     def _goal_runtime_available(self):
         if self.host != "local":

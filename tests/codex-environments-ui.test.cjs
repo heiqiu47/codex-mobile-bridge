@@ -13,7 +13,7 @@ function fixture({native=true,listSource='all',host='local'}={}){
    get value(){return value;},set value(next){value=String(next);},get options(){return this.children;},
    append(...children){for(const child of children){this.children.push(child);child.parentElement=this;if(this.tagName==='SELECT'&&!value)value=child.value;}},
    replaceChildren(...children){this.children=[];if(this.tagName==='SELECT')value='';this.append(...children);},
-   showModal(){this.open=true;},close(){this.open=false;},addEventListener(){},dispatchEvent(){},setAttribute(key,v){this[key]=v;},after(){},
+   showModal(){this.open=true;},close(){this.open=false;},addEventListener(){},dispatchEvent(){},setAttribute(key,v){this[key]=v;},closest(selector){return selector==='.picker-head'?this:null;},after(){},
    querySelector(){return this.labelNode||(this.labelNode=node('span'));},querySelectorAll(){return [];},classList:{add(){},remove(){},toggle(){},contains(){return false;}}};return n;
  }
  const html=fs.readFileSync(path.join(__dirname,'../web/index.html'),'utf8');

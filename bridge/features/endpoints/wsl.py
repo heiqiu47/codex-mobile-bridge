@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import posixpath
 import threading
 import time
 import uuid
@@ -102,6 +103,7 @@ class WslEntry(WslFeatures):
         self.server = None
         self.generation = None
         self.subscriptions = {}
+        self._managed_routes = {}
         self.write_lock = threading.RLock()
         self._draft_identity_cache = {}
         self._draft_identity_pending = set()
@@ -426,26 +428,77 @@ class WslEntry(WslFeatures):
                     for saved, native in (('cwd', 'cwd'), ('model_provider', 'modelProvider')))):
             raise IPCError('原 WSL 会话身份或接入已变化，操作尚未发送，请重新查看原会话')
 
-    def _target(self, identifier, activate=False):
+    def _account_route(self):
+        from bridge.features.accounts.wsl_account_payload import worker_source
+        # Unmanaged homes retain their existing path/ownership semantics. Only
+        # an existing management store activates the stricter account worker.
+        summary = worker_source()
+        summary += '\nstore=AccountStore("codex", '+repr(self.row['home'])+')\nprint(json.dumps(store.route_summary()))\n'
+        path = posixpath.join(self.row['home'], '.codex-mobile-bridge-accounts', 'store.json')
+        source = 'import os,json\nif not os.path.lexists('+repr(path)+'):\n print(json.dumps({"managed":False}))\nelse:\n exec('+repr(summary)+')\n'
+        return self.read(self.row['distribution'], source)
+
+    def _check_account_route(self, runtime, thread, *, new=False):
+        route = self._account_route()
+        if route.get('managed') is False:
+            previous = self._managed_routes.get(thread.get('id'))
+            if previous is not None and previous[0] == self.generation:
+                raise IPCError('WSL 账号管理状态已变化，请退出原 WSL 服务后重新连接')
+            return None
+        if not route.get('valid'):
+            raise IPCError('WSL 账号配置已变化，请在账号页面核验后重新连接')
+        config = runtime.request('config/read', {'includeLayers': False, 'cwd': thread.get('cwd')}).get('config') or {}
+        provider = config.get('model_provider') or 'openai'
+        definition = (config.get('model_providers') or {}).get(provider) or {}
+        if ((thread.get('modelProvider') and thread['modelProvider'] != provider) or provider != route['provider']):
+            raise IPCError('此历史会话的提供商与当前接入不同；请先选择原接入')
+        if (definition.get('base_url') != route['baseUrl']
+                or definition.get('wire_api', 'responses') != 'responses'
+                or definition.get('requires_openai_auth') is not True
+                or config.get('cli_auth_credentials_store', 'file') != 'file'
+                or config.get('openai_base_url') not in (None, route['baseUrl'])
+                or config.get('forced_login_method') not in (None, 'api')
+                or any(config.get(key) for key in ('profile', 'profiles', 'api_key_helper', 'credential_store'))
+                or any(definition.get(key) for key in ('env_key', 'experimental_bearer_token', 'http_headers',
+                    'env_http_headers', 'auth', 'aws', 'query_params', 'gateway_oauth'))):
+            raise IPCError('此项目覆盖了已选择的 WSL API 地址或认证，请在原 CLI 修正项目配置后重新连接')
+        proof = (self.generation, route['appliedIdentity'], route['accountIdentity'],
+                 thread.get('cwd'), provider, thread.get('model'))
+        previous = self._managed_routes.get(thread.get('id'))
+        # A changed model does not change the verified endpoint. Preserve the
+        # latest observed model while retaining the original route provenance.
+        if (not new and thread.get('status', {}).get('type') != 'notLoaded'
+                and (previous is None or previous[:-1] != proof[:-1])):
+            raise IPCError('此 WSL 会话已由其他连接加载，无法核验原 API 路由；请退出原 WSL 服务后重新连接')
+        return proof
+
+    def _target(self, identifier, activate=False, managed_control=False):
         metadata = self.store.get(identifier)
         runtime = self.runtime(allow_start=activate)
         # Fresh native evidence, never a display cache. Explicit subscription is
         # allowed only to this already loaded thread on this original daemon.
         thread = runtime.request('thread/read', {'threadId': identifier, 'includeTurns': False})['thread']
         self._verify_thread(identifier, metadata, thread)
+        previous = self._managed_routes.get(identifier)
+        defer_route = (managed_control and thread.get('status', {}).get('type') != 'notLoaded'
+                       and previous is not None and previous[0] == self.generation)
+        proof = (self._check_account_route(runtime, thread)
+                 if (activate or managed_control) and not defer_route else None)
         if (activate and thread.get('id') == identifier and not thread.get('parentThreadId')
                 and thread.get('threadSource') != 'subagent' and thread.get('status', {}).get('type') == 'notLoaded'):
             self.subscriptions.pop(identifier, None)
-            self._subscribe(identifier, runtime, thread)
+            self._subscribe(identifier, runtime, thread, route_proof=proof)
             thread = runtime.request('thread/read', {'threadId': identifier, 'includeTurns': False})['thread']
             self._verify_thread(identifier, metadata, thread)
         if (thread.get('id') != identifier or thread.get('parentThreadId') or
                 thread.get('threadSource') == 'subagent' or
                 thread.get('canAcceptDirectInput') is not True or thread.get('status', {}).get('type') not in ('idle', 'active')):
             raise IPCError('WSL 会话尚未就绪或由其他执行器独占；操作未发送，请重新连接')
+        if proof is not None and thread.get('status', {}).get('type') != 'notLoaded':
+            self._managed_routes[identifier] = (*proof[:-1], thread.get('model'))
         return runtime, thread
 
-    def _subscribe(self, identifier, runtime, thread):
+    def _subscribe(self, identifier, runtime, thread, route_proof=None):
         generation = self.generation
         if self.subscriptions.get(identifier) == generation:
             return
@@ -476,6 +529,8 @@ class WslEntry(WslFeatures):
                 session.state['currentPermissions'] = permissions
                 session.changed()
         self.subscriptions[identifier] = generation
+        if route_proof is not None:
+            self._managed_routes[identifier] = (*route_proof[:-1], current.get('model'))
 
     @_entry_write
     def activate(self, identifier):
@@ -577,6 +632,7 @@ class WslEntry(WslFeatures):
                     source += source_text('features/sessions/create.py')
                     source += '\nprint(json.dumps(project_directory(**' + payload({'value': project['cwd'], 'expected': project.get('directoryIdentity')}) + ')))\n'
                 cwd = self.read(self.row['distribution'], source)['cwd']
+                proof = self._check_account_route(runtime, {'cwd': cwd}, new=True)
                 receipt = self.creations[request_id] = {'project': project_key, 'title': title, 'cwd': cwd}
                 self.data_dir.mkdir(parents=True, exist_ok=True)
                 private_json(self.creations_path, self.creations)
@@ -586,6 +642,10 @@ class WslEntry(WslFeatures):
                     uuid.UUID(identifier)
                     if created.get('cwd') != cwd or created.get('parentThreadId'):
                         raise IPCError('新会话身份未确认')
+                    if proof is not None:
+                        if created.get('modelProvider') != proof[4]:
+                            raise IPCError('新会话提供商与已选择的 WSL API 不一致')
+                        self._managed_routes[identifier] = (*proof[:-1], created.get('model'))
                     receipt['id'] = identifier
                     private_json(self.creations_path, self.creations)
                     runtime.request('thread/name/set', {'threadId': identifier, 'name': title})
@@ -664,7 +724,7 @@ class WslEntry(WslFeatures):
             previous = self._previous_send(identifier, key, value)
             if previous is not None and not (queued and previous.get('status') == 'queued'):
                 return previous
-            runtime, thread = self._target(identifier, activate=mode != 'queue')
+            runtime, thread = self._target(identifier, activate=mode != 'queue', managed_control=True)
             if (mode == 'send' or queued) and thread['status']['type'] == 'active':
                 raise ValueError('任务正在运行，请选择补充当前任务，或等待完成')
             if goal_activation is not None:
@@ -711,6 +771,9 @@ class WslEntry(WslFeatures):
                         params['collaborationMode'] = collaboration
                     result = runtime.request('turn/start', params)
                 return {'status': 'accepted', 'id': submission_id, 'turnId': (result.get('turn') or {}).get('id') or result.get('turnId')}
+            # Check immediately before creating an uncertain write receipt. A
+            # known route rejection has not sent model bytes and stays retryable.
+            self._check_account_route(runtime, thread)
             result = self._mutation(identifier, key, value, dispatch)
             self.session(identifier, background=True)
             return result

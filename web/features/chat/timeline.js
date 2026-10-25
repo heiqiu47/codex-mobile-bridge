@@ -2,12 +2,32 @@
 const timelineText=source=>typeof BridgeI18n==='undefined'?source:BridgeI18n.t(source);
 const fileChangeLabel=row=>timelineText('已编辑 {count} 个文件').replace('{count}',row.fileSummary?.count||0);
 const recentTimelinePages=new Map();
+function timelineFilePath(path,cwd){
+  if(typeof path!=='string'||!path||typeof cwd!=='string'||!cwd||/[\0\r\n]/.test(path))throw Error(timelineText('文件路径无法定位'));
+  const windows=/^(?:[A-Za-z]:[\\/]|\\\\|\/\/)/.test(cwd);
+  const normalize=value=>windows?value.replace(/\\/g,'/'):value;
+  path=normalize(path);cwd=normalize(cwd).replace(/\/+$/,'');
+  const absolute=/^(?:\/|[A-Za-z]:\/)/.test(path);
+  if(absolute){
+    const prefix=cwd+'/',match=windows?path.toLowerCase().startsWith(prefix.toLowerCase()):path.startsWith(prefix);
+    if(!match)throw Error(timelineText('此文件位于聊天项目之外，无法在当前文件标签页中定位。'));
+    path=path.slice(prefix.length);
+  }
+  const parts=[];
+  for(const part of path.split('/')){
+    if(!part||part==='.')continue;
+    if(part==='..'){if(!parts.length)throw Error(timelineText('文件路径无法定位'));parts.pop();}
+    else parts.push(part);
+  }
+  if(!parts.length||parts.some(part=>part.includes('\\')||part.includes(':')))throw Error(timelineText('文件路径无法定位'));
+  return parts.join('/');
+}
 
 // History and live changes share stable keys, but never share a request queue.
 class ChatTimeline {
   static clearCache(){recentTimelinePages.clear();}
-  constructor({url, request, renderMeta, renderText, status, onAction, canEdit = () => true, elements = {}, active = () => true, cacheKey = ''}) {
-    Object.assign(this,{url,request,renderMeta,renderText,status,onAction,active,cacheKey});
+  constructor({url, request, renderMeta, renderText, status, onAction, onFile, canEdit = () => true, elements = {}, active = () => true, cacheKey = ''}) {
+    Object.assign(this,{url,request,renderMeta,renderText,status,onAction,onFile,active,cacheKey});
     this.canEdit=()=>!this.cached&&canEdit();
     this.viewport=elements.viewport||document.getElementById('timeline');
     this.container=elements.container||document.getElementById('messages');
@@ -182,8 +202,10 @@ class ChatTimeline {
       heading.append(stats);
       const list=document.createElement('ul');list.className='edited-files-list';
       for(const file of row.fileSummary.files){
-        const item=document.createElement('li'),path=document.createElement('span'),counts=document.createElement('span');
+        const item=document.createElement('li'),path=document.createElement(this.onFile?'button':'span'),counts=document.createElement('span');
+        if(this.onFile){path.type='button';path.onclick=()=>this.onFile(file.path);}
         path.textContent=file.path;path.className='edited-files-path';counts.textContent='+'+file.added+' −'+file.removed;counts.className='edited-files-stats';item.append(path,counts);list.append(item);
+        if(this.onFile)path.classList.add('plain');
       }
       content.append(list);
       // File cards expand the supplied summary only, including old cached rows
