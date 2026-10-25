@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from bridge.api.assets import FONT_ROUTE, PDF_CMAP_ROUTE, PDF_FONT_ROUTE, STATIC
 from bridge.clients.codex.remote import RemoteCatalog, RemoteCliModels
 from bridge.features.auth import tls
+from bridge.features.accounts.wsl_account_payload import worker_source
 from bridge.resources import project_root, source_text
 
 
@@ -21,9 +22,9 @@ PUBLIC_URLS = set('''
 / /bootstrap.js /host.js /layout.js /permissions.js /downloads.js /downloads.css
 /client-icons/codex.png /client-icons/claude.png /client-icons/deepseek.png
 /client-navigation.js /client-navigation.css /client-lifecycle.js /client-lifecycle.css /desktop-sessions.js
-/client-accounts.js /cli-access.js /desktop-sessions.css /vendor/xterm/xterm.js
+/client-accounts.js /cli-access.js /wsl-accounts.js /desktop-sessions.css /vendor/xterm/xterm.js
 /vendor/xterm/addon-fit.js /vendor/xterm/xterm.css /command-terminal-panel.js
-/list-sync.js /agents-panel.js /side-chat.js /terminal-panel.js /floating-panel.js
+/list-sync.js /agents-panel.js /side-chat.js /terminal-panel.js /floating-panel.js /project-picker.js
 /git-panel.js /file-actions.js /workbench.js /source-view.js /pdf-preview.js /html-preview.js /vendor/pdfjs/pdf.min.mjs /vendor/pdfjs/pdf.worker.min.mjs /vendor/prism/source-view.min.js /image-viewer.js /workbench.css /i18n.js /app.js
 /modes.js /attachments.js /activity.js /fast-mode.js /accounts.js /account.js
 /account.css /presentation.js /presentation.css /markdown.js /message-actions.js
@@ -37,8 +38,10 @@ PUBLIC_URLS = set('''
 SSH_SOURCES = {
     'bridge/clients/claude/remote_worker.py': ['profile', 'command', 'resume'],
     'bridge/features/sessions/store.py': ['SessionStore'],
+    'bridge/features/sessions/message_management.py': ['snapshot', 'mutate'],
     'bridge/clients/codex/catalog.py': ['Catalog'],
     'bridge/clients/codex/remote_models.py': ['remote_model_worker'],
+    'bridge/clients/codex/configuration.py': ['magpie_managed'],
     'bridge/features/sessions/create.py': ['create_empty', 'fork_copy', 'rename_thread'],
     'bridge/features/accounts/models.py': ['model_ids'],
     'bridge/features/accounts/draft_identity.py': ['draft_identity', 'codex_account_identity'],
@@ -55,6 +58,10 @@ PLATFORM_SOURCES = {
     'bridge/platforms/macos/force_exit.py',
     'bridge/platforms/windows/codex_daemon_env.py',
 }
+WSL_ACCOUNT_SOURCES = {'bridge/features/accounts/wsl_account_worker.py',
+                       'bridge/platforms/codex_process_identity.py',
+                       *('bridge/vendor/wsl_tomli/'+name for name in
+                         ('__init__.py', '_parser.py', '_re.py', '_types.py'))}
 CONNECTORS = {'bridge/clients/claude/connector.js', 'bridge/clients/deepseek/host.mjs'}
 NATIVE_SOURCES = {'bridge/platforms/macos/claude-helper.swift',
                   'bridge/platforms/windows/claude-helper.cs',
@@ -132,9 +139,10 @@ class ResourceLayoutTests(unittest.TestCase):
         manifest = json.loads((ROOT/'scripts/gateway-resources.json').read_text())
         self.assertEqual(len(manifest), len(set(manifest)))
         self.assertEqual({name for name in manifest if name.endswith('.py')},
-                         set(SSH_SOURCES) | PLATFORM_SOURCES)
+                         set(SSH_SOURCES) | PLATFORM_SOURCES | WSL_ACCOUNT_SOURCES)
         self.assertTrue(CONNECTORS <= set(manifest))
         self.assertIn('bridge/clients/LICENSE.coding-mobile', manifest)
+        self.assertIn('bridge/vendor/wsl_tomli/LICENSE', manifest)
         for relative in manifest:
             with self.subTest(resource=relative):
                 path = PurePosixPath(relative)
@@ -147,6 +155,7 @@ class ResourceLayoutTests(unittest.TestCase):
         # The real catalog builder combines TLS/model/catalog definitions and
         # removes package imports. Test its output, not a duplicate assembler.
         combined = {'bridge/features/auth/tls.py', 'bridge/features/accounts/models.py',
+                    'bridge/clients/codex/configuration.py',
                     'bridge/clients/codex/catalog.py'}
         source = RemoteCatalog('fixture-host')._source()
         for node in ast.walk(ast.parse(source)):
@@ -160,6 +169,9 @@ class ResourceLayoutTests(unittest.TestCase):
         cases.append({'name': 'native-cli-models-with-platform-readers',
                       'source': RemoteCliModels._source(),
                       'symbols': ['remote_model_worker', 'read_daemon_environment']})
+        cases.append({'name': 'wsl-accounts-with-models-and-tls',
+                      'source': worker_source()+'\nassert codex_updater(Path("/unused"),"/fixture/codex",[b"codex",b"app-server",b"--managed-daemon"],{},Path.cwd()) is None\n',
+                      'symbols': ['AccountStore', 'execute', 'fetch_models', 'model_catalog', 'codex_updater']})
         for relative, symbols in SSH_SOURCES.items():
             if relative not in combined:
                 cases.append({'name': relative, 'source': source_text(relative.removeprefix('bridge/')),

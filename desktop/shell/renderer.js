@@ -116,9 +116,9 @@ function moduleName(name){return ({account:'accounts','desktop-sessions':'accoun
 function tab(name){const requested=name;name=moduleName(name);activeTab=name;
   if(name!=='notifications')hideWebhookUrl();
   if(name!=='accounts'&&typeof codexCliAccessPanel!=='undefined'){codexCliAccessPanel?.clear();claudeCliAccessPanel?.clear();}
-  if(name==='accounts'){desktopConnections?.refresh();desktopConnections?.refreshClients();harnessPanel?.refresh();}
+  if(name==='accounts'){desktopConnections?.refresh();desktopConnections?.refreshClients();harnessPanel?.refresh();if(typeof wslAccountScopes!=='undefined')for(const scope of wslAccountScopes)scope.load();}
   document.querySelectorAll('[data-panel]').forEach(node=>node.hidden=moduleName(node.dataset.panel)!==name);
-  if(name==='accounts')accountsPanel?.refresh();else accountsPanel?.resume();
+  if(name==='accounts'&&!$('accounts-content').hidden)accountsPanel?.refresh();else accountsPanel?.resume();
   document.querySelectorAll('[data-tab]').forEach(node=>node.classList.toggle('active',node.dataset.tab===name));
   window.GatewayLayout?.tab(name);$('page-title').textContent=t(titles[name]);if(snapshot)updateDirty();if(name==='advanced')loadLogs();if(name==='devices')loadDevices();if(snapshot)renderUpdate();
   if(['desktop-sessions','harness'].includes(requested))document.querySelectorAll('[data-panel="'+requested+'"] > details').forEach(node=>node.open=true);
@@ -503,5 +503,26 @@ $('device-policy').onsubmit=event=>{event.preventDefault();return changeDevices(
 
 const codexCliAccessPanel=typeof CliAccessPanel==='undefined'?null:new CliAccessPanel({root:$('cli-access-content'),provider:'codex',read:()=>api.cliAccess({action:'list'}),request:value=>api.cliAccess(value)});
 const claudeCliAccessPanel=typeof CliAccessPanel==='undefined'?null:new CliAccessPanel({root:$('cli-access-claude-content'),provider:'claude',read:()=>api.cliAccess({action:'list'}),request:value=>api.cliAccess(value)});
-document.addEventListener('bridge-client-config',event=>{codexCliAccessPanel?.clear();claudeCliAccessPanel?.clear();if(event.detail==='codex')codexCliAccessPanel?.refresh();else if(event.detail==='claude')claudeCliAccessPanel?.refresh();});
+document.addEventListener('bridge-client-config',event=>{codexCliAccessPanel?.clear();claudeCliAccessPanel?.clear();if(event.detail==='codex'&&!$('cli-access-content').hidden)codexCliAccessPanel?.refresh();else if(event.detail==='claude'&&!$('cli-access-claude-content').hidden)claudeCliAccessPanel?.refresh();});
 const accountsPanel=typeof AccountsPanel==='undefined'?null:new AccountsPanel({root:$('accounts-content'),desktop:true,read:()=>api.accounts({action:'list'}),request:value=>api.accounts(value),onUpdate:value=>desktopConnections?.renderAccount(value)});
+
+// WSL access has its own scope; local panels keep their existing data and callbacks.
+const wslAccountScopes=[];
+for(const provider of ['codex','claude']){
+  if(typeof WslAccountsPanel==='undefined')continue;
+  const localRoot=provider==='codex'?$('accounts-content'):desktopConnections?.accountPanels?.claude?.root;
+  if(!localRoot)continue;
+  const wrapper=document.createElement('div'),label=document.createElement('label'),select=document.createElement('select'),caption=document.createElement('span'),root=document.createElement('div');
+  caption.dataset.i18n='运行环境';caption.textContent=t('运行环境');label.append(caption,select);wrapper.append(label,root);localRoot.before(wrapper);
+  const request=value=>api.cliAccess({action:'wslAccounts',provider,entry:select.value,operation:value.action,...Object.fromEntries(Object.entries(value).filter(([key])=>key!=='action'))});
+  const panel=new WslAccountsPanel({root,provider,desktop:true,read:entry=>api.cliAccess({action:'wslAccounts',provider,entry,operation:'list'}),request});
+  const localPanel=provider==='codex'?accountsPanel:desktopConnections?.accountPanels?.claude;
+  if(localPanel){const visible=localPanel.visible.bind(localPanel);localPanel.visible=()=>!localRoot.hidden&&visible();}
+  const localCli=provider==='codex'?$('cli-access-content'):$('cli-access-claude-content');
+  let selectedWsl=false;
+  const choose=()=>{const local=select.value==='local',returning=local&&selectedWsl;selectedWsl=!local;localRoot.hidden=!local;if(localCli)localCli.hidden=!local;if(local){panel.clear();if(returning){localPanel?.refresh();if(localCli&&!localCli.hidden)(provider==='codex'?codexCliAccessPanel:claudeCliAccessPanel)?.refresh();}}else {(provider==='codex'?codexCliAccessPanel:claudeCliAccessPanel)?.clear();if(localPanel){if(localPanel.clear)localPanel.clear();else{localPanel.generation++;localPanel.modelsRevision++;localPanel.loading=false;localPanel.busy=false;localPanel.closeEditor?.();clearTimeout(localPanel.timer);}}panel.select(select.value);}};
+  let revision=0;
+  const load=async()=>{const current=++revision;try{const value=await api.cliAccess({action:'wslAccounts',provider,operation:'environments'});if(current!==revision)return;const previous=select.value||'local';select.replaceChildren(new Option(t('此电脑'),'local'),...(value.environments||[]).map(row=>new Option([row.label||row.distribution,row.user,row.configDir].filter(Boolean).join(' · '),row.id)));select.value=[...select.options].some(row=>row.value===previous)?previous:'local';label.hidden=!(value.environments||[]).length;choose();}catch(error){if(current===revision){label.hidden=true;select.replaceChildren(new Option(t('此电脑'),'local'));choose();}}};
+  select.onchange=choose;select.append(new Option(t('此电脑'),'local'));root.hidden=true;label.hidden=true;wslAccountScopes.push({panel,load});
+}
+document.addEventListener('bridge-client-config',event=>{for(const scope of wslAccountScopes){scope.panel.clear();scope.load();}});

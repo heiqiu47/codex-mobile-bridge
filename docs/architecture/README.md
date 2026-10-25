@@ -7,6 +7,7 @@
 | 需求 | 首先查看 | 需要联动时再看 |
 | --- | --- | --- |
 | Windows 客户端安装路径、进程、启动和退出 | `bridge/platforms/windows/` | `bridge/clients/discovery.py`、`desktop_app.py`、`lifecycle.py` |
+| Codex 页内 APP / CLI / WSL 接入与 Magpie | `bridge/features/endpoints/`、`bridge/clients/manager.py`、`bridge/platforms/windows/wsl.py` | `web/features/clients/client-navigation.js`、[使用说明](../wsl-codex.md)、[验证记录](windows-wsl-validation.md) |
 | macOS 屏保、辅助功能、Claude 原生助手 | `bridge/platforms/macos/claude.py`、`claude-helper.swift` | `bridge/clients/claude/setup.py` |
 | Ubuntu 安装发现、桌面启动和 IPC | `bridge/platforms/linux/`、`platforms/posix/` | [Linux 说明](../linux.md) |
 | 本机 Linux Codex 权限能力、侧边聊天权限确认 | `bridge/features/sessions/linux_permissions.py`、`linux_side_chat.py` | `bridge/clients/codex/catalog.py`、`web/features/chat/permissions.js` |
@@ -16,6 +17,7 @@
 | 本机 CLI 接入保存、选择与核验 | `bridge/features/accounts/cli_access.py`、`cli_sync.py` | `bridge/clients/claude/cli_session.py`，`web/features/accounts/cli-access.js` |
 | CLI 原生接入与 SSH 发现 | `bridge/clients/codex/app_server.py`、`cli_session.py`、`remote.py` | `features/sessions/store.py`、`app/service.py`；[接入边界](../codex-cli.md) |
 | 会话历史、审批、计划/目标、侧边聊天 | `bridge/features/sessions/` | `bridge/app/service.py`，`web/features/chat/` |
+| 各接入的新建项目、目录浏览与登记 | `bridge/features/sessions/create.py`、`projects.py`、`bridge/clients/manager.py` | `web/shared/project-picker.js`、[新建项目聊天](../project-chats.md) |
 | 文件、图片、上传下载、Git | `bridge/features/workspace/` | `web/features/workspace/`、`web/shared/image-viewer.js` |
 | 源码高亮、PDF/HTML 预览与全屏、目录返回 | `web/features/workspace/` | `bridge/api/html_preview.py`、`httpd.py`、原生手机导航；[模块约定](../../web/README.md#文件阅读模块) |
 | 聊天与 Markdown 文件中的 Mermaid 图表、源码和全屏 | `web/shared/mermaid-*.js`、`markdown.js` | `bridge/api/mermaid_render.py`、中继与 iOS 子页面导航；[模块约定](../../web/README.md#mermaid-preview) |
@@ -83,6 +85,8 @@ flowchart TD
 **Codex 会话发送：**`web/shell/app.js` 组织请求，`api/httpd.py` 验证登录与 CSRF，`app/service.py` 解析会话和原桌面 owner，`clients/codex/ipc.py` 发送受限协议消息，`clients/codex/transport.py` 选择本机的套接字或 Windows 命名管道。消息/审批规范化在 `features/sessions/model.py`，历史在 `store.py`，时间线在 `timeline.py`。
 
 **Claude/DSH 会话操作：**共享页面模块 `web/features/clients/desktop-sessions.js` 调用 HTTP，`clients/manager.py` 处理客户端启用状态、并发只读合并及写入记录，再调用对应 `adapter.py`。Claude 的 mailbox 与 `connector.js`、DSH 的 `host.mjs` 是实际连接协议边界。某种模型或权限差异应在其客户端适配器内处理。
+
+消息排队、旧版未确认记录恢复和各接入支持范围见 [消息管理](../message-management.md)。
 
 历史首屏与实时控制的拆分、各接入分页能力及本地验证范围见 [历史与控制拆分](history-control-separation.md)。
 

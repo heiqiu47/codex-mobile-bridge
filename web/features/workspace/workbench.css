@@ -162,3 +162,5 @@
 .wb-side-queue{flex:none;max-height:25%;overflow:auto;margin:0 14px}.wb-side-queue:empty{display:none}
 .wb-side-landing~.wb-status:empty{display:none}.wb-side-content:not(.has-side-chat)>.wb-status{margin:0 24px 24px;text-align:center}
 .wb-side-messages{overflow-anchor:none}
+
+.wb-source-line.wb-source-selected,.wb-source-number.wb-source-selected{background:color-mix(in srgb,var(--accent) 18%,var(--code))}

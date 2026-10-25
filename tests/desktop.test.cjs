@@ -82,7 +82,7 @@ async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,lo
   const fs=require('node:fs'),vm=require('node:vm');
   const nodes=new Map();
   function node(){return {parentNode:{insertBefore(){}},getAnimations(){return [];},animate(){},scrollIntoView(){},focus(){},addEventListener(){},closest(){return null;},value:'',checked:false,hidden:false,textContent:'',dataset:{},
-    classList:{toggle(){}},click(){return this.onclick?.();},append(...items){this.children=(this.children||[]).concat(items);},replaceChildren(...items){this.children=items;},setAttribute(){},removeAttribute(){},querySelectorAll(){return [];}};}
+    classList:{toggle(){},add(){}},before(item){this.beforeNode=item;},get options(){return this.children||[];},click(){return this.onclick?.();},append(...items){this.children=(this.children||[]).concat(items);},replaceChildren(...items){this.children=items;},setAttribute(){},removeAttribute(){},querySelectorAll(){return [];}};}
   const html=fs.readFileSync(path.join(__dirname,'../desktop/index.html'),'utf8');
   for(const match of html.matchAll(/\bid="([^"]+)"/g))nodes.set(match[1],node());
   for(const id of ['clients-start','clients-stop'])nodes.set(id,node());
@@ -94,10 +94,11 @@ async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,lo
   const calls=[];
   const api={account:async()=>({visible:false}),language:async()=>initialLanguage,setLanguage:async value=>value,snapshot:async()=>{calls.push('snapshot');return structuredClone(value);},start:async()=>{calls.push('start');return {started:true,message:'正在启动网关'};},
     save:async payload=>{value.preferences={...value.preferences,...payload.preferences};return structuredClone(value);},logs:async()=>({text:''})};
-  const context=vm.createContext({window:{bridgeDesktop:api},AccountsPanel,
+  api.cliAccess=async payload=>{calls.push({cliAccess:structuredClone(payload)});return payload.operation==='environments'?{provider:payload.provider,environments:[]}:{provider:payload.provider,entry:payload.entry,identity:'fixture-identity',available:true,accounts:[],blockers:[],capabilities:{switch:true,models:true}};};
+  const context=vm.createContext({window:{bridgeDesktop:api},AccountsPanel,Option:function(text,value){return Object.assign(node(),{textContent:text,value});},
     localStorage:{getItem(){return null;},setItem(){}},document:{hidden,addEventListener(name,fn){this[name]=fn;},documentElement:{},getElementById:id=>nodes.get(id),createElement:node,querySelectorAll:()=>[]},
     URL,Date:class extends Date{static now(){return now;}},setTimeout(){},clearTimeout(){},clearInterval(){},setInterval:(callback,ms)=>{if(callback.name==='refresh')poll=callback;}});
-  for(const name of ['web/shared/i18n.js','desktop/shared/secret-fields.js','desktop/features/connections/connections.js','desktop/features/connections/pairing.js','web/features/accounts/account.js','desktop/features/notifications/watches.js','desktop/shell/renderer.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',name),'utf8'),context);
+  for(const name of ['web/shared/i18n.js','desktop/shared/secret-fields.js','desktop/features/connections/connections.js','desktop/features/connections/pairing.js','web/features/accounts/account.js','desktop/features/notifications/watches.js','web/features/accounts/wsl-accounts.js','desktop/shell/renderer.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',name),'utf8'),context);
   await new Promise(setImmediate);
   return {nodes,value,context,api,calls,run:code=>vm.runInContext(code,context),poll:()=>poll(),advance:ms=>{now+=ms;},start:()=>nodes.get('start').onclick()};
 }
@@ -105,6 +106,7 @@ async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,lo
 test('desktop tab transitions update visibility before Codex account polling resumes',async()=>{
   const events=[],accounts={dataset:{panel:'accounts'},hidden:true},overview={dataset:{panel:'overview'},hidden:false};
   const ui=await renderer('zh-CN',{AccountsPanel:class{
+    visible(){return !accounts.hidden;}
     refresh(){events.push(['refresh',accounts.hidden]);}
     resume(){events.push(['resume',accounts.hidden]);}
     render(){}
@@ -1102,4 +1104,13 @@ test('Windows startup lookup handles Electron quoted paths with spaces',()=>{
   const startup=createLoginStartup(app,{platform:'win32',executable:'C:/Program Files/Codex Mobile Bridge.exe'});
   assert.equal(startup.status().enabled,true);
   assert.deepEqual(queries,['C:/Program Files/Codex Mobile Bridge.exe','"C:/Program Files/Codex Mobile Bridge.exe"']);
+});
+
+test('desktop WSL scope uses registered environment transport and restores native content',async()=>{
+ let nativeReads=0;const ui=await renderer('zh-CN',{AccountsPanel:class{visible(){return true;}refresh(){nativeReads++;}resume(){}render(){}clear(){this.generation=(this.generation||0)+1;}}}),entry='wsl:'+'a'.repeat(32),requests=[];
+ ui.api.cliAccess=async payload=>{requests.push(structuredClone(payload));return payload.operation==='environments'?{provider:'codex',environments:[{id:entry,label:'Ubuntu',distribution:'Ubuntu',user:'developer',configDir:'/home/developer/.codex'}]}:{provider:'codex',entry,identity:'wsl-digest',available:true,accounts:[],capabilities:{switch:true,models:true},blockers:[]};};
+ await ui.run('wslAccountScopes[0].load()');const native=ui.nodes.get('accounts-content'),wrapper=native.beforeNode,select=wrapper.children[0].children[1];
+ assert.equal(select.options.length,2);assert.equal(select.options[1].value,entry);select.value=entry;await select.onchange();await new Promise(setImmediate);
+ assert.equal(native.hidden,true);assert.equal(ui.run('wslAccountScopes[0].panel.value.entry'),entry);assert.deepEqual(requests.at(-1),{action:'wslAccounts',provider:'codex',entry,operation:'list'});
+ const readsBeforeReturn=nativeReads;select.value='local';select.onchange();assert.equal(nativeReads,readsBeforeReturn+1);assert.equal(native.hidden,false);assert.equal(ui.run('wslAccountScopes[0].panel.value'),null);assert.equal(ui.run('wslAccountScopes[0].panel.entry'),'');
 });

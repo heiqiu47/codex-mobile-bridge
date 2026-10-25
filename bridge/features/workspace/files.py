@@ -15,6 +15,129 @@ AGENT_KINDS = ('agentMessage', 'assistantMessage', 'planImplementation')
 IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
 
 
+def code_comment_references(text):
+    """Extract directives outside code, preserving their quoted Markdown content."""
+    yield from _directive_references(text, _code_comment_candidates(text))
+
+
+def file_citation_references(text):
+    """Extract complete file citations; grant resolution still enforces its roots."""
+    yield from _directive_references(text, _code_comment_candidates(text, citation=True))
+
+
+def _directive_references(text, matches):
+    candidates = {start: (end, path) for start, end, path in matches}
+    fence, inline, consumed, base = None, None, 0, 0
+    for line in text.splitlines(keepends=True):
+        offset = max(0, consumed - base)
+        if offset >= len(line):
+            base += len(line)
+            continue
+        if offset == 0:
+            content = re.sub(r'^ {0,3}(?:(?:> ?)|(?:[-+*] |\d+[.)] ))+', '', line)
+            marker = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', content.rstrip('\r\n'))
+            if marker:
+                run, tail = marker.groups()
+                if fence is None:
+                    fence = (run[0], len(run))
+                elif run[0] == fence[0] and len(run) >= fence[1] and not tail.strip():
+                    fence = None
+                base += len(line)
+                continue
+            if fence is not None or content.startswith(('    ', '\t')):
+                base += len(line)
+                continue
+        while offset < len(line):
+            candidate = candidates.get(base + offset) if inline is None else None
+            if candidate:
+                consumed, path = candidate
+                yield path
+                offset = consumed - base
+            elif line[offset] == '`':
+                end = offset + 1
+                while end < len(line) and line[end] == '`':
+                    end += 1
+                width = end - offset
+                if inline is None:
+                    inline = width
+                elif inline == width:
+                    inline = None
+                offset = end
+            elif line[offset] == '\\' and inline is None and offset + 1 < len(line):
+                offset += 2
+            else:
+                offset += 1
+        base += len(line)
+
+
+def _code_comment_candidates(value, citation=False):
+    """Forward-only bounded parsing; Markdown context is checked by the caller."""
+    attribute = re.compile(r'\s*([a-zA-Z_]+)=')
+    marker = ':codex-file-citation{' if citation else '::code-comment{'
+    allowed = ('path', 'artifact_kind', 'purpose') if citation else ('title', 'body', 'file', 'start', 'end', 'priority')
+    offset = 0
+    while True:
+        offset = value.find(marker, offset)
+        if offset < 0:
+            return
+        beginning = offset
+        cursor, attrs, valid = offset + len(marker), {}, True
+        limit = min(len(value), offset + 65536)
+        while cursor < limit:
+            if value[cursor] == '}':
+                cursor += 1
+                break
+            field = attribute.match(value, cursor)
+            if not field or field[1] in attrs or field[1] not in allowed:
+                valid = False
+                break
+            key, cursor = field[1], field.end()
+            if cursor < limit and value[cursor] == '"':
+                cursor += 1
+                chars = []
+                while cursor < limit and value[cursor] not in ('"', '\x00'):
+                    character = value[cursor]
+                    if character == '\\' and cursor + 1 < limit and value[cursor + 1] in ('"', '\\'):
+                        cursor += 1
+                        character = value[cursor]
+                    chars.append(character)
+                    cursor += 1
+                if cursor >= limit or value[cursor] != '"':
+                    valid = False
+                    break
+                attrs[key] = ''.join(chars)
+                cursor += 1
+            else:
+                number = re.match(r'\d{1,7}(?!\d)', value[cursor:cursor + 8])
+                if not number:
+                    valid = False
+                    break
+                attrs[key] = int(number[0])
+                cursor += len(number[0])
+            if cursor < limit and value[cursor] != '}' and not value[cursor].isspace():
+                valid = False
+                break
+            while cursor < limit and value[cursor].isspace():
+                cursor += 1
+        else:
+            valid = False
+        offset = max(offset + len(marker), cursor)
+        required = ('path',) if citation else ('title', 'body', 'file')
+        if not valid or not all(isinstance(attrs.get(key), str) and attrs[key].strip() for key in required):
+            continue
+        if citation:
+            if all(isinstance(value, str) for value in attrs.values()):
+                yield beginning, cursor, attrs['path']
+            continue
+        if any(key in attrs and (not isinstance(attrs[key], int) or not 1 <= attrs[key] <= 1000000) for key in ('start', 'end')):
+            continue
+        if 'end' in attrs and ('start' not in attrs or attrs['end'] < attrs['start']):
+            continue
+        if 'priority' in attrs and (not isinstance(attrs['priority'], int) or not 0 <= attrs['priority'] <= 3):
+            continue
+        yield beginning, cursor, attrs['file']
+
+
 def path_identity(value):
     """Return the host-normalized identity used to link duplicate references."""
     path = value if isinstance(value, Path) else Path(value)
@@ -131,11 +254,14 @@ def artifact_paths(state, codex_home):
         roots.append(Path(state['cwd']))
     roots = [root.resolve() for root in roots]
     candidates = set()
+    comments = set()
     for turn in ordered_turns(state):
         for item in items_array(turn.get('items')):
             if item.get('type') in ('agentMessage', 'assistantMessage'):
                 for match in MARKDOWN_PATH.finditer(item.get('text', '')):
                     candidates.add(match[1] or match[2])
+                comments.update(code_comment_references(item.get('text', '')))
+                candidates.update(file_citation_references(item.get('text', '')))
             for attachment in item.get('content', []) if isinstance(item.get('content'), list) else []:
                 if isinstance(attachment, dict) and attachment.get('type') in ('localImage', 'image', 'file'):
                     value = attachment.get('path', attachment.get('url'))
@@ -143,7 +269,7 @@ def artifact_paths(state, codex_home):
                         candidates.add(value)
     result = {}
     model_images, trusted_views = _model_image_references(state)
-    for raw in sorted(candidates):
+    for raw in sorted(candidates | comments):
         # Model-authored Markdown and response attachments remain bound to the
         # workspace/visualization roots even when they name an image suffix.
         value = re.sub(r':\d+$', '', raw)
@@ -151,10 +277,24 @@ def artifact_paths(state, codex_home):
         if not path:
             continue
         try:
-            path = ((Path(state['cwd']) / path) if not path.is_absolute() and state.get('cwd') else path).resolve(strict=True)
+            path = (Path(state['cwd']) / path) if not path.is_absolute() and state.get('cwd') else path
+            if raw in comments and raw not in candidates:
+                if not state.get('cwd'):
+                    continue
+                root = Path(state['cwd']).resolve()
+                relative = workspace_relative_path(path, root)
+                if relative is None:
+                    continue
+                unresolved = Path(os.path.abspath(path))
+                # Ignore host aliases above the project (e.g. macOS /var), but
+                # never grant a review reference through a project symlink.
+                project = Path(os.path.abspath(state['cwd']))
+                if project not in unresolved.parents or any(part.is_symlink() for part in (unresolved, *unresolved.parents) if part != project and project in part.parents):
+                    continue
+            path = path.resolve(strict=True)
             if not any(workspace_relative_path(path, root) is not None for root in roots) or not (path.is_file() or path.is_dir()):
                 continue
-        except OSError:
+        except (OSError, RuntimeError):
             continue
         key = hashlib.sha256(str(path_identity(path)).encode()).hexdigest()
         artifact = result.setdefault(key, {'path': path, 'reference': raw, 'references': [], 'name': path.name,

@@ -3,6 +3,7 @@
   const markdown = window.markdownit({html:false, linkify:true, breaks:true});
   // Math delimiters must be consumed before Markdown removes backslash escapes.
   markdown.use(texmath, {engine:window.katex, delimiters:['brackets','dollars']});
+  window.BridgeOutputDirectives?.install(markdown);
   const tags = new Set(['p','h1','h2','h3','h4','h5','h6','ul','ol','li','strong','em','s','blockquote','hr','br','table','thead','tbody','tr','th','td']);
 
   // Build nodes from parsed tokens; model output never becomes executable HTML.
@@ -23,6 +24,7 @@
     function target(reference) {
       const file = artifacts.get(reference);
       if (file) return {url:fileUrl(file), file};
+      if (window.BridgeOutputDirectives?.isReviewTarget(reference)) return {url:reference, review:true};
       if (/^https?:\/\//i.test(reference)) return {url:reference};
       return null;
     }
@@ -31,6 +33,7 @@
       anchor.href = url;
       anchor.target = '_blank';
       anchor.rel = 'noopener noreferrer';
+      if (window.BridgeOutputDirectives?.isReviewTarget(url)) anchor.onclick=event=>{event.preventDefault();window.BridgeOutputDirectives?.review(url);};
       if (title) anchor.title = title;
       return anchor;
     }
@@ -53,16 +56,28 @@
           const display = token.block || token.type === 'math_inline_double';
           const formula = document.createElement(token.block ? 'div' : 'span');
           formula.className = display ? 'math-display' : 'math-inline';
-          try {
-            window.katex.render(token.content, formula, {
+          const expression = document.createElement('span');
+          formula.append(expression);
+          const source = () => { const code=document.createElement('code');code.textContent=token.content;expression.replaceChildren(code); };
+          const render = () => {
+            try { window.katex.render(token.content, expression, {
               displayMode:display, throwOnError:true, trust:false,
               maxExpand:1000, maxSize:20, strict:'ignore'
+            }); } catch { source(); }
+          };
+          if(window.katex)render();
+          else {
+            source();
+            // Only replace this formula, never rerender the message or composer.
+            const load = () => window.BridgeFeatures?.load('math').then(() => {
+              if(formula.isConnected)render();
+            }).catch(() => {
+              if(!formula.isConnected)return;
+              const retry=document.createElement('button');retry.type='button';retry.className='plain';
+              retry.textContent=typeof BridgeI18n==='undefined'?'重试':BridgeI18n.t('重试');
+              retry.onclick=()=>{retry.remove();load();};expression.append(retry);
             });
-          } catch {
-            // Incomplete or unsupported TeX stays readable during streaming.
-            const source = document.createElement('code');
-            source.textContent = token.content;
-            formula.append(source);
+            load();
           }
           if (token.type.endsWith('_eqno')) {
             const number = document.createElement('span');
@@ -71,6 +86,11 @@
             formula.append(number);
           }
           parent.append(formula);
+        } else if (token.type === 'output_directive') {
+          parent.append(window.BridgeOutputDirectives.create(token.meta, reference => {
+            const file=artifacts.get(markdown.normalizeLink(reference));
+            return file ? {url:fileUrl(file),file} : null;
+          }));
         } else if (token.type === 'text') {
           parent.append(document.createTextNode(token.content));
         } else if (token.type === 'softbreak' || token.type === 'hardbreak') {

@@ -25,6 +25,21 @@ class Native:
         return {'pid': pid, 'parent': int(after[1]), 'uid': stat.st_uid, 'ruid': stat.st_uid,
                 'image': image, 'birth': after[19], 'zombie': after[0] == 'Z'}
 
+    def ancestor(self, pid):
+        # A non-dumpable SSH/session ancestor can deny exe reads even to its
+        # own user. Keep its PID in the protected chain without treating this
+        # partial metadata as a signalable target identity.
+        root = Path('/proc')/str(pid)
+        before = (root/'stat').read_text().rsplit(')', 1)[1].split()
+        try:
+            image = str((root/'exe').resolve(strict=True))
+        except PermissionError:
+            image = ''
+        after = (root/'stat').read_text().rsplit(')', 1)[1].split()
+        if before[19] != after[19]:
+            raise ProcessLookupError('process changed')
+        return {'parent': int(after[1]), 'image': image}
+
     def open(self, identity):
         handle = os.pidfd_open(identity['pid'])
         try:

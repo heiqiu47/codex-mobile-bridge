@@ -7,17 +7,29 @@
   "/icon-touch.png": "icon-touch.png",
   "/icon-192.png": "icon-192.png",
   "/manifest.webmanifest": "manifest.webmanifest",
-  "/app.js": ["shared/dialog-dismiss.js", "shell/app.js"],
+  "/app.js": [
+    "shared/dialog-dismiss.js",
+    "shell/app.js"
+  ],
   "/bootstrap.js": "shared/bootstrap.js",
   "/style.css": [
     "shell/style.css",
     "layouts/wide/shell.css",
     "shell/chat-list.css",
     "layouts/compact/shell.css",
-    "shell/content.css"
+    "shell/content.css",
+    "shared/output-directives.css",
+    "features/chat/composer-quotes.css",
+    "features/chat/message-management.css"
   ],
   "/activity.js": "features/chat/activity.js",
-  "/attachments.js": ["features/chat/composer-drafts.js", "features/chat/attachments.js"],
+  "/attachments.js": [
+    "features/chat/composer-drafts.js",
+    "features/chat/composer-quotes.js",
+    "features/chat/attachments.js",
+    "features/chat/message-management.js",
+    "features/chat/message-management-binding.js"
+  ],
   "/fast-mode.js": "features/chat/fast-mode.js",
   "/list-sync.js": "features/chat/list-sync.js",
   "/message-actions.js": "features/chat/message-actions.js",
@@ -29,6 +41,7 @@
   "/accounts.js": "features/accounts/accounts.js",
   "/client-accounts.js": "features/accounts/client-accounts.js",
   "/cli-access.js": "features/accounts/cli-access.js",
+  "/wsl-accounts.js": "features/accounts/wsl-accounts.js",
   "/client-lifecycle.css": "features/clients/client-lifecycle.css",
   "/client-navigation.css": [
     "features/clients/client-navigation.css",
@@ -49,6 +62,7 @@
     "layouts/compact/desktop-sessions.css",
     "features/clients/desktop-session-controls.css"
   ],
+  "/project-picker.js": "shared/project-picker.js",
   "/desktop-sessions.js": "features/clients/desktop-sessions.js",
   "/agents-panel.js": "features/workspace/agents-panel.js",
   "/command-terminal-panel.js": "features/workspace/command-terminal-panel.js",
@@ -72,6 +86,7 @@
     "shared/mermaid-renderer.js",
     "shared/mermaid-viewer.js",
     "shared/mermaid-cards.js",
+    "shared/output-directives.js",
     "shared/markdown.js"
   ],
   "/image-viewer.js": "shared/image-viewer.js",
@@ -93,7 +108,10 @@
     "hosts/mobile-footer.css",
     "hosts/mobile-controls.css"
   ],
-  "/host.js": "hosts/environment.js",
+  "/host.js": [
+    "hosts/environment.js",
+    "hosts/browser-navigation.js"
+  ],
   "/layout.js": "layouts/viewport.js",
   "/file-actions.js": "features/workspace/file-actions.js",
   "/pdf-preview.js": "features/workspace/pdf-preview.js",

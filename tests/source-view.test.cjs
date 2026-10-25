@@ -150,3 +150,28 @@ test('HTML preview keeps mode controls separate and its Escape signal exits only
   options.onEscape(); assert.equal(exits, 0);
   workbench.previewFullscreen = {tab}; options.onEscape(); assert.equal(exits, 1);
 });
+
+test('source locations select the requested lines and scroll only to the start', () => {
+  const view=sourceView.create({name:'a.py',text:'one\ntwo\nthree\nfour'}), rows=tokens(view).filter(row=>row.dataset?.line);
+  let scrolled;
+  for(const row of rows){row.classList.toggle=(name,selected)=>{row.selected=selected;};row.classList.contains=name=>row.className.split(' ').includes(name);row.scrollIntoView=options=>{scrolled={row,options};};}
+  view.querySelectorAll=()=>rows;
+  assert.equal(sourceView.locate(view,2,3),true);
+  assert.deepEqual(rows.filter(row=>row.selected).map(row=>row.dataset.line),['2','3','2','3']);
+  assert.equal(scrolled.row.dataset.line,'2');assert.equal(scrolled.options.block,'center');
+  assert.equal(sourceView.locate(view,0,3),false);assert.equal(sourceView.locate(view,3,2),false);assert.equal(sourceView.locate(view,1,1000001),false);
+});
+
+test('opening a source location preserves its session and rejects invalid ranges', async () => {
+  const Workbench=vm.runInContext('Workbench',context),workbench=Object.create(Workbench.prototype),session={key:'source'},calls=[];
+  workbench.current=session;workbench.preview=async(...args)=>calls.push(args);
+  await workbench.openSourceLocation(session,'src/a.py',2,4);
+  assert.equal(calls[0][0],session);assert.equal(calls[0][1].path,'src/a.py');assert.equal(calls[0][1].sourceLocation.start,2);assert.equal(calls[0][1].sourceLocation.end,4);
+  await workbench.openSourceLocation({key:'other'},'src/a.py',2,4);await workbench.openSourceLocation(session,'src/a.py',0,4);assert.equal(calls.length,1);
+});
+
+test('large source locations preserve all text with bounded DOM and the selected range', () => {
+  const text='first\r\n'+'line\n'.repeat(12000)+'last', view=sourceView.create({name:'large.txt',text,location:{start:11000,end:11002}}),{code,gutter}=parts(view);
+  assert.equal(gutter,undefined);assert.equal(code.textContent,text);assert.equal(code.children.length,3);
+  const selected=code.children[1];assert.equal(selected.dataset.line,'11000');assert.equal(selected.dataset.lineEnd,'11002');assert.equal(selected.textContent,'line\nline\nline\n');
+});

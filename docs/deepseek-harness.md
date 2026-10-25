@@ -42,7 +42,9 @@ Claude 当前第三方 API 接入的“查看可用模型”可在 Desktop 连�
 
 Claude/DSH 复用聊天列表、消息、复制、附件、文件/Git/终端标签、通知、下载和分屏组件；具体可用操作以各适配器的能力为准。Codex 临时侧边聊天、Goal、Fast 和 Skills 不自动等同于其他应用支持。
 
-上下文圆环位于权限旁：Codex 使用最近请求的占用，Claude Code 使用实际上下文汇总，DSH 使用 context pressure 投影并标记估算含义。缺少容量/用量时显示未知，不使用累计计费 Token 推算占比。Cowork 未提供相同汇总接口时不显示虚假的百分比。
+上下文圆环位于权限旁：Codex 使用最近请求的占用，Claude Desktop Code 使用原生当前上下文汇总，DSH 使用 context pressure 投影并标记估算含义。Claude 的最近一次模型输入单独展示，不作为当前上下文百分比；当前汇总不可用时圆环显示未知。Claude Code CLI 的最近请求计数也保留这一标注。缺少容量/用量时显示未知，不使用累计计费 Token 推算占比。Cowork 未提供相同汇总接口时不显示虚假的百分比。
+
+Claude Desktop Code 与 DSH 在原生接口可用且回复有可核验的原生消息位置时，提供“从这里分支”。Claude 使用原始消息 UUID，DSH 使用已完成回复所在轮次的结束位置。创建后打开新聊天，原聊天草稿保留；分支操作不发送消息。Cowork、Claude CLI 和不支持该接口的旧连接不会显示此操作。结果待核对时，相同请求不会重新创建分支。
 
 ## 兼容性与验证
 

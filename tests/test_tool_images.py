@@ -88,6 +88,20 @@ class ToolImageTests(unittest.TestCase):
         self.assertEqual(dynamic['attachments'][0]['desktopId'], row['attachments'][0]['desktopId'])
         self.assertNotIn(PNG, json.dumps(public_turns([{'messages': [dynamic]}])))
 
+    def test_public_turns_strip_patch_metadata_without_changing_tool_bodies_or_native_state(self):
+        tool={'role':'activity','kind':'fileChange','text':'original tool patch output'}
+        turn={'id':'turn','diff':'PRIVATE_NET_PATCH'*10000,'fileChanges':[
+            {'path':'a.py','added':2,'removed':1,'diff':'PRIVATE_FILE_PATCH'*10000}],
+            'fileChangesBasis':'net','messages':[tool]}
+        public=public_turns([turn])[0]
+        self.assertNotIn('diff',public)
+        self.assertEqual(public['fileChanges'],[{'path':'a.py','added':2,'removed':1}])
+        self.assertEqual(public['fileChangesBasis'],'net')
+        self.assertNotIn('PRIVATE_',json.dumps(public))
+        self.assertIs(public['messages'][0],tool)
+        self.assertIn('diff',turn)
+        self.assertIn('diff',turn['fileChanges'][0])
+
     def test_user_attachment_descriptors_remain_available(self):
         attachment = {'type': 'localImage', 'path': '/tmp/attachment.png', 'name': 'attachment.png'}
         row = normalize_item({'type': 'userMessage', 'content': [{'type': 'text', 'text': 'look'}, attachment]})

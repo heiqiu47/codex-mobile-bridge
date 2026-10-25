@@ -53,6 +53,13 @@ def managed_api_env(source=None):
             if not key.startswith('ANTHROPIC_') and key not in _MANAGED_API_ROUTING}
 
 
+def project_account_identity(profile):
+    """Bind directory selection to native account identity and effective API routing."""
+    from bridge.clients.claude.remote_worker import auth_fingerprint
+    environment = managed_api_env() if profile.get('managedApi') else os.environ.copy()
+    return auth_fingerprint(profile['binary'], profile['directory'], environment)
+
+
 def _permission_prompt_args(binary, env):
     """Claude 2.1.168 routes stdio prompts before --permission-prompts existed."""
     try:
@@ -634,13 +641,19 @@ class ClaudeCli:
         self.listing()
         return sid in self.index
 
-    def create(self, cwd, origin, message):
+    def create(self, cwd, origin, message, directory_identity=None, account_identity=None):
         profile = self.profile_resolver()
         if not profile or profile['origin'] != origin or not self._ready(profile, fresh=True):
+            raise BridgeUnavailable('原 Claude Code 账号配置已变化或不可用')
+        if account_identity is not None and project_account_identity(profile) != account_identity:
             raise BridgeUnavailable('原 Claude Code 账号配置已变化或不可用')
         project = Path(cwd).resolve(strict=True)
         if not project.is_dir():
             raise ValueError('原项目目录不可用')
+        if directory_identity is not None:
+            stat = project.stat()
+            if directory_identity != {'cwd': str(project), 'device': stat.st_dev, 'inode': stat.st_ino}:
+                raise ValueError('项目目录已变化，请重新选择目录')
         native = str(uuid.uuid4())
         sid = model.gateway_id('cli:' + origin, native)
         env = managed_api_env() if profile.get('managedApi') else os.environ.copy()
@@ -657,6 +670,8 @@ class ClaudeCli:
             command.extend(('--add-dir', str(upload_dir.resolve())))
         fresh = self.profile_resolver()
         if not fresh or fresh['origin'] != origin:
+            raise BridgeUnavailable('原 Claude Code 账号配置已变化或不可用')
+        if account_identity is not None and project_account_identity(fresh) != account_identity:
             raise BridgeUnavailable('原 Claude Code 账号配置已变化或不可用')
         process = subprocess.Popen(command, cwd=str(project), env=env, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,

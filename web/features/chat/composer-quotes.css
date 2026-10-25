@@ -1,0 +1,7 @@
+.composer-quotes{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;max-height:160px;overflow:auto}
+.composer-quotes[hidden],.composer-quote-selection[hidden],.composer-quote-actions[hidden]{display:none}
+.composer-quote-actions{display:flex;margin:0 0 6px}
+.composer-quote-selection{flex:none;font:inherit;font-size:12px;white-space:nowrap;cursor:pointer;border:1px solid var(--line,#8886);border-radius:8px;padding:7px 10px;background:var(--panel,#fff);color:inherit}
+.composer-quote{display:flex;align-items:flex-start;gap:8px;max-width:100%;border-left:3px solid var(--accent,#64748b);border-radius:4px;background:var(--panel,#8881);padding:6px 8px;font-size:12px}
+.composer-quote>details{min-width:0;overflow-wrap:anywhere}.composer-quote summary{cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.composer-quote-full{white-space:pre-wrap;max-height:240px;overflow:auto;margin-top:6px}
+.composer-quote>button{flex:none;cursor:pointer;border:0;background:transparent;color:inherit;font-size:18px;line-height:1;padding:2px 5px}

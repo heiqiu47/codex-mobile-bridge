@@ -22,9 +22,10 @@ def force_stop(executable, commands):
     deadline = time.monotonic() + 20
     try:
         protected, images, pid = set(), {str(Path(sys.executable).resolve())}, os.getpid()
+        ancestor = native.ancestor if sys.platform == 'linux' else native.identity
         while pid > 1 and pid not in protected:
             protected.add(pid)
-            identity = native.identity(pid)
+            identity = ancestor(pid)
             images.add(identity['image'])
             pid = identity['parent']
         if executable in images or protected.intersection(commands):
@@ -43,7 +44,7 @@ def force_stop(executable, commands):
             rows = desktop(sys.platform).processes(lambda image: str(Path(image).resolve()) == executable)
             if set(rows) - set(commands):
                 raise ValueError(CHANGED)
-            latest = desktop(sys.platform).commands(rows)
+            latest = desktop(sys.platform).commands(rows) if rows else {}
             active = []
             for target in set(held) - set(rows):
                 try:

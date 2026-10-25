@@ -38,3 +38,59 @@
 它创建独立界面，所有历史与 workspace 请求均为合成只读结果；不访问真实会话。
 分别在宽屏与 390 px 下验证首屏、旧页追加、滚动位置、文件引用、当前状态及草稿保留。
 断言使用当前消息节点，因为文件引用更新可能合法地替换旧 DOM 节点。
+
+
+## 新建聊天与项目目录
+
+`project-creation.browser.js` 在已加载生产 Web 脚本的隔离 loopback 页面中运行。
+通过浏览器驱动读取并注入脚本后，调用并等待
+`runProjectCreationBrowserChecks({language:'zh',provider:'claude',keepOpen:true})`。
+`language` 支持 `zh` / `en`，`provider` 支持 `claude` / `deepseek`；
+`folder:true` 会在检查结束时停留于共享目录弹窗，便于视觉验收。
+`keepOpen:true` 保留预览，结束时调用 `window.__projectCreationPreview.cleanup()`；默认自动清理。
+分别在 320 px、390 px 和宽屏下运行中英检查，核验短路径、环境身份、首条消息要求、折叠新建文件夹和横向溢出。
+该脚本创建独立 `DesktopSessionsView`，所有请求由闭包合成；新建文件夹仅改变内存中的路径，拒绝项目登记和聊天创建，不访问实际客户端。
+
+Codex 的环境路由、目录登记和创建回执由 `codex-entries.browser.js` 检查，配套服务为
+`scripts/smoke-wsl-app-ui.cjs`。运行 `CMB_FIXTURE_ONLY=1 node scripts/smoke-wsl-app-ui.cjs`
+只启动合成 API 服务，随后由现有浏览器打开打印的 loopback 地址；不要对真实网关调用这些检查。
+页面启动后注入 `codex-entries.browser.js`，调用并等待 `checkCodexEntries()`，使用中文界面和全新的夹具状态。
+它覆盖单一 Codex 入口、WSL 扫描启停、列表过滤分页、WSL 新目录、本机及 SSH CLI 无既有项目时的新目录流程、模型标签和草稿隔离。
+`checkCodexProjectCreation()` 可在原生 Codex 接入已启用时单独检查本机与 SSH CLI 项目流程。
+合成服务核验 `environments`、目录 `host`、WSL `entry`、`kind:'cli'`、目录身份和创建请求；
+这些聊天创建只返回内存中的合成会话，不发送消息、不调用模型。修改服务端夹具后应重启服务，重新加载页面不能更新旧进程的路由。
+
+
+## 图片添加到当前对话
+
+`image-composer.browser.js` 配合 `scripts/smoke-image-composer.cjs`，使用已安装的 Electron 执行隔离检查。
+它加载生产 Workbench、ComposerQuotes、ChatAttachments、图片预览器、样式和 `app.js` 中的实际回调，
+以合成图片验证 Codex、Claude、DSH 在 390 px 和宽屏下的文件标签、图片预览、“添加到对话”、返回聊天、可见附件和草稿保留。
+同一个文件标签在账号身份改变后仍可查看原图片，但不能将旧图片加入新的草稿。
+附件上传由内存夹具接收，HTTP 服务拒绝所有非 GET 请求，不调用真实网关或模型。
+检查结果和截图保存在 `.tmp/v215-chat-feedback/image-workbench-check/`。
+
+## 输入区引用布局
+
+`composer-quotes.browser.js` 在 `bootstrap-fixture.py` 完整启动生产页面后运行。
+调用并等待 `runComposerQuoteLayoutChecks()`，分别在实际 390、844、1440 px 视口执行；调整窗口后先等待 `innerWidth` 匹配目标宽度。
+它复制已初始化的完整 Codex / Claude 输入区（包括提醒、权限、上下文和收起按钮），不再手工简化工具栏。核验宽屏选区按钮紧邻上下文用量、窄屏独立紧凑行且原工具栏不换行、引用预览单行省略与展开完整文本，以及选区点击和已有草稿保留；不发送消息。布局依据实际输入区宽度，不能用全窗口宽度代替分屏宽度。
+
+## Codex 多标签页发送协调
+
+在隔离 `bootstrap-fixture.py?case=success` 页面加载 `composer-send.browser.js` 后，调用并等待 `runComposerSendCoordinationChecks()`。它使用两个独立同源文档、实际 IndexedDB 事务与专属合成 localStorage 键，验证同 ID 并发登记、拒绝顺序、未知结果保留和全部明确拒绝后允许改为排队；不请求发送 API。顶层标签页的同源共享行为需由浏览器驱动另行核验。
+
+`persistent-drafts.browser.js` 的 `runPersistentDraftTests()` 使用真实提交处理器和合成网络结果，补充账号切换、页面导航及等待回执期间的新草稿保护。两类检查不得在真实会话页面执行。
+
+## 聊天列表优先启动
+
+`python3 -B tests/browser/list-first-fixture.py` 启动隔离 loopback 服务，使用生产页面、版本化资源和合成账号／列表，拒绝聊天写入。
+`?case=first` 获取列表后，打开 `?case=cached`：同一身份缓存应先显示，5 秒后刷新为新标题；`?case=identity` 使用另一缓存身份，旧列表不能提前出现。
+`?case=blocked` 对公式、终端和文件预览资源返回 503，列表仍应正常显示且不请求这些组件；实际渲染公式后应保留源码和重试按钮，不进入全屏启动错误。
+`?case=slow` 为脚本响应额外增加 300 ms；结合浏览器单页网络限速验证冷启动。`window.__listProbe` 记录首个列表／缓存更新时刻和运行时异常。仅在夹具中使用，禁止对真实网关注入测试数据。
+
+## WSL 弹窗宽度
+
+在隔离生产页面夹具中加载 `wsl-dialog-width.browser.js`，调用并等待 `runWslDialogWidthChecks({kind:"accounts"})` 或 `{kind:"new-chat"}`。使用合成长发行版名称、账号名、地址与导入选项；不调用真实账号接口或发送聊天。分别在 320/393/430/1280 宽度及中英文下检查元素边界、`scrollWidth === clientWidth`、横向滚动位置为零，窄屏原生选择框字号至少 16px。完成后调用 `window.__wslLayoutCleanup()`。
+
+选择框内部的长选项在 WebKit 中可能扩大祖先滚动区域，即使元素边界正常；需要在 WebKit 实际执行以上滚动断言，不能只检查 Chromium 或元素宽度。macOS WKWebView 的通过结果不能代替 iPhone 真机输入与选择验收。

@@ -84,7 +84,7 @@ class Desktop:
         if action == 'desktop-sessions':
             return sessions.control(value)
         if action == 'cli-access':
-            return bridge.cli_access.public() if value.get('action') == 'list' else bridge.cli_access.change(value)
+            return bridge.cli_access_control(value)
         return bridge.accounts.control(value) if action == 'accounts' else bridge.accounts.account(value)
 
     def config(self):

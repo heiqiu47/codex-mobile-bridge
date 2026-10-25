@@ -191,6 +191,23 @@ class PtyTests(unittest.TestCase):
         self.wait_output(s,'REMOTE:kept'); self.assertTrue(s.shell.startswith('/'))
         s.resize(91,29);self.send(s,'stty size\r');self.wait_output(s,'29 91')
 
+    def test_custom_transport_preserves_utf8_input_resize_and_completion(self):
+        received = []
+        def transport(source):
+            received.append(source)
+            return [sys.executable, '-u', '-c', source]
+        s = RemoteTerminalSession(None, self.root, transport=transport, transport_name='WSL')
+        self.sessions.append(s)
+        self.assertEqual(len(received), 1)
+        self.send(s, "printf '\\344\\275\\240\\345\\245\\275\\n'\r")
+        self.wait_output(s, '你好')
+        s.resize(95, 27)
+        self.send(s, 'stty size\r')
+        self.wait_output(s, '27 95')
+        (self.root/'unique-wsl-file').write_text('fixture')
+        result = s.complete('cat unique-wsl-f', len('cat unique-wsl-f'))
+        self.assertIn('unique-wsl-file', str(result))
+
     def test_remote_source_shell_uses_utf8_when_remote_locale_is_c(self):
         original = subprocess.Popen
         def launch(args, **kwargs):

@@ -21,7 +21,7 @@ const BridgeSourceView = (() => {
       : (english ? 'Wrap lines' : '自动换行');
   };
   document.addEventListener('bridge-language', () => document.querySelectorAll('.wb-source-wrap').forEach(wrapLabel));
-  const create = ({name, text}) => {
+  const create = ({name, text, location}) => {
     const source = document.createElement('div'); source.className = 'wb-source';
     source.dataset.wrap = 'false';
     const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'wb-source-wrap';
@@ -51,11 +51,11 @@ const BridgeSourceView = (() => {
       gutter.setAttribute('aria-hidden', 'true');
       for (let index = 0; index < lines; index++) {
         const number = document.createElement('span'); number.className = 'wb-source-number';
-        number.textContent = String(index + 1); number.style.gridRow = String(index + 1);
+        number.dataset.line = String(index + 1); number.textContent = String(index + 1); number.style.gridRow = String(index + 1);
         gutter.append(number);
       }
       body.append(gutter);
-      let line = document.createElement('span'); line.className = 'wb-source-line'; line.style.gridRow = '1'; code.append(line);
+      let line = document.createElement('span'); line.className = 'wb-source-line'; line.dataset.line = '1'; line.style.gridRow = '1'; code.append(line);
       let pendingCR = false, lineNumber = 1;
       const appendPiece = (value, classes) => {
         if (!value) return;
@@ -65,7 +65,7 @@ const BridgeSourceView = (() => {
       };
       const endLine = ending => {
         const eol = document.createElement('span'); eol.className = 'wb-source-eol'; eol.textContent = ending; line.append(eol);
-        line = document.createElement('span'); line.className = 'wb-source-line'; line.style.gridRow = String(++lineNumber); code.append(line);
+        line = document.createElement('span'); line.className = 'wb-source-line'; line.dataset.line = String(++lineNumber); line.style.gridRow = String(lineNumber); code.append(line);
       };
       const appendText = (value, classes) => {
         let start = 0;
@@ -94,7 +94,17 @@ const BridgeSourceView = (() => {
       if (pendingCR) endLine('\r');
     } else {
       body.classList.add('wb-source-no-gutter');
-      code.textContent = text;
+      if (location && Number.isInteger(location.start) && location.start >= 1 && location.start <= lines) {
+        let line=1, start=0, end=text.length;
+        const endings=/\r\n|\r|\n/g;let match;
+        while((match=endings.exec(text))){
+          line++;
+          if(line===location.start)start=endings.lastIndex;
+          if(line>(location.end||location.start)){end=endings.lastIndex;break;}
+        }
+        code.append(document.createTextNode(text.slice(0,start)));
+        const selected=document.createElement('span');selected.className='wb-source-line';selected.dataset.line=String(location.start);selected.dataset.lineEnd=String(location.end||location.start);selected.textContent=text.slice(start,end);code.append(selected,document.createTextNode(text.slice(end)));
+      } else code.textContent = text;
     }
     pre.append(code); body.append(pre); source.append(body);
     source.addEventListener('copy', event => {
@@ -110,5 +120,16 @@ const BridgeSourceView = (() => {
     if (large) source.dataset.plain = 'true';
     return source;
   };
-  return {create, languageFor};
+  const locate = (source, start, end = start) => {
+    if (!Number.isInteger(start) || start < 1 || start > 1000000 || !Number.isInteger(end) || end < start || end > 1000000) return false;
+    let first = null;
+    for (const row of source.querySelectorAll('[data-line]')) {
+      const line = Number(row.dataset.line), last = Number(row.dataset.lineEnd || row.dataset.line), selected = last >= start && line <= end;
+      row.classList.toggle('wb-source-selected', selected);
+      if (line === start && row.classList.contains('wb-source-line')) first = row;
+    }
+    if (first) first.scrollIntoView({block:'center', inline:'nearest'});
+    return !!first;
+  };
+  return {create, languageFor, locate};
 })();

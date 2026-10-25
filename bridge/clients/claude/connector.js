@@ -114,6 +114,7 @@
     if(kind==='code')capabilities[kind].push('mobileList');
     if(typeof api[surface]?.getSession==='function'&&typeof api[surface]?.getTranscript==='function')capabilities[kind].push('mobileDetail');
     if(kind==='code'&&typeof api[surface]?.getTranscriptTail==='function'&&typeof api[surface]?.getTranscriptPage==='function')capabilities[kind].push('mobileHistory');
+    if(kind==='code'&&typeof api[surface]?.forkSession==='function'&&typeof api[surface]?.getTranscript==='function')capabilities[kind].push('mobileFork');
   }
   function installObservers() {
     for (const surface of Object.values(surfaces)) {
@@ -275,6 +276,17 @@
     return [typeof options === 'string' ? {sessionId:options} :
       options && typeof options === 'object' && !Array.isArray(options) ? options : {}];
   }
+  async function mobileFork(target,id,options={}){
+    if(target!==api.LocalSessions||!capabilities.code.includes('mobileFork'))throw Error('当前 Claude 接入未提供原生分支接口');
+    if(typeof options.id!=='string'||!/^[0-9a-f-]{36}$/i.test(options.id)||typeof options.messageId!=='string'||!options.messageId)throw Error('分支标识无效');
+    const transcript=await target.getTranscript(id);
+    const anchor=Array.isArray(transcript)&&transcript.find(row=>row.uuid===options.messageId&&row.type==='assistant'&&
+      !['isSynthetic','isMeta','isSidechain','parent_tool_use_id','isCompactSummary'].some(key=>row[key]));
+    if(!anchor)throw Error('原消息已不可用，请刷新聊天后重试');
+    // Use Desktop's own inclusive UUID cut and preserve the parent workspace.
+    // The gateway receipt fences retries; a lost response must never fork again.
+    return target.forkSession(id,'local_'+options.id,options.messageId);
+  }
   async function mobileList(){
     const rows=await Promise.all(Object.entries(surfaces).filter(([,name])=>typeof api[name]?.getAll==='function').map(async([kind,name])=>{
       const result=await api[name].getAll();
@@ -333,6 +345,7 @@
           if (msg.method === 'mobileAccount') return {result:await mobileAccount()};
           if (msg.method === 'mobileList') return {result:await bounded(mobileList(),30000,'读取会话超时')};
           if (msg.method === 'mobileDetail' && capabilities[msg.surface].includes('mobileDetail')) return {result:await bounded(mobileDetail(target,msg.args[0],msg.args[1]),30000,'读取会话超时')};
+          if (msg.method === 'mobileFork' && capabilities[msg.surface].includes('mobileFork')) return {result:await mobileFork(target,msg.args[0],msg.args[1])};
           if (msg.method === 'mobileProgress') { const page=msg.surface==='code'&&capabilities.code.includes('mobileHistory')?await target.getTranscriptTail(msg.args[0],24):await target.getTranscript(msg.args[0]); const rows=Array.isArray(page)?page:page?.messages; return {result:sanitize('getTranscript',Array.isArray(rows)?rows.slice(-24):[])}; }
           if (!allowed.has(msg.method) || typeof target[msg.method] !== 'function') throw new Error('不支持的桌面操作');
           return {result:sanitize(msg.method, await target[msg.method](...callArgs(msg.method,msg.args)))};
@@ -473,6 +486,7 @@
             if (target && msg.method === 'mobileAccount') return mobileAccount();
             if (target && msg.method === 'mobileList') return mobileList();
             if (target && msg.method === 'mobileDetail' && capabilities[msg.surface].includes('mobileDetail')) return mobileDetail(target,msg.args[0],msg.args[1]);
+            if (target && msg.method === 'mobileFork' && capabilities[msg.surface].includes('mobileFork')) return mobileFork(target,msg.args[0],msg.args[1]);
             if (target && msg.method === 'mobileProgress') { const page=msg.surface==='code'&&capabilities.code.includes('mobileHistory')?await target.getTranscriptTail(msg.args[0],24):await target.getTranscript(msg.args[0]); const rows=Array.isArray(page)?page:page?.messages; return sanitize('getTranscript',Array.isArray(rows)?rows.slice(-24):[]); }
             if (!target || !allowed.has(msg.method) || typeof target[msg.method] !== 'function' || !Array.isArray(msg.args)) {
               throw new Error('不支持的桌面操作');

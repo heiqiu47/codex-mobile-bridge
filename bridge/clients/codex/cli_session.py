@@ -14,7 +14,7 @@ from pathlib import Path
 
 from bridge.clients.codex.app_server import (
     AppServerError, AppServerUnavailable, AppServerUnknownResult, AppServerUnsupported, CodexAppServer)
-from bridge.clients.codex.catalog import Catalog, CatalogError, ModelStore
+from bridge.clients.codex.catalog import Catalog, CatalogError, ModelStore, normalize_native_skills
 from bridge.clients.codex.remote import RemoteStore, RemoteUnavailable, remote_model_catalog, remote_model_identity
 from bridge.platforms.codex_daemon_env import read_daemon_environment, DaemonEnvironmentUnavailable
 from bridge.features.sessions.goal import GoalError, GoalUnavailable, GoalUnsupported, normalize_goal_result
@@ -718,21 +718,7 @@ class CliSessions:
             cwd = self.metadata[thread_id]['cwd']
         raw = self.client.request('skills/list', {'cwds': [cwd], 'forceReload': force_reload},
                                   replay_safe=True)
-        rows, errors = [], []
-        for entry in raw.get('data', []):
-            if entry.get('cwd') != cwd:
-                continue
-            errors.extend(entry.get('errors') or [])
-            for skill in entry.get('skills') or []:
-                if not skill.get('enabled', True) or not skill.get('path') or not skill.get('name'):
-                    continue
-                path = skill['path']
-                rows.append({'id': hashlib.sha256(path.encode()).hexdigest(),
-                             'path': path, 'name': skill['name'],
-                             'description': skill.get('description', ''),
-                             'scope': skill.get('scope'),
-                             'displayName': (skill.get('interface') or {}).get('displayName') or skill['name']})
-        return rows, errors
+        return normalize_native_skills(raw, cwd)
 
     def validate_skills(self, thread_id, ids):
         self._check_joined_identity(thread_id)

@@ -15,6 +15,7 @@ import unicodedata
 from pathlib import Path
 
 from bridge.resources import source_text
+from bridge.features.sessions.message_management import snapshot as management_snapshot, mutate as management_mutate
 
 from bridge.features.terminals.manager import TerminalManager
 from bridge.features.sessions.side_chat import SideChats
@@ -30,16 +31,26 @@ from bridge.features.workspace.workspace import operate as workspace_operation
 from bridge.clients.codex.catalog import Catalog, CatalogError, ModelStore, MODEL_REFRESH_SECONDS
 from bridge.platforms.codex_daemon_env import DaemonEnvironmentUnavailable
 from bridge.clients.codex.remote import AppHosts, RemoteStore, RemoteCatalog, RemoteUnavailable, ssh_read, ssh_download, payload
-from bridge.features.sessions.create import rename_thread, independent_directory, create_empty, fork_copy, open_in_desktop, CreationError, CreationUnavailable, ForkUnavailable
+from bridge.features.sessions.create import (
+    rename_thread, independent_directory, create_empty, fork_copy, open_in_desktop, open_project_in_desktop,
+    CreationError, CreationUnavailable, ForkUnavailable, project_directory,
+    project_directory_listing,
+)
+from bridge.features.sessions.projects import Projects
 from bridge.features.sessions.timeline import Timeline
 from bridge.features.sessions.tool_images import TOOL_IMAGE_CACHE, public_turns
 from bridge.features.accounts.account import Account
 from bridge.features.accounts.accounts import Accounts, operation
 from bridge.features.accounts.draft_identity import codex_account_identity, draft_identity
 from bridge.features.accounts.cli_access import CliAccess
+from bridge.features.accounts.wsl_accounts import WslAccounts
 from bridge.features.sessions.goal import GoalRPC, GoalError, GoalUnavailable, GoalUnsupported, goal_activation, goal_identity, normalize_goal_result, normalize_ui_locale, goal_command_fingerprint, goal_state_confirms_command, native_goal_absent, normalize_goal, plan_goal_command, read_native_goal
 from bridge.features.workspace.uploads import Uploads, image_type
 from bridge.clients.codex.remote import upload_file
+
+
+class SubmissionRejected(ValueError):
+    """The request was rejected before any submission was recorded or sent."""
 
 
 class LiveSession:
@@ -60,6 +71,7 @@ class LiveSession:
         self.state = None
         self.history_state = None
         self.saved_view = None
+        self.saved_file_changes = {}
         self.history_limit = 2
         self.timeline_limit = 40
         self.timeline_source = None
@@ -129,6 +141,14 @@ class LiveSession:
     def set_history(self, state):
         self.history_state = state
         self.saved_view = normalize_state(state, False, image_cache=self.tool_image_cache, item_limit=self.timeline_limit)
+        # Complete native patch evidence is retained by the saved reader even
+        # when its messages are outside the current presentation window.
+        self.saved_file_changes = {
+            turn.get('turnId'): (turn['_nativeFileChanges'], turn.get('_nativeFileChangesBasis', 'recorded'))
+            for turn in ordered_turns(state) if turn.get('status') == 'completed' and turn.get('_nativeFileChanges')}
+        for turn in self.saved_view['turns']:
+            if turn.get('status') == 'completed' and turn.get('fileChanges'):
+                self.saved_file_changes.setdefault(turn['id'], (turn['fileChanges'], turn.get('fileChangesBasis', 'recorded')))
         self.changed()
 
     def view(self, *, item_limit=None):
@@ -142,6 +162,10 @@ class LiveSession:
                 result['status'] = 'notLoaded'
             if self.runtime == 'cli' and self.connected:
                 result['permissionMode'] = linux_permissions.current_mode(self.state)
+            for turn in result['turns']:
+                saved_changes = self.saved_file_changes.get(turn['id'])
+                if turn.get('status') == 'completed' and not turn.get('fileChanges') and saved_changes:
+                    turn['fileChanges'], turn['fileChangesBasis'] = saved_changes
             if self.saved_view and result['contextUsage'] is None:
                 saved_usage = self.saved_view.get('contextUsage')
                 if saved_usage:
@@ -200,6 +224,12 @@ class Bridge:
         self._draft_remote_pending = set()
         self.data_dir = Path(data_dir)
         self.hosts = AppHosts(codex_home)
+        self.directory_projects = Projects(data_dir)
+        if host == 'local':
+            from bridge.features.endpoints.registry import Entries
+            self.entries = Entries(data_dir, codex_home)
+        else:
+            self.entries = None
         self.remote_bridges = {}
         self.host_errors = []
         self.listed = set()
@@ -217,6 +247,7 @@ class Bridge:
         self.account = Account(codex_home, data_dir, codex_bin, executable_getter=executable_getter) if host == 'local' else None
         self.accounts = Accounts(self) if host == "local" else None
         self.cli_access = CliAccess(self) if host == "local" else None
+        self.wsl_accounts = WslAccounts(self) if host == "local" else None
         self.goal = goal_rpc or (GoalRPC(codex_home, codex_bin, executable_getter=executable_getter) if host == 'local' else None)
         self.owner_goal = owner_goal
         self.goal_transport = 'owner' if owner_goal else 'sidecar'
@@ -256,6 +287,36 @@ class Bridge:
                 self.live.setdefault(key.split(":")[0], LiveSession(key.split(":")[0]))
         threading.Thread(target=self._maintain, daemon=True).start()
         threading.Thread(target=self._upload_gc, daemon=True).start()
+
+    def cli_access_control(self, value):
+        """Local desktop control; credential mutations stay off the web route."""
+        if not isinstance(value, dict):
+            raise ValueError('CLI 接入请求无效')
+        if value.get('action') != 'wslAccounts':
+            return self.cli_access.control(value)
+        manager = self.wsl_accounts
+        if manager is None:
+            raise ValueError('此网关不支持 WSL 账号')
+        operation = value.get('operation')
+        if operation == 'environments':
+            if set(value) != {'action', 'operation', 'provider'}:
+                raise ValueError('WSL 环境查询参数无效')
+            return manager.environments(value['provider'])
+        request = {key: item for key, item in value.items() if key not in ('action', 'operation')}
+        request['action'] = 'read' if operation == 'list' else operation
+        return manager.change(request, desktop=True)
+
+    def wsl_account_sources(self, provider):
+        from bridge.features.accounts.wsl_account_sources import sources
+        return sources(self, provider)
+
+    def wsl_account_import(self, provider, value):
+        from bridge.features.accounts.wsl_account_sources import import_api
+        return import_api(self, provider, value)
+
+    def wsl_account_guard(self, provider, row, *, read_only=False, release_idle=False):
+        from bridge.features.accounts.wsl_account_guard import account_guard
+        return account_guard(self, provider, row, read_only=read_only, release_idle=release_idle)
 
     def _goal_runtime_available(self):
         if self.host != "local":
@@ -527,7 +588,21 @@ class Bridge:
         target.replace(self.creations_path)
 
     def projects(self):
-        projects = [dict(project, type='desktop') for project in self.hosts.projects()]
+        projects = [dict(project, type=project.get('type', 'desktop'))
+                    for project in self.directory_projects.list({'local', *self.hosts.hosts()})]
+        def identity(project):
+            cwd = project.get('cwd') or ''
+            cwd = os.path.normcase(os.path.realpath(cwd)) if project['host'] == 'local' else cwd.rstrip('/')
+            return project['host'], cwd, project.get('type', 'desktop')
+        known = {identity(project): project for project in projects}
+        for project in self.hosts.projects():
+            key = identity(project)
+            if key in known:
+                known[key]['nativeProject'] = True
+            else:
+                row = dict(project, type='desktop', nativeProject=True)
+                projects.append(row)
+                known[key] = row
         candidates = [(self.host, self)]
         if self.host == 'local':
             for host in self.hosts.hosts():
@@ -539,7 +614,7 @@ class Bridge:
                 return []
         with ThreadPoolExecutor(max_workers=min(4, len(candidates))) as pool:
             groups = list(pool.map(read, candidates))
-        seen = set()
+        seen = {(project['host'], project['cwd']) for project in projects if project.get('type') == 'cli'}
         for (host, bridge), rows in zip(candidates, groups):
             for row in rows:
                 cwd = row.get('cwd')
@@ -550,7 +625,71 @@ class Bridge:
                 projects.append({'key': 'cli|' + host + '|' + hashlib.sha256(cwd.encode()).hexdigest()[:20],
                                  'type': 'cli', 'host': host, 'hostLabel': label,
                                  'name': cwd.rstrip('/').rsplit('/', 1)[-1] or cwd, 'cwd': cwd})
+        for project in projects:
+            project['environment'] = project.get('type', 'desktop') + '|' + project['host']
         return projects
+
+    def project_environments(self):
+        hosts = {'local': {'displayName': '此电脑'}, **self.hosts.hosts()}
+        return [{'key': kind + '|' + host, 'type': kind, 'surface': kind, 'host': host,
+                 'hostLabel': info.get('displayName') or info.get('alias') or host,
+                 'name': (info.get('displayName') or info.get('alias') or host) +
+                         (' · Codex App' if kind == 'desktop' else ' · Codex CLI')}
+                for host, info in hosts.items() for kind in ('desktop', 'cli')]
+
+    @operation
+    def register_project(self, path, create=False, host='local', kind='desktop'):
+        if kind not in ('desktop', 'cli'):
+            raise ValueError('未知聊天类型')
+        if host == 'local':
+            identity = project_directory(path, create)
+            label = '此电脑'
+        else:
+            info = self.hosts.hosts().get(host)
+            if info is None: raise ValueError('请选择已登记的运行主机')
+            source = source_text('features/sessions/create.py')
+            source += '\nprint(json.dumps(project_directory(**' + payload({'value': path, 'create': create}) + ')))\n'
+            identity = ssh_read(info['alias'], source)
+            label = info.get('displayName') or info['alias']
+        return self.directory_projects.save(host, label, identity,
+            scope='cli' if kind == 'cli' else None, type=kind, environment=kind+'|'+host,
+            hostIdentity=None if host == 'local' else info['alias'])
+
+    @operation
+    def project_directories(self, host, path=None, hidden=False, name=None, identity=None):
+        if host == 'local': return project_directory_listing(path, hidden, name, identity)
+        info = self.hosts.hosts().get(host)
+        if info is None: raise ValueError('请选择已登记的运行主机')
+        source = source_text('features/sessions/create.py')
+        source += '\nprint(json.dumps(project_directory_listing(**' + payload({'value':path,'hidden':hidden,'name':name,'identity':identity}) + ')))\n'
+        return ssh_read(info['alias'], source)
+
+    def _saved_desktop_project(self, cwd):
+        canonical = os.path.normcase(os.path.realpath(cwd))
+        return next((row for row in self.hosts.projects() if row['host'] == 'local' and
+                     os.path.normcase(os.path.realpath(row['cwd'])) == canonical), None)
+
+    def _confirm_desktop_project(self, project, entry):
+        cwd = project_directory(project['cwd'], expected=project['directoryIdentity'])['cwd']
+        native = self._saved_desktop_project(cwd)
+        if native is None:
+            if entry.get('phase') in ('registering-project', 'project-ready'):
+                raise CreationError('原生项目登记结果尚未确认，请在电脑 App 完成目录确认后重试同一请求；尚未创建聊天')
+            entry['phase'] = 'registering-project'
+            self._save_creations()
+            try:
+                open_project_in_desktop(cwd)
+            except (OSError, CreationError, subprocess.SubprocessError) as exc:
+                raise CreationError('原生项目打开结果尚未确认，请检查电脑 App；尚未创建聊天，不会重复登记') from exc
+            deadline = time.monotonic() + 12
+            while native is None and time.monotonic() < deadline:
+                time.sleep(.25)
+                native = self._saved_desktop_project(cwd)
+            if native is None:
+                raise CreationError('请在电脑 App 完成项目目录确认后重试同一请求；尚未创建聊天，不会重复登记')
+        entry['phase'] = 'project-ready'
+        self._save_creations()
+        return dict(project, nativeProject=True, name=native.get('name') or project.get('name'))
 
     @operation
     def create_chat(self, project_key, title, request_id, kind='desktop'):
@@ -561,7 +700,7 @@ class Bridge:
             raise ValueError('请输入 1–120 字的聊天名称')
         if kind not in ('desktop', 'cli'):
             raise ValueError('未知聊天类型')
-        available = self.projects() if kind == 'cli' else self.hosts.projects()
+        available = [project for project in self.projects() if (project.get('type') or 'desktop') == kind]
         project = next((p for p in available if p['key'] == project_key), None)
         if kind == 'desktop' and project_key == 'local|independent':
             project = {'host': 'local', 'cwd': None}
@@ -575,15 +714,29 @@ class Bridge:
                         entry.get('kind', 'desktop') != kind or
                         entry.get('cwd', project['cwd']) != project['cwd']):
                     raise ValueError('同一创建请求不能用于不同内容')
-                if not entry.get('id'):
+                if not entry.get('id') and entry.get('phase') not in ('registering-project', 'project-ready'):
                     raise CreationError('上次创建结果尚不确定，请先刷新聊天列表并检查电脑 App，避免重复创建')
             else:
+                if project.get('hostIdentity') and self.hosts.hosts().get(project['host'], {}).get('alias') != project['hostIdentity']:
+                    raise ValueError('原 SSH 主机配置已变化，请重新选择项目')
+                if kind == 'cli':
+                    cli_bridge = self.for_host(project['host'])
+                    if (project['host'] != 'local' and
+                            cli_bridge.cli_sessions.alias != self.hosts.hosts()[project['host']]['alias']):
+                        raise ValueError('原 SSH 主机配置已变化，请重启网关后重新选择项目')
                 if kind == 'desktop':
+                    if project['host'] != 'local' and project.get('directoryIdentity') and not project.get('nativeProject'):
+                        raise CreationUnavailable('请先在电脑 Codex App 添加此 SSH 项目，再重新选择；当前接入尚不支持远程侧栏项目登记')
                     self.ipc.connect()
                 entry = {'project': project_key, 'title': title, 'kind': kind,
-                         'cwd': project['cwd'], 'host': project['host'], 'at': time.time()}
+                         'cwd': project['cwd'], 'host': project['host'],
+                         'directoryIdentity': project.get('directoryIdentity'), 'at': time.time()}
                 self.creations[request_id] = entry
                 self._save_creations()
+            if not entry.get('id'):
+                if (kind == 'desktop' and project.get('directoryIdentity') and
+                        (not project.get('nativeProject') or entry.get('phase') in ('registering-project', 'project-ready'))):
+                    project = self._confirm_desktop_project(project, entry)
                 if kind == 'cli':
                     def mark_started():
                         entry['started'] = True
@@ -594,7 +747,18 @@ class Bridge:
                         self._save_creations()
 
                     try:
-                        state = self.for_host(project['host']).cli_sessions.create(
+                        if project.get('directoryIdentity'):
+                            if project['host'] == 'local':
+                                project_directory(project['cwd'], expected=project['directoryIdentity'])
+                            else:
+                                source = source_text('features/sessions/create.py')
+                                source += '\nprint(json.dumps(project_directory(**' + payload({
+                                    'value': project['cwd'], 'expected': project['directoryIdentity']}) + ')))\n'
+                                ssh_read(cli_bridge.cli_sessions.alias, source)
+                        if (project['host'] != 'local' and
+                                cli_bridge.cli_sessions.alias != self.hosts.hosts().get(project['host'], {}).get('alias')):
+                            raise ValueError('原 SSH 主机配置已变化，请重启网关后重新选择项目')
+                        state = cli_bridge.cli_sessions.create(
                             project['cwd'], title, on_start=mark_started, on_created=mark_created)
                         thread_id = state['id']
                     except AppServerUnavailable:
@@ -604,12 +768,22 @@ class Bridge:
                         raise
                 elif project['host'] == 'local':
                     try:
-                        cwd = project['cwd'] or independent_directory(self.data_dir, request_id)
-                        thread_id = create_empty(self.catalog_reader.executable, self.codex_home, cwd, title)
+                        cwd = (project_directory(project['cwd'], expected=project['directoryIdentity'])['cwd']
+                               if project.get('directoryIdentity') else project['cwd']) or independent_directory(self.data_dir, request_id)
+                        native_project = ({'name': project.get('name'),
+                            'required': bool(project.get('directoryIdentity') and not project.get('nativeProject'))} if project['cwd'] else None)
+                        if entry.get('phase') == 'project-ready':
+                            entry['phase'] = 'creating-thread'
+                            self._save_creations()
+                        thread_id = create_empty(self.catalog_reader.executable, self.codex_home, cwd, title,
+                                                 project=native_project)
                     except CreationUnavailable:
-                        # No process started: retrying this request cannot create
-                        # a duplicate. Keep uncertain post-start results recorded.
-                        del self.creations[request_id]
+                        # No thread mutation happened: retrying this request cannot
+                        # create a duplicate. Keep uncertain post-start results recorded.
+                        if entry.get('phase') == 'creating-thread':
+                            entry['phase'] = 'project-ready'
+                        else:
+                            del self.creations[request_id]
                         self._save_creations()
                         raise
                 else:
@@ -617,13 +791,15 @@ class Bridge:
                     source = source_text('features/sessions/create.py')
                     source += '\nimport shutil\nhome=Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex")))\n'
                     source += 'runtime=shutil.which("codex") or str(Path.home()/".local/bin/codex")\n'
+                    if project.get('directoryIdentity'):
+                        source += 'project_directory(**' + payload({'value': project['cwd'], 'expected': project['directoryIdentity']}) + ')\n'
                     source += 'print(json.dumps({"id":create_empty(runtime, home, **' + payload({'cwd': project['cwd'], 'title': title}) + ')}))\n'
                     thread_id = ssh_read(host['alias'], source, timeout=90)['id']
                 uuid.UUID(thread_id)
                 entry['id'] = thread_id
                 self._save_creations()
                 if kind == 'cli':
-                    bridge = self.for_host(project['host'])
+                    bridge = cli_bridge
                     with bridge.lock:
                         session = bridge.live.setdefault(thread_id, LiveSession(thread_id))
                     with session.condition:
@@ -786,6 +962,8 @@ class Bridge:
     def for_host(self, host):
         if host == self.host:
             return self
+        if isinstance(host, str) and host.startswith('wsl:') and self.entries is not None:
+            return self.entries.get(host)
         available = self.hosts.hosts()
         if self.host != "local" or host not in available:
             raise KeyError("未知 SSH 主机")
@@ -1035,15 +1213,37 @@ class Bridge:
         return {'schemaVersion': 1, 'generatedAt': int(time.time()),
                 'remoteHostCount': len(sources) - 1, 'hosts': reports}
 
-    def list(self, query="", limit=100, offset=0, archived=False, source='all', include_sources=False, local_only=False, host_label=None):
+    def list(self, query="", limit=100, offset=0, archived=False, source='all', include_sources=False,
+             local_only=False, host_label=None, entry=None):
+        if source not in ('all', 'desktop', 'cli', 'wsl'):
+            raise ValueError('不支持的会话来源')
+        if entry and entry not in ('desktop', 'all'):
+            self.host_errors = []
+            target = self.for_host(entry)
+            try:
+                return target.list(query=query, limit=limit, offset=offset, archived=archived,
+                                   source=source, include_sources=include_sources)
+            except (RemoteUnavailable, StoreUnavailable) as exc:
+                self.host_errors = [{'host': entry, 'label': host_label or 'WSL', 'error': str(exc)}]
+                return ([], []) if include_sources else []
         sources = [(self, host_label or "此电脑")]
         if self.host == 'local' and not local_only:
             sources.extend((self.for_host(host), info.get('displayName') or info['alias']) for host, info in self.hosts.hosts().items())
+            if self.entries is not None and entry != 'desktop':
+                sources.extend((self.for_host(host), info['label']) for host, info in self.entries.hosts().items())
         def read(host_source):
             bridge, label = host_source
             try:
+                if bridge.host.startswith('wsl:'):
+                    # WSL is a display category; its native source remains CLI.
+                    wsl_source = 'wsl' if source in ('all', 'wsl') else 'desktop'
+                    value = bridge.list(query=query, limit=limit + offset, archived=archived,
+                                        source=wsl_source, include_sources=include_sources)
+                    rows, available = value if include_sources else (value, [])
+                    return rows, None, available
                 available = bridge.store.available_sources() if include_sources else []
-                rows = bridge.store.list(limit=limit + offset, archived=archived, query=query, source=source)
+                rows = ([] if source == 'wsl' else bridge.store.list(
+                    limit=limit + offset, archived=archived, query=query, source=source))
                 rows = self.hosts.decorate(rows, bridge.host, label)
                 with bridge.lock:
                     bridge.listed.update(row['id'] for row in rows)
@@ -1060,9 +1260,10 @@ class Bridge:
             results = list(pool.map(read, sources))
         self.host_errors = [error for _, error, _ in results if error]
         rows = [row for group, _, _ in results for row in group]
+        available_sources = {source for _, _, available in results for source in available}
         rows.sort(key=lambda row: (row['recency'], row['id'], row['host']), reverse=True)
         page = rows[offset:offset + limit]
-        return (page, sorted({source for _, _, available in results for source in available})) if include_sources else page
+        return (page, sorted(available_sources)) if include_sources else page
 
     def activity(self, identifiers):
         if not isinstance(identifiers, list) or len(identifiers) > 500 or any(not isinstance(v, str) for v in identifiers):
@@ -1131,6 +1332,12 @@ class Bridge:
                 source.notification_cursor = cursor
             except (IPCError, RemoteUnavailable, StoreUnavailable):
                 pass  # Preserve the cursor so the next discovery can recover.
+        if self.host == 'local' and self.entries is not None:
+            for identifier in self.entries.hosts():
+                try:
+                    rows.extend(self.entries.get(identifier).notification_candidates())
+                except (IPCError, RemoteUnavailable, StoreUnavailable, KeyError):
+                    pass
         return rows
 
     def notification_updates(self):
@@ -1147,6 +1354,12 @@ class Bridge:
                     if session.connected and (session.watched or state.get('threadRuntimeStatus', {}).get('type') == 'active' or
                             any(t.get('status') == 'inProgress' for t in ordered_turns(state)) or pending_requests(state)):
                         rows.append({'id': session.id, 'host': source.host})
+        if self.host == 'local' and self.entries is not None:
+            # Existing instances only: a UI poll never registers or starts WSL.
+            with self.entries.lock:
+                entries = list(self.entries.bridges.values())
+            for entry in entries:
+                rows.extend(entry.notification_updates())
         return rows
 
     def release_notification_session(self, session):
@@ -2518,6 +2731,74 @@ class Bridge:
             raise ValueError('请输入 1–4000 字的目标内容')
         return self._goal_control(thread_id, request_id, 'edit', objective=objective, expected=expected)
 
+    def _management_identity(self, thread_id, refresh=False):
+        with self.lock:
+            session = self.live.get(thread_id)
+        if session is None:
+            return ''
+        with session.condition:
+            provider = (session.state or {}).get('modelProvider') or session.saved_provider
+        if not provider:
+            return ''
+        if self.host == 'local':
+            return self._draft_account_identity({'provider': provider})
+        alias = self.cli_sessions.alias
+        home = str(self.cli_sessions.remote_home) if self.cli_sessions.remote_home else None
+        with self._draft_remote_lock:
+            cached = self._draft_remote_cache.get((self.host, alias, home, provider))
+            fresh = cached and time.monotonic() - cached[0] < 30
+            identity = cached[1] if fresh else ''
+        if refresh and not fresh:
+            # Probe only account files, never native history or attachment.
+            self._draft_account_identity({'provider': provider})
+        return identity
+
+    def message_management(self, thread_id, receipt_ids=()):
+        uuid.UUID(thread_id)
+        identity = self._management_identity(thread_id, refresh=True)
+        with self.goal_lock, self.submit_lock:
+            rows = [(k.split(':', 1)[1], copy.deepcopy(v)) for k, v in self.submissions.items() if k.startswith(thread_id + ':')]
+            result = management_snapshot(rows, receipt_ids, self._goal_activation_ids(thread_id), scope=[self.host, thread_id, identity])
+            for receipt in result['receipts']:
+                command = self.goal_commands.get(thread_id + ':' + receipt['id'])
+                if command and command.get('action') == 'create':
+                    state = command.get('state')
+                    receipt['status'] = 'accepted' if state == 'confirmed' else 'failed' if state == 'failed' else 'unknown'
+        result['draftAccountIdentity'] = identity
+        result['identityPending'] = not identity and (bool(getattr(self, '_draft_remote_pending', ())) or
+                                                    (self.host != 'local' and bool(self._management_identity(thread_id))))
+        if not identity:
+            result['capabilities'] = dict.fromkeys(result['capabilities'], False)
+        return result
+
+    @operation
+    def manage_messages(self, thread_id, body):
+        uuid.UUID(thread_id)
+        # Do not load history or attach merely to edit the durable queue.
+        with self.lock:
+            session = self.live.setdefault(thread_id, LiveSession(thread_id))
+        with session.action_lock, self.goal_lock, self.submit_lock:
+            identity = self._management_identity(thread_id)
+            if not identity or body.get('expectedAccount') != identity:
+                raise ValueError('账号接入已变化，请刷新会话后重试')
+            body = {k: v for k, v in body.items() if k != 'expectedAccount'}
+            rows = [(k.split(':', 1)[1], copy.deepcopy(v)) for k, v in self.submissions.items() if k.startswith(thread_id + ':')]
+            updated, result = management_mutate(rows, body, self._goal_activation_ids(thread_id), scope=[self.host, thread_id, identity])
+            keys = [k for k in self.submissions if k.startswith(thread_id + ':')]
+            values = iter((thread_id + ':' + k, v) for k, v in updated)
+            previous = self.submissions
+            self.submissions = dict(next(values) if k in keys else (k, v) for k, v in previous.items())
+            try:
+                self._save_ledger()
+            except Exception:
+                self.submissions = previous
+                raise
+            result.update(management_snapshot(updated, hidden=self._goal_activation_ids(thread_id), scope=[self.host, thread_id, identity]))
+            result['draftAccountIdentity'] = identity
+        with session.condition:
+            session.changed()
+        return result
+
     def cancel_queued(self, thread_id, submission_id):
         uuid.UUID(submission_id)
         session = self.session(thread_id, attach=False)
@@ -2612,9 +2893,9 @@ class Bridge:
             with session.condition:
                 active = (session.state or {}).get("threadRuntimeStatus", {}).get("type") == "active"
                 if active and mode == "send":
-                    raise ValueError("Codex 正在执行。请选择「排队发送」或「补充当前任务」。")
+                    raise SubmissionRejected("Codex 正在执行。请选择「排队发送」或「补充当前任务」。")
                 if not active and mode == "steer":
-                    raise ValueError("当前任务已经结束，请使用普通发送")
+                    raise SubmissionRejected("当前任务已经结束，请使用普通发送")
                 if work_mode is not None and not (session.state.get("latestModel") or
                         (session.state.get("latestCollaborationMode") or {}).get("settings", {}).get("model")):
                     raise ValueError("尚未取得模型设置，请重新连接后再切换模式")
@@ -2653,8 +2934,10 @@ class Bridge:
                     return
             with self.goal_lock:
                 with self.submit_lock:
-                    if self.submissions[key]["status"] != "queued":
+                    queued = [(k, v) for k, v in self.submissions.items() if k.startswith(session.id + ':') and v.get('status') == 'queued']
+                    if not queued or queued[0][0] != key:
                         return
+                    entry = copy.deepcopy(queued[0][1])
                     activation = entry.get("goalActivation")
                     cancelled = False
                     if activation:
@@ -2833,6 +3116,8 @@ class Bridge:
         self.side_chats.close()
         if self.cli_access:
             self.cli_access.close()
+        if getattr(self, 'wsl_accounts', None):
+            self.wsl_accounts.close()
         self.closed.set()
         if hasattr(self.catalog_reader, 'stop_model_refresh'):
             self.catalog_reader.stop_model_refresh()
@@ -2840,6 +3125,8 @@ class Bridge:
             for timer in self.native_model_timers.values():
                 timer.cancel()
             self.native_model_timers.clear()
+        if self.entries is not None:
+            self.entries.close()
         if self.host == "local" and self.accounts:
             self.accounts.login_cancel.set()
             with self.accounts.lock:

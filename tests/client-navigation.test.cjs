@@ -410,3 +410,17 @@ test('list entry acknowledges only the displayed provider snapshot, once per vis
  assert.equal(calls.length,1);assert.equal(calls[0].body.provider,'claude');assert.equal(calls[0].body.through,12);
  await nav.choose('deepseek');nav.acknowledgeList('deepseek',value);assert.equal(calls.length,2);
 });
+
+test('Claude WSL entries stay under Claude and can be enabled independently of native access',()=>{
+ const {nav}=fixture(),id='wsl-claude:'+'a'.repeat(32);
+ nav.clients=[{id:'claude',name:'Claude',enabled:true,nativeEnabled:false,entries:[{id,enabled:true,kind:'wsl-claude-cli',name:'WSL Claude Code'}]}];
+ const rows=nav.managementClients();assert.equal(rows.length,2);assert.equal(rows[0].enabled,false);assert.equal(rows[1].parentId,'claude');
+ nav.clients=nav.withClientEnabled('claude',true);assert.equal(nav.clients[0].nativeEnabled,true);assert.equal(nav.clients[0].entries[0].enabled,true);
+ nav.clients=nav.withClientEnabled(id,false);assert.equal(nav.clients[0].enabled,true);assert.equal(nav.clients[0].entries[0].enabled,false);
+ nav.clients=nav.withClientEnabled('claude',false);assert.equal(nav.clients[0].enabled,false);
+});
+
+
+test('Claude WSL management uses the packaged Claude icon',()=>{
+ const {nav,document}=fixture();document.createElement=tag=>({tag,setAttribute(){},append(child){this.child=child;}});const icon=nav.icon('wsl-claude:'+'a'.repeat(32));assert.equal(icon.child.src,'/client-icons/claude.png');
+});

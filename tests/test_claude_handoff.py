@@ -62,6 +62,25 @@ class ClaudeHandoff(unittest.IsolatedAsyncioTestCase):
         self.desktop.close()
         self.assertEqual(self.request(), acknowledgement)
 
+    async def test_known_workspace_trust_rejection_is_acknowledged_without_hiding_unknown_errors(self):
+        self.reply(seq=0, surfaces={'code': ['start', 'mobileFork']})
+        call = asyncio.create_task(self.desktop.call('code', 'start', {}, timeout=1))
+        request = await self.wait_request('request')
+        self.reply(seq=request['seq'], done=True,
+                   error="Error invoking remote method '$eipc_message$_5c55def3-2e9e-44fa-af10-a18b58800855_$_claude.web_$_LocalSessions_$_start': WorkspaceTrustError: Workspace requires trust approval before starting a session. [ccdErrorCategory:trust_required]")
+        with self.assertRaisesRegex(BridgeUnavailable, 'requires trust'):
+            await call
+        self.assertEqual(self.desktop.unconfirmed_mutations, set())
+        self.assertEqual(self.request()['type'], 'idle')
+        self.reply(seq=request['seq'], surfaces={'code': ['start', 'mobileFork']})
+        call = asyncio.create_task(self.desktop.call('code', 'mobileFork', 'parent', {}, timeout=1))
+        request = await self.wait_request('request')
+        self.reply(seq=request['seq'], done=True,
+                   error='Workspace requires trust approval before starting a session.')
+        with self.assertRaises(BridgeUnavailable):
+            await call
+        self.assertEqual(self.desktop.unconfirmed_mutations, {request['seq']})
+
     async def test_uncertain_mutation_blocks_handoff_and_keeps_request(self):
         with self.assertRaisesRegex(BridgeUnavailable, '响应超时'):
             await self.desktop.call('code', 'sendMessage', 'session', 'text', timeout=.03)

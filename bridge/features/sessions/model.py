@@ -7,6 +7,7 @@ from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
 import ntpath
 from bridge.features.sessions.tool_images import extract_tool_images
+from bridge.features.sessions.store import items_array, native_file_changes, native_turn_file_changes, native_patch_counts
 
 
 
@@ -66,17 +67,6 @@ def text_content(content):
     if isinstance(content, list):
         return "\n".join(str(x.get("text", "")) for x in content if isinstance(x, dict) and x.get("type") in ("text", "input_text", "output_text", "inputText"))
     return ""
-
-
-def items_array(items):
-    if isinstance(items, list):
-        return items
-    if isinstance(items, dict):
-        entities = items.get("entitiesByKey", {})
-        if entities:
-            return [entities[e["value"]] for island in items.get("islands", []) for e in island.get("entries", []) if e.get("value") in entities]
-        return list(items.get("items", []))
-    return []
 
 
 def request_id(item):
@@ -198,8 +188,8 @@ def normalize_item(item, *, image_cache=None):
         row.update(role="activity", title="思考摘要", text="\n".join(item.get("summary", [])))
     elif kind == "commandExecution":
         row.update(role="activity", title="执行命令", text=item.get("command", ""), output=item.get("aggregatedOutput", ""), exitCode=item.get("exitCode"))
-    elif kind == "fileChange":
-        row.update(role="activity", title="文件变更", text="\n\n".join(str(c.get("path", "")) + "\n" + str(c.get("diff", "")) for c in item.get("changes", [])))
+    elif kind in ("fileChange", "FileChange"):
+        row.update(role="activity", title="文件变更", text="\n\n".join(c["path"] + "\n" + c["diff"] for c in native_file_changes([item])))
     elif kind in ("mcpToolCall", "dynamicToolCall"):
         extract = image_cache.extract if image_cache is not None else extract_tool_images
         source = item.get("result", item.get("contentItems", item.get("content", item.get("error", ""))))
@@ -275,6 +265,11 @@ def normalize_state(state, connected=True, *, image_cache=None, item_limit=None)
         if skip >= len(items) and skip:
             skip -= len(items)
             continue
+        pagination = turn.get('itemsPagination') or {}
+        items_complete = turn.get('_itemsComplete', True) and pagination.get('hasLoadedOldest', True)
+        if isinstance(turn.get('items'), dict):
+            items_complete = items_complete and turn['items'].get('isComplete', True)
+        authoritative_diff = isinstance(turn.get('diff'), str) and turn['diff'].startswith('diff --git ')
         omitted = skip
         skip = 0
         occurrences = {}
@@ -340,7 +335,11 @@ def normalize_state(state, connected=True, *, image_cache=None, item_limit=None)
         result.append({"model": model, "effort": effort, "id": turn.get("turnId") or str(ordinal), "status": turn.get("status"),
                        "startedAt": turn.get("turnStartedAtMs"), "messages": messages,
                        "actionable": bool(turn.get("turnId")) and turn.get("turnId") != "history",
-                       "error": turn.get("error"), "diff": turn.get("diff")})
+                       "error": turn.get("error"), "diff": turn.get("diff"),
+                       # A partial turn cannot establish complete totals. Defer its footer
+                       # until backfill includes the whole turn; never scan omitted patches.
+                       "fileChanges": native_turn_file_changes(turn) if '_nativeFileChanges' in turn or (not omitted and (items_complete or authoritative_diff)) else [],
+                       "fileChangesBasis": turn.get('_nativeFileChangesBasis') or ('net' if isinstance(turn.get('diff'), str) and turn['diff'].startswith('diff --git ') else 'recorded')})
     history = state.get("turnHistory", {}).get("history", {})
     settings = state.get('latestThreadSettings') or {}
     tier = settings if 'serviceTier' in settings else (turns[-1].get('params') or {}) if turns else {}

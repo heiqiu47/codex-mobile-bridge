@@ -1,5 +1,6 @@
 """Read-only discovery and history for existing Codex chats."""
 import copy
+import re
 import os
 import threading
 from collections import OrderedDict
@@ -12,17 +13,162 @@ from contextlib import closing, contextmanager, ExitStack
 from pathlib import Path
 
 
+def items_array(items):
+    if isinstance(items, list):
+        return items
+    if isinstance(items, dict):
+        entities = items.get("entitiesByKey", {})
+        if entities:
+            return [entities[e["value"]] for island in items.get("islands", []) for e in island.get("entries", []) if e.get("value") in entities]
+        return list(items.get("items", []))
+    return []
+
+
+def native_patch_counts(diff):
+    """File headers are metadata only before a hunk; hunk text can start +++/---."""
+    added = removed = 0
+    in_hunk = False
+    unified = diff.startswith(('diff --git ', '--- ', '+++ '))
+    for line in diff.splitlines():
+        if line.startswith('@@'):
+            in_hunk = True
+            continue
+        if line.startswith('diff --git '):
+            in_hunk = False
+            unified = True
+            continue
+        if unified and not in_hunk:
+            continue
+        added += line.startswith('+')
+        removed += line.startswith('-')
+    return added, removed
+
+
+def native_file_changes(items):
+    """Keep native patch evidence separate from tool prose and workspace state."""
+    files, seen = {}, set()
+    for item in items:
+        if item.get('type') not in ('fileChange', 'FileChange') or item.get('status') in ('failed', 'declined', 'inProgress'):
+            continue
+        identity = item.get('id')
+        if identity and identity in seen:
+            continue
+        if identity:
+            seen.add(identity)
+        changes = item.get('changes') or []
+        if isinstance(changes, dict):
+            changes = [dict(change, path=path) for path, change in changes.items() if isinstance(change, dict)]
+        for change in changes:
+            if not isinstance(change, dict) or not isinstance(change.get('path'), str):
+                continue
+            diff = change.get('diff', change.get('unified_diff', ''))
+            content_diff = not diff and change.get('type') in ('add', 'delete') and isinstance(change.get('content'), str)
+            if content_diff:
+                prefix = '+' if change['type'] == 'add' else '-'
+                diff = '\n'.join(prefix + line for line in change['content'].splitlines())
+            if not isinstance(diff, str):
+                continue
+            path = change['path']
+            entry = files.setdefault(path, {'path': path, 'added': 0, 'removed': 0, 'diff': ''})
+            if content_diff:
+                lines = len(change['content'].splitlines())
+                added, removed = (lines, 0) if change['type'] == 'add' else (0, lines)
+            else:
+                added, removed = native_patch_counts(diff)
+            entry['added'] += added
+            entry['removed'] += removed
+            entry['diff'] += ('\n' if entry['diff'] else '') + diff
+    return list(files.values())
+
+
+def native_turn_file_changes(turn):
+    if '_nativeFileChanges' in turn:
+        return turn['_nativeFileChanges']
+    diff = turn.get('diff')
+    if isinstance(diff, str) and diff.startswith('diff --git '):
+        changes = []
+        for section in re.split(r'(?=^diff --git )', diff, flags=re.MULTILINE):
+            if not section:
+                continue
+            target = re.search(r'^\+\+\+ (.+)$', section, re.MULTILINE)
+            original = re.search(r'^--- (.+)$', section, re.MULTILINE)
+            path = target.group(1) if target and target.group(1) != '/dev/null' else original.group(1) if original else None
+            if not path:
+                renamed = re.search(r'^rename to (.+)$', section, re.MULTILINE)
+                path = renamed.group(1) if renamed else None
+            if path and path.startswith('"'):
+                try:
+                    path = json.loads(path)
+                except ValueError:
+                    continue
+            if path:
+                changes.append({'path': path[2:] if path.startswith(('a/', 'b/')) else path, 'diff': section})
+        if changes:
+            return native_file_changes([{'type': 'fileChange', 'changes': changes}])
+    return native_file_changes(items_array(turn.get('items', [])))
+
+
 class StoreUnavailable(RuntimeError):
     pass
 
 
 class SessionStore:
     DESKTOP_ORIGINATORS = ('Codex Desktop', 'codex_work_desktop', 'codex_mobile_bridge')
+    CLI_ORIGINATORS = ('codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli',
+                       'codex_mobile_bridge_wsl', 'codex_mobile_bridge')
 
-    def __init__(self, codex_home):
+    def __init__(self, codex_home, source='all'):
+        if source not in ('all', 'desktop', 'cli'):
+            raise ValueError('未知会话来源')
+        self.source = source
         self.home = Path(codex_home).resolve()
         self.history_cache = OrderedDict()
         self.history_lock = threading.Lock()
+        self.cli_inputs_lock = threading.Lock()
+        self.cli_inputs_cache = None
+
+    def _cli_inputs(self, query=''):
+        """CLI resume labels/search, without changing saved titles or ownership."""
+        if self.source != 'cli': return {}, set()
+        path = self.home/'history.jsonl'
+        try:
+            st = path.stat()
+            signature = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, query)
+        except OSError:
+            return {}, set()
+        with self.cli_inputs_lock:
+            if self.cli_inputs_cache and self.cli_inputs_cache[0] == signature:
+                return self.cli_inputs_cache[1:]
+            latest, matches = {}, set()
+            needle = query.casefold()
+            try:
+                with path.open(encoding='utf-8', errors='replace') as stream:
+                    for line in stream:
+                        try: record = json.loads(line)
+                        except ValueError: continue
+                        if not isinstance(record, dict): continue
+                        identifier, text = record.get('session_id'), record.get('text')
+                        if not isinstance(identifier, str) or not isinstance(text, str) or not text.strip(): continue
+                        latest[identifier] = ' '.join(text.split())[:200]
+                        if needle and needle in text.casefold(): matches.add(identifier)
+            except OSError:
+                return {}, set()
+            self.cli_inputs_cache = (signature, latest, matches)
+            return latest, matches
+
+    def _owner_filter(self, columns):
+        if self.source == 'all':
+            return self._user_origin_filter(columns)
+        return self._source_filter(columns, self.source)
+
+    def _matches(self, row):
+        origin = self._origin(row)
+        if self.source == 'all':
+            return origin in ('desktop', 'cli')
+        if self.source == 'cli':
+            return (row.get('originator') in self.CLI_ORIGINATORS or
+                    (row.get('originator') is None and row.get('source') == 'cli'))
+        return origin == 'desktop'
 
     @contextmanager
     def _connect(self):
@@ -66,12 +212,16 @@ class SessionStore:
     def list(self, query="", limit=100, offset=0, archived=False, source='all'):
         if source not in ('all', 'desktop', 'cli'):
             raise ValueError('不支持的会话来源')
+        labels, matches = self._cli_inputs(query)
         with self._connect() as conn:
             columns = {r[1] for r in conn.execute("PRAGMA table_info(threads)")}
             fields = [name for name in ("id", "name", "title", "cwd", "updated_at", "updated_at_ms", "recency_at", "recency_at_ms", "model_provider", "model", "originator", "source", "archived", "is_pinned") if name in columns]
             where = ["archived = ?"]
             params = [int(archived)]
             where.append(self._user_origin_filter(columns))
+            # The selected source narrows the otherwise shared user inventory.
+            if self.source != 'all':
+                where[-1] = self._owner_filter(columns)
             if "thread_source" in columns:
                 where.append("COALESCE(thread_source, '') != 'subagent'")
             if "source" in columns:
@@ -80,17 +230,30 @@ class SessionStore:
                 where.append(self._source_filter(columns, source))
             if query:
                 search_fields = [name for name in ("name", "title", "cwd") if name in columns]
-                where.append("(" + " OR ".join(name + " LIKE ?" for name in search_fields) + ")")
+                # History can contain many matching IDs; a read-only function
+                # avoids SQLite's placeholder limit, before sorting/pagination.
+                conn.create_function('bridge_cli_input_match', 1, lambda identifier: identifier in matches)
+                where.append("(" + " OR ".join([name + " LIKE ?" for name in search_fields] + ['bridge_cli_input_match(id)']) + ")")
                 params += ["%" + query + "%"] * len(search_fields)
             recency = "COALESCE(recency_at_ms, recency_at * 1000, updated_at * 1000)" if "recency_at_ms" in columns else "COALESCE(recency_at, updated_at)" if "recency_at" in columns else "updated_at"
             rows = conn.execute("SELECT " + ",".join(fields) + " FROM threads WHERE " + " AND ".join(where) + " ORDER BY " + recency + " DESC, id DESC LIMIT ? OFFSET ?", params + [limit, offset]).fetchall()
-            return [dict(row, origin=self._origin(dict(row))) for row in rows]
+            result = []
+            for row in rows:
+                item = dict(row)
+                origin = self._origin(item)
+                if self.source == 'cli' and self._matches(item):
+                    origin = 'cli'
+                item['origin'] = origin
+                if self.source == 'cli':
+                    item['display_title'] = item.get('name') or labels.get(item['id']) or item.get('title')
+                result.append(item)
+            return result
 
     def available_sources(self):
         """Original sources across the complete visible inventory, independent of list filters."""
         with self._connect() as conn:
             columns = {r[1] for r in conn.execute("PRAGMA table_info(threads)")}
-            where = [self._user_origin_filter(columns)]
+            where = [self._owner_filter(columns)]
             if 'thread_source' in columns:
                 where.append("COALESCE(thread_source, '') != 'subagent'")
             if 'source' in columns:
@@ -101,20 +264,21 @@ class SessionStore:
             rows = conn.execute('SELECT DISTINCT ' + ','.join(fields) + ' FROM threads WHERE ' + ' AND '.join(where)).fetchall()
             return sorted({self._origin(dict(row)) for row in rows})
 
-    @staticmethod
-    def _source_filter(columns, source):
+    def _source_filter(self, columns, source):
         if source == 'desktop':
             originators = "originator IN ('Codex Desktop', 'codex_work_desktop', 'codex_mobile_bridge')" if 'originator' in columns else '0'
             legacy = "(originator IS NULL AND source = 'vscode')" if 'originator' in columns and 'source' in columns else "source = 'vscode'" if 'source' in columns else '0'
             return '(' + originators + ' OR ' + legacy + ')'
-        originators = "originator IN ('codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli')" if 'originator' in columns else '0'
+        origins = self.CLI_ORIGINATORS if self.source == 'cli' else tuple(
+            origin for origin in self.CLI_ORIGINATORS if origin != 'codex_mobile_bridge')
+        originators = 'originator IN (' + ','.join(repr(origin) for origin in origins) + ')' if 'originator' in columns else '0'
         legacy = "(originator IS NULL AND source = 'cli')" if 'originator' in columns and 'source' in columns else "source = 'cli'" if 'source' in columns else '0'
         return '(' + originators + ' OR ' + legacy + ')'
 
     @staticmethod
     def _user_origin_filter(columns):
         if 'originator' in columns:
-            recognized = "originator IN ('Codex Desktop', 'codex_work_desktop', 'codex_mobile_bridge', 'codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli')"
+            recognized = "originator IN ('Codex Desktop', 'codex_work_desktop', 'codex_mobile_bridge', 'codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli', 'codex_mobile_bridge_wsl')"
             if 'source' in columns:
                 return '(' + recognized + " OR (originator IS NULL AND source IN ('vscode', 'cli')))"
             return recognized
@@ -126,7 +290,7 @@ class SessionStore:
             return 'subagent'
         if row.get('originator') in cls.DESKTOP_ORIGINATORS or (row.get('originator') is None and row.get('source') == 'vscode'):
             return 'desktop'
-        if row.get('originator') in ('codex-tui', 'codex_cli_rs', 'codex-mobile-bridge-cli') or (row.get('originator') is None and row.get('source') == 'cli'):
+        if row.get('originator') in cls.CLI_ORIGINATORS or (row.get('originator') is None and row.get('source') == 'cli'):
             return 'cli'
         return 'other'
 
@@ -138,6 +302,8 @@ class SessionStore:
                       for name in ('updated_at', 'updated_at_ms', 'recency_at', 'recency_at_ms') if name in columns]
             clock = 'MAX(' + ','.join('COALESCE(' + c + ',0)' for c in clocks) + ',0)'
             owner = self._user_origin_filter(columns)
+            if self.source != 'all':
+                owner = self._owner_filter(columns)
             filters = [owner, clock + ' >= ?']
             if 'thread_source' in columns:
                 filters.append("COALESCE(thread_source, '') != 'subagent'")
@@ -152,21 +318,24 @@ class SessionStore:
             columns = {r[1] for r in conn.execute('PRAGMA table_info(threads)')}
             fields = [name for name in ('id', 'originator', 'source') if name in columns]
             rows = [dict(row) for row in conn.execute('SELECT ' + ','.join(fields) + ' FROM threads')]
-        desktop = {row['id'] for row in rows if 'originator' not in columns
-                   or row.get('originator') in ('Codex Desktop', 'codex_work_desktop', 'codex_mobile_bridge')
-                   or (row.get('originator') is None and row.get('source') == 'vscode')}
+        if self.source == 'all':
+            roots = {row['id'] for row in rows if
+                     ('originator' not in columns and row.get('source') != 'cli') or
+                     self._origin(row) == 'desktop'}
+        else:
+            roots = {row['id'] for row in rows if self._matches(row)}
         children = {}
         for row in rows:
             parent = self._agent_source(row).get('parent_thread_id')
             if isinstance(parent, str):
                 children.setdefault(parent, []).append(row['id'])
-        pending = list(desktop)
+        pending = list(roots)
         while pending:
             for child in children.get(pending.pop(), []):
-                if child not in desktop:
-                    desktop.add(child)
+                if child not in roots:
+                    roots.add(child)
                     pending.append(child)
-        return [{'id': identifier} for identifier in sorted(desktop)]
+        return [{'id': identifier} for identifier in sorted(roots)]
 
     def recencies(self, identifiers):
         if not identifiers:
@@ -186,6 +355,12 @@ class SessionStore:
             origin = self._origin(result)
             if origin not in ('desktop', 'cli'):
                 raise KeyError("不是可访问的 Codex 会话")
+            if not self._matches(result):
+                raise KeyError("不是可访问的 Codex 会话")
+            if self.source == 'cli':
+                origin = 'cli'
+                labels, _ = self._cli_inputs()
+                result['display_title'] = result.get('name') or labels.get(thread_id) or result.get('title')
             result['origin'] = origin
             return result
 
@@ -334,6 +509,7 @@ class SessionStore:
                         turns[row['turn_id']] = {'turnId': row['turn_id'], 'status': header['status'],
                                                 'turnStartedAtMs': header['started_at'],
                                                 '_firstUserItemId': header['first_user_item_id'],
+                                                '_itemsComplete': not (more and row['turn_id'] == rows[item_limit]['turn_id']),
                                                 'error': json.loads(header['error_json']) if header['error_json'] else None,
                                                 'items': []}
                     item = json.loads(row['item_json'])
@@ -456,6 +632,8 @@ class SessionStore:
                         turns.append(current)
                         items = current["items"]
                     items.append({"id": item.get("id", str(len(items))), "type": "ImageView", "path": item.get("path", "")})
+                elif isinstance(item, dict) and item.get("type") in ("FileChange", "fileChange") and current is not None:
+                    items.append({**item, "type": "fileChange", "status": item.get("status", "completed")})
             elif record.get("type") == "response_item":
                 if current is None:
                     current = {"turnId": "history", "status": "completed", "items": []}
@@ -471,6 +649,11 @@ class SessionStore:
                     items.append({"id": payload.get("id", str(len(items))), "type": "agentMessage", "text": payload.get("text", "")})
                 elif payload.get("type") in ("function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output"):
                     items.append({"id": payload.get("call_id", str(len(items))), "type": "storedToolEvent", **payload})
+        # Rollout parsing already visited these records. Retain the native patch
+        # projection once so a later bounded item window need not reopen bodies.
+        for turn in turns:
+            turn['_nativeFileChanges'] = native_turn_file_changes(turn)
+            turn['_nativeFileChangesBasis'] = 'recorded'
         result = {"id": thread_id, "title": meta.get("name") or meta.get("title"), "cwd": meta["cwd"],
                 "latestModel": meta.get('model') or next((t['params']['model'] for t in reversed(turns) if (t.get('params') or {}).get('model')), None),
                 "latestReasoningEffort": next((t['params']['effort'] for t in reversed(turns) if (t.get('params') or {}).get('effort')), None),

@@ -1,3 +1,126 @@
+<a id="v215"></a>
+
+# v2.1.5 发布验证
+
+发布标签 `v2.1.5` 指向 `3e90c8d`，基于已验收候选 `1006a4e`。桌面与手机统一为 **2.1.5**，Android/iOS 构建号 **38**。PR #64 的 8 个原始提交与 PR #70 的 `d62002b` 均保留在历史中。版本整理后的修订仅修正测试夹具：真实 registry 路径、UTF-8 重读、SQLite 连接关闭及超时时钟隔离，未改变产品行为或放宽断言。
+
+| 检查 | 结果与范围 |
+| --- | --- |
+| 标签完整 CI | [40205704693](https://github.com/try2love/codex-mobile-bridge/actions/runs/40205704693) 的 7 项检查全部通过：Windows / Ubuntu Python 3.9、3.13，macOS Python 3.13，前端及移动更新检查。后端共 2556 项，按平台保留已有原生夹具跳过；跳过不计为原生验收通过 |
+| 本地前端与更新器 | 前端 1146 项：1145 通过、1 跳过；更新器 33 项：32 通过、1 跳过。原生移动发布及下载、恢复检查通过 |
+| Android | 正式包 2.1.5/build38，应用标识和签名与 v2.1.4 一致。专用 Android 35 模拟器完成 2.1.4 → 2.1.5 → 2.1.4 覆盖与回退，未卸载或重置；电脑列表、设置、绑定凭据与原生/WebView 可信认证保留 |
+| iOS | 正式主 App 与两个扩展标识均为 2.1.5/build38；官方 CI 未签名 IPA 的共享脚本与标签一致，源码 ZIP 的 49 个文件与 Git 跟踪内容逐一一致。专用 iOS 18.2 模拟器完成 2.1.4 → 2.1.5 → 2.1.4，电脑列表、设置及原生/WebView 可信认证保留。首轮夹具 cookie 基线变化已在旧版上复现，修正基线后复验；不将模拟器声明为本轮手机真机安装验收 |
+| 更新与安装身份 | 桌面、Android、iOS 正式标识和桌面更新验签公钥保持。Windows 包含独立 ConPTY 组件，不替换系统组件；Android 沿用正式签名，iOS 仍需用户以原标识和签名自行覆盖安装 |
+| 布局与 WSL 边界 | 最新 WSL 弹窗已在真实 macOS WKWebView 与 Chromium 的窄宽屏检查中通过，并核验 Windows Test 实际样式；不将 WKWebView 等同于 iPhone 真机。WSL 账号管理仍为实验性，隔离假 API 与配置恢复不代表真实备用账号全流程通过 |
+
+正式包的五种桌面架构构建、安装启动、认证配对及更新恢复检查记录在[官方产物工作流](https://github.com/try2love/codex-mobile-bridge/actions/runs/40205704812)。正式产物的跨版本升级、回滚、原手机绑定复用以及最终资产核验结果见 [v2.1.5 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.5)；工作流和隔离验收全部通过后才公开 Release。
+
+升级验证使用正式包的隔离副本，不覆盖日常正式版或 Test 的账号、配置、绑定和草稿。Windows 本机临时文件与验收副本限定 F 盘；运行中被系统锁定的草稿存储不强行读取或关闭程序，不将未能读取的文件声明为已做字节比较。没有为了验收发送真实聊天消息或调用模型。
+
+**English:** v2.1.5 targets `3e90c8d`, retaining the original PR64/70 commits, official application identifiers and update-signing key. All seven tag CI checks passed; frontend/updater regressions retain their documented skips. Official Android signing is unchanged. Dedicated Android 35 and iOS 18.2 simulators passed 2.1.4 → 2.1.5 → 2.1.4 with settings and native/WebView trusted authentication retained. The official unsigned iOS artifact uses all three production identifiers; shared scripts and the 49-file source archive match the tag. This is not a new real-phone installation claim. See the linked build workflow and release page for official desktop artifacts, isolated cross-version upgrade/rollback and final asset verification; publication requires those gates to pass. Daily apps and data are not replaced, and Windows local temporary data stays on F:. Experimental WSL account tests do not establish real multi-account compatibility.
+
+---
+
+<a id="v215-pr70-integration"></a>
+
+# v2.1.5 PR #70 与文件变更摘要整合（2026-10-25，本地 Test）
+
+分支 `fix/v2.1.5-pr70-integration`，最终产品提交 `e0e087a`。通过 merge 保留 PR #70 作者 lanchengjiu 的原始提交 `d62002b`，UNC、发送竞态与混版网页修订分别提交；未推送 GitHub。内部版本仍为 2.1.4，不代表正式发布。
+
+- PR #70 的发送修复恢复持久化草稿保护引入回归之前的体验：网关明确确认未提交后，保留输入并允许切换为排队或补充。断网、其他错误和结果未知继续保留提交 ID，不自动重放。逐次登记同一提交的发送尝试，迟到拒绝不会移除其他标签页仍在途或结果未知的尝试；仍开着的旧版网页后来写入的未确认记录也不能被忽略。协调不可用时保守保留已有记录，新的私有请求仍可在明确拒绝后改方式。
+- Windows 项目比较补齐盘符、UNC 和扩展路径的分隔符与大小写处理；纯 `//` 路径由执行目标的平台消除歧义，单斜杠 POSIX 路径仍区分大小写。SSH 不依据网关操作系统猜测目标，保留原始 cwd、host 与原生项目成员关系。
+- “已编辑文件”卡片仅展示文件路径及新增/删除行数，展开不请求补丁正文；125 个文件完整列出，旧缓存卡片也不重新拉取补丁。原工具过程正文仍可按需查看；累计修改与原生净差异继续区分。
+
+| 检查 | 结果与边界 |
+| --- | --- |
+| 最终前端回归 | 1026 项：1025 通过、1 跳过。46 项发送/草稿定向检查覆盖明确拒绝、双标签页迟到回包、混版网页、存储不可用、账号/会话隔离、引用及后续草稿保护 |
+| 后端与编译模块 | 最终后端代码 155 项：153 通过、2 Windows 专属跳过，使用 Mac 打包编译模块和隔离本地 IPC/HTTP 夹具。末次仅修订网页脚本，154 个 Bridge 编译模块与已验收候选逐一相同，无需重复编译 |
+| 真实 Chromium | 文件摘要在 390/1440px 共 24 项；草稿真实 handler 与合成请求 24 项；最终脚本的双同源文档 10 项、两个真实顶层标签页 4 项、混版页面 7 项通过。没有发送真实聊天消息或调用模型；不将浏览器夹具计为手机真机或真实忙碌任务验收 |
+| Mac Test | 最终候选覆盖安装并自动启动 8788；366 个包内网页文件与归档一致，8 个实际 HTTP 资源匹配、7 个条件缓存 304。复用固定开发证书，本轮覆盖后无人工钥匙串授权。正式版文件/进程、原生客户端进程、原配置、网络凭据及原手机绑定保护检查通过 |
+| Windows Test | 最终安装 713 项文件逐一匹配；实际安装编译模块 138 项：137 通过、1 跳过，发送相关 Node 46 项与 WSL/Claude 包内检查通过。GUI 可见且无横向溢出，原用户会话启动 8788，实例归属正确；8 个实际版本化资源及 304 通过。正式版/WSL Test、配置与有效绑定、7 个原生 DSH 进程身份保持 |
+| Ubuntu Test | 用户安装后，723 项安装文件逐一匹配 DEB，dpkg 状态正常；59 项包内编译模块回归、Node 草稿/发送/引用、smoke/项目检查通过。原普通图形会话启动 GUI 与 8788 网关，健康实例归属正确；8 个实际版本化资源哈希及 304 通过，最终草稿模块包含在实际资源中。正式版、自启动、账号配置、原手机绑定和 1 个原生 Codex 进程保持，Cloudflare 启用数仍为 0；未做远程 GUI 截图视觉验收 |
+
+三台 Test 使用相同最终已提交源码归档；Mac/Windows 的最后一次网页修订在核对原生输入不变后复用已验收编译组件。Windows 临时文件与构建产物限定 F 盘，Windows/Ubuntu 重型构建串行。Mac 清理约 1.71 GiB、Windows 清理约 2.15 GiB 逻辑大小的本轮重复产物；Ubuntu 清理本轮重复源码、解包与临时目录。三端均保留最终安装或安装包、最终源码归档、本轮之前的一个 `c0cc4a2` 回滚副本及必要记录；清理后再次核验运行与保留状态。附加的原固定 HTTPS 地址只读静态请求返回 Cloudflare HTTP 403，尚未确认原因，因此不声称此次公网入口验收通过；没有修改该入口或放宽访问控制。记录位于忽略目录 `.tmp/v215-pr70-integration/` 与 `.tmp/v215-pr70-20261025/`。
+
+**English:** PR #70 retains its author's original commit. The send-mode change restores behavior regressed by durable draft protection: only a definitive pre-submission rejection releases the corresponding attempts. Unknown delivery, concurrent tabs, older open pages and later draft edits stay protected. UNC comparisons preserve target-host semantics and original paths. Edited-file cards now expose paths and line counts without downloading patches. Final frontend and real-browser synthetic checks passed. Mac, Windows and Ubuntu Test are installed and running; installed files, live assets, configuration and bindings were verified. Ubuntu GUI process startup is not screenshot-based visual acceptance. Redundant build outputs were removed while retaining final artifacts and one pre-round rollback per platform. A supplemental public HTTPS probe returned Cloudflare 403; LAN acceptance passed and the existing network configuration was preserved. No GitHub publication or real model request occurred.
+
+---
+
+# v2.1.5 文件变更摘要（2026-10-25，本地源码）
+
+按用户验收反馈，文件变更卡片收敛为文件路径和新增/删除行数。展开只显示已有清单，不再读取或展示补丁正文；超过 50 个文件也保留完整清单。分页卡片、详情以及旧状态响应中的文件变更 metadata 均不再携带补丁；原工具过程正文、原生会话与源文件保持原样。原生净差异与“累计修改”的统计来源区分保留。
+
+定向验证：后端时间线 22 项与公共投影 25 项通过；前端分页、消息详情与资源 9 项通过。真实 Chromium 使用生产资源及合成数据执行窄屏/宽屏文件卡片各 12 项，原时间线、可见性和缓存 43 项通过。展开、收起、再次展开及统计更新没有发起补丁详情请求；125 文件全列、巨大补丁不进入卡片、普通正文详情继续可读。单个异常大的路径清单沿用原有单行可达规则，未增加新的文件列表分页协议。
+
+本次仅修改本地源码，未重新编译或覆盖三台 Test；先前 c0cc4a2 的安装验收不能算本次摘要改动的实机验收。正式版、配置、账号与绑定未改。验收记录：`.tmp/v215-file-summary-pr70/`；未推送 GitHub。
+
+**English:** Edited-file cards now show paths and added/removed line counts only. Expanding a card never downloads a patch, including cards restored from older cache metadata. Timeline cards and public file-change metadata exclude patch bodies; original tool output and native state remain intact. Focused backend and frontend regressions plus 390/1440 px Chromium checks passed using synthetic data. This source-only revision has not been rebuilt or installed on the Test gateways.
+
+---
+
+<a id="v215-lifecycle-output"></a>
+
+# v2.1.5 生命周期、文件卡片与手机重连修订（2026-10-25，本地候选）
+
+**修订与复验：** 用户在 iPhone 实测否定了 `4927458` 的引用位置和文件卡片结果，首版简化夹具的通过不算这两项实机通过。后续提交 `c0cc4a2` 修复实际输入区换行和 native/saved 分页合并中的遗漏；安装后已在真实 Mac 8788 会话页面复验引用布局和原回复的 9 文件卡片，Windows/Ubuntu 更新恢复推进。手机真机仍待用户复测。
+
+分支 `fix/v2.1.5-lifecycle-output-regressions`，产品提交由 `4927458` 修订至 `c0cc4a2`，基于上一轮已验收的项目、WSL 与会话交互候选；没有推送 GitHub。内部版本仍为 2.1.4，不代表发布。
+
+- 宽屏引用按钮跟随上下文用量；窄屏使用工具栏后的紧凑独立行，不再让原有按钮折行。按输入区域实际宽度切换，分屏和窗口缩放时保留选区与草稿。折叠引用只显示一行省略预览，展开和原草稿保留。
+- Codex 原生 `FileChange` 历史生成完成回合的文件变更卡片，隐藏执行过程时仍可见。原生净差异优先；只有逐次补丁记录时明确标注“累计修改”，不冒充 Desktop 的最终净增删数。分页边界没有完整回合时不生成局部总计；详情继续按需分段读取。只读核对用户截图对应回合的 9 个文件，没有发送消息或调用模型。
+- DSH 迁移补齐上一版已验证接入脚本的 LF/CRLF 指纹，保留归属及配置核验。Mac 强制退出后不再为已空进程集合调用 `ps`。Linux 单独处理 SSH 父进程不可读取可执行路径的情况，保留祖先进程保护和目标 UID、可执行文件、出生时间、pidfd 的严格核验。
+- Android 已匹配的现有登录绑定直接进入网页，不再等待后台串行网络队列；身份不匹配的恢复仍经服务器核验。Android/iOS 初始文档加载设有有限等待与重试入口，提交文档后让网页接管加载状态；不重放聊天写入。
+
+| 检查 | 证据与边界 |
+| --- | --- |
+| 完整本地回归 | 后端 2370 项：2288 通过、82 平台/显式原生跳过；前端 988 项：987 通过、1 跳过；最后的分页完整性和资源检查 31 项：30 通过、1 Windows 跳过 |
+| 真实浏览器 | 1440px 时间线、缓存、可见性、文件卡片及引用 69 项；最新文件卡片另补宽度断言，宽/390px 均通过。使用合成内容，截图检查无溢出；首版简化 DOM 未覆盖用户问题。修订后复制完整生产输入区，320/390/844/1440px、区域缩放与草稿共 102 项通过，旧实现由同一夹具检出失败 |
+| 实际会话页面 | `c0cc4a2` 安装后，真实 B 会话在 1440px 下引用按钮紧邻上下文环，390px 下位于工具栏之后的紧凑独立行，草稿未改。通过页面原有上翻入口读取历史，原回复的“已编辑 9 个文件”卡片出现且能展开 9 条文件路径，手机宽度无横向溢出；不是合成卡片或手机真机验收 |
+| 实际文件卡片 API | 真实 B 会话原回合经 7 页读取返回完整 9 文件元数据，连接持续有效。保存的补丁累计为 +206/−15，标注“累计修改”；不将其声称为 Desktop 截图中的最终净差异 +199/−8 |
+| Windows 原生 | 在现有 Windows 设备执行 Python/Node 及自建进程退出夹具；独立进程与观察器存活。真实旧脚本 LF/CRLF 迁移通过。正式/Test/WSL Test 安装与 30 项配置保护记录一致；构建安装结果另记 |
+| Windows Test 安装 | 修订 `c0cc4a2` 在 F 盘串行构建并覆盖安装，713 个安装文件匹配。实际安装包编译模块 125 项、WSL/Claude 83 项通过；GUI、8788 健康归属及 8 个实际版本化资源/304 通过。原 Test 配置、账号、绑定及正式版/WSL Test 保留，原 Codex daemon 进程身份不变；只通过正常停网关结束已核对空闲的网关自有 Claude 执行。健康复验后清理本轮重复构建产物约 1.65 GiB，保留安装器和验收记录 |
+| Ubuntu 原生 | 271 项：270 通过、1 Windows 跳过；修复前真实退出夹具失败，修复后目标退出而旁路进程存活。正式/Test 配置、绑定、自启动和进程身份保留；构建安装结果另记 |
+| Ubuntu 修订包 | 用户安装 `c0cc4a2` 后，723 项文件逐一匹配（720 应用文件及 3 个 DEB 桌面/图标文件）；实际安装包编译回归 44 项：43 通过、1 Windows 跳过。8788 实例、局域网页面两次 200 及不同 nonce、1 项版本化 CSS 哈希/304 检查通过，正式版、账号绑定、自启动及原禁用 Cloudflare 状态保持。验收启动器首次使用的临时目录过长导致 Electron 单实例套接字失败，改短本次 GUI 进程的临时路径后桌面程序及渲染进程持续运行超过 3 分钟，网关没有重启；未改系统设置。远程 Wayland 窗口画面尚未完成视觉核验，不将进程运行算作截图验收 |
+| Mac Test | 完整离线构建、签名和覆盖安装通过，8788 健康实例归属正确；366 个包内网页资源与源码一致，8 个实际 HTTP 资源匹配、7 项条件缓存 304；包内编译模块 106 项检查，105 通过、1 平台跳过；正式版、配置、网络设置及原绑定摘要一致 |
+| Mac 后续修订 | `c0cc4a2` 编译模块 107 项：106 通过、1 平台跳过；安装启动、8 个实际资源和 7 项 304 检查通过。相同代码的本地 Test 改用已有固定开发证书，跨版本 designated requirement 一致，81 个 Mach-O 权限无变化。用户完成首次签名切换授权后，实际正常重启并自动读取钥匙串、启动新网关；启动命令约 0.10 秒返回，随后健康检查通过，无需再次人工授权。13 个原生客户端进程、正式版、原配置与绑定保持。后续本地构建复用同一签名，签名失败中止；未改变正式包签名或钥匙串权限规则 |
+| 手机构建 | Android 已签名 APK 完成；实际抽取 Android 导航方法的 Java 夹具验证匹配绑定不等待占用队列，陈旧身份不恢复。iOS 独立 Test 已签名覆盖安装并启动，6 个已存电脑和 16 项偏好前后逐字节一致；不声称导出或直接核验了钥匙串令牌 |
+
+手机真实后台停留后的体感等待仍需用户复测；原生进程检查使用自建夹具，没有强制退出用户正在使用的客户端。原生分页当前没有返回截图回合的净差异，因此其累计补丁数字与 Desktop 净差异可能不同，界面已明确区分。新 Test 启动通过后清理本轮旧 Test 副本与重复构建目录约 0.99 GiB，保留源码归档、手机包和验收记录。验收记录位于忽略目录 `.tmp/v215-lifecycle-output/`。
+
+后续 `c0cc4a2` 验收通过后另外清理 Mac 约 1.05 GB、Windows 约 1.77 GB、Ubuntu 本轮合计约 1.62 GB 的明确重复载荷（逻辑大小）；当前安装、远端当前/回滚安装包、源码归档及必要日志保留。Mac 固定签名工具保存在本机 `.local/test-apps/build-tools/`，不随临时构建目录清理，不纳入正式包或 GitHub。
+
+**English:** Initial phone acceptance reopened quote layout and the missing edited-file card despite simplified fixture passes. Follow-up c0cc4a2 separates compact quote actions from the complete toolbar and retains saved file metadata when native paging exposes a partial completed turn. The installed Mac gateway now exposes the actual nine-file card through its paging API and real session page; quote placement was visually checked at 390 and 1440 pixels with the draft unchanged. Recorded patch totals remain distinct from authoritative net diffs. This candidate also covers owned DSH connector migration, macOS/Linux shutdown regressions, and mobile connection-entry scheduling. After the user authorized the local-only transition to the existing development signing identity, an actual Test restart retrieved its Keychain credential and started automatically without another manual authorization. Original client processes, permissions, configuration and bindings remain intact. Physical-device layout and resume latency still require user acceptance. No GitHub publication occurred.
+
+---
+
+<a id="v215-chat-feedback"></a>
+
+# v2.1.5 项目与会话交互修订（2026-10-24，本地候选）
+
+分支 `fix/v2.1.5-chat-feedback`，基于已安装的 `5e6dd00` Test。没有推送、合并 main 或发布。
+
+- Codex 新本机项目通过 App 自身登记目录，再创建并核对聊天的原生项目归属；DSH 通过原生工作区 ID 创建聊天。仅选择目录不会触发登记。Claude 的明确工作区信任拒绝改为可操作提示，保留首条消息；其他未知写入结果仍禁止重放。
+- Codex 补齐消息引用；当前会话的授权图片可从预览添加回原草稿。DSH 隐藏无效引用入口。文件引用标记按既有文件权限显示文件名，不扩展路径访问权限。
+- Claude Desktop Code、DSH 仅在原生能力可用时显示“从这里分支”，使用原生消息边界并保留原草稿和写操作回执。Claude 当前上下文只使用原生摘要；最近一次请求用量单独标注，不再充当当前占用百分比。
+- 上翻历史处理触顶手势、隐藏工具记录和并发实时重置，单次请求意图最多补三页，保持阅读锚点。真实“筛选国考可报考岗位”会话的只读索引和原生跟随检查均可取得 355 条记录；没有激活、发送或调用模型。
+
+| 检查 | 结果与边界 |
+| --- | --- |
+| Node 前端回归 | 984 项，983 通过、1 平台跳过，无失败 |
+| Python 定向回归 | 160 项，159 通过、1 Windows URL 启动器跳过；覆盖项目登记回执、信任拒绝、分支、上下文、文件边界、历史和资源清单 |
+| 真实 Chromium 浏览器 | 既有时间线/缓存/可见性 43 项；新增窄/宽屏历史与引用 20 项；输出交互 130 项；使用合成内容，不访问真实聊天写接口 |
+| 真实 Electron 图片交互 | 预览布局 55 项；生产 Workbench、草稿、附件集成 54 项，390/1280px；没有发送或 HTTP 写请求 |
+| Mac Test 安装启动 | 产品提交 `8ec4603` 完整离线构建、签名校验和覆盖安装；366 个包内网页资源与源码一致。用户完成钥匙串系统确认后，GUI 显示运行中、8788 实例归属正确，现有局域网入口的首页及 7 个脚本匹配、7 项条件缓存返回 304。正式版进程和文件、原配置及手机绑定摘要一致。本轮未更新 Windows/Ubuntu 安装包 |
+| 原生接口证据 | 只读核对本机 Codex、Claude、DSH 安装包中的登记、分支及上下文接口。隔离 Codex 运行时创建空聊天验证存储关联；该检查不等同于桌面侧栏的完整实测 |
+
+真实桌面新项目分组、Claude/DSH 原生分支以及用户指定会话的上下文数值仍需 Test 实测；不把合成接口检查记为原生端到端通过。新 SSH Desktop 目录尚无已验证的原生项目登记入口，需先在电脑 App 添加项目；已有 SSH 项目和 CLI 创建保留。Claude Cowork 没有已确认的原生分支接口，不显示该操作。手机触摸和系统输入法结果以真机复测为准。
+
+本机诊断、浏览器结果与构建记录保存在忽略目录 `.tmp/v215-chat-feedback/`。不改正式版、账号、原会话连接、配置和手机绑定，不自动确认工作区信任。
+
+**English:** This local candidate fixes native project association, known Claude workspace-trust refusals, message/image reuse, native Code/Harness branching, context measurement semantics, and in-place history pagination. Frontend and targeted backend regressions pass, with real-browser synthetic coverage at narrow and wide widths. Installed native sources establish the interface contracts; native sidebar/branch behavior and the reported live context count still require user acceptance. No messages or model requests were sent, and no GitHub publication occurred.
+
+---
+
 <a id="v214"></a>
 
 # v2.1.4 正式发布验收（2026-10-24）

@@ -3,9 +3,10 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 function fixture({storage=new Map(),sessionStore=new Map()}={}){
  const listeners={};let document;
  class Node {
-  constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.parentElement=null;this.dataset={};this.attributes={};this.hidden=false;this.disabled=false;this.value='';this.className='';this._text='';this.style={setProperty(){}};this.scrollHeight=100;this.scrollTop=0;this.clientHeight=100;this.clientWidth=1000;this.open=false;this.options=this.children;this.classList={contains:n=>this.className.split(' ').includes(n),add:(...ns)=>this.className=[...new Set([...this.className.split(' ').filter(Boolean),...ns])].join(' '),remove:(...ns)=>this.className=this.className.split(' ').filter(n=>!ns.includes(n)).join(' '),toggle:(n,v)=>{v=v??!this.classList.contains(n);this.classList[v?'add':'remove'](n);return v;}};}
+  constructor(tag='div'){this.nodeType=tag==='#text'?3:1;this.tagName=tag.toUpperCase();this.children=[];this.parentElement=null;this.dataset={};this.attributes={};this.hidden=false;this.disabled=false;this.value='';this.className='';this._text='';this.style={setProperty(){}};this.scrollHeight=100;this.scrollTop=0;this.clientHeight=100;this.clientWidth=1000;this.open=false;this.options=this.children;this.classList={contains:n=>this.className.split(' ').includes(n),add:(...ns)=>this.className=[...new Set([...this.className.split(' ').filter(Boolean),...ns])].join(' '),remove:(...ns)=>this.className=this.className.split(' ').filter(n=>!ns.includes(n)).join(' '),toggle:(n,v)=>{v=v??!this.classList.contains(n);this.classList[v?'add':'remove'](n);return v;}};}
   get textContent(){return this._text+this.children.map(n=>n.textContent).join('');}set textContent(v){this._text=String(v??'');this.children=[];this.options=this.children;}
   getBoundingClientRect(){return {width:this.clientWidth,top:0,bottom:this.clientHeight};}
+  get ownerDocument(){return document;}
   get firstElementChild(){return this.children[0];}get lastChild(){return this.children.at(-1);}get childNodes(){return this.children;}get isConnected(){return !!this.parentElement;}
   append(...nodes){for(let n of nodes){if(typeof n==='string')n=document.createTextNode(n);n.remove();n.parentElement=this;this.children.push(n);}}
   prepend(...nodes){for(const n of [...nodes].reverse()){n.remove();n.parentElement=this;this.children.unshift(n);}}
@@ -16,16 +17,16 @@ function fixture({storage=new Map(),sessionStore=new Map()}={}){
   add(option){this.append(option);if(this.children.length===1)this.value=option.value;}
   setAttribute(k,v){this.attributes[k]=String(v);if(k==='class')this.className=v;if(k.startsWith('data-'))this.dataset[k.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=v;}
   getAttribute(k){return this.attributes[k];}removeAttribute(k){delete this.attributes[k];}addEventListener(type,fn){this['on'+type]=fn;}removeEventListener(type,fn){if(this['on'+type]===fn)this['on'+type]=null;}
-  matches(selector){return selector.split(',').some(s=>{s=s.trim();if(s==='input:checked')return this.tagName==='INPUT'&&this.checked;if(s.startsWith('.'))return this.classList.contains(s.slice(1));if(s.startsWith('#'))return this.id===s.slice(1);const attr=s.match(/^\[([^=\]]+)(?:="?([^"\]]+)"?)?\]$/);if(attr)return attr[2]===undefined?this.attributes[attr[1]]!==undefined:this.attributes[attr[1]]===attr[2];return this.tagName===s.toUpperCase();});}
+  matches(selector){return selector.split(',').some(s=>{s=s.trim();if(s==='input:checked')return this.tagName==='INPUT'&&this.checked;if(s.startsWith('.'))return s.slice(1).split('.').every(name=>this.classList.contains(name));if(s.startsWith('#'))return this.id===s.slice(1);const attr=s.match(/^\[([^=\]]+)(?:="?([^"\]]+)"?)?\]$/);if(attr)return attr[2]===undefined?this.attributes[attr[1]]!==undefined:this.attributes[attr[1]]===attr[2];return this.tagName===s.toUpperCase();});}
   closest(selector){return this.matches(selector)?this:this.parentElement?.closest(selector)||null;}
   querySelectorAll(selector){return this.children.flatMap(n=>[...(n.matches(selector)?[n]:[]),...n.querySelectorAll(selector)]);}querySelector(selector){return this.querySelectorAll(selector)[0]||null;}
-  showModal(){this.open=true;}close(){this.open=false;this.onclose?.();}focus(){document.activeElement=this;}select(){}setSelectionRange(){}click(){return this.onclick?.({preventDefault(){}});}contains(n){return n===this||this.children.some(c=>c.contains(n));}
+  showModal(){this.open=true;}close(){this.open=false;this.onclose?.();}focus(){document.activeElement=this;}select(){}setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;}click(){return this.onclick?.({preventDefault(){}});}contains(n){return n===this||this.children.some(c=>c.contains(n));}
  }
- document={body:new Node('body'),documentElement:new Node('html'),hidden:false,activeElement:null,createElement:tag=>new Node(tag),createElementNS:(_,tag)=>new Node(tag),createTextNode:text=>{const n=new Node('#text');n.textContent=text;return n;},querySelectorAll:s=>document.body.querySelectorAll(s),querySelector:s=>document.body.querySelector(s),getElementById:id=>document.body.querySelector('#'+id),addEventListener:(type,fn)=>listeners[type]=fn,dispatchEvent:event=>listeners[event.type]?.(event)};
+ document={body:new Node('body'),documentElement:new Node('html'),hidden:false,activeElement:null,getSelection:()=>null,createElement:tag=>new Node(tag),createElementNS:(_,tag)=>new Node(tag),createTextNode:text=>{const n=new Node('#text');n.textContent=text;return n;},querySelectorAll:s=>document.body.querySelectorAll(s),querySelector:s=>document.body.querySelector(s),getElementById:id=>document.body.querySelector('#'+id),addEventListener:(type,fn)=>listeners[type]=fn,dispatchEvent:event=>listeners[event.type]?.(event)};
  const root=new Node('div');root.className='app';document.body.append(root);const select=new Node('select'),calls=[],notices=[];let uploadHandler=async()=>({ok:true,status:200,json:async()=>({image:true,size:16,name:'image.png'})}),handler=async(url,body)=>body?{status:'accepted'}:url.includes('/detail')?{session:{id:'a',title:'Chat',model:'model-a',effort:'high',status:'idle',capabilities:{}},messages:[]}:url.includes('/workspace')?{entries:[],total:0,project:'/project'}:{sessions:[]};
  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},location:{pathname:'/'},history:{replaceState(){}},localStorage:{get length(){return storage.size;},key:i=>[...storage.keys()][i],getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},sessionStorage:{get length(){return sessionStore.size;},key:i=>[...sessionStore.keys()][i],getItem:k=>sessionStore.get(k),setItem:(k,v)=>sessionStore.set(k,v),removeItem:k=>sessionStore.delete(k)},crypto:{getRandomValues:array=>webcrypto.getRandomValues(array)},Uint8Array,TextEncoder,Option:class extends Node{constructor(text,value){super('option');this.textContent=text;this.value=value;}},ResizeObserver:class{observe(){}},MutationObserver:class{observe(){}},AbortController,URLSearchParams,requestAnimationFrame:fn=>fn(),cancelAnimationFrame(){},getComputedStyle:()=>({getPropertyValue:()=>8}),setTimeout(){return 1;},clearTimeout(){},fetch:async(url,options)=>{calls.push({url,upload:options});return uploadHandler(url,options);},renderMarkdown:(node,text)=>node.textContent=text,CustomEvent:class{constructor(type,options){this.type=type;Object.assign(this,options);}}});
  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/shell/app.js'),'utf8').match(/^function uuid\(\).*$/m)[0],context);
- for(const file of ['web/layouts/viewport.js','web/features/chat/activity.js','web/features/chat/composer-drafts.js','web/features/chat/attachments.js','web/shared/i18n.js','web/features/clients/client-lifecycle.js','web/features/chat/message-actions.js','web/features/chat/permissions.js','web/features/workspace/workbench.js','web/features/chat/list-sync.js','web/features/clients/desktop-sessions.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+ for(const file of ['web/layouts/viewport.js','web/features/chat/activity.js','web/features/chat/composer-drafts.js','web/features/chat/composer-quotes.js','web/features/chat/attachments.js','web/shared/i18n.js','web/features/clients/client-lifecycle.js','web/features/chat/message-actions.js','web/features/chat/permissions.js','web/features/workspace/workbench.js','web/features/chat/list-sync.js','web/features/clients/desktop-sessions.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
  const View=vm.runInContext('DesktopSessionsView',context),view=new View({root,select,request:(url,body)=>{calls.push({url,body});return handler(url,body);},notify:text=>notices.push(text),onSelect(){},csrf:()=>'csrf-test',onUnauthorized(){}});
  return {view,root,document,calls,notices,storage,sessionStore,setHandler:fn=>handler=fn,setUploadHandler:fn=>uploadHandler=fn,run:s=>vm.runInContext(s,context),text:n=>n.textContent};
 }
@@ -827,4 +828,196 @@ test('known preflight rejection permits a new explicit Claude CLI resume attempt
  assert.equal(attempts,1);assert.equal(ui.view.canResume(),true);assert.equal(ui.view.send.disabled,true);
  await ui.view.resumeButton.click();await new Promise(setImmediate);
  const writes=ui.calls.filter(c=>c.body);assert.equal(writes.length,2);assert.notEqual(writes[0].body.id,writes[1].body.id);assert.equal(ui.view.canMutate(),true);
+});
+
+test('Claude directory creation is scoped to the selected SSH environment and sends only after explicit submit',async()=>{
+ const ui=fixture();await ui.view.choose('claude');ui.run('window.BridgeProjectPicker={choose(options){window.fixturePicker=options;return Promise.resolve();}}');
+ const local={key:'local-cli',surface:'cli',host:'local',name:'Local CLI',createRequiresMessage:true},ssh={key:'ssh-cli',surface:'cli',host:'ssh:work',name:'Work server',createRequiresMessage:true};
+ ui.setHandler(async(url,body)=>url.includes('/projects/register')?{project:{key:'registered-ssh',environment:ssh.key,surface:'cli',cwd:'/srv/new-project',name:'new-project'}}:url.includes('/projects/browse')?{path:'/srv',directories:[],roots:[]}:url.includes('/projects')?{projects:[],environments:[local,ssh]}:body?{status:'ready',result:{id:'created'}}:url.includes('/detail')?{session:{id:'created',title:'Native CLI title',status:'idle'},messages:[]}:{sessions:[]});
+ await ui.view.create();const dialog=ui.document.querySelector('dialog'),selects=dialog.querySelectorAll('select');selects[0].value=ssh.key;selects[0].onchange();
+ const create=dialog.querySelector('.primary');assert.equal(create.disabled,true);assert.equal(dialog.querySelector('input').parentElement.hidden,true);
+ await dialog.querySelector('.project-picker-browse').onclick();assert.equal(ui.calls.some(call=>call.body),false);
+ await ui.run("window.fixturePicker.request({path:null,hidden:false,name:null,identity:null})");const browse=ui.calls.at(-1);assert.equal(browse.body.environment,ssh.key);
+ ui.run("window.fixturePicker.onSelect({path:'/srv/new-project',identity:'ssh-id'})");assert.equal(create.disabled,false);assert.equal(ui.calls.some(call=>call.url.includes('/projects/register')),false);
+ dialog.querySelector('textarea').value='First CLI instruction';await dialog.querySelector('form').onsubmit({preventDefault(){}});
+ const registered=ui.calls.find(call=>call.url.includes('/projects/register'));assert.deepEqual(JSON.parse(JSON.stringify(registered.body)),{environment:ssh.key,path:'/srv/new-project',createDirectory:false});
+ const sent=ui.calls.find(call=>call.url.endsWith('/create'));assert.equal(sent.body.projectKey,'registered-ssh');assert.equal(sent.body.firstMessage,'First CLI instruction');assert.equal(Object.hasOwn(sent.body,'title'),false);
+});
+
+test('a provider with no supported project environments cannot advertise directory creation',async()=>{
+ const ui=fixture();await ui.view.choose('deepseek');ui.setHandler(async()=>({projects:[],environments:[]}));await ui.view.create();const dialog=ui.document.querySelector('dialog');assert.equal(dialog.querySelector('.project-picker-browse').hidden,true);assert.equal(dialog.querySelector('.primary').disabled,true);assert.equal(ui.calls.some(call=>call.body),false);
+});
+
+
+test('Claude WSL rows and project groups preserve distribution identity at the same path',async()=>{
+ const ui=fixture();ui.setHandler(async()=>({sessions:[{id:'a',title:'WSL A',backend:'cli',runtime:'wsl',host:'wsl-claude:a',hostLabel:'Ubuntu A',cwd:'/home/user/project'},{id:'b',title:'WSL B',backend:'cli',runtime:'wsl',host:'wsl-claude:b',hostLabel:'Ubuntu B',cwd:'/home/user/project'}]}));
+ await ui.view.choose('claude');assert.match(ui.view.rowsRoot.textContent,/CLI · WSL/);assert.match(ui.view.rowsRoot.textContent,/Ubuntu A/);assert.match(ui.view.rowsRoot.textContent,/Ubuntu B/);
+ ui.view.listMode.value='project';ui.view.renderList();assert.equal(ui.view.rowsRoot.querySelectorAll('details').length,2);
+});
+
+async function quoteChat(provider='claude'){
+ const ui=fixture();await ui.view.choose(provider);await ui.view.open('a');ui.view.bindDraftGateway('gateway-a');
+ ui.view.applyDetail({session:{id:'a',title:'Chat',status:'idle'},draftAccountIdentity:'account-a',capabilities:{send:true},messages:[{id:'reply',role:'assistant',text:'Selected answer\nSecond line'}]});return ui;
+}
+
+test('selected assistant text becomes a removable quote without editing draft or intercepting native selection',async()=>{
+ const ui=await quoteChat(),view=ui.view;view.input.value='my draft';view.input.setSelectionRange(2,4);view.input.oninput();
+ const body=view.messages.querySelector('.message-body');ui.document.getSelection=()=>({isCollapsed:false,rangeCount:1,getRangeAt:()=>({startContainer:body,endContainer:body}),toString:()=>'Selected answer'});
+ ui.document.dispatchEvent({type:'selectionchange'});assert.equal(view.quotes.action.hidden,false);
+ let cancelled=false;view.quotes.action.onpointerdown({preventDefault(){cancelled=true;}});ui.document.getSelection=()=>null;ui.document.activeElement=null;ui.document.dispatchEvent({type:'selectionchange'});assert.equal(view.quotes.action.hidden,false);view.quotes.action.click();
+ assert.equal(cancelled,false);assert.equal(view.input.value,'my draft');assert.equal(view.input.selectionStart,2);assert.equal(view.input.selectionEnd,4);assert.equal(view.quotes.quotes[0].text,'Selected answer');assert.equal(view.quotes.quotes[0].provider,'claude');assert.ok(view.quotes.quotes[0].source);
+ assert.equal(view.quotes.root.querySelector('details').querySelector('div').textContent,'Selected answer');
+ view.quotes.root.querySelector('.composer-quote').querySelector('button').click();assert.equal(view.quotes.quotes.length,0);assert.equal(view.composerDrafts.load(view.draftScope).quotes.length,0);assert.equal(ui.calls.filter(call=>call.body).length,0);
+});
+
+test('quote-only drafts restore per provider and session and serialize only on explicit submit',async()=>{
+ for(const provider of ['claude']){
+  const ui=await quoteChat(provider),view=ui.view;view.quotes.add('A\nB','reply');const original=view.draftScope;
+  assert.equal(view.input.value,'');assert.equal(view.composerDrafts.load(original).quotes.length,1);assert.equal(ui.calls.filter(call=>call.body).length,0);
+  view.prepareChat('b');view.bindDraftScope({draftAccountIdentity:'account-a'});assert.equal(view.quotes.quotes.length,0);
+  view.prepareChat('a');view.applyDetail({session:{id:'a',status:'idle'},draftAccountIdentity:'account-a',capabilities:{send:true},messages:[]});assert.equal(view.quotes.quotes[0].text,'A\nB');
+  await view.submit();const sent=ui.calls.filter(call=>call.body);assert.equal(sent.length,1);assert.equal(sent[0].body.text,'> A\n> B');assert.equal(view.quotes.quotes.length,0);assert.equal(view.composerDrafts.load(original),null);
+ }
+});
+
+test('unknown quote send keeps the same id and new draft revisions survive an earlier acknowledgement',async()=>{
+ const ui=await quoteChat(),view=ui.view;view.input.value='draft';view.input.oninput();view.quotes.add('quote','reply');
+ ui.setHandler(async(url,body)=>body?{status:'unknown'}:{sessions:[]});await view.submit();const first=ui.calls.filter(call=>call.body)[0].body;
+ assert.equal(first.text,'> quote\n\ndraft');assert.equal(view.quotes.quotes.length,1);assert.equal(view.input.value,'draft');
+ view.freshDetail=true;let resolve;ui.setHandler((url,body)=>body?new Promise(done=>resolve=done):Promise.resolve({sessions:[]}));const retry=view.submit();view.quotes.add('later','reply-2');resolve({status:'accepted'});await retry;
+ assert.equal(ui.calls.filter(call=>call.body)[1].body.id,first.id);assert.equal(view.quotes.quotes.length,2);assert.equal(view.input.value,'draft');assert.equal(view.composerDrafts.load(view.draftScope).quotes.length,2);
+});
+
+test('followup prompt events append editable text only in the connected current assistant message',async()=>{
+ const ui=await quoteChat(),view=ui.view;view.input.value='keep';view.input.setSelectionRange(1,3);view.input.oninput();const body=view.messages.querySelector('.message-body'),button=ui.document.createElement('button');body.append(button);
+ view.messages['onbridge-compose-prompt']({target:button,detail:{text:'Follow up'}});assert.equal(view.input.value,'keep\n\nFollow up');assert.equal(view.input.selectionStart,1);assert.equal(view.input.selectionEnd,3);assert.equal(ui.calls.filter(call=>call.body).length,0);
+ view.prepareChat('b');view.bindDraftScope({draftAccountIdentity:'account-a'});view.messages['onbridge-compose-prompt']({target:button,detail:{text:'stale'}});assert.equal(view.input.value,'');
+ view.clear();view.messages['onbridge-compose-prompt']({target:button,detail:{text:'logged out'}});assert.equal(view.quotes.quotes.length,0);assert.equal(view.input.value,'');
+});
+
+test('cross-message and user selections and detached streaming reply snapshots cannot become quotes',async()=>{
+ const ui=await quoteChat(),view=ui.view,body=view.messages.querySelector('.message-body'),other=ui.document.createElement('div');view.messages.append(other);
+ ui.document.getSelection=()=>({isCollapsed:false,rangeCount:1,getRangeAt:()=>({startContainer:body,endContainer:other}),toString:()=>'cross boundary'});view.quotes.capture();assert.equal(view.quotes.action.hidden,true);
+ ui.document.getSelection=()=>({isCollapsed:false,rangeCount:1,getRangeAt:()=>({startContainer:body,endContainer:body}),toString:()=>'snapshot'});view.quotes.capture();view.quotes.action.onpointerdown();body.remove();view.quotes.action.click();assert.equal(view.quotes.quotes.length,0);
+ const user=ui.document.createElement('article');user.className='message user';const userBody=ui.document.createElement('div');userBody.className='message-body';user.append(userBody);view.messages.append(user);ui.document.getSelection=()=>({isCollapsed:false,rangeCount:1,getRangeAt:()=>({startContainer:userBody,endContainer:userBody}),toString:()=>'user text'});view.quotes.capture();assert.equal(view.quotes.action.hidden,true);
+});
+
+test('combined quote and draft limit blocks a send without truncating or clearing either',async()=>{
+ const ui=await quoteChat(),view=ui.view;view.input.value='x'.repeat(99999);view.input.oninput();view.quotes.add('quote');await view.submit();assert.match(view.error.textContent,/100000/);assert.equal(ui.calls.filter(call=>call.body).length,0);assert.equal(view.input.value.length,99999);assert.equal(view.quotes.quotes.length,1);
+});
+
+test('failed durable storage cannot let an acknowledgement erase a later quote-only edit',async()=>{
+ for(const provider of ['claude']){
+  const ui=await quoteChat(provider),view=ui.view;ui.run("localStorage.setItem=()=>{throw Error('quota');}");view.quotes.add('first','reply');
+  let resolve;ui.setHandler((url,body)=>body?new Promise(done=>resolve=done):Promise.resolve(url.includes('/detail')?{session:{id:'a',status:'idle'},draftAccountIdentity:'account-a',capabilities:{send:true},messages:[]}:{sessions:[]}));const sending=view.submit();assert.equal(view.composerDrafts.pending(view.draftScope),null);
+  view.quotes.add('later','reply-2');assert.equal(view.input.value,'');resolve({status:'accepted'});await sending;
+  assert.equal(view.input.value,'');assert.deepEqual(Array.from(view.quotes.quotes,row=>row.text),['first','later']);assert.deepEqual(Array.from(view.provisionalDrafts.get(provider+':a').quotes,row=>row.text),['first','later']);
+ }
+});
+
+
+test('message quote uses complete text and rejects late results after draft identity changes',async()=>{
+ const ui=await quoteChat(),view=ui.view,node=view.messages.querySelector('.message');view.input.value='keep';view.input.oninput();
+ view.messages['onbridge-compose-quote']({target:node,detail:{getText:()=>Promise.resolve('complete answer'),source:'reply'}});await new Promise(setImmediate);
+ assert.equal(view.quotes.quotes[0].text,'complete answer');assert.equal(view.input.value,'keep');assert.equal(ui.calls.filter(call=>call.body).length,0);
+ let finish;const pending=view.quotes.quoteMessage(()=>new Promise(resolve=>finish=resolve),'reply',node);
+ view.prepareChat('b');view.bindDraftScope({draftAccountIdentity:'account-a'});finish('stale answer');await pending;assert.equal(view.quotes.quotes.length,0);
+});
+
+test('DSH hides quote actions and selection while preserving editable followup prompts',async()=>{
+ const ui=await quoteChat('deepseek'),view=ui.view,body=view.messages.querySelector('.message-body');
+ assert.equal(view.messages.querySelector('.message-actions').children.length,1);assert.equal(view.quotes.available(),true);
+ view.quotes.add('unsupported quote','reply');assert.equal(view.quotes.quotes.length,0);
+ ui.document.getSelection=()=>({isCollapsed:false,rangeCount:1,getRangeAt:()=>({startContainer:body,endContainer:body}),toString:()=>'Selected answer'});view.quotes.capture();assert.equal(view.quotes.action.hidden,true);
+ const button=ui.document.createElement('button');body.append(button);view.messages['onbridge-compose-prompt']({target:button,detail:{text:'Follow up'}});assert.equal(view.input.value,'Follow up');assert.equal(ui.calls.filter(call=>call.body).length,0);
+});
+
+test('last-prompt counters never become a current context percentage',async()=>{
+ const ui=await opened();
+ ui.view.applyDetail({session:{id:'a',title:'A',contextUsage:null,contextUsageStatus:'unavailable',lastPromptContextUsage:{usedTokens:112973,contextWindow:200000,measurement:'lastPrompt'}},messages:[]});
+ assert.ok(ui.view.contextRing.classList.contains('unknown'));assert.doesNotMatch(ui.view.contextButton.title,/56%/);
+ ui.view.contextDetails();const dialog=ui.document.querySelector('dialog');assert.match(dialog.textContent,/112,973/);assert.match(dialog.textContent,/最近一次模型输入/);assert.doesNotMatch(dialog.textContent,/56\.5%/);dialog.close();
+ ui.view.applyDetail({session:{id:'a',title:'A',contextUsage:{usedTokens:112973,contextWindow:200000,measurement:'lastPrompt'}},messages:[]});
+ assert.ok(ui.view.contextRing.classList.contains('unknown'));
+ ui.view.applyDetail({session:{id:'a',title:'A',contextUsage:{usedTokens:67500,contextWindow:200000}},messages:[]});assert.match(ui.view.contextButton.title,/34%/);
+});
+
+test('native branch actions require capability and canonical message identity and preserve source draft',async()=>{
+ const ui=await opened(),message={id:'display-id',role:'assistant',text:'Answer',forkMessageId:'native-uuid'};
+ ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:false},messages:[message]});
+ assert.equal(ui.view.messages.querySelectorAll('button').some(b=>b.textContent==='从这里分支'),false);
+ ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:true},messages:[{...message,forkMessageId:null}]});
+ assert.equal(ui.view.messages.querySelectorAll('button').some(b=>b.textContent==='从这里分支'),false);
+ ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:true},messages:[message]});
+ ui.view.input.value='source draft';let saved=0,openedChild;ui.view.saveDraft=()=>{saved++;};ui.view.open=async id=>{openedChild=id;};
+ ui.setHandler(async(url,body)=>body?{status:'ready',result:{id:'child'}}:{sessions:[]});
+ await ui.view.messages.querySelectorAll('button').find(b=>b.textContent==='从这里分支').click();
+ const branch=ui.calls.find(c=>c.url.endsWith('/fork'));assert.equal(branch.body.sessionId,'a');assert.equal(branch.body.messageId,'native-uuid');assert.equal(Object.hasOwn(branch.body,'text'),false);assert.equal(openedChild,'child');assert.ok(saved>0);assert.equal(ui.view.input.value,'source draft');
+});
+
+test('uncertain branch retries keep the same receipt and a late result cannot switch chats',async()=>{
+ const ui=await opened();ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:true},messages:[]});ui.view.refresh=async()=>{};let finish;const ids=[];
+ ui.setHandler(async(url,body)=>{if(body){ids.push(body.id);return {status:'unknown',message:'Check Desktop'};}return {sessions:[]};});
+ await ui.view.fork('native-uuid');ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:true},messages:[]});await ui.view.fork('native-uuid');assert.equal(ids.length,2);assert.equal(ids[0],ids[1]);
+ ui.view.applyDetail({session:{id:'a',title:'A'},capabilities:{fork:true},messages:[]});let selected;ui.view.open=async id=>{selected=id;};ui.setHandler((url,body)=>body?new Promise(resolve=>finish=resolve):Promise.resolve({sessions:[]}));
+ const branch=ui.view.fork('other-native-uuid');ui.view.sid='b';finish({status:'ready',result:{id:'child'}});await branch;assert.equal(selected,undefined);
+});
+
+test('Claude trust refusal preserves creation fields and explicit retry uses a new receipt',async()=>{
+ const ui=await opened(),ids=[];let attempts=0;
+ ui.setHandler(async(url,body)=>{
+  if(url.includes('/projects')&&!body)return {projects:[{key:'p',surface:'code',cwd:'/trusted-later',name:'Project'}],environments:[{key:'code',surface:'code',createRequiresMessage:true}]};
+  if(url.endsWith('/create')){ids.push(body.id);attempts++;return {status:'blocked',code:'workspace-trust-required',message:'请先在 Claude Desktop 的 Code 页面打开此目录并确认“信任工作区”，再返回重试。首条消息已保留。'};}
+  return {sessions:[]};
+ });
+ await ui.view.create();const dialog=ui.document.querySelector('dialog'),form=dialog.querySelector('form'),message=dialog.querySelector('textarea'),title=dialog.querySelector('input');title.value='Preserved title';message.value='Preserved first instruction';
+ await form.onsubmit({preventDefault(){}});assert.equal(dialog.open,true);assert.match(dialog.textContent,/信任工作区/);assert.equal(title.value,'Preserved title');assert.equal(message.value,'Preserved first instruction');
+ await form.onsubmit({preventDefault(){}});assert.equal(attempts,2);assert.notEqual(ids[0],ids[1]);assert.equal(message.value,'Preserved first instruction');
+});
+
+test('verified WSL account continuation preserves same-session text selection and attachments without sending',async()=>{
+ const ui=await opened(),view=ui.view,entry='wsl-claude:'+ 'a'.repeat(32),previous='1'.repeat(64),next='2'.repeat(64);view.bindDraftGateway('gateway-a');view.bindDraftScope({draftAccountIdentity:previous});view.rows=[{id:'a',host:entry,runtime:'wsl'}];view.input.value='retained text';view.input.setSelectionRange(2,7);view.saveDraft();
+ view.attachments.rows.push({id:'attachment-a',name:'file.txt',size:10,status:'ready'});const attachmentKey=view.attachments.key;view.attachments.save(attachmentKey,view.attachments.rows);const savedAttachments=ui.sessionStore.get('attachments:'+attachmentKey),calls=ui.calls.filter(call=>call.body).length;
+ const result={provider:'claude',entry,draftContinuations:[{id:'a',previousAccountIdentity:previous,accountIdentity:next}]};assert.equal(view.continueWslAccountDrafts(result),1);assert.equal(view.input.value,'retained text');assert.equal(view.input.selectionStart,2);assert.equal(view.input.selectionEnd,7);assert.equal(view.draftScope.account,next);assert.equal(view.attachments.key,attachmentKey);assert.equal(view.attachments.rows[0].id,'attachment-a');assert.equal(ui.sessionStore.get('attachments:'+attachmentKey),savedAttachments);assert.equal(ui.calls.filter(call=>call.body).length,calls);assert.equal(view.pending.size,0);
+});
+test('WSL draft continuation rejects another provider host account and unresolved submissions',async()=>{
+ const ui=await opened(),view=ui.view,entry='wsl-claude:'+ 'a'.repeat(32),previous='1'.repeat(64),next='2'.repeat(64);view.bindDraftGateway('gateway-a');view.bindDraftScope({draftAccountIdentity:previous});view.rows=[{id:'a',host:entry,runtime:'wsl'}];view.input.value='private draft';view.saveDraft();const result={provider:'claude',entry,draftContinuations:[{id:'a',previousAccountIdentity:previous,accountIdentity:next}]};
+ for(const changed of [{provider:'codex'},{entry:'wsl-claude:'+'b'.repeat(32)},{continuationPending:true},{draftContinuations:[{id:'a',previousAccountIdentity:'3'.repeat(64),accountIdentity:next}]}])assert.equal(view.continueWslAccountDrafts({...result,...changed}),0);
+ const pendingKey=view.pendingKey('send',{text:'private draft'},'a','claude',previous);view.pending.set(pendingKey,'unknown-id');assert.equal(view.continueWslAccountDrafts(result),0);assert.equal(view.pending.get(pendingKey),'unknown-id');assert.equal(view.draftScope.account,previous);assert.equal(view.composerDrafts.load({...view.draftScope,account:next}),null);
+});
+
+test('fresh verified WSL detail continues an offline mobile draft after a switch from another client',async()=>{
+ const ui=await opened(),view=ui.view,entry='wsl-claude:'+'a'.repeat(32),old='1'.repeat(64),middle='2'.repeat(64),current='3'.repeat(64);view.bindDraftGateway('gateway-a');
+ const previous={gateway:'gateway-a',provider:'claude',account:old,host:'local',session:'a'};view.composerDrafts.save(previous,{text:'offline phone draft',selectionStart:3,selectionEnd:9});
+ const hint={id:'a',entry,accountIdentity:current,previousAccountIdentities:[old,middle]},value={session:{id:'a',runtime:'wsl',host:entry,draftAccountIdentity:current},draftContinuation:hint};
+ const calls=ui.calls.filter(call=>call.body).length;view.bindDraftScope(value);assert.equal(view.input.value,'offline phone draft');assert.equal(view.input.selectionStart,3);assert.equal(view.draftScope.account,current);assert.equal(ui.calls.filter(call=>call.body).length,calls);
+});
+test('unverified external account changes and other WSL entries cannot use draft lineage',async()=>{
+ const ui=await opened(),view=ui.view,entry='wsl-claude:'+'a'.repeat(32),old='1'.repeat(64),current='2'.repeat(64);view.bindDraftGateway('gateway-a');const previous={gateway:'gateway-a',provider:'claude',account:old,host:'local',session:'a'};view.composerDrafts.save(previous,{text:'private old draft'});
+ const session={id:'a',runtime:'wsl',host:entry,draftAccountIdentity:current},hint={id:'a',entry,accountIdentity:current,previousAccountIdentities:[old]};
+ for(const value of [{session},{session,draftContinuation:{...hint,entry:'wsl-claude:'+'b'.repeat(32)}},{session,draftContinuation:{...hint,id:'other'}},{session,draftContinuation:{...hint,accountIdentity:'3'.repeat(64)}}]){view.bindDraftScope(value);assert.equal(view.input.value,'');assert.notEqual(view.composerDrafts.load({...previous,account:current})?.text,'private old draft');}
+ view.composerDrafts.begin(previous,{text:'private old draft'},'unknown-original');view.bindDraftScope({session,draftContinuation:hint});assert.notEqual(view.composerDrafts.load({...previous,account:current})?.text,'private old draft');assert.equal(view.composerDrafts.pending(previous).id,'unknown-original');assert.equal(view.input.value,'');
+});
+
+test('mobile draft continuation consumes manager-wrapped account identities while session keeps raw native ownership',async()=>{
+ const ui=await opened(),view=ui.view,entry='wsl-claude:'+'a'.repeat(32),rawOld='1'.repeat(64),rawCurrent='2'.repeat(64),wrap=raw=>require('node:crypto').createHash('sha256').update(JSON.stringify(['draft-v1','claude','wsl-cli',entry,raw])).digest('hex'),old=wrap(rawOld),current=wrap(rawCurrent);view.bindDraftGateway('gateway-a');view.composerDrafts.save({gateway:'gateway-a',provider:'claude',account:old,host:'local',session:'a'},{text:'real wrapped scope draft'});view.bindDraftScope({draftAccountIdentity:current,session:{id:'a',runtime:'wsl',host:entry,draftAccountIdentity:rawCurrent},draftContinuation:{id:'a',entry,accountIdentity:current,previousAccountIdentities:[old]}});assert.notEqual(current,rawCurrent);assert.equal(view.input.value,'real wrapped scope draft');assert.equal(view.draftScope.account,current);
+});
+
+test('common chat demand waits for resources and Back cancels the pending detail read',async()=>{
+ const ui=fixture();await ui.view.choose('claude');
+ ui.run("var releaseChat;window.BridgeFeatures={load:()=>new Promise(resolve=>{releaseChat=resolve;})}");
+ const before=ui.calls.filter(call=>call.url.includes('/detail')).length;
+ const opening=ui.view.open('a');assert.equal(ui.view.sid,'a');
+ assert.equal(ui.calls.filter(call=>call.url.includes('/detail')).length,before);
+ ui.view.backToList();ui.run('releaseChat()');await opening;
+ assert.equal(ui.view.sid,null);assert.equal(ui.calls.filter(call=>call.url.includes('/detail')).length,before);
+});
+
+test('only the latest chat receives detail after shared renderer loading completes',async()=>{
+ const ui=fixture();await ui.view.choose('claude');
+ ui.run("var releaseChat;var chatReady=new Promise(resolve=>{releaseChat=resolve;});window.BridgeFeatures={load:()=>chatReady}");
+ const before=ui.calls.filter(call=>call.url.includes('/detail')).length;
+ const first=ui.view.open('a'),second=ui.view.open('b');ui.run('releaseChat()');await Promise.all([first,second]);
+ const reads=ui.calls.filter(call=>call.url.includes('/detail')).slice(before);
+ assert.equal(reads.length,1);assert.match(reads[0].url,/sessionId=b/);
 });

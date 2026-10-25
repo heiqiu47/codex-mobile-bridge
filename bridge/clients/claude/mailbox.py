@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 from pathlib import Path
@@ -21,12 +22,26 @@ MAX_PACKET = 32 * 1024 * 1024
 MAX_REQUEST = 10 * 1024 * 1024
 # Bump when the injected renderer must reload a changed API contract. A new
 # owner generation alone only reconnects the existing JavaScript closure.
-CONNECTOR_REVISION = 9
+CONNECTOR_REVISION = 10
 MUTATIONS = {'sendMessage', 'interrupt', 'stop', 'respondToToolPermission', 'start', 'archive',
-             'delete', 'updateSession', 'setPermissionMode', 'setModel', 'setEffort', 'setThinkingSummariesWanted'}
+             'delete', 'updateSession', 'setPermissionMode', 'setModel', 'setEffort', 'setThinkingSummariesWanted', 'mobileFork'}
+
+
+def workspace_trust_rejection(message):
+    """Recognize only the verified native pre-start refusal, including IPC wrappers."""
+    return isinstance(message, str) and re.fullmatch(
+        r'(?:(?:Error invoking [^\n]+|Error|WorkspaceTrustError): )*'
+        r'Workspace requires trust approval before starting a session\.'
+        r'(?: \[ccdErrorCategory:trust_required\])?', message) is not None
 
 
 class FileDesktop:
+    def _known_start_rejection(self, reply):
+        request = self._request_packet()
+        return (request.get('method') == 'start' and request.get('surface') == 'code'
+                and request.get('seq') == reply.get('seq') and reply.get('done') is True
+                and workspace_trust_rejection(reply.get('error')))
+
     def __init__(self, directory, token):
         self.directory = Path(directory).resolve()
         self.token = token
@@ -64,7 +79,8 @@ class FileDesktop:
                     seq = value.get('seq')
                     if (value.get('done') is True and not self.unconfirmed_mutations and
                             request.get('type') == 'request' and request.get('seq') == seq == self.seq and
-                            ('error' not in value or request.get('method') not in MUTATIONS)):
+                            ('error' not in value or request.get('method') not in MUTATIONS
+                             or self._known_start_rejection(value))):
                         # A timed-out call can receive a late signed result.
                         # Clear only that exact request, once, after its result
                         # has become known; do not overwrite a newer request.
@@ -162,7 +178,7 @@ class FileDesktop:
             value = json.loads(payload)
             if not isinstance(value, dict) or value.get('generation') != self.generation:
                 return {}
-            if value.get('done') is True and 'error' not in value:
+            if value.get('done') is True and ('error' not in value or self._known_start_rejection(value)):
                 self.unconfirmed_mutations.discard(value.get('seq'))
             self.cached, self.stamp = value, stamp
             return value
@@ -212,7 +228,7 @@ class FileDesktop:
                 reply = self.read()
                 if reply.get('seq') == seq and reply.get('done') is True:
                     if 'error' in reply:
-                        acknowledged = method not in MUTATIONS
+                        acknowledged = method not in MUTATIONS or self._known_start_rejection(reply)
                         raise BridgeUnavailable(str(reply['error']))
                     acknowledged = True
                     return reply.get('result')

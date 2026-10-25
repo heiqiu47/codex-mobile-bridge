@@ -47,6 +47,15 @@ class Timeline:
                 ordinal = message.get('_timelineOrdinal', occurrences.get(identity, 0))
                 occurrences[identity] = ordinal + 1
                 entries.append((identity + (ordinal,), turn, message, message.get('_firstUser', message is first_user)))
+            if turn.get('status') == 'completed' and turn.get('fileChanges'):
+                changes = turn['fileChanges']
+                added = sum(change['added'] for change in changes)
+                removed = sum(change['removed'] for change in changes)
+                summary = {'id': 'native-file-changes', 'kind': 'fileChanges', 'role': 'fileChanges',
+                           'fileSummary': {'count': len(changes), 'added': added, 'removed': removed, 'basis': turn.get('fileChangesBasis', 'recorded'),
+                                           'files': [{k: c[k] for k in ('path', 'added', 'removed')} for c in changes]},
+                           'text': ''}
+                entries.append(((turn['id'], summary['id'], summary['kind'], 0), turn, summary, False))
             if turn.get('error'):
                 entries.append(((turn['id'], 'error'), turn, None, False))
         start = max(0, len(entries) - limit) if limit is not None else 0
@@ -62,7 +71,7 @@ class Timeline:
         # A tool call carried only to interpret a recent result must not expand
         # the next source read to every intervening historical item.
         self.source_anchor = next((entry[0] for entry in entries[start:]
-                                   if entry[2] is not None and not entry[2].get('_historyCarry')), None)
+                                   if entry[2] is not None and entry[2].get('kind') != 'fileChanges' and not entry[2].get('_historyCarry')), None)
         rows, details = [], {}
         for identity, turn, message, first_user in entries[start:]:
             if message is not None:
@@ -72,16 +81,20 @@ class Timeline:
                 text = message.get('text') or ''
                 if message.get('output'):
                     text += '\n\n' + message['output']
-                activity = message['role'] == 'activity'
+                activity = message['role'] in ('activity', 'fileChanges')
                 attachments = [{k: str(a[k])[:300] for k in ('type', 'name', 'path', 'desktopId') if k in a}
                                for a in (message.get('attachments') or [])[:20]]
-                version = hashlib.sha256(encoded([text, turn.get('model'), turn.get('effort'), attachments])).hexdigest()[:24]
+                version = hashlib.sha256(encoded([text, turn.get('model'), turn.get('effort'), attachments, message.get('fileSummary')])).hexdigest()[:24]
                 row = {k: message[k] for k in ('role', 'kind', 'status', 'title', 'phase', 'requestId') if k in message}
                 row.update(key=key, turnId=turn['id'], order=len(rows), version=version,
                            text=text[:180 if activity else TEXT_PREVIEW],
                            truncated=(activity and bool(text)) or len(text) > TEXT_PREVIEW, turnStatus=turn.get('status'),
                            editable=turn.get('actionable', True) and first_user and message.get('kind') == 'userMessage',
                            forkable=turn.get('actionable', True) and message['role'] == 'assistant' and message.get('phase') != 'commentary' and turn.get('status') == 'completed')
+                if message.get('fileSummary'):
+                    row['fileSummary'] = message['fileSummary']
+                    row['text'] = ''
+                    row['truncated'] = False
                 if message['role'] == 'assistant':
                     row.update({k:turn[k] for k in ('model','effort') if turn.get(k)})
                 if attachments:

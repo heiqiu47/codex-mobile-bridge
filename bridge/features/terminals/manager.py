@@ -196,9 +196,9 @@ class TerminalManager:
             if job is None: raise KeyError('命令不存在或不属于当前登录；网关重启后记录会清除')
             return job
 
-    def open_session(self, owner, thread, identifier, root, cols, rows, alias=None):
+    def open_session(self, owner, thread, identifier, root, cols, rows, alias=None, *, session_factory=None):
         from bridge.platforms.posix.terminal import TerminalSession, RemoteTerminalSession, dimensions
-        if os.name == 'nt' and not alias:
+        if os.name == 'nt' and not alias and session_factory is None:
             from bridge.platforms.windows.terminal import WindowsTerminalSession
             TerminalSession = WindowsTerminalSession
         uuid.UUID(identifier); dimensions(cols, rows)
@@ -206,13 +206,14 @@ class TerminalManager:
         with self.lock:
             if key in self.closed: raise ValueError('此终端已关闭，请打开新终端')
             if key in self.sessions: return self.sessions[key].read()
-            if not root or (not alias and not Path(root).is_dir()): raise ValueError('聊天项目目录不可用')
+            if not root or (not alias and session_factory is None and not Path(root).is_dir()): raise ValueError('聊天项目目录不可用')
             active = [k for k, job in self.sessions.items() if not job.done.is_set()]
             if len(active) >= 16 or sum(k[0] == owner for k in active) >= 4: raise ValueError('请先关闭其他终端')
             if len(self.closed) >= 4096: raise ValueError('终端记录已满，请重启网关')
             for old in list(self.sessions):
                 if self.sessions[old].done.is_set(): self.closed.add(old); del self.sessions[old]
-            self.sessions[key] = RemoteTerminalSession(alias, root, cols, rows) if alias else TerminalSession(root, cols, rows)
+            self.sessions[key] = (session_factory(root, cols, rows) if session_factory else
+                                  RemoteTerminalSession(alias, root, cols, rows) if alias else TerminalSession(root, cols, rows))
             return self.sessions[key].read()
 
     def session(self, owner, thread, identifier):

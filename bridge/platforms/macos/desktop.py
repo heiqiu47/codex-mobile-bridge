@@ -33,6 +33,8 @@ def processes(matches):
 
 
 def commands(pids):
+    if not pids:
+        return {}
     result = subprocess.run(['ps', '-ww', '-p', ','.join(map(str, pids)), '-o', 'pid=,args='],
                             capture_output=True, text=True, timeout=10)
     if result.returncode not in (0, 1):

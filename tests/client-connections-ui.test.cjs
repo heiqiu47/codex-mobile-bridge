@@ -8,10 +8,10 @@ function fixture({accounts=false}={}){
   const root={hidden:false,querySelector(selector){const provider=selector.includes('deepseek')?'deepseek':'claude';if(selector.includes('.client-auto-setup'))return articles[provider]?.querySelector('.client-auto-setup')||null;if(selector.startsWith('[data-client-config='))return articles[provider]||null;if(selector==='input')return accounts?articles.deepseek.querySelector('input'):input;if(selector==='[data-deepseek-home]')return input;if(selector==='[data-desktop-choose]')return choose;if(selector==='[data-claude-workspace]')return workspace;if(selector==='[data-claude-home]')return claudeHome;if(selector==='[data-claude-data]')return claudeData;return statuses[provider];},querySelectorAll(selector){if(selector==='[data-desktop-status]')return Object.values(statuses);if(selector.includes('data-desktop-action'))return [scan];return Object.values(articles).flatMap(article=>article.querySelectorAll(selector));}};
   const calls=[],errors=[],prompts=[],choices=[],initializations=[];let closeChoice=true,finishChoice,initializeChoice=true,finishInitialize,chosen='',confirmed=true,handler=async body=>body.action==='status'?{backends:{},deepseekHome:'/fixture'}:body.action==='accounts'?{accounts:[]}:{clients:[]};
   const listeners={},timers=[],storage=new Map();
-  const context=vm.createContext({ClientLifecycle:{...require('../web/features/clients/client-lifecycle.js'),chooseDisable(client){choices.push(client.id);return closeChoice==='pending'?new Promise(resolve=>finishChoice=resolve):closeChoice;}},CustomEvent:class{constructor(type){this.type=type;}},document:{body:node('body'),documentElement:{},getElementById:id=>nodes[id],createElement:node,querySelector:()=>null,querySelectorAll:selector=>selector==='[data-i18n]'?Object.values(statuses):[],hidden:false,addEventListener(type,fn){listeners[type]=fn;},dispatchEvent(event){listeners[event.type]?.(event);}},setInterval(fn){timers.push(fn);},setTimeout(){},clearTimeout(){},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},window:{confirm:message=>{prompts.push(message);return confirmed;},GatewayLayout:{selectClient(){}}}});
+  const context=vm.createContext({ClientLifecycle:{...require('../web/features/clients/client-lifecycle.js'),chooseDisable(client){choices.push(client.id);return closeChoice==='pending'?new Promise(resolve=>finishChoice=resolve):closeChoice;}},CustomEvent:class{constructor(type){this.type=type;}},document:{body:node('body'),documentElement:{},getElementById:id=>nodes[id],createElement:node,querySelector:()=>null,querySelectorAll:selector=>selector==='[data-i18n]'?Object.values(statuses):[],hidden:false,addEventListener(type,fn){listeners[type]=fn;},removeEventListener(type,fn){if(listeners[type]===fn)delete listeners[type];},dispatchEvent(event){listeners[event.type]?.(event);}},setInterval(fn){timers.push(fn);},setTimeout(){},clearTimeout(){},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},window:{confirm:message=>{prompts.push(message);return confirmed;},GatewayLayout:{selectClient(){}}}});
   context.ClientLifecycle.chooseInitialize=client=>{initializations.push(client.id);return initializeChoice==='pending'?new Promise(resolve=>finishInitialize=resolve):initializeChoice;};
-  for(const file of ['web/shared/i18n.js',...(accounts?['web/features/accounts/client-accounts.js']:[]),'desktop/features/clients/desktop-sessions.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
-  const Class=vm.runInContext('DesktopConnectionsPanel',context),panel=new Class({root,api:{choose:async()=>chosen,desktopSessions:body=>{calls.push(body);return handler(body);}},feedback:message=>errors.push(message)});
+  for(const file of ['web/shared/i18n.js','web/features/accounts/wsl-accounts.js',...(accounts?['web/features/accounts/client-accounts.js']:[]),'desktop/features/clients/desktop-sessions.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
+  const Class=vm.runInContext('DesktopConnectionsPanel',context),panel=new Class({root,api:{choose:async()=>chosen,cliAccess:body=>{calls.push(body);return handler(body);},desktopSessions:body=>{calls.push(body);return handler(body);}},feedback:message=>errors.push(message)});
   const all=n=>[n,...n.children.flatMap(all)];
   return {panel,nodes,calls,errors,scan,storage,prompts,choices,initializations,setInitializeChoice:value=>initializeChoice=value,decideInitialize:value=>finishInitialize(value),setChoice:value=>closeChoice=value,decide:value=>finishChoice(value),statuses,workspace,claudeHome,claudeData,input,choose,root,document:context.document,setChosen:value=>chosen=value,poll:async()=>{await timers[0]();},apply:()=>vm.runInContext('BridgeI18n.apply()',context),confirm:value=>confirmed=value,setHandler:fn=>handler=fn,all:()=>all(nodes['client-overview']),text:()=>all(nodes['client-overview']).map(n=>n.textContent).join('\n'),english:()=>vm.runInContext("BridgeI18n.setLanguage('en')",context)};
 }
@@ -353,4 +353,48 @@ test('desktop offers force only inside close choices and retains a disabled runn
   assert.equal(body.enabled,false);assert.equal(body.quitDesktop,true);assert.equal(body.forceDesktop,true);assert.equal(body.forceConfirmed,true);assert.equal(ui.all().some(node=>node.textContent==='Close desktop app…'),false);
   ui.panel.clients=[{...client,running:true}];ui.panel.gatewayRunning=false;ui.panel.renderClients();assert.equal(ui.all().some(node=>node.textContent==='Close desktop app…'),false);
  }
+});
+
+function codexEntries({native=true,wsl=true,nativeSelectable=true}={}){
+ const entry='wsl:'+'c'.repeat(32);
+ return {id:'codex',name:'Codex',enabled:native||wsl,configured:true,selectable:true,installed:true,running:wsl,connected:wsl,desktopEnabled:native,entries:[
+  {id:'desktop',kind:'desktop',name:'Codex',enabled:native,configured:nativeSelectable,selectable:nativeSelectable,installed:nativeSelectable,running:false,connected:false,canQuitDesktop:false},
+  {id:entry,kind:'wsl-cli',icon:'codex',name:'WSL Codex · Ubuntu',enabled:wsl,configured:true,selectable:true,installed:true,running:wsl,connected:wsl,canQuitDesktop:false}
+ ]};
+}
+test('desktop client management groups native and WSL Codex switches in one Codex section',()=>{
+ const ui=fixture();ui.panel.clients=[codexEntries()];ui.panel.renderClients();
+ const rows=ui.all().filter(node=>node.tag==='tr'),group=rows.find(row=>row.children[0]?.attributes.scope==='rowgroup');assert.ok(group);assert.equal(group.children[0].textContent,'Codex');assert.equal(group.children[0].colSpan,5);
+ const entries=rows.filter(row=>row.dataset.clientParent==='codex');assert.deepEqual(entries.map(row=>row.dataset.clientId),['codex','wsl:'+'c'.repeat(32)]);
+ assert.equal(ui.all().filter(node=>node.tag==='input'&&node.className==='client-toggle').length,2);assert.equal(ui.all().some(node=>node.textContent==='关闭电脑 App…'),false);
+});
+test('desktop native Codex disable preserves WSL-only availability while the write is pending',async()=>{
+ const ui=fixture();ui.panel.clients=[codexEntries()];ui.panel.refreshClients=async()=>{};let finish;ui.setHandler(()=>new Promise(resolve=>finish=resolve));
+ const disabling=ui.panel.toggleClient('codex',false);assert.equal(ui.choices.length,0);assert.equal(ui.panel.clients[0].desktopEnabled,false);assert.equal(ui.panel.clients[0].enabled,true);assert.equal(ui.panel.clients[0].entries[1].enabled,true);
+ assert.equal(ui.calls[0].provider,'codex');assert.equal(ui.calls[0].enabled,false);finish({clients:ui.panel.clients});await disabling;
+});
+test('desktop WSL disable only changes its own environment and skips native quit choices',async()=>{
+ const ui=fixture();ui.panel.clients=[codexEntries()];ui.panel.refreshClients=async()=>{};const id=ui.panel.clients[0].entries[1].id;
+ ui.setHandler(async()=>({clients:ui.panel.clients}));await ui.panel.toggleClient(id,false);
+ assert.equal(ui.choices.length,0);assert.equal(ui.calls[0].provider,id);assert.equal(ui.calls[0].quitDesktop,false);assert.equal(ui.panel.clients[0].entries[1].enabled,false);assert.equal(ui.panel.clients[0].desktopEnabled,true);assert.equal(ui.panel.clients[0].enabled,true);
+});
+test('desktop aggregate WSL readiness cannot enable an unavailable native Codex entry',async()=>{
+ const ui=fixture();ui.panel.clients=[codexEntries({native:false,nativeSelectable:false})];ui.panel.renderClients();
+ const native=ui.all().find(row=>row.dataset.clientId==='codex');assert.equal(native.querySelector('input').disabled,true);await ui.panel.toggleClient('codex',true);assert.equal(ui.calls.length,0);
+});
+test('desktop reconciliation checks native quit against the native entry while WSL stays connected',async()=>{
+ const ui=fixture(),client=codexEntries({native:false});ui.panel.clients=[client];ui.panel.operationFailures=new Map([['codex',{action:'quit',uncertain:true,message:'pending'}]]);
+ ui.setHandler(async()=>({clients:[client]}));await ui.panel.refreshClients();assert.equal(ui.panel.operationFailures.has('codex'),false);assert.equal(ui.panel.clients[0].enabled,true);assert.equal(ui.panel.clients[0].connected,true);
+});
+
+test('desktop WSL Manage buttons mount the real account panel for the exact provider and entry',async()=>{
+ for(const [provider,kind,prefix] of [['codex','wsl-cli','wsl:'],['claude','wsl-claude-cli','wsl-claude:']]){
+  const ui=fixture(),entry=prefix+'a'.repeat(32),client={id:entry,kind,name:'Fixture WSL',configured:true,enabled:true,installed:true,canQuitDesktop:false};ui.panel.clients=[client];
+  ui.setHandler(async value=>{assert.equal(value.action,'wslAccounts');assert.equal(value.provider,provider);assert.equal(value.entry,entry);return{provider,entry,identity:'fixture',available:true,target:{distribution:'Fixture',user:'tester',configDir:'/home/tester/.config'},accounts:[],blockers:['External CLI remains running'],capabilities:{save:true,import:true,capture:false,switch:false}};});
+  ui.panel.renderClients();assert.ok(ui.text().includes('在网关中管理 WSL 账号与 API'));const button=ui.all().find(node=>node.tag==='button'&&node.textContent==='管理');const panel=button.onclick();await new Promise(resolve=>setImmediate(resolve));
+  const dialog=ui.document.body.children.find(node=>node.id==='wsl-account-management-dialog');assert.ok(dialog?.open);assert.equal(dialog.dataset.provider,provider);assert.equal(dialog.dataset.entry,entry);assert.equal(dialog.children[0].className,'picker-head');assert.equal(dialog.children[0].children[0].textContent,'WSL 账号与接入');assert.equal(dialog.children[0].children[1].textContent,'关闭');assert.equal(dialog.children.length,2);const labels=dialog.querySelectorAll('button').map(node=>node.textContent);assert.ok(labels.includes('保存 API 接入'));assert.ok(labels.includes('从本机导入 API 接入'));assert.equal(labels.includes('确认切换'),false);assert.equal(panel.entry,entry);dialog.close();assert.equal(panel.entry,'');assert.equal(ui.document.body.children.includes(dialog),false);
+ }
+});
+test('desktop resources load WSL account UI before its client management entry point',()=>{
+ const html=fs.readFileSync(path.join(__dirname,'../desktop/index.html'),'utf8');assert.ok(html.includes('../web/features/accounts/account.css'));const panel=html.indexOf('src="../web/features/accounts/wsl-accounts.js"'),entry=html.indexOf('src="features/clients/desktop-sessions.js"');assert.ok(panel>0&&entry>panel);assert.ok(fs.existsSync(path.join(__dirname,'../web/features/accounts/wsl-accounts.js')));
 });

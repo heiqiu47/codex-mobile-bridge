@@ -313,7 +313,11 @@ class Workbench {
     for (const [name, description, action] of [[BridgeI18n.t('文件'), BridgeI18n.t('浏览项目文件、上传与下载'), () => this.files()], ['Git', BridgeI18n.t('历史、暂存、提交与分支管理'), () => this.git()], [BridgeI18n.t('终端'), BridgeI18n.t('运行项目命令、构建与查看输出'), () => this.terminal()], [BridgeI18n.t('侧边聊天'), BridgeI18n.t('继承当前上下文，临时讨论并跨设备接续'), () => this.sideChat()], [BridgeI18n.t('子智能体'), BridgeI18n.t('查看派生任务关系与执行记录'), () => this.agents()]]) {
       const button = this.button('', () => { dialog.close(); action(); }, name);
       button.append(this.node('strong', '', name), this.node('span', '', description));
-      if((this.current.provider||this.current.access?.canUseSideChat===false)&&['侧边聊天','子智能体'].map(BridgeI18n.t).includes(name)) {button.disabled=true;button.lastChild.textContent=BridgeI18n.t('当前客户端尚未提供此能力');}
+      const capability=name===BridgeI18n.t('终端')?'terminal':name===BridgeI18n.t('侧边聊天')?'sideChat':null;
+      const unavailable=this.current.provider&&['侧边聊天','子智能体'].map(BridgeI18n.t).includes(name)
+        ||this.current.access?.canUseSideChat===false&&['侧边聊天','子智能体'].map(BridgeI18n.t).includes(name)
+        ||capability&&this.current.capabilities?.[capability]===false;
+      if(unavailable){button.disabled=true;button.lastChild.textContent=BridgeI18n.t('当前客户端尚未提供此能力');}
       choices.append(button);
     }
     dialog.append(head, choices); dialog.addEventListener('close', () => dialog.remove()); document.body.append(dialog); dialog.showModal();
@@ -342,8 +346,11 @@ class Workbench {
     }
     this.select('sidechat');
   }
-  terminal() {
+  async terminal() {
     const session=this.current;if(!session)return;
+    try { if(window.BridgeFeatures)await window.BridgeFeatures.load('terminal'); }
+    catch(error){this.notify(BridgeI18n.t('终端加载失败，请重试'));return;}
+    if(this.current!==session)return;
     if(!session.files.some(tab=>tab.id==='terminal')) {
       const tab={id:'terminal',name:BridgeI18n.t('终端'),body:this.node('div','wb-terminal')};
       session.files.push(tab);tab.terminal=new TerminalPanel(this,session,tab);
@@ -432,12 +439,18 @@ class Workbench {
     button.dataset.i18nAriaLabel = description; button.dataset.i18nTitle = description;
     button.setAttribute('aria-label', BridgeI18n.t(description)); button.title = BridgeI18n.t(description);
   }
+  async openSourceLocation(session, path, start, end = start) {
+    if (session !== this.current || !path || !Number.isInteger(start) || start < 1 || start > 1000000 || !Number.isInteger(end) || end < start || end > 1000000) return;
+    await this.preview(session, {path, name:path.split('/').pop(), sourceLocation:{start,end}});
+  }
   async preview(session, entry) {
     if (session !== this.current) return;
+    const imageContext={provider:session.provider||'codex',id:session.id,host:session.host||'local'};
+    const imageComposerScope=window.BridgeImageViewer?.composerScope(imageContext);
     const id = 'file:' + entry.path;
-    if (session.files.some(t => t.id === id)) { this.select(id); return; }
+    if (session.files.some(t => t.id === id)) { this.select(id); const tab=session.files.find(t=>t.id===id); if(entry.sourceLocation) {tab.sourceLocation=entry.sourceLocation;tab.showSourceLocation?.();} return; }
     if (session.files.filter(t => t.id.startsWith('file:')).length >= 8) { this.notify(BridgeI18n.t('最多同时打开 8 个文件，请先关闭一个标签')); return; }
-    const tab = {id, name: entry.name, body: this.node('div', 'wb-preview'), controller: new AbortController()}; session.files.push(tab);
+    const tab = {id, name: entry.name, sourceLocation:entry.sourceLocation, body: this.node('div', 'wb-preview'), controller: new AbortController()}; session.files.push(tab);
     tab.body.append(this.node('p', 'wb-status', BridgeI18n.t('正在读取文件…'))); this.select(id);
     try {
       const pdf = /\.pdf$/i.test(entry.name);
@@ -445,6 +458,8 @@ class Workbench {
       const result = pdf
         ? {...await this.request(downloadUrl + '&info=1', undefined, tab.controller.signal), kind:'pdf'}
         : await this.request(this.url(session, 'preview', entry.path), undefined, tab.controller.signal);
+      if (window.BridgeFeatures && ['pdf','text'].includes(result.kind)) await window.BridgeFeatures.load('files');
+      if (window.BridgeFeatures && result.kind === 'text' && /\.md$/i.test(result.name)) await window.BridgeFeatures.load('chat');
       if (tab.controller.signal.aborted || !this.sessions.has(session.key) || !session.files.includes(tab)) return;
       const head = this.node('div', 'wb-preview-head'), title = this.node('div', 'wb-preview-title'), actions = this.node('div', 'wb-preview-actions');
       title.append(this.raw(this.node('strong', '', result.name)), this.node('small', '', this.size(result.size) + ' · ' + entry.path));
@@ -455,9 +470,9 @@ class Workbench {
       if (result.kind === 'pdf') {
         tab.pdf = BridgePdfPreview.create({url:downloadUrl, info:result});
         content.classList.add('wb-pdf-content'); content.append(tab.pdf.element);
-      } else if (result.kind === 'image') { const image = this.node('img'); image.src = 'data:' + result.mime + ';base64,' + result.data; image.alt = result.name; window.BridgeImageViewer?.registerWorkspaceImage(image, result); content.append(image); }
+      } else if (result.kind === 'image') { const image = this.node('img'); image.src = 'data:' + result.mime + ';base64,' + result.data; image.alt = result.name; window.BridgeImageViewer?.registerWorkspaceImage(image, result, imageContext, imageComposerScope); content.append(image); }
       else if (result.kind === 'text') {
-        if (/\.md$/i.test(result.name)) {content.__mermaidScope=this.mermaidScope;content.__mermaidIdentity=session.key+'|'+id;renderMarkdown(content, result.text);}
+        if (/\.md$/i.test(result.name) && !tab.sourceLocation) {if(!this.mermaidScope)this.mermaidScope=window.BridgeMermaidCards?.createScope();content.__mermaidScope=this.mermaidScope;content.__mermaidIdentity=session.key+'|'+id;renderMarkdown(content, result.text);}
         else if (/\.html?$/i.test(result.name)) {
           modes = this.node('div', 'wb-preview-modes');
           const preview = this.button('预览', () => show('preview'));
@@ -471,14 +486,15 @@ class Workbench {
             source.setAttribute('aria-pressed', String(mode === 'source'));
             copy.hidden = mode !== 'source';
             if (mode === 'preview') { tab.html = BridgeHtmlPreview.create({text:result.text, onEscape:() => { if (this.previewFullscreen?.tab === tab) this.closePreviewFullscreen(); }}); content.replaceChildren(tab.html.element); }
-            else content.replaceChildren(BridgeSourceView.create({name:result.name, text:result.text}));
+            else content.replaceChildren(BridgeSourceView.create({name:result.name, text:result.text, location:tab.sourceLocation}));
           };
-          show('preview');
+          tab.showSourceLocation = () => { show('source'); BridgeSourceView.locate(content.firstChild, tab.sourceLocation.start, tab.sourceLocation.end); };
+          show(tab.sourceLocation ? 'source' : 'preview');
         }
         else {
           const copy = this.button('复制', () => window.BridgeClipboard.copy(() => result.text, copy), '复制代码');
           copy.className = 'wb-source-copy'; copyAction = copy;
-          content.append(BridgeSourceView.create({name:result.name, text:result.text}));
+          content.append(BridgeSourceView.create({name:result.name, text:result.text, location:tab.sourceLocation}));
         }
       } else content.append(this.node('p', 'wb-empty', BridgeI18n.t(result.size > 512 * 1024 ? '文件超过 512 KB，无法在线预览。可下载后打开。' : '此文件不是 UTF-8 文本或可预览图片，可下载后打开。')));
       if (['pdf','image','text'].includes(result.kind)) {
@@ -487,6 +503,10 @@ class Workbench {
       }
       if (copyAction) actions.append(copyAction);
       tab.body.replaceChildren(...(modes ? [head, modes, content] : [head, content]));
+      if (result.kind === 'text') {
+        tab.showSourceLocation ||= () => { content.replaceChildren(BridgeSourceView.create({name:result.name, text:result.text, location:tab.sourceLocation})); BridgeSourceView.locate(content.firstChild, tab.sourceLocation.start, tab.sourceLocation.end); };
+        if (tab.sourceLocation) tab.showSourceLocation();
+      }
       if (tab.pdf) tab.pdf.load();
     } catch (error) { if (error.name !== 'AbortError') tab.body.replaceChildren(this.node('p', 'wb-status error', error.message), this.button(BridgeI18n.t('重试'), () => { this.close(id); this.preview(session, entry); })); }
   }

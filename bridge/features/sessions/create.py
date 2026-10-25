@@ -21,7 +21,7 @@ class CreationError(RuntimeError):
 
 
 class CreationUnavailable(CreationError):
-    """The runtime never started, so no thread mutation could have happened."""
+    """No thread mutation could have happened."""
 
 
 class ForkUnavailable(CreationUnavailable):
@@ -120,13 +120,149 @@ def independent_directory(data_dir, request_id):
         raise CreationUnavailable('独立聊天目录不可用') from exc
 
 
-def create_empty(executable, codex_home, cwd, title):
+def project_directory(value, create=False, expected=None):
+    """Explicit project selection only; return the canonical directory identity."""
+    if not isinstance(value, str) or not value.strip() or len(value) > 4096 or any(ord(c) < 32 for c in value):
+        raise ValueError('请输入完整的项目目录')
+    if type(create) is not bool:
+        raise ValueError('创建目录选项无效')
+    value = value.strip()
+    # UNC/device paths can initiate remote authentication on Windows. Projects
+    # on SSH/WSL must be resolved on that registered host instead.
+    if os.name == 'nt' and (value.startswith(('\\\\', '//')) or ':' in value[2:]):
+        raise ValueError('请使用此电脑的本地绝对路径')
+    path = Path(value).expanduser()
+    if not path.is_absolute() or '..' in path.parts:
+        raise ValueError('请使用绝对路径或 ~/ 开头的目录，不含 ..')
+    try:
+        if create and not path.exists():
+            parent = path.parent.resolve(strict=True)
+            if not parent.is_dir(): raise ValueError('父目录不存在')
+            # Deliberately create only the requested final directory, never a
+            # guessed hierarchy, and never overwrite existing contents.
+            try: (parent/path.name).mkdir(mode=0o700)
+            except FileExistsError: pass
+        canonical = path.resolve(strict=True)
+        if not canonical.is_dir(): raise ValueError('所选路径不是目录')
+        if not os.access(canonical, os.R_OK | os.W_OK | os.X_OK):
+            raise ValueError('项目目录不可读写')
+        st = canonical.stat()
+        identity = {'cwd': str(canonical), 'device': st.st_dev, 'inode': st.st_ino}
+        if expected is not None and identity != expected:
+            raise ValueError('项目目录已变化，请重新选择目录')
+        return identity
+    except OSError as exc:
+        raise ValueError('项目目录不存在或不可访问；新目录请勾选创建，并确保父目录存在') from exc
+
+
+def project_directory_listing(value=None, hidden=False, name=None, identity=None):
+    """Explicit filesystem picker; only directories, never file contents."""
+    if type(hidden) is not bool: raise ValueError('目录显示选项无效')
+    if value is None: value = str(Path.home())
+    if not isinstance(value, str) or len(value) > 4096 or any(ord(c) < 32 for c in value):
+        raise ValueError('目录路径无效')
+    if os.name == 'nt' and (value.startswith(('\\\\', '//')) or ':' in value[2:]):
+        raise ValueError('请使用此电脑的本地目录')
+    try:
+        path = Path(value).expanduser()
+        if not path.is_absolute() or '..' in path.parts: raise ValueError('目录路径无效')
+        path = path.resolve(strict=True)
+        if not path.is_dir() or not os.access(path, os.R_OK | os.X_OK): raise ValueError('目录不可浏览')
+        st = path.stat()
+        current = {'cwd': str(path), 'device': st.st_dev, 'inode': st.st_ino}
+        if name is not None:
+            if (not isinstance(name, str) or not name.strip() or len(name) > 200 or name in ('.', '..')
+                    or any(c in name for c in '/\\:') or any(ord(c) < 32 for c in name)):
+                raise ValueError('请输入有效的文件夹名称，不含路径分隔符')
+            if identity != current: raise ValueError('当前目录已变化，请刷新后新建')
+            child = path/name.strip()
+            # A lost mkdir response must never silently select an existing
+            # folder or follow a replacement symlink on a later request.
+            try:
+                child.mkdir(mode=0o700)
+            except FileExistsError as exc:
+                raise ValueError('文件夹已存在，请刷新后选择') from exc
+            path = Path(project_directory(str(child))['cwd'])
+            st = path.stat(); current = {'cwd': str(path), 'device': st.st_dev, 'inode': st.st_ino}
+        directories = []
+        for child in path.iterdir():
+            if not hidden and child.name.startswith('.'): continue
+            try:
+                if child.is_dir(): directories.append({'name': child.name, 'path': str(child)})
+            except OSError: continue
+        directories.sort(key=lambda item: (item['name'].casefold(), item['name']))
+        roots = [{'name': '/', 'path': '/'}]
+        if os.name == 'nt':
+            import ctypes
+            kernel = ctypes.windll.kernel32
+            roots = [{'name': chr(n)+':', 'path': chr(n)+':\\'} for n in range(65,91)
+                     if kernel.GetDriveTypeW(chr(n)+':\\') in (2,3)]
+        return {'path': str(path), 'parent': str(path.parent) if path.parent != path else None,
+                'home': str(Path.home()), 'roots': roots, 'identity': current, 'directories': directories}
+    except (OSError, RuntimeError) as exc:
+        raise ValueError('无法浏览此目录，请检查访问权限') from exc
+
+
+def _native_project_support(executable, required):
+    """Inspect this runtime before a new-directory operation can mutate it."""
+    kwargs = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
+    try:
+        with tempfile.TemporaryDirectory(prefix='project-schema-') as folder:
+            result = subprocess.run([str(executable), 'app-server', 'generate-json-schema', '--experimental', '--out', folder],
+                                    capture_output=True, timeout=30, **kwargs)
+            def schema(name):
+                paths = list(Path(folder).rglob(name + '.json'))
+                return json.loads(paths[0].read_text(encoding='utf-8')) if paths else {}
+            supported = (result.returncode == 0 and
+                         'projectId' in schema('ThreadStartParams').get('properties', {}) and
+                         bool(schema('ProjectListResponse').get('properties', {}).get('data')))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        supported = False
+    if required and not supported:
+        raise CreationUnavailable('此 Codex 版本不支持原生项目关联，请更新电脑 Codex App 后重试，或在 App 中添加项目后重新选择')
+    return supported
+
+
+def _native_project(request, cwd, project):
+    canonical = lambda value: os.path.normcase(os.path.realpath(value))
+    matches = []
+    cursor = None
+    seen = set()
+    while True:
+        page = request('project/list', {'cursor': cursor, 'limit': 100})
+        matches.extend(row for row in page['data'] if any(
+            canonical(root['path']) == canonical(cwd) for root in row.get('roots', [])))
+        cursor = page.get('nextCursor')
+        if cursor is None:
+            break
+        if cursor in seen:
+            raise CreationError('原生项目列表游标无效，请在电脑 App 检查项目')
+        seen.add(cursor)
+    named = [row for row in matches if row.get('name') == project.get('name')]
+    selected = named if named else matches
+    if len(selected) > 1:
+        raise CreationError('此目录对应多个原生项目，请在电脑 App 确认项目归属后重试')
+    if selected:
+        return selected[0]['id']
+    raise CreationUnavailable('电脑 App 项目与运行时尚未对应，请检查所用 Codex App 和运行时配置后重试')
+
+
+def create_empty(executable, codex_home, cwd, title, project=None):
+    supported = project is not None and _native_project_support(executable, project.get('required', False))
     def create(request):
-        result = request('thread/start', {'cwd': cwd, 'ephemeral': False})
+        project_id = _native_project(request, cwd, project) if supported else None
+        params = {'cwd': cwd, 'ephemeral': False}
+        if project_id is not None:
+            params['projectId'] = project_id
+        result = request('thread/start', params)
         thread_id = result['thread']['id']
         uuid.UUID(thread_id)
+        if project_id is not None and result['thread'].get('projectId') != project_id:
+            raise CreationError('聊天已创建但原生项目归属未确认，请检查电脑 App，不要重复创建')
         request('thread/name/set', {'threadId': thread_id, 'name': title})
-        request('thread/read', {'threadId': thread_id, 'includeTurns': True})
+        saved = request('thread/read', {'threadId': thread_id, 'includeTurns': True})
+        if project_id is not None and saved['thread'].get('projectId') != project_id:
+            raise CreationError('聊天已创建但项目归属未持久化确认，请检查电脑 App，不要重复创建')
         return thread_id
     return _runtime_operation(executable, codex_home, cwd, create)
 
@@ -167,11 +303,21 @@ def fork_copy(executable, codex_home, cwd, source_id, turn_id, title, settings):
     return _runtime_operation(executable, codex_home, cwd, fork)
 
 
+def open_project_in_desktop(cwd):
+    # Native newThread navigation registers the folder and opens an empty
+    # composer. Never include a prompt, message, or submit instruction.
+    _open_desktop_url('codex://threads/new?' + urlencode({'path': cwd}))
+
+
 def open_in_desktop(thread_id, host):
     uuid.UUID(thread_id)
     url = 'codex://threads/' + thread_id
     if host != 'local':
         url += '?' + urlencode({'hostId': host})
+    _open_desktop_url(url)
+
+
+def _open_desktop_url(url):
     if sys.platform == 'darwin':
         subprocess.run(['open', url], check=True, timeout=10,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

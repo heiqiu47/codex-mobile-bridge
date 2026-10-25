@@ -63,8 +63,8 @@ def draft_account_identity(directory, cwd=None, environment=None):
     return ''
 
 
-def auth_status(binary, directory):
-    env = os.environ.copy()
+def auth_status(binary, directory, environment=None):
+    env = dict(os.environ if environment is None else environment)
     env['CLAUDE_CONFIG_DIR'] = str(directory)
     try:
         result = subprocess.run([binary, 'auth', 'status', '--json'], env=env,
@@ -75,15 +75,24 @@ def auth_status(binary, directory):
         return {}
 
 
-def auth_fingerprint(binary, directory):
-    status = auth_status(binary, directory)
+def auth_fingerprint(binary, directory, environment=None):
+    status = (auth_status(binary, directory) if environment is None
+              else auth_status(binary, directory, environment))
+    if os.environ.get('MOBILE_BRIDGE_WSL_NATIVE') == '1' and type(status.get('loggedIn')) is not bool:
+        # A cold native CLI can time out once. Unknown evidence must never
+        # become a synthetic logged-out owner or replace an existing scope.
+        status = (auth_status(binary, directory) if environment is None
+                  else auth_status(binary, directory, environment))
+        if type(status.get('loggedIn')) is not bool:
+            raise ValueError('WSL Claude Code 登录状态暂无法核验，请稍后重试')
     stable = {key: status[key] for key in ('authMethod', 'apiProvider', 'email', 'accountId',
               'accountUuid', 'organizationId', 'organizationUuid', 'orgId', 'workspaceId')
               if isinstance(status.get(key), str) and status[key]}
     credentials = Path(directory)/'.credentials.json'
-    ambient = {key: os.environ[key] for key in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+    environment = os.environ if environment is None else environment
+    ambient = {key: environment[key] for key in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
                'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS')
-               if os.environ.get(key)}
+               if environment.get(key)}
     identity = {'loggedIn': status.get('loggedIn') is True, 'stable': stable,
                 'ambient': ambient}
     if not any(key in stable for key in ('email', 'accountId', 'accountUuid',
@@ -95,18 +104,61 @@ def auth_fingerprint(binary, directory):
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
+def native_wsl_binary(binary):
+    """A Windows npm shim is not a Linux Claude Code installation."""
+    if not binary:
+        return False
+    path = Path(binary).resolve()
+    if re.match(r'^/mnt/[a-zA-Z](?:/|$)', str(path)) or path.suffix.lower() in ('.exe', '.cmd', '.bat'):
+        return False
+    try:
+        with path.open('rb') as stream:
+            header = stream.read(8192)
+        if header.startswith(b'MZ'):
+            return False
+        if header.startswith(b'#!'):
+            text = header.decode('utf-8', errors='replace').lower()
+            if any(name in text for name in ('claude.exe', 'node.exe', 'cmd.exe', 'powershell.exe')):
+                return False
+            if 'node' in text.splitlines()[0]:
+                node = shutil.which('node')
+                if not node or not native_wsl_binary(node):
+                    return False
+        return True
+    except OSError:
+        return False
+
+
 def profile():
     binary = shutil.which('claude') or next((str(p) for p in
         (Path.home()/'.local/bin/claude', Path('/usr/local/bin/claude'))
         if p.is_file() and os.access(p, os.X_OK)), None)
+    if os.environ.get('MOBILE_BRIDGE_WSL_NATIVE') == '1' and not native_wsl_binary(binary):
+        binary = next((str(p) for p in (Path.home()/'.local/bin/claude',
+            Path('/usr/local/bin/claude'), Path.home()/'.npm-global/bin/claude',
+            *Path.home().glob('.nvm/versions/node/*/bin/claude'))
+            if p.is_file() and os.access(p, os.X_OK) and native_wsl_binary(p)), None)
     if not binary:
         return None
     explicit = os.environ.get('CLAUDE_CONFIG_DIR')
     directory = Path(explicit).expanduser().resolve() if explicit else Path.home()/'.claude'
     try:
-        digest = hashlib.sha256((directory/'settings.json').read_bytes()).hexdigest()
+        settings_bytes = (directory/'settings.json').read_bytes()
     except OSError:
         digest = 'none'
+    else:
+        if os.environ.get('MOBILE_BRIDGE_WSL_NATIVE') == '1':
+            try:
+                settings = json.loads(settings_bytes)
+            except (ValueError, UnicodeError):
+                pass  # Invalid settings retain their original byte identity.
+            else:
+                if isinstance(settings, dict):
+                    # WSL's native TUI writes its display theme at first launch.
+                    # Presentation changes must not replace the account scope.
+                    settings.pop('theme', None)
+                    settings_bytes = json.dumps(settings, sort_keys=True, separators=(',', ':')).encode()
+        digest = hashlib.sha256(settings_bytes).hexdigest()
     binary = str(Path(binary).resolve())
     auth = auth_fingerprint(binary, directory)
     return {'binary': binary, 'directory': str(directory),
@@ -258,7 +310,8 @@ def saved(path, found, *, include_events=False):
                     cwd = event['cwd']
                 if kind == 'assistant' and isinstance(event.get('message'), dict):
                     candidate = event['message'].get('model')
-                    if isinstance(candidate, str):
+                    if (isinstance(candidate, str) and candidate != '<synthetic>'
+                            and not event.get('isApiErrorMessage')):
                         model = candidate
                 if kind == 'mode' and event.get('mode') in MODES:
                     permission = event['mode']
@@ -459,9 +512,30 @@ def upload(found, request):
     return {'path': str(path.resolve())}
 
 
+def continuation_identity(directory):
+    files = {}
+    for name in ('settings.json', '.credentials.json'):
+        path = Path(directory)/name
+        if path.is_symlink():
+            raise ValueError('WSL 账号配置不可重定向')
+        try:
+            files[name] = base64.b64encode(path.read_bytes()).decode()
+        except FileNotFoundError:
+            files[name] = None
+    return hashlib.sha256(json.dumps(files, ensure_ascii=False, indent=2, sort_keys=True).encode()).hexdigest()
+
+
 def command(request):
     found = profile()
     operation = request.get('operation')
+    if operation == 'account-continuation':
+        if os.environ.get('MOBILE_BRIDGE_WSL_NATIVE') != '1' or not found:
+            raise ValueError('WSL 账号续接核验不可用')
+        identity = continuation_identity(found['directory'])
+        rows = sessions(found)
+        if found != profile() or identity != continuation_identity(found['directory']):
+            raise ValueError('WSL 账号配置在续接核验期间变化')
+        return {'identity': identity, 'profile': found, 'sessions': rows}
     if operation == 'list':
         return {'profile': found, 'sessions': sessions(found) if found else []}
     if operation == 'projects':
@@ -523,6 +597,10 @@ def create(request):
     cwd = Path(request['cwd']).resolve(strict=True)
     if not cwd.is_dir():
         raise ValueError('原项目目录不可用')
+    if request.get('directoryIdentity') is not None:
+        stat = cwd.stat()
+        if request['directoryIdentity'] != {'cwd': str(cwd), 'device': stat.st_dev, 'inode': stat.st_ino}:
+            raise ValueError('项目目录已变化，请重新选择目录')
     directory = upload_root(found, request['scope'])
     if profile() != found:
         raise ValueError('原 Claude Code 配置已变化或不可用')

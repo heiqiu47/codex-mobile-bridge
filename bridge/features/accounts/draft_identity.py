@@ -10,7 +10,7 @@ def draft_identity(*parts):
                                      separators=(',', ':')).encode('utf-8')).hexdigest()
 
 
-def codex_account_identity(home, provider, environment=None):
+def codex_account_identity(home, provider, environment=None, *, shared_auth=False, toml_loads=None):
     """Read the selected home without contacting or activating a Codex runtime."""
     home = Path(home)
     environment = environment or {}
@@ -28,16 +28,20 @@ def codex_account_identity(home, provider, environment=None):
         endpoint = environment.get('OPENAI_BASE_URL') or 'https://api.openai.com/v1'
         return draft_identity('api', provider, endpoint, key) if isinstance(key, str) and key else ''
     try:
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib
-        config = tomllib.loads((home/'config.toml').read_text(encoding='utf-8'))
+        if toml_loads is None:
+            try:
+                import tomllib
+            except ImportError:
+                import tomli as tomllib
+            toml_loads = tomllib.loads
+        config = toml_loads((home/'config.toml').read_text(encoding='utf-8'))
         profile = (config.get('profiles') or {}).get(config.get('profile')) or {}
         effective = {**config, **profile}
         definition = (effective.get('model_providers') or {}).get(provider) or {}
         key = (environment.get(definition['env_key']) if definition.get('env_key')
                else definition.get('experimental_bearer_token'))
+        if shared_auth and not key and definition.get('requires_openai_auth') is True:
+            key = auth.get('OPENAI_API_KEY')
         endpoint = definition.get('base_url')
         if isinstance(key, str) and key and isinstance(endpoint, str) and endpoint:
             return draft_identity('api', provider, endpoint, key)

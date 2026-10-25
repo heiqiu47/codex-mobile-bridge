@@ -1,12 +1,33 @@
 'use strict';
 const timelineText=source=>typeof BridgeI18n==='undefined'?source:BridgeI18n.t(source);
+const fileChangeLabel=row=>timelineText('已编辑 {count} 个文件').replace('{count}',row.fileSummary?.count||0);
 const recentTimelinePages=new Map();
+function timelineFilePath(path,cwd){
+  if(typeof path!=='string'||!path||typeof cwd!=='string'||!cwd||/[\0\r\n]/.test(path))throw Error(timelineText('文件路径无法定位'));
+  const windows=/^(?:[A-Za-z]:[\\/]|\\\\|\/\/)/.test(cwd);
+  const normalize=value=>windows?value.replace(/\\/g,'/'):value;
+  path=normalize(path);cwd=normalize(cwd).replace(/\/+$/,'');
+  const absolute=/^(?:\/|[A-Za-z]:\/)/.test(path);
+  if(absolute){
+    const prefix=cwd+'/',match=windows?path.toLowerCase().startsWith(prefix.toLowerCase()):path.startsWith(prefix);
+    if(!match)throw Error(timelineText('此文件位于聊天项目之外，无法在当前文件标签页中定位。'));
+    path=path.slice(prefix.length);
+  }
+  const parts=[];
+  for(const part of path.split('/')){
+    if(!part||part==='.')continue;
+    if(part==='..'){if(!parts.length)throw Error(timelineText('文件路径无法定位'));parts.pop();}
+    else parts.push(part);
+  }
+  if(!parts.length||parts.some(part=>part.includes('\\')||part.includes(':')))throw Error(timelineText('文件路径无法定位'));
+  return parts.join('/');
+}
 
 // History and live changes share stable keys, but never share a request queue.
 class ChatTimeline {
   static clearCache(){recentTimelinePages.clear();}
-  constructor({url, request, renderMeta, renderText, status, onAction, canEdit = () => true, elements = {}, active = () => true, cacheKey = ''}) {
-    Object.assign(this,{url,request,renderMeta,renderText,status,onAction,active,cacheKey});
+  constructor({url, request, renderMeta, renderText, status, onAction, onFile, canEdit = () => true, elements = {}, active = () => true, cacheKey = ''}) {
+    Object.assign(this,{url,request,renderMeta,renderText,status,onAction,onFile,active,cacheKey});
     this.canEdit=()=>!this.cached&&canEdit();
     this.viewport=elements.viewport||document.getElementById('timeline');
     this.container=elements.container||document.getElementById('messages');
@@ -27,12 +48,20 @@ class ChatTimeline {
       if(upward&&this.nearTop()&&!this.retryCount)this.loadOlder(100);
     };
     this.viewport.addEventListener('scroll',this.onScroll,{passive:true});
+    // At the scroll boundary wheel/touch intent produces no scroll event.
+    this.atHistoryEdge=()=>!this.suppress&&this.viewport.clientHeight&&this.viewport.scrollTop<=1&&!this.retryCount;
+    this.onWheel=event=>{if(event.deltaY<0&&this.atHistoryEdge())this.loadOlder(100);};
+    this.onTouchStart=event=>{this.touchY=event.touches.length===1?event.touches[0].clientY:null;};
+    this.onTouchMove=event=>{if(this.touchY===null||event.touches.length!==1)return;const y=event.touches[0].clientY;if(y-this.touchY>12&&this.atHistoryEdge()){this.touchY=y;this.loadOlder(100);}};
+    this.viewport.addEventListener('wheel',this.onWheel,{passive:true});
+    this.viewport.addEventListener('touchstart',this.onTouchStart,{passive:true});
+    this.viewport.addEventListener('touchmove',this.onTouchMove,{passive:true});
     this.older.onclick=()=>this.sequence<0||this.cached?this.start():this.loadOlder(this.retryCount||100);
     this.newer.onclick=()=>{this.jumpBottom();this.anchor=this.capture();};
     this.resize=new ResizeObserver(()=>this.restore(this.anchor,this.following));
     this.resize.observe(this.container);
   }
-  dispose(){this.abort.abort();window.BridgeMermaidCards?.clearScope(this.mermaidScope);clearTimeout(this.startRetry);this.resize.disconnect();this.viewport.removeEventListener('scroll',this.onScroll);this.newer.hidden=true;}
+  dispose(){this.abort.abort();window.BridgeMermaidCards?.clearScope(this.mermaidScope);clearTimeout(this.startRetry);this.resize.disconnect();this.viewport.removeEventListener('scroll',this.onScroll);this.viewport.removeEventListener('wheel',this.onWheel);this.viewport.removeEventListener('touchstart',this.onTouchStart);this.viewport.removeEventListener('touchmove',this.onTouchMove);this.newer.hidden=true;}
   atBottom(){return this.viewport.scrollHeight-this.viewport.scrollTop-this.viewport.clientHeight<110;}
   nearTop(){const nodes=[...this.container.children].filter(n=>!n.hidden);return nodes.length>0&&nodes.slice(0,11).some(n=>n.getBoundingClientRect().bottom>=this.viewport.getBoundingClientRect().top);}
   capture(accept=()=>true){if(!this.viewport.clientHeight)return this.anchor;const top=this.viewport.getBoundingClientRect().top;const nodes=[...this.container.children].filter(n=>!n.hidden&&accept(n));const node=nodes.find(n=>n.getBoundingClientRect().bottom>top)||nodes[nodes.length-1];return node?{key:node.dataset.key,offset:node.getBoundingClientRect().top-top}:null;}
@@ -89,14 +118,22 @@ class ChatTimeline {
   historyStatus(){this.older.hidden=!this.hasMore;this.older.disabled=this.busy;this.older.textContent=this.busy?timelineText('正在读取更早内容…'):this.retryCount?timelineText('历史加载失败，点击重试'):timelineText('查看更早内容');}
   async loadOlder(count){
     if(this.cached||this.busy||!this.hasMore||this.abort.signal.aborted)return;
-    const generation=this.generation,before=this.before;
     this.busy=true;this.retryCount=0;this.historyStatus();
     try{
-      const page=await this.read('timeline',{before,limit:count});
-      if(this.abort.signal.aborted||generation!==this.generation)return;
-      if(page.reset||page.epoch!==this.epoch){this.apply(page,true);return;}
-      this.apply(page,false,true);
-    }catch(e){if(this.abort.signal.aborted||generation!==this.generation)return;this.retryCount=count;}
+      // Keep the user's history intent across a concurrent live reset. A page
+      // of hidden tool activity may otherwise leave scrollTop stuck at zero.
+      for(let attempt=0;attempt<3;attempt++){
+        const generation=this.generation,before=this.before;
+        const page=await this.read('timeline',{before,limit:count});
+        if(this.abort.signal.aborted)return;
+        if(generation!==this.generation)continue;
+        if(page.reset||page.epoch!==this.epoch){this.apply(page,true);if(!this.hasMore)return;continue;}
+        if(page.hasMore&&(!page.rows.length||page.before===before)){this.retryCount=count;return;}
+        const visible=page.rows.some(row=>!this.rows.has(row.key)&&this.rowVisible(row));
+        this.apply(page,false,true);
+        if(visible||!this.hasMore||!this.active()||!this.nearTop())return;
+      }
+    }catch(e){if(this.abort.signal.aborted)return;this.retryCount=count;}
     finally{this.busy=false;if(!this.abort.signal.aborted)this.historyStatus();}
   }
   apply(page,reset=false,history=false,cached=false){
@@ -144,13 +181,38 @@ class ChatTimeline {
     }
   }
   renderRow(row,open){
-    const activity=row.role==='activity',toolImages=activity&&row.attachments?.some(item=>item.type==='toolImage');
+    const activity=row.role==='activity'||row.role==='fileChanges',toolImages=activity&&row.attachments?.some(item=>item.type==='toolImage');
     const node=document.createElement(activity&&!toolImages?'details':'div');
     node.className=toolImages?'tool-images timeline-row':activity?'activity timeline-row':'message timeline-row '+row.role;
     const content=toolImages?document.createElement('details'):node;
     if(toolImages){content.className='activity';node.append(content);}
     const heading=document.createElement(activity?'summary':'span');heading.className=activity?'':'who';
     heading.textContent=activity?(row.title||row.kind)+(row.status==='inProgress'?timelineText(' · 进行中'):''):row.role==='user'?timelineText('你'):row.role==='error'?timelineText('执行错误'):['CODEX',row.model&&[row.model,row.effort].filter(Boolean).join(' ')].filter(Boolean).join(' · ');content.append(heading);
+    if(row.fileSummary){
+      node.classList.add('edited-files-card');
+      heading.replaceChildren();
+      const label=document.createElement('span');label.className='edited-files-label';label.textContent=fileChangeLabel(row);
+      const stats=document.createElement('span');stats.className='edited-files-stats';
+      const added=document.createElement('span');added.className='edited-files-added';added.textContent='+'+row.fileSummary.added;
+      const removed=document.createElement('span');removed.className='edited-files-removed';removed.textContent='−'+row.fileSummary.removed;
+      stats.append(added,removed);heading.append(label);
+      if(row.fileSummary.basis==='recorded'){
+        const basis=document.createElement('small');basis.className='edited-files-basis';basis.textContent=timelineText('累计修改');heading.append(basis);
+      }
+      heading.append(stats);
+      const list=document.createElement('ul');list.className='edited-files-list';
+      for(const file of row.fileSummary.files){
+        const item=document.createElement('li'),path=document.createElement(this.onFile?'button':'span'),counts=document.createElement('span');
+        if(this.onFile){path.type='button';path.onclick=()=>this.onFile(file.path);}
+        path.textContent=file.path;path.className='edited-files-path';counts.textContent='+'+file.added+' −'+file.removed;counts.className='edited-files-stats';item.append(path,counts);list.append(item);
+        if(this.onFile)path.classList.add('plain');
+      }
+      content.append(list);
+      // File cards expand the supplied summary only, including old cached rows
+      // which may still advertise a patch body. Never request their details.
+      content.open=!!open;
+      return node;
+    }
     const body=document.createElement(activity?'pre':'div');body.className=activity?'activity-body':'message-body';
     body.__mermaidScope=this.mermaidScope;body.__mermaidIdentity=row.key;
     const more=document.createElement('button');more.className='plain detail-more';more.type='button';
@@ -179,6 +241,7 @@ class ChatTimeline {
     if(row.role==='user'||row.role==='assistant'){
       const actions=document.createElement('div');actions.className='message-actions';
       const copy=document.createElement('button');copy.type='button';copy.className='plain message-copy';copy.textContent=timelineText('复制');copy.onclick=()=>window.BridgeClipboard?.copy(()=>this.fullText(row),copy);actions.append(copy);node.append(actions);
+      const quote=document.createElement('button');quote.type='button';quote.className='plain message-quote';quote.textContent=timelineText('引用');quote.onclick=()=>node.dispatchEvent(new CustomEvent('bridge-compose-quote',{bubbles:true,detail:{getText:()=>this.fullText(row),source:row.key}}));actions.append(quote);
     }
     if(row.attachments?.length){
       const attachments=document.createElement('div');attachments.className='timeline-attachments';
@@ -234,12 +297,14 @@ class ChatTimeline {
   relabel(){
     this.refreshActions();
     this.container.querySelectorAll('.message-copy').forEach(n=>n.textContent=timelineText('复制'));
+    this.container.querySelectorAll('.message-quote').forEach(n=>n.textContent=timelineText('引用'));
     this.container.querySelectorAll('.code-copy').forEach(n=>n.textContent=timelineText('复制代码'));
     this.historyStatus();
     for(const [key,entry] of this.nodes){
       const row=this.rows.get(key)?.row;if(!row)continue;
-      const node=entry.node,heading=row.role==='activity'?(node.tagName==='DETAILS'?node.firstElementChild:node.querySelector('details.activity > summary')):node.firstElementChild;
-      if(heading)heading.textContent=row.role==='activity'?(row.title||row.kind)+(row.status==='inProgress'?timelineText(' · 进行中'):''):row.role==='user'?timelineText('你'):row.role==='error'?timelineText('执行错误'):['CODEX',row.model&&[row.model,row.effort].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
+      const node=entry.node,heading=(row.role==='activity'||row.role==='fileChanges')?(node.tagName==='DETAILS'?node.firstElementChild:node.querySelector('details.activity > summary')):node.firstElementChild;
+      if(row.fileSummary){const label=node.querySelector('.edited-files-label');if(label)label.textContent=fileChangeLabel(row);const basis=node.querySelector('.edited-files-basis');if(basis)basis.textContent=timelineText('累计修改');}
+      else if(heading)heading.textContent=(row.role==='activity'||row.role==='fileChanges')?(row.title||row.kind)+(row.status==='inProgress'?timelineText(' · 进行中'):''):row.role==='user'?timelineText('你'):row.role==='error'?timelineText('执行错误'):['CODEX',row.model&&[row.model,row.effort].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
       const more=node.querySelector('.detail-more');
       if(more&&!more.disabled)more.textContent=timelineText(this.details.has(key)?'继续加载正文':'展开完整内容');
       const attachment=node.querySelector('.timeline-attachments small.muted');

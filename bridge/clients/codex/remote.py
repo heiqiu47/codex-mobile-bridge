@@ -3,6 +3,7 @@ import base64
 from contextlib import contextmanager
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -85,6 +86,8 @@ class RemoteStore:
         suffix = ('\nimport os\nhome_source = "environment" if os.environ.get("CODEX_HOME") else "default"\n'
                   's = SessionStore(Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex"))))\n'
                   'result = s.' + method + '(**' + payload(args) + ')\n')
+        if method == 'list':
+            suffix += 'for row in result: row["_targetPathStyle"] = "windows" if os.name == "nt" else "posix"\n'
         if method == 'discovery_diagnostics':
             suffix += 'result["homeSource"] = home_source\n'
         return ssh_read(self.alias, source + suffix + 'print(json.dumps(result, ensure_ascii=False))\n', timeout=30)
@@ -97,7 +100,7 @@ class RemoteStore:
                 return [dict(row) for row in previous[1]]
             rows = self.call('list', kwargs)
             self.cache[key] = (time.monotonic(), rows)
-            return rows
+            return [dict(row) for row in rows]
 
     def available_sources(self):
         with self.lock:
@@ -160,7 +163,10 @@ class RemoteCatalog:
     def _source(self):
         source = source_text('features/auth/tls.py') + '\n'
         source += source_text('features/accounts/models.py').replace('from bridge.features.auth.tls import client_context', '') + '\n'
-        source += source_text('clients/codex/catalog.py').replace('from bridge.features.accounts.models import model_catalog', '')
+        source += source_text('clients/codex/configuration.py') + '\n'
+        source += source_text('clients/codex/catalog.py').replace(
+            'from bridge.features.accounts.models import model_catalog', '').replace(
+            'from bridge.clients.codex.configuration import magpie_managed', '')
         source += '\nimport shutil\nhome=Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex")))\n'
         source += 'runtime=shutil.which("codex") or str(Path.home()/".local/bin/codex")\n'
         source += 'reader=Catalog(home, runtime, allow_background_refresh=False)\n'
@@ -273,8 +279,10 @@ class RemoteCliModels:
         source = source_text('features/auth/tls.py') + '\n'
         source += source_text('features/accounts/models.py').replace(
             'from bridge.features.auth.tls import client_context', '') + '\n'
+        source += source_text('clients/codex/configuration.py') + '\n'
         source += source_text('clients/codex/catalog.py').replace(
-            'from bridge.features.accounts.models import model_catalog', '') + '\n'
+            'from bridge.features.accounts.models import model_catalog', '').replace(
+            'from bridge.clients.codex.configuration import magpie_managed', '') + '\n'
         source += source_text('platforms/linux/codex_daemon_env.py') + '\n'
         source += '_linux_read_process_environment = read_process_environment\n'
         source += source_text('platforms/macos/force_exit.py') + '\n'
@@ -378,17 +386,35 @@ class AppHosts:
             projects = [{'id': p['id'], 'name': p.get('label') or p['remotePath'].rsplit('/', 1)[-1], 'roots': [p['remotePath']]}
                         for p in state.get('remote-projects', []) if p['hostId'] == host]
         assignments = state.get('thread-project-assignments', {})
-        def normalized(path):
-            if host == 'local' and os.name == 'nt':
-                return path.replace('\\', '/').rstrip('/').casefold()
+        def windows_path(path):
+            return bool(re.match(r'^[a-z]:[\\/]|^\\\\|^//[?.]/', path, re.I))
+        def normalized(path, windows=False):
+            if windows or windows_path(path):
+                value = path.replace('\\', '/')
+                if value[:8].casefold() in ('//?/unc/', '//./unc/'):
+                    value = '//' + value[8:]
+                elif re.match(r'^//[?.]/[a-z]:/', value, re.I):
+                    value = value[4:]
+                return value.rstrip('/').casefold()
             return path.rstrip('/')
         for row in rows:
+            # A plain // path can also be POSIX. Only the execution host can
+            # disambiguate it; remote list rows carry that host's path style.
+            target_style = row.pop('_targetPathStyle', None)
+            windows_host = os.name == 'nt' if host == 'local' else target_style == 'windows'
             raw_cwd = row.get('cwd', '')
-            cwd = normalized(raw_cwd)
+            cwd = normalized(raw_cwd, windows_host and raw_cwd.startswith('//'))
             assigned = assignments.get(row['id'], {})
             project = next((p for p in projects if p['id'] == assigned.get('projectId') and assigned.get('hostId', host) == host), None)
             if project is None:
-                matches = [(len(normalized(root)), p) for p in projects for root in p['roots'] if cwd == normalized(root) or cwd.startswith(normalized(root) + '/')]
+                matches = []
+                for candidate in projects:
+                    for root in candidate['roots']:
+                        # Infer the target path syntax, never the gateway's OS.
+                        windows = (windows_host and (root.startswith('//') or raw_cwd.startswith('//'))) or windows_path(root) or windows_path(raw_cwd)
+                        prefix, target = normalized(root, windows), normalized(raw_cwd, windows)
+                        if target == prefix or target.startswith(prefix + '/'):
+                            matches.append((len(prefix), candidate))
                 project = max(matches, key=lambda v: v[0])[1] if matches else None
             row.update(host=host, hostLabel=label,
                        projectKey=host + '|' + (project['id'] if project else cwd or 'unassigned'),
@@ -397,7 +423,7 @@ class AppHosts:
         return rows
 
 
-def upload_file(alias, thread, identifier, name, data, digest):
+def upload_file(alias, thread, identifier, name, data, digest, *, reader=None):
     """Transfer only the selected file to a private directory on its execution host."""
     value = {'thread': thread, 'id': identifier, 'name': name, 'data': base64.b64encode(data).decode('ascii'), 'sha256': digest}
     source = 'import os,json,base64,hashlib\nfrom pathlib import Path\nv=' + payload(value) + '''
@@ -415,4 +441,4 @@ else:
     tmp.replace(p)
 print(json.dumps({'path':str(p.resolve())}))
 '''
-    return ssh_read(alias, source, timeout=90)['path']
+    return (reader or ssh_read)(alias, source, timeout=90)['path']

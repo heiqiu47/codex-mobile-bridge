@@ -24,11 +24,12 @@ async function runPersistentDraftTests(){
     window.fetch=async(url,options)=>{if(String(url).includes('/api/sessions/'+a+'/send')){sentPayload=JSON.parse(options.body);return new Promise(resolve=>{resolveSend=resolve;});}return old.fetch.call(window,url,options);};
     $('message').value='submitted';$('message').dispatchEvent(new Event('input',{bubbles:true}));
     const sendingPromise=$('composer').onsubmit({preventDefault(){}});
+    const sendDeadline=performance.now()+3000;while(!sentPayload&&performance.now()<sendDeadline)await new Promise(resolve=>setTimeout(resolve,10));
     check(sentPayload?.text==='submitted','DOM submission sends the captured revision');
     $('message').value='edited while sending';$('message').dispatchEvent(new Event('input',{bubbles:true}));
     resolveSend({ok:true,status:200,json:async()=>({status:'accepted'})});await sendingPromise;
     check($('message').value==='edited while sending'&&composerDrafts.load(scope(a)).text==='edited while sending','Delayed acknowledgement preserves the later DOM edit');
-    check(composerDrafts.pending(scope(a))===null,'Confirmed send clears its durable pending id');
+    check(composerDrafts.pendingSend(scope(a))===null,'Confirmed send clears its durable pending id');
     currentId=b;codexDraftScope=null;codexDraftTouched=false;$('message').value='';state={status:'idle',access:{source:'desktop',canSend:true}};
     let attempts=[];window.fetch=async(url,options)=>{if(String(url).includes('/api/sessions/'+b+'/send')){attempts.push(JSON.parse(options.body));return {ok:true,status:200,json:async()=>({status:attempts.length===1?'unknown':'accepted'})};}return old.fetch.call(window,url,options);};
     $('message').value='sent before account scope';$('message').dispatchEvent(new Event('input',{bubbles:true}));
@@ -38,7 +39,7 @@ async function runPersistentDraftTests(){
     check(codexProvisionalDrafts.get('local|'+b)?.text==='sent before account scope','Unknown send keeps its provisional text');
     bindCodexDraft({draftAccountIdentity:'account-a'});await $('composer').onsubmit({preventDefault(){}});
     check(attempts.length===2&&attempts[1].id===attempts[0].id,'Account scope transition retries the same payload with the same ID');
-    check(composerDrafts.pending(scope(b))===null,'Confirmed transition retry clears the durable pending ID');
+    check(composerDrafts.pendingSend(scope(b))===null,'Confirmed transition retry clears the durable pending ID');
     sessionStorage.setItem('pending:local|'+b,JSON.stringify({...attempts[0],id:'foreign-id',gateway:'different-gateway',target:'local|'+b,account:''}));
     codexDraftScope=null;codexDraftTouched=false;$('message').value='sent before account scope';$('message').dispatchEvent(new Event('input',{bubbles:true}));bindCodexDraft({draftAccountIdentity:'account-b'});
     await $('composer').onsubmit({preventDefault(){}});
@@ -75,7 +76,7 @@ async function runPersistentDraftTests(){
     check(sent?.text==='temporary','Gateway without draft identity can still send');
     return {passed:checks.length,checks};
   }finally{
-    for(const key of [scope(a),scope(b),scope(a,'account-b'),scope(b,'account-new'),scope('33333333-3333-4333-8333-333333333333'),scope('44444444-4444-4444-8444-444444444444')])composerDrafts.clear(key);
+    for(const key of [scope(a),scope(b),scope(a,'account-b'),scope(b,'account-new'),scope('33333333-3333-4333-8333-333333333333'),scope('44444444-4444-4444-8444-444444444444')])for(const kind of ['draft','pending','pending-v2'])composerDrafts.remove(composerDrafts.key(key,kind));
     codexProvisionalDrafts.clear();ChatTimeline.prototype.start=old.timelineStart;listRows=old.listRows;
     sessionStorage.removeItem('draft:local|'+b);sessionStorage.removeItem('draft:local|55555555-5555-4555-8555-555555555555');
     sessionStorage.removeItem('pending:local|'+b);

@@ -66,7 +66,7 @@ class ClaudeContext(unittest.IsolatedAsyncioTestCase):
         result = await self.detail('code', ['getContextUsageSummary'], contextUsage=None, contextUsageStatus='private fixture')
         self.assertEqual(result['session']['contextUsageStatus'], 'unavailable')
 
-    async def test_desktop_transcript_usage_fills_missing_summary(self):
+    async def test_desktop_last_prompt_is_not_current_context_when_summary_is_missing(self):
         event = {'type': 'assistant', 'message': {'id': 'step', 'model': 'desktop-model',
                  'usage': {'input_tokens': 10, 'cache_creation_input_tokens': 20,
                            'cache_read_input_tokens': 30}}}
@@ -80,10 +80,24 @@ class ClaudeContext(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.adapter, 'prepare'), patch.object(self.adapter, 'connect'), \
              patch.object(self.adapter, 'reconnect'):
             result = await self.adapter.dispatch('detail', row['id'], {})
-        self.assertEqual(result['session']['contextUsage']['usedTokens'], 60)
-        self.assertEqual(result['session']['contextUsage']['contextWindow'], 200000)
-        self.assertEqual(result['session']['contextUsageStatus'], 'available')
-        self.assertTrue(result['capabilities']['contextUsage'])
+        self.assertIsNone(result['session']['contextUsage'])
+        self.assertEqual(result['session']['lastPromptContextUsage']['usedTokens'], 60)
+        self.assertEqual(result['session']['lastPromptContextUsage']['contextWindow'], 200000)
+        self.assertEqual(result['session']['contextUsageStatus'], 'unsupported')
+        self.assertFalse(result['capabilities']['contextUsage'])
+
+    async def test_native_current_summary_wins_over_larger_last_request(self):
+        raw = {'sessionId': 'fixture', 'turnRunning': False}
+        row = session('code', raw)
+        self.adapter.index = {row['id']: row}
+        self.adapter.desktop.capabilities = {'code': ['mobileDetail', 'getContextUsageSummary']}
+        self.adapter.desktop.call.return_value = {'session': raw,
+            'transcript': [{'type': 'assistant', 'message': {'usage': {'input_tokens': 112973}}}],
+            'contextUsage': {'usedTokens': 67500, 'contextWindow': 200000}, 'contextUsageStatus': 'available'}
+        with patch.object(self.adapter, 'prepare'), patch.object(self.adapter, 'connect'), patch.object(self.adapter, 'reconnect'):
+            result = await self.adapter.dispatch('detail', row['id'], {})
+        self.assertEqual(result['session']['contextUsage']['usedTokens'], 67500)
+        self.assertEqual(result['session']['lastPromptContextUsage']['usedTokens'], 112973)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,27 @@
+# 消息管理 / Message management
+
+在聊天的“更多 → 消息管理”中查看待发送队列和未确认记录。存在待处理记录时，输入区上方也会提供入口。Web、Android 和 iOS 使用同一页面。
+
+- **调整顺序**：拖动消息左侧手柄，或使用“上移 / 下移”。仅尚未发送、由网关持有的消息可以排序；顺序保存在网关，后续发送按此顺序执行。
+- **撤回**：从待发送队列移除。已经交给客户端的消息无法通过此操作撤销。
+- **编辑**：在独立编辑区修改正文，保存后保持原排队位置和原附件；聊天输入框原有草稿、引用和附件保持不变。消息已开始发送时不能再修改，编辑内容会保留。
+- **未确认记录**：进入会话时按原发送 ID 核对结果。已确认的记录可解除旧版客户端阻塞；结果未知或查不到时保留。检查聊天记录后，可显式忽略该记录，操作不会撤销、重发或删除聊天消息。
+- **断网和多个页面**：撤回、排序或保存编辑的结果不明确时不会自动重试。其他页面修改了队列或编辑记录时，刷新或重新打开后再操作。
+
+Codex Desktop、本机 CLI、SSH CLI 和 WSL 的网关队列支持管理。Claude / DSH 已交给原生客户端的队列仍由原生客户端管理；页面会说明限制，不提供无效的排序。当前设备保存的未确认记录可以单独处理。
+
+旧版 Android App 请在原电脑连接中选择“更多 → 刷新页面”，再打开会话；只切回前台可能仍在使用旧页面。它只核对该电脑、账号、接入及会话的记录，不会清空其他草稿，也不会自动发送。
+
+## English
+
+Open **More → Message management** in a chat. A shortcut also appears above the composer when records need attention. Web, Android and iOS share this page.
+
+- Drag a queued message by its handle, or use **Move up / Move down**. The gateway persists the order and uses it for dispatch.
+- **Withdraw** removes an unsent message. It cannot undo a message already handed to the client.
+- **Edit** changes a queued message in place, keeping its position and attachments. The separate editor preserves your chat draft and quotes. If dispatch has started, the edit is kept but cannot be applied.
+- Old unconfirmed records are checked against their original submission IDs. Unknown or missing results remain visible for explicit dismissal; dismissal never resends or deletes chat messages.
+- Ambiguous operations are not retried automatically. Conflicts between pages require refreshing or reopening the manager.
+
+Gateway-owned Codex Desktop, local CLI, SSH CLI and WSL queues are supported. Claude / DSH native queues remain managed by their native clients; unsupported actions are not offered. Device-local unconfirmed records can still be managed.
+
+In older Android apps, choose **More → Refresh page** in the existing computer connection, then reopen the chat. Returning to the foreground alone may keep the old page running. No app reinstall or automatic resend is required.

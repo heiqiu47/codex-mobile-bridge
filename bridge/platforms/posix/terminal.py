@@ -232,21 +232,23 @@ def remote_main(root, cols, rows):
 
 
 class RemoteTerminalSession:
-    def __init__(self, alias, root, cols=80, rows=24):
-        if not alias or alias.startswith('-') or any(c.isspace() for c in alias): raise ValueError('SSH 别名无效')
+    def __init__(self, alias, root, cols=80, rows=24, *, transport=None, transport_name="SSH"):
+        if transport is None and (not alias or alias.startswith('-') or any(c.isspace() for c in alias)): raise ValueError('SSH 别名无效')
         dimensions(cols, rows)
+        self.transport_name = transport_name
         self.lock = threading.RLock(); self.changed = threading.Event(); self.write_lock = threading.Lock(); self.pending = {}
         self.text = ''; self.end = 0; self.code = None; self.reason = ''; self.shell = ''
         self.root = str(root); self.done = threading.Event(); self.ready = threading.Event()
         from bridge.resources import source_text
         source = source_text('features/terminals/completion.py') + '\n' + source_text('platforms/posix/terminal.py')
         source += '\nremote_main('+repr(str(root))+','+str(cols)+','+str(rows)+')\n'
-        self.process = subprocess.Popen(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ClearAllForwardings=yes',
+        args = transport(source) if transport else ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ClearAllForwardings=yes',
              '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=yes', '-o', 'UpdateHostKeys=no', alias,
-             'python3 -u -c '+shlex.quote(source)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+             'python3 -u -c '+shlex.quote(source)]
+        self.process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         threading.Thread(target=self._read, daemon=True).start()
         if not self.ready.wait(12) or self.done.is_set():
-            self.process.kill(); raise ValueError('SSH 终端未能启动，请检查连接和远程 Python')
+            self.process.kill(); raise ValueError(self.transport_name + ' 终端未能启动，请检查连接和远程 Python')
 
     read = TerminalSession.read
     append = TerminalSession.append
@@ -268,7 +270,7 @@ class RemoteTerminalSession:
                 if not event['running']: break
         except (OSError, ValueError, KeyError): pass
         finally:
-            self.reason = self.reason or 'SSH 终端已断开'
+            self.reason = self.reason or self.transport_name + ' 终端已断开'
             self.process.stdout.close()
             if self.process.poll() is None: self.process.terminate()
             self.process.wait(); self.done.set(); self.changed.set(); self.ready.set()
@@ -281,9 +283,9 @@ class RemoteTerminalSession:
         with self.lock: self.pending[identifier] = (finished, value)
         try:
             with self.write_lock:
-                if self.done.is_set(): raise ValueError('SSH 终端已关闭')
+                if self.done.is_set(): raise ValueError(self.transport_name + ' 终端已关闭')
                 self.process.stdin.write((json.dumps({'request':identifier,'action':action,**params})+'\n').encode()); self.process.stdin.flush()
-            if not finished.wait(6): raise TimeoutError('SSH 终端响应超时')
+            if not finished.wait(6): raise TimeoutError(self.transport_name + ' 终端响应超时')
             if 'error' in value: raise ValueError(value['error'])
             return value['result']
         finally:

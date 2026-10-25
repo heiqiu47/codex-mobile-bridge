@@ -21,7 +21,7 @@ async function fixture({missing='',auth='anonymous',hash='',language='zh',pairPe
   const dispatch=(name,event)=>{for(const fn of listeners.get(name)||[])fn(event);};
   const response=data=>({ok:true,status:200,json:async()=>data});
   const context=vm.createContext({window,location,history:{replaceState(_a,_b,url){current=new URL(url,current);}},localStorage:storage,sessionStorage:storage,navigator:{userAgent:'fixture'},
-    document:{documentElement:{},getElementById:id=>nodes.get(id),addEventListener(){},dispatchEvent(){},querySelectorAll(){return [];},querySelector(){return {classList:{toggle(){}}};},createElement:node},
+    document:{readyState:'complete',documentElement:{classList:node().classList,dataset:{}},getElementById:id=>nodes.get(id),addEventListener(){},dispatchEvent(){},querySelectorAll(){return [];},querySelector(){return {classList:{toggle(){}}};},createElement:node},
     AbortController,Event:class{},CustomEvent:class{},Option:function(text,value){return {...node('option'),textContent:text,value};},
     Workbench:class{constructor(){this.current=null;this.panel={querySelector(){return null;}};this.backCalls=0;this.locateCancels=0;}get splitMode(){return false;}get isFileVisible(){return !!this.current&&this.current.active!=='chat';}back(){this.backCalls++;return workbenchBack.call(this);}cancelLocate(){this.locateCancels++;}directory(session,_tab,dir){session.directory=dir;}select(id){this.current.active=id;}rememberScroll(){}stopThumbnails(){}reset(){}relabel(){}},DesktopSessionsView:class{bindListCache(identity,host){this.snapshot=storage.getItem(`desktop-list-v1:${identity}:${host}:${cachedProvider}`);}previewCachedList(provider){if(provider!==cachedProvider||!this.snapshot)return false;const row=node('button');row.textContent=JSON.parse(this.snapshot).rows[0].title;row.disabled=true;row.dataset.provider=provider;nodes.get('app').append(row);navigation.push('preview');return true;}refresh(){}clear(){}},ClientNavigation:class{constructor(){this.provider=storage.getItem('bridge-client')||'codex';}paint(){navigation.push('paint');}refresh(){navigation.push('refresh');if(navigationPending)return new Promise(resolve=>{releaseNavigation=()=>{if(allDisabled)this.provider=null;resolve();};});if(allDisabled)this.provider=null;}async openChatLink(){navigation.push('open');}acknowledgeList(){}},
     setTimeout(fn,delay){timers.set(++clock,{fn,delay});return clock;},clearTimeout(id){timers.delete(id);},setInterval(){},clearInterval(){},
@@ -37,9 +37,10 @@ async function fixture({missing='',auth='anonymous',hash='',language='zh',pairPe
       if(url.startsWith('/api/sessions?'))return allDisabled?{ok:false,status:400,json:async()=>({error:'此应用已关闭，请在应用管理中开启'})}:response({sessions:[]});
       throw Error('Unexpected fixture request');
     }});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/features/clients/client-navigation.js'),'utf8').match(/^function isCodexClient.*$/m)[0],context);
   const run=file=>vm.runInContext(fs.readFileSync(path.join(root,file),'utf8'),context,{filename:file});
   if(missing!=='bootstrap')run('web/shared/bootstrap.js');
-  const dependencies=['web/hosts/environment.js','web/shared/i18n.js','web/features/chat/list-sync.js','web/features/accounts/account.js','web/features/accounts/accounts.js','web/features/chat/modes.js','web/features/chat/attachments.js','web/features/chat/activity.js','web/features/chat/fast-mode.js','web/features/chat/message-actions.js','web/features/chat/permissions.js'];
+  const dependencies=['web/hosts/environment.js','web/hosts/browser-navigation.js','web/shared/i18n.js','web/features/chat/list-sync.js','web/features/accounts/account.js','web/features/accounts/accounts.js','web/features/chat/modes.js','web/features/chat/attachments.js','web/features/chat/activity.js','web/features/chat/fast-mode.js','web/features/chat/message-actions.js','web/features/chat/permissions.js'];
   for(const file of dependencies){if(file.endsWith('/'+missing+'.js'))continue;run(file);}
   try{run('web/shell/app.js');}catch(e){error=e;dispatch('error',{target:window,message:e.message});}
   await new Promise(setImmediate);
@@ -47,11 +48,11 @@ async function fixture({missing='',auth='anonymous',hash='',language='zh',pairPe
     get reloads(){return reloads;},timeout(){for(const [id,timer] of timers)if(timer.delay===30000){timers.delete(id);timer.fn();break;}}};
 }
 
-test('HTML provides visible status before the independent CSP-safe bootstrap, without revealing login',()=>{
+test('HTML applies the CSP-safe bootstrap before styles and provides status without revealing login',()=>{
   assert.match(html,/<section id="bootstrap-status"[^>]*aria-busy="true"/);
   assert.doesNotMatch(html.match(/<section id="bootstrap-status"[^>]*>/)[0],/\bhidden\b/);
   assert.match(html,/<section id="login" class="login" hidden>/);
-  assert.ok(html.indexOf('id="bootstrap-status"')<html.indexOf('src="/bootstrap.js"'));
+  assert.ok(html.indexOf('src="/bootstrap.js"')<html.indexOf('id="bridge-shell-style"'));
   assert.ok(html.indexOf('src="/bootstrap.js"')<html.indexOf('src="/host.js"'));
   assert.doesNotMatch(html,/<script[^>]*>\s*[^<\s]|\son(?:click|error|load)=/);
 });

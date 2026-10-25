@@ -1,0 +1,54 @@
+# Agent Note: Codex 页内统一 APP、CLI 与 WSL 接入
+
+Status: implemented
+
+## Problem
+
+同一台电脑上的 WSL Codex 与原生 Codex 使用相同的聊天操作，但独立应用入口迫使用户切换页面才能比较、搜索和新建会话。它们又有不同的认证、配置目录、文件系统和执行归属，不能用页面合并来合并运行身份。旧 WSL 文件操作还会保留在 HTTP 读请求体之前解析出的对象，使停用后的迟到上传继续写入。
+
+## Decision
+
+顶层保留一个 Codex，WSL 是 Codex 的子接入。会话列表的公开分类为 `all / cli / desktop / wsl`，显示全部 / CLI / APP / WSL。WSL 仍使用 `access.source=cli / runtime=wsl`，不改变原始线程来源和能力判断。每条会话、草稿、附件、项目与写入回执继续绑定原 `host + threadId`；WSL host 是发行版、用户和 `CODEX_HOME` 的原稳定摘要。
+
+Codex 行聚合可用、启用和运行状态，`entries` 提供完整原生子项和各 WSL 子项。聚合行没有新增持久化总开关；原 `provider=codex` 操作仍只控制原生 APP / CLI，各 WSL ID 控制自身。UI 的原生退出、初始化与不确定结果核验只使用原生子项。只有 WSL 可用时可进入统一库存，原生 endpoint 的写入仍检查自身开关。
+
+统一列表沿用逐 host 渐进读取与最终合并分页；本机库存请求返回已启用 WSL 的 ID，实际 WSL 列表、会话和目录请求仍路由到原 endpoint。CLI 分类排除 WSL，WSL 分类不误开放 APP 能力。零结果保留用户选定分类。新建与账号面板显式选择环境，WSL 账号页不展示本机 CLI 凭据编辑器，不回退到本机接入。
+
+WSL 写操作和 `close()` 共用重入门锁。停用等待已接受的文件、Git、附件、目录及原生写操作完成；一旦关闭，旧 HTTP 对象再次进入写门时即拒绝。注册表在关闭旧连接期间保留配置锁，避免新启用连接与旧写操作交叠。写入结果未知仍保留原回执，不自动重发。列表、历史与页面切换不会启动发行版或恢复线程。
+
+新建项目沿用既有各接入的创建方式，统一目录选择界面，不强制依赖历史聊天。Codex 的项目按 host 和 Desktop/CLI 类型分开；Claude 的 Code、Cowork、本机与 SSH CLI 分开；DSH 只广告实际 Desktop 能力。浏览、新建文件夹、登记目录与创建会话分步执行，目录登记保存在网关自己的数据中。创建前重新核验目录身份、接入启用、SSH 目标及账号；环境变化后旧登记不可复用。Claude 的本机 CLI 登记作用域补充现有认证指纹，不改变旧会话 origin 或 ID，也不保存明文凭据。Codex 缓存 Bridge 与当前 SSH alias 不一致时拒绝创建，不将新主机预检结果用于旧主机。
+
+目录 UI 共用 `web/shared/project-picker.js`；各调用方提供绑定所选环境的请求函数和失效检查。创建弹窗采用单屏表单，保留环境名称、短路径与展开完整路径；目录创建默认收起。浏览或选目录不发消息；Claude 的必要首条消息通过“创建并发送”显式提交。旧 DSH 连接器未广告新目录能力时只保留已有项目创建；更新源码后才开放新目录。
+
+## Existing-note audit
+
+[Codex 聊天列表按主机渐进显示](../bug-fix/2026-10-16-codex-list-first-paint.md)与本次部分重叠；本次沿用其分页和失败主机规则，并增加 WSL host。[网关在所有客户端停用时保持可管理](../bug-fix/2026-10-16-gateway-with-no-clients.md)与聚合状态部分重叠；本次保持全部停用时的管理入口，不把任何 WSL 的启用状态当作原生操作许可。两篇原决定继续成立，不归档或删除。
+
+## Alternatives considered
+
+- 独立 WSL 应用可以直接复用现有应用生命周期，但重复同类入口并隔开统一搜索，不符合单 Codex 的交互目标。
+- 把 WSL 改为第三种原始 `source` 能减少展示转换，却会破坏现有 CLI 能力判断和历史来源兼容；仅展示分类使用 WSL。
+- 增加 Codex 总开关能一次撤销所有接入，但会引入新的持久化和父子恢复语义，也让原有“退出电脑 App”难以指向明确环境；保留子项独立启停。
+- 仅在 HTTP 读取请求体之前检查启用状态改动最少，但无法阻止持有旧对象的迟到写入；在实际写入口与关闭操作之间建立互斥顺序。
+- 让每种接入分别实现目录弹窗容易产生环境失效和路径处理差异；只共享展示与浏览流程，创建、回执和原生协议仍由原接入负责。
+- 多步向导可以隐藏部分字段，但对已存在项目增加点击；采用一屏主表单与按需目录弹窗。
+
+## Testing
+
+定向 Node 测试覆盖统一导航、旧 WSL 链接、跨环境深链接竞态、四类筛选、新建项目响应隔离和账号作用域。Python 测试用真实 HTTP Handler 等待上传体，在停用后再到达文件字节，旧实现能复现落盘，修复后拒绝写入；另覆盖关闭先行和写入先行的顺序、原生/WSL 独立启用与分页分类。完整源码及合成浏览器回归的最终结果记录在隔离分支 `.tmp/wsl-unified/`。本机验证不代表 Windows/WSL 真机、移动 WebView、冻结包或升级验收。
+
+v2.1.4 基线整合后的全集为 Python 2269 项（82 跳过）及 Node 928 项（1 跳过），其余通过；浏览器在 390/1280 px 各执行 82 项 Codex/WSL/SSH 断言，共享创建弹窗另检查 320px 英文及 Claude/DSH。新增回归以真实 `_profile` 与缓存 Bridge 路径复现账号/SSH 切换问题，并验证 2001 轮 WSL 历史可完整按需读取。原生 Windows/WSL 与移动 WebView 尚需使用本轮包另行验收，详见 [验证记录](../../../../docs/architecture/windows-wsl-validation.md)。
+
+## CLI 功能与 Claude WSL
+
+WSL 是 CLI 的执行环境，能力由同一原生运行时验证。Codex 使用原生 settings、skills、Goal 和 turn 接口；目标激活与排队回执绑定具体目标，排队执行前重新核验，未知写入不重放。终端复用 SSH 的已确认 PTY 传输，命令在对应 WSL 用户及项目中执行。模型目录使用已有 ModelStore 和 12 小时刷新策略，以目标侧配置/认证摘要和原生身份隔离，摘要不向页面披露凭据。
+
+Claude WSL 复用 RemoteClaudeCli 的历史、控制和配置协议，传输使用 `wsl.exe`，不用 SSH 别名代替发行版。登记键包含发行版、用户和 Claude 配置目录。显式扫描跳过 Windows 互操作脚本并寻找 Linux 原生程序；被动刷新不启动发行版。Claude 原生接入与 WSL 独立启停，生命周期检查只控制对应环境。列表缓存保留环境元数据，同路径不会跨环境合组。
+
+只补前端能力标志不能提供有效的控制路由；启动另一套未经核验的执行器则会改变原会话归属。因此采用现有原生控制、只读索引和独立传输组合，桌面专用的侧边聊天等能力仍不开放给 CLI。
+
+## Consequences
+
+同类会话可以统一查看，同时保留配置和执行边界；无原生 App 时 WSL 不再被原生就绪条件阻断。代价是展示聚合状态与实际操作子项必须分开，所有写入门仍以具体 endpoint 为准。停用会等待已接受的写操作返回；操作结果不确定时继续保留待核对状态，关闭接入不会退出原 CLI 或迁移任务。
+
+Supported unmanaged WSL profiles now have [environment-scoped account management](../feature/2026-10-25-wsl-account-management.md). This supersedes only the earlier external-only account UI; target identity, passive reads and original runtime ownership remain unchanged.
