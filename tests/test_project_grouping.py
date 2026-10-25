@@ -47,6 +47,46 @@ class ProjectGroupingTests(unittest.TestCase):
         for cwd in ['D:/Work/Project2', 'D:/Other/independent']:
             self.assertNotEqual(self.decorate(cwd)['projectKey'], 'local|local')
 
+    def test_unregistered_windows_directories_use_leaf_names_on_either_gateway_os(self):
+        self.saved = {}
+        for gateway_os in ('nt', 'posix'):
+            for host in ('local', 'ssh'):
+                for cwd in [r'C:\Users\fixture\Work\Project', r'\\?\C:\Users\fixture\Work\Project',
+                            r'\\server\share\Project' + '\\', r'\\?\UNC\server\share\Project']:
+                    for origin in ('cli', 'desktop'):
+                        with self.subTest(gateway_os=gateway_os, host=host, cwd=cwd, origin=origin), \
+                                patch('bridge.clients.codex.remote.os.name', gateway_os):
+                            original = {'id': 'fixture', 'cwd': cwd, 'origin': origin,
+                                        'model_provider': 'fixture-provider', '_targetPathStyle': 'windows'}
+                            row = self.hosts.decorate([dict(original)], host, host)[0]
+                            self.assertEqual(row['projectName'], 'Project')
+                            self.assertEqual(row['cwd'], cwd)
+                            self.assertEqual(row['origin'], origin)
+                            self.assertEqual(row['model_provider'], 'fixture-provider')
+                            self.assertTrue(row['projectKey'].startswith(host + '|'))
+                            self.assertNotIn('_targetPathStyle', row)
+        self.assertEqual(self.saved, {})
+
+    def test_unlabelled_remote_windows_project_uses_directory_name(self):
+        self.saved['codex-managed-remote-connections'] = [{'hostId': 'ssh', 'alias': 'fixture'}]
+        self.saved['remote-projects'][0].update(remotePath=r'C:\Work\Project')
+        self.saved['remote-projects'][0].pop('label')
+        self.assertEqual(self.hosts.projects()[1]['name'], 'Project')
+        self.assertEqual(self.decorate(r'C:\Work\Project', 'ssh')['projectName'], 'Project')
+        self.saved['remote-projects'][0]['label'] = 'Custom project name'
+        self.assertEqual(self.hosts.projects()[1]['name'], 'Custom project name')
+        self.assertEqual(self.decorate(r'C:\Work\Project', 'ssh')['projectName'], 'Custom project name')
+
+    def test_unregistered_posix_directory_names_keep_literal_backslashes_and_case(self):
+        self.saved = {}
+        for gateway_os in ('nt', 'posix'):
+            for host in ('local', 'ssh'):
+                with patch('bridge.clients.codex.remote.os.name', gateway_os):
+                    row = self.decorate(r'/work/Project\notes', host, target_style='posix')
+                    self.assertEqual(row['projectName'], r'Project\notes')
+                    self.assertEqual(row['cwd'], r'/work/Project\notes')
+                    self.assertEqual(row['projectKey'], host + r'|/work/Project\notes')
+
     def test_longest_root_and_all_saved_roots_are_considered(self):
         self.saved['local-projects']['local']['rootPaths'].append('E:/Second')
         self.saved['local-projects']['nested'] = {'id': 'nested', 'name': 'Nested',
