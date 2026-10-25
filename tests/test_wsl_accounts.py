@@ -376,7 +376,16 @@ class WslAccountModelCacheTests(unittest.TestCase):
 
     def test_concurrent_refresh_is_singleflight_and_registry_controls_remain_available(self):
         import threading
+        from concurrent.futures import Future
         entered, release = threading.Event(), threading.Event()
+        joined = threading.Event()
+        class ObservedFuture(Future):
+            def result(self, timeout=None):
+                joined.set()
+                return super().result(timeout)
+        future_patch = patch('bridge.features.accounts.wsl_account_models.Future', ObservedFuture)
+        future_patch.start()
+        self.addCleanup(future_patch.stop)
         calls = []
         def target(provider, row, request):
             if request['action'] == 'models':
@@ -398,12 +407,12 @@ class WslAccountModelCacheTests(unittest.TestCase):
         registry.lock.release()
         self.assertTrue(self.accounts.lock.acquire(timeout=1))
         self.accounts.lock.release()
-        # Wait for the second read to join the existing per-identity Future.
-        for _ in range(100):
-            if self.call.call_count >= 3:
-                break
-            threading.Event().wait(.005)
-        release.set()
+        # Snapshot reads precede joining the Future; counting them does not
+        # prove that the second caller is waiting on the in-flight request.
+        try:
+            self.assertTrue(joined.wait(3))
+        finally:
+            release.set()
         first.join(5); second.join(5)
         self.assertFalse(first.is_alive() or second.is_alive())
         self.assertEqual(len(calls), 1)
