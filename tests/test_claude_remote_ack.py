@@ -1,5 +1,7 @@
 """Durable remote user UUID acknowledgement without replay/echo events."""
 import copy
+from pathlib import Path
+import tempfile
 import threading
 import unittest
 import uuid
@@ -15,7 +17,10 @@ class RemoteDurableAckTests(unittest.TestCase):
     def adapter(self, kind, *, save=True, finished=False):
         host_id = 'ssh:fixture' if kind is RemoteClaudeCli else 'wsl-claude:fixture'
         host = {'alias': 'fixture', 'distribution': 'Fixture Ubuntu', 'user': 'fixture'}
-        hosts = SimpleNamespace(hosts=lambda: {host_id: host})
+        temporary = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]/'.tmp')
+        self.addCleanup(temporary.cleanup)
+        hosts = SimpleNamespace(hosts=lambda: {host_id: host},
+                                path=Path(temporary.name)/'claude-wsl-entries.json')
         cli = kind(hosts)
         self.addCleanup(cli.close)
         cli._command = Mock(return_value=['fixture-only'])
