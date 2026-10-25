@@ -1,14 +1,23 @@
 <a id="v215"></a>
 
-# v2.1.5 发布验收（进行中）
+# v2.1.5 发布验证
 
-候选基于 `1006a4e`，桌面与手机统一为 2.1.5，Android/iOS 构建号38。PR #64 的8个原始提交与 PR #70 的 `d62002b` 保留在历史中；最终正式包、CI 和升级回滚结果完成后补记于本节。尚未将候选测试等同于正式发布验收。
+发布标签 `v2.1.5` 指向 `3e90c8d`，基于已验收候选 `1006a4e`。桌面与手机统一为 **2.1.5**，Android/iOS 构建号 **38**。PR #64 的 8 个原始提交与 PR #70 的 `d62002b` 均保留在历史中。版本整理后的修订仅修正测试夹具：真实 registry 路径、UTF-8 重读、SQLite 连接关闭及超时时钟隔离，未改变产品行为或放宽断言。
 
-- 原桌面、Android 和 iOS 应用标识、桌面更新验签公钥保持；覆盖升级与回滚使用隔离副本，不替换日常正式版或 Test 的账号、配置、手机绑定及草稿。
-- WSL 账号管理为实验性：已有隔离假 API、状态保护与配置恢复检查不代表真实备用账号全流程通过。
-- 最新 WSL 弹窗修订通过真实 macOS WKWebView 和 Chromium 的窄宽屏检查，Windows Test 已核验实际样式；不将 macOS WKWebView 宣称为 iPhone 真机。
+| 检查 | 结果与范围 |
+| --- | --- |
+| 标签完整 CI | [40205704693](https://github.com/try2love/codex-mobile-bridge/actions/runs/40205704693) 的 7 项检查全部通过：Windows / Ubuntu Python 3.9、3.13，macOS Python 3.13，前端及移动更新检查。后端共 2556 项，按平台保留已有原生夹具跳过；跳过不计为原生验收通过 |
+| 本地前端与更新器 | 前端 1146 项：1145 通过、1 跳过；更新器 33 项：32 通过、1 跳过。原生移动发布及下载、恢复检查通过 |
+| Android | 正式包 2.1.5/build38，应用标识和签名与 v2.1.4 一致。专用 Android 35 模拟器完成 2.1.4 → 2.1.5 → 2.1.4 覆盖与回退，未卸载或重置；电脑列表、设置、绑定凭据与原生/WebView 可信认证保留 |
+| iOS | 正式主 App 与两个扩展标识均为 2.1.5/build38；官方 CI 未签名 IPA 的共享脚本与标签一致，源码 ZIP 的 49 个文件与 Git 跟踪内容逐一一致。专用 iOS 18.2 模拟器完成 2.1.4 → 2.1.5 → 2.1.4，电脑列表、设置及原生/WebView 可信认证保留。首轮夹具 cookie 基线变化已在旧版上复现，修正基线后复验；不将模拟器声明为本轮手机真机安装验收 |
+| 更新与安装身份 | 桌面、Android、iOS 正式标识和桌面更新验签公钥保持。Windows 包含独立 ConPTY 组件，不替换系统组件；Android 沿用正式签名，iOS 仍需用户以原标识和签名自行覆盖安装 |
+| 布局与 WSL 边界 | 最新 WSL 弹窗已在真实 macOS WKWebView 与 Chromium 的窄宽屏检查中通过，并核验 Windows Test 实际样式；不将 WKWebView 等同于 iPhone 真机。WSL 账号管理仍为实验性，隔离假 API 与配置恢复不代表真实备用账号全流程通过 |
 
-**English:** Release validation is in progress. Versions are 2.1.5/build38, original PR64/70 commits and application/update-signing identities are retained. Official artifact, CI, upgrade and rollback results will be recorded after completion. WSL account management remains experimental; isolated API and desktop-browser checks do not establish real multi-account or iPhone validation.
+正式包的五种桌面架构构建、安装启动、认证配对及更新恢复检查记录在[官方产物工作流](https://github.com/try2love/codex-mobile-bridge/actions/runs/40205704812)。正式产物的跨版本升级、回滚、原手机绑定复用以及最终资产核验结果见 [v2.1.5 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.5)；工作流和隔离验收全部通过后才公开 Release。
+
+升级验证使用正式包的隔离副本，不覆盖日常正式版或 Test 的账号、配置、绑定和草稿。Windows 本机临时文件与验收副本限定 F 盘；运行中被系统锁定的草稿存储不强行读取或关闭程序，不将未能读取的文件声明为已做字节比较。没有为了验收发送真实聊天消息或调用模型。
+
+**English:** v2.1.5 targets `3e90c8d`, retaining the original PR64/70 commits, official application identifiers and update-signing key. All seven tag CI checks passed; frontend/updater regressions retain their documented skips. Official Android signing is unchanged. Dedicated Android 35 and iOS 18.2 simulators passed 2.1.4 → 2.1.5 → 2.1.4 with settings and native/WebView trusted authentication retained. The official unsigned iOS artifact uses all three production identifiers; shared scripts and the 49-file source archive match the tag. This is not a new real-phone installation claim. See the linked build workflow and release page for official desktop artifacts, isolated cross-version upgrade/rollback and final asset verification; publication requires those gates to pass. Daily apps and data are not replaced, and Windows local temporary data stays on F:. Experimental WSL account tests do not establish real multi-account compatibility.
 
 ---
 
