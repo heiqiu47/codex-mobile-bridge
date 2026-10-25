@@ -67,3 +67,24 @@ test('failed durable write leaves temporary draft available for migration later'
   assert.equal(new ComposerDrafts(failing).migrate(scope('A'),temporary,{text:'draft:local|A'}),null);
   assert.equal(temporary.getItem('draft:local|A'),'old');
 });
+
+test('explicit account continuation copies only draft content within the same complete scope',()=>{
+  const drafts=new ComposerDrafts(storage()),previous=scope('original'),next={...previous,account:'two'};
+  drafts.save(previous,{text:'unsent',selectionStart:2,selectionEnd:5,sendMode:'queue',workMode:'plan',skills:['old-skill'],quotes:[{text:'quoted',source:'original reply'}]});
+  const saved=drafts.continueAccount(previous,next);assert.equal(saved.text,'unsent');assert.equal(saved.selectionStart,2);assert.equal(saved.selectionEnd,5);assert.equal(saved.quotes[0].text,'quoted');assert.equal(saved.sendMode,'send');assert.equal(saved.workMode,'default');assert.deepEqual(saved.skills,[]);
+  assert.equal(drafts.load(previous).text,'unsent');assert.equal(drafts.pending(next),null);
+  for(const different of [{gateway:'other'},{host:'other'},{provider:'claude'},{session:'other'}])assert.equal(drafts.continueAccount(previous,{...next,...different}),null);
+});
+test('account continuation never copies pending IDs or overwrites another account draft',()=>{
+  for(const side of ['previous','next']){const drafts=new ComposerDrafts(storage()),previous=scope('same'),next={...previous,account:'two'};drafts.save(previous,{text:'possibly sent'});drafts.begin(side==='previous'?previous:next,{text:'possibly sent'},'unknown-id');const old=JSON.stringify(drafts.pending(side==='previous'?previous:next));assert.equal(drafts.continueAccount(previous,next),null);assert.equal(JSON.stringify(drafts.pending(side==='previous'?previous:next)),old);}
+  const drafts=new ComposerDrafts(storage()),previous=scope('same'),next={...previous,account:'two'};drafts.save(previous,{text:'old'});drafts.save(next,{text:'newer draft'});assert.equal(drafts.continueAccount(previous,next),null);assert.equal(drafts.load(next).text,'newer draft');
+});
+
+test('account continuation leaves v2 unknown and memory pending records in their original scope',()=>{
+  for(const kind of ['v2','memory']){
+    const drafts=new ComposerDrafts(storage()),previous=scope('same'),next={...previous,account:'two'};drafts.save(previous,{text:'possibly sent'});
+    const record={id:'unknown-v2',body:{text:'possibly sent'},gateway:previous.gateway,provider:previous.provider,account:previous.account,target:previous.host+'|'+previous.session};
+    if(kind==='v2')drafts.write(drafts.key(previous,'pending-v2'),record);else drafts.temporaryPending.set('pending:'+record.target,record);
+    assert.equal(drafts.continueAccount(previous,next),null);assert.equal(drafts.load(next),null);assert.equal(drafts.pendingRecords(previous)[0].id,'unknown-v2');assert.equal(drafts.pendingRecords(next).length,0);
+  }
+});

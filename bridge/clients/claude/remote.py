@@ -222,7 +222,7 @@ class RemoteClaudeCli:
             raise ValueError('原 SSH 主机配置已变化')
         fresh = self._remote(row['alias'], {'operation': 'detail', 'native': row['nativeId'],
                                        'origin': row['origin']})
-        if model.gateway_id('cli:'+self.transport_kind+':'+row['host']+':'+fresh['origin'], fresh['nativeId']) != sid:
+        if self._row(row['host'], host, fresh)['id'] != sid:
             raise ValueError('原 SSH Claude Code 会话身份已变化')
         updated = self._row(row['host'], host, fresh)
         with self.lock:

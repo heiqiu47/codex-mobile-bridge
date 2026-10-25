@@ -120,13 +120,38 @@ class WslAccountWorkerTests(unittest.TestCase):
             self.switch(identifier)
         self.assertEqual(json.loads((self.home/'settings.json').read_bytes())['theme'], 'external')
 
-    def test_edit_active_saved_secret_does_not_claim_new_secret_is_active(self):
+    def test_edit_active_profile_rejects_without_changing_credentials_identity_or_snapshot(self):
         identifier = self.save()
         self.switch(identifier)
+        files = self.store.files()
+        saved = self.store.path.read_bytes()
+        for changes in ({'apiKey': 'new-key'}, {'baseUrl': 'https://other.invalid'}, {'model': 'other-model'}):
+            with self.subTest(changes=changes):
+                with self.assertRaisesRegex(worker.AccountError, '先切换到其他接入'):
+                    self.save(id=identifier, **changes)
+                self.assertEqual(self.store.files(), files)
+                self.assertEqual(self.store.path.read_bytes(), saved)
+                self.assertEqual(self.store.public()['activeId'], identifier)
+        self.store.change({'action': 'rename', 'id': identifier, 'name': 'New display name'})
+        self.assertEqual(self.store.public()['activeId'], identifier)
+        self.switch('native')
+        native = self.store.files()
         self.save(id=identifier, apiKey='new-key')
-        self.assertIsNone(self.store.public()['activeId'])
+        self.assertEqual(self.store.files(), native)
         self.switch(identifier)
         self.assertEqual(json.loads((self.home/'settings.json').read_bytes())['env']['ANTHROPIC_API_KEY'], 'new-key')
+
+    def test_native_snapshot_cannot_be_deleted_or_renamed(self):
+        identifier = self.save()
+        self.switch(identifier)
+        original = self.store.path.read_bytes()
+        files = self.store.files()
+        for operation in ({'action': 'delete', 'id': 'native'},
+                          {'action': 'rename', 'id': 'native', 'name': 'Changed native'}):
+            with self.subTest(action=operation['action']), self.assertRaises(worker.AccountError):
+                self.store.change(operation)
+            self.assertEqual(self.store.path.read_bytes(), original)
+            self.assertEqual(self.store.files(), files)
 
     def test_helper_managed_profile_blocks_switch_but_can_save_api(self):
         (self.home/'settings.json').write_text('{"apiKeyHelper":"external-helper"}')

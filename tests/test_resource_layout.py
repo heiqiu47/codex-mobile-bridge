@@ -59,6 +59,7 @@ PLATFORM_SOURCES = {
     'bridge/platforms/windows/codex_daemon_env.py',
 }
 WSL_ACCOUNT_SOURCES = {'bridge/features/accounts/wsl_account_worker.py',
+                       'bridge/platforms/codex_process_identity.py',
                        *('bridge/vendor/wsl_tomli/'+name for name in
                          ('__init__.py', '_parser.py', '_re.py', '_types.py'))}
 CONNECTORS = {'bridge/clients/claude/connector.js', 'bridge/clients/deepseek/host.mjs'}
@@ -169,8 +170,8 @@ class ResourceLayoutTests(unittest.TestCase):
                       'source': RemoteCliModels._source(),
                       'symbols': ['remote_model_worker', 'read_daemon_environment']})
         cases.append({'name': 'wsl-accounts-with-models-and-tls',
-                      'source': worker_source(),
-                      'symbols': ['AccountStore', 'execute', 'fetch_models', 'model_catalog']})
+                      'source': worker_source()+'\nassert codex_updater(Path("/unused"),"/fixture/codex",[b"codex",b"app-server",b"--managed-daemon"],{},Path.cwd()) is None\n',
+                      'symbols': ['AccountStore', 'execute', 'fetch_models', 'model_catalog', 'codex_updater']})
         for relative, symbols in SSH_SOURCES.items():
             if relative not in combined:
                 cases.append({'name': relative, 'source': source_text(relative.removeprefix('bridge/')),

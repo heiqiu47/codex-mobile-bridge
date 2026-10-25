@@ -6,15 +6,15 @@ Windows 本机与 WSL 中的 Codex、Claude Code 可以使用不同账号和 API
 
 先在 **应用管理** 中登记并启用对应 WSL 入口，再打开 **账号管理**，选择该 WSL 环境。查看不会启动已停止的发行版或 CLI，也不会调用模型。
 
-- **网关桌面端**：添加或编辑 API 接入、重命名、删除未使用的接入、保存当前原生接入。也可以选择本机已保存的同类 API，显式导入到所选 WSL。导入只是保存，切换需要另行确认；本机账号不变。
-- **Web 和手机端**：查看所选环境、切换已保存接入、查看上游模型。新增或导入密钥请在网关桌面端完成。免密访问不允许切换账号。
+- **网关桌面、已登录的 Web 和手机端**：添加 API 接入、编辑未使用的接入、重命名、删除未使用的接入、保存当前原生接入。也可以选择本机已保存的同类 API，显式导入到所选 WSL。导入只是保存，切换需要另行确认；本机账号不变。正在使用的接入只允许重命名；修改地址或密钥前先切换到其他接入。
+- **免密访问**：只能查看环境和模型，不能新增、导入、修改、删除或切换账号。密钥写入后不会在账号列表中返回。
 - **官方登录**：在原 WSL CLI 完成。网关不复制 Desktop 的官方登录或系统钥匙串。支持的文件配置可以保存为“原始 WSL 登录”，以后恢复。
 
-切换前请在原终端退出使用该配置的 CLI 或共享服务。仍运行的进程、该环境中排队或结果未确认的操作会阻止切换；网关不会替你结束进程、清空队列或重发消息。配置切换完成不代表 API 凭据已经通过上游认证，重新打开 CLI 后以原生登录结果为准。
+切换需要单独确认，并即时检查所选 WSL 配置的任务、审批和操作记录。排队、运行中或结果未确认的操作会阻止切换；网关不会清空队列或重发消息。Claude Code 仅正常释放本网关创建的空闲执行器，其他终端仍在使用该配置时请先退出。Codex 的共享服务需要在全部空闲后正常重启，以重新载入地址和凭据；原终端连接可能需要重连。无法核验状态、进程身份不符或正常退出超时都会停止切换，不会强制杀进程。配置切换完成不代表 API 凭据已经通过上游认证，真实接入以原生登录或实际请求结果为准。
 
 第一次切换会保存原配置快照，恢复时按原文件内容恢复。若原配置随后被其他工具修改，网关会停止覆盖并提示使用原工具处理。Magpie、组织管理、系统凭据、复杂 profile、自定义认证路由和共享目录等不支持安全切换的配置，仍由原工具管理。
 
-**切换后继续旧聊天**：标准 Codex Responses API 接入会保留当前 provider 标识，成对更新地址与密钥；使用该标识的已有聊天仍使用原会话 ID、历史和目录，重新打开 CLI 后可继续使用新接入，无需新建聊天。其他 provider 标识的历史不会自动迁移。多个提供商共用认证、环境变量或额外认证配置仍会阻止切换。旧聊天的模型不会自动更改；新 API 不支持该模型时，请在聊天模型设置中选择兼容模型。Claude Code 的标准 API 切换同样保留原配置目录和历史，退出原进程后重新打开以加载新接入。切换不会重发消息或修改草稿。
+**切换后继续旧聊天**：标准 Codex Responses API 接入会保留当前 provider 标识，成对更新地址与密钥；使用该标识的已有聊天仍使用原会话 ID、历史和目录，共享服务重启并核验后可继续使用新接入，无需新建聊天。其他 provider 标识的历史不会自动迁移。多个提供商共用认证、环境变量或额外认证配置仍会阻止切换。旧聊天的模型不会自动更改；新 API 不支持该模型时，请在聊天模型设置中选择兼容模型。Claude Code 的标准 API 切换同样保留原配置目录和历史，本网关的下一次显式操作重新加载新接入。明确切换后，网关保留原会话标识，并将其未发送草稿关联到新账号；已有新账号草稿不会被覆盖，未确认发送记录不会迁移或重发。外部工具修改账号不触发此草稿续接。
 
 **查看上游模型**复用所选 API 的缓存，显示更新时间以及上游实际报告的名称和推理强度。未返回推理强度时显示“上游未提供”。手动刷新重新获取；缓存使用后按 12 小时安排后台更新，已停止或关闭的 WSL 不会被唤醒。不同网关、客户端、WSL 环境和 API 身份不共用模型缓存。原生官方登录的模型仍通过原 CLI 或已有聊天的模型设置查看。
 
@@ -26,15 +26,15 @@ Windows and WSL Codex or Claude Code can use different accounts and APIs. Matchi
 
 Register and enable the WSL entry in **App management**, then select that environment in **Account management**. Viewing accounts does not start a stopped distribution or CLI, or call a model.
 
-- **Gateway desktop app:** add, edit, rename or delete saved API profiles and save the original native configuration. Explicitly import a saved API from the same local client into the selected WSL environment. Import saves a profile; switching requires a separate confirmation and leaves the Windows account unchanged.
-- **Web and mobile:** view the environment, switch saved profiles and inspect upstream models. Manage secrets in the gateway desktop app. Passwordless access cannot switch accounts.
+- **Gateway desktop app and authenticated Web/mobile clients:** add API profiles, edit inactive profiles, rename or delete inactive profiles, and save the original native configuration. Explicitly import a saved API from the same local client into the selected WSL environment. Import saves a profile; switching requires a separate confirmation and leaves the Windows account unchanged. An active profile can only be renamed; switch away before editing its endpoint or key.
+- **Passwordless access:** view environments and models only. Adding, importing, editing, deleting or switching accounts requires authentication. Saved keys are never returned in the account list.
 - **Official sign-in:** complete it in the original WSL CLI. Desktop OAuth credentials and system keyrings are not copied. Supported file-based configurations can be saved and restored as the original WSL sign-in.
 
-Exit the CLI or shared service using that configuration before switching. Running clients, queued operations and attributable unconfirmed results block switching. The gateway does not terminate processes, clear queues or resend messages. A completed configuration change does not verify credentials with the upstream service; reopen the CLI and check its native sign-in status.
+Switching requires explicit confirmation and fresh checks of tasks, approvals and operation records for the selected WSL configuration. Running or queued work and unconfirmed results block switching; no queue is cleared or message resent. Claude Code releases only idle executors created by this gateway; exit other terminals using the configuration first. Codex must normally restart its shared service after all work is idle, so that both endpoint and credentials reload. Original terminal connections may need to reconnect. Unverifiable state, changed process identity or a normal-exit timeout stops the switch without a forced kill. A completed configuration change does not verify the credentials with the upstream service; native sign-in or an actual request provides that verification.
 
 The first switch saves an exact original-file snapshot. External edits stop a later overwrite or restore. Magpie, managed settings, system credentials, complex profiles, custom authentication routing and shared directories remain managed by their original tools when safe switching is unavailable.
 
-**Continue existing chats after switching:** a standard Codex Responses API profile keeps the selected provider ID and updates its endpoint and key together. Chats using that provider retain their thread ID, history and directory; reopen the CLI to continue through the new access profile without creating another chat. History tied to other provider IDs is not automatically migrated. Multiple providers sharing authentication, environment overrides or additional authentication settings still block switching. Existing chat models are unchanged; select a compatible model in chat settings if the new API does not support the old one. Standard Claude Code API switching likewise retains its configuration directory and history; exit and reopen the original process to load the new profile. Switching never resends messages or changes drafts.
+**Continue existing chats after switching:** a standard Codex Responses API profile keeps the selected provider ID and updates its endpoint and key together. Chats using that provider retain their thread ID, history and directory; continue through the new access profile after the shared service has restarted and been checked, without creating another chat. History tied to other provider IDs is not automatically migrated. Multiple providers sharing authentication, environment overrides or additional authentication settings still block switching. Existing chat models are unchanged; select a compatible model in chat settings if the new API does not support the old one. Standard Claude Code API switching likewise retains its configuration directory and history; the next explicit gateway operation loads the new profile. After an explicit switch, the gateway retains the original session ID and carries its unsent draft into the new account scope. Existing drafts in the destination scope are not overwritten, and unconfirmed sends are neither migrated nor resent. External account changes do not authorize this draft continuation.
 
 **Upstream models** reuses the selected API's cache and shows its update time, model names and reported reasoning levels. Missing levels are shown as “Not reported by upstream.” Manual refresh fetches again. Using a cache schedules a background refresh after 12 hours; it never wakes a stopped or disabled WSL environment. Cache identities are isolated by gateway, client, environment and API profile. Native sign-in models remain available through the original CLI or existing chat model settings.
 

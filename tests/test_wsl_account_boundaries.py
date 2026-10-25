@@ -227,6 +227,31 @@ class WslAccountBoundaryTests(unittest.TestCase):
             self.switch(id='native')
         self.assertEqual(self.store.files(), before)
 
+    def test_runtime_release_candidate_requires_only_the_standard_running_client_reason(self):
+        for reasons, expected in (([worker.ERROR_MESSAGES['runtime_running']], True),
+                                  (['WSL 环境变量覆盖认证，请先在原终端处理'], False),
+                                  (['WSL shell 配置包含认证覆盖，请使用原终端处理'], False),
+                                  ([worker.ERROR_MESSAGES['runtime_unknown']], False), ([], False)):
+            with self.subTest(reasons=reasons):
+                self.store.guard = lambda *_: reasons
+                self.assertEqual(self.store.public()['runtimeReleaseCandidate'], expected)
+
+    def test_configuration_and_runtime_blockers_remain_distinct_and_external_edits_are_hard(self):
+        self.store.guard = lambda *_: ['fixture runtime remains running']
+        state = self.store.public()
+        self.assertEqual(state['configurationBlockers'], [])
+        self.assertEqual(state['runtimeBlockers'], ['fixture runtime remains running'])
+        self.assertEqual(state['blockers'], state['runtimeBlockers'])
+        self.store.guard = lambda *_: []
+        self.switch()
+        with (self.home / 'config.toml').open('a') as output:
+            output.write('# external change\n')
+        state = self.store.public()
+        self.assertIn(worker.ERROR_MESSAGES['external_change'], state['configurationBlockers'])
+        self.assertEqual(state['runtimeBlockers'], [])
+        self.assertFalse(state['capabilities']['switch'])
+        self.assertFalse(state['capabilities']['restore'])
+
     def test_busy_target_never_starts_a_native_transaction(self):
         before = self.store.files()
         self.store.guard = lambda *_: ['fixture runtime is still running']
@@ -339,11 +364,17 @@ class WslAccountRoutingBoundaries(unittest.TestCase):
             self.accounts.change(self.request())
         self.call.assert_not_called()
 
-    def test_web_credential_enrollment_fields_reject_before_dispatch(self):
-        for fields in ({'action': 'save-api'}, {'apiKey': 'fixture-secret'}, {'sourceId': 'local-saved'}):
-            with self.subTest(fields=fields), self.assertRaises(ValueError):
-                self.accounts.change(self.request(**fields))
-        self.call.assert_not_called()
+    def test_authenticated_web_can_manage_saved_environment_credentials(self):
+        requests = ({'action': 'save-api', 'name': 'Fixture', 'model': 'fixture',
+                     'baseUrl': 'https://fixture.invalid', 'apiKey': 'private-fixture'},
+                    {'action': 'rename', 'id': 'saved', 'name': 'New name'},
+                    {'action': 'delete', 'id': 'saved'})
+        for fields in requests:
+            with self.subTest(action=fields['action']):
+                self.accounts.change({'provider': 'codex', 'entry': self.row['id'], **fields})
+        self.assertEqual(self.call.call_count, len(requests))
+        for call in self.call.call_args_list:
+            self.assertEqual(call.args[1]['id'], self.row['id'])
 
     def test_stopped_environment_read_remains_passive_and_change_never_dispatches(self):
         with patch('bridge.features.accounts.wsl_accounts.wsl.running_distributions', return_value=[]):
@@ -387,7 +418,7 @@ class WslAccountRoutingBoundaries(unittest.TestCase):
                 self.assertEqual(receipts, original)
         self.assertTrue(all(call.args[-1] == {'action': 'read'} for call in self.call.call_args_list))
 
-    def test_read_masks_persisted_unknown_and_failed_receipt_verification_neutrally(self):
+    def test_read_distinguishes_unresolved_receipts_from_failed_verification(self):
         path = self.directory / self.row['id'][4:] / 'operations.json'
         path.parent.mkdir()
         for original in (b'{"fixture":{"result":{"status":"unknown"}}}', b'invalid receipt json'):
@@ -398,7 +429,7 @@ class WslAccountRoutingBoundaries(unittest.TestCase):
                 result = self.accounts.read('codex', self.row['id'])
                 self.assertFalse(result['capabilities']['switch'])
                 self.assertFalse(result['capabilities']['restore'])
-                self.assertIn('无法核验', result['blockers'][-1])
+                self.assertIn('无法核验' if original == b'invalid receipt json' else '结果待核对', result['blockers'][-1])
                 self.assertNotIn('仍运行', result['blockers'][-1])
                 self.assertEqual(path.read_bytes(), original)
 

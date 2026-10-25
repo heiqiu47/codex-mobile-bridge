@@ -369,10 +369,129 @@ class WslEntry(WslFeatures):
             'reason': None if connected else '点击重新连接以恢复 WSL 会话',
         }
 
+    def _account_draft_state(self, provider):
+        """Fresh credential fingerprints only; no runtime or model access."""
+        from bridge.features.accounts.wsl_account_payload import worker_source
+        source = worker_source()+'\n'+source_text('features/accounts/draft_identity.py')
+        source += '\nstore=AccountStore("codex", '+repr(self.row['home'])+')\nfiles=store.files()\n'
+        source += 'config=_toml_loads((files["config.toml"] or b"").decode())\n'
+        source += 'owner=codex_account_identity(store.directory,'+payload(provider)+',os.environ,shared_auth=True,toml_loads=_toml_loads)\n'
+        source += 'print(json.dumps({"identity":_identity(files),"provider":config.get("model_provider","openai"),"owner":owner}))\n'
+        value = self.read(self.row['distribution'], source)
+        if not value.get('identity') or value.get('provider') != provider:
+            raise IPCError('WSL 草稿账号身份无法核验，请刷新后重新选择')
+        return {**value, 'accountIdentity': draft_identity('codex', self.host, provider, value['owner']) if value.get('owner') else ''}
+
+    def _account_draft_catalog(self, provider):
+        sessions, visited = {}, set()
+        for archived in (False, True):
+            offset = 0
+            while True:
+                rows = self.store.list(query='', limit=200, offset=offset, archived=archived, source='cli')
+                if not isinstance(rows, list):
+                    raise IPCError('WSL 历史会话目录无法完整核验，账号尚未切换')
+                for row in rows:
+                    sid = row.get('id')
+                    if not isinstance(sid, str) or not sid or sid in visited:
+                        raise IPCError('WSL 历史会话目录已变化，账号尚未切换')
+                    visited.add(sid)
+                    if (row.get('model_provider') or 'openai') != provider:
+                        continue
+                    sid, cwd = row.get('id'), row.get('cwd')
+                    if not isinstance(sid, str) or not sid or not isinstance(cwd, str) or not cwd or sid in sessions:
+                        raise IPCError('WSL 历史会话目录已变化，账号尚未切换')
+                    sessions[sid] = {'id': sid, 'cwd': cwd, 'provider': provider}
+                if len(rows) < 200:
+                    break
+                offset += len(rows)
+        return sessions
+
+    def capture_account_drafts(self, provider):
+        """Snapshot catalog tuples only; never load thread contents or runtimes."""
+        state = self._account_draft_state(provider)
+        sessions = self._account_draft_catalog(provider)
+        if self._account_draft_state(provider) != state:
+            raise IPCError('WSL 草稿账号身份已变化，账号尚未切换')
+        return {'version': 1, 'entry': self.host, 'provider': provider, 'identity': state['identity'],
+                'accountIdentity': state['accountIdentity'], 'sessions': list(sessions.values())}
+
+    def _account_draft_records(self):
+        path = self.data_dir/'account-drafts.json'
+        if not path.exists():
+            return {'version': 1, 'entry': self.host, 'sessions': {}}
+        value = json.loads(path.read_text(encoding='utf-8'))
+        if value.get('version') != 1 or value.get('entry') != self.host or not isinstance(value.get('sessions'), dict):
+            raise IPCError('WSL 草稿续接记录无法核验')
+        return value
+
+    def complete_account_drafts(self, snapshot, appliedIdentity):
+        if (snapshot.get('version') != 1 or snapshot.get('entry') != self.host
+                or not isinstance(snapshot.get('sessions'), list)):
+            raise IPCError('WSL 草稿续接归属无法核验')
+        provider = snapshot.get('provider')
+        state = self._account_draft_state(provider)
+        if state['identity'] != appliedIdentity:
+            raise IPCError('WSL 草稿续接配置身份已变化')
+        if not snapshot.get('accountIdentity') or not state['accountIdentity']:
+            # A first login has no proven old draft owner. It still permits
+            # account setup, without inventing a cross-account authorization.
+            with self.lock:
+                self._draft_identity_cache[provider] = (time.monotonic(), state['accountIdentity'])
+            return []
+        value = self._account_draft_records()
+        updated = copy.deepcopy(value)
+        drafts = []
+        catalog = self._account_draft_catalog(provider)
+        for saved in snapshot['sessions']:
+            sid = saved['id']
+            current = catalog.get(sid)
+            if current != saved or saved['provider'] != provider:
+                raise IPCError('原 WSL 草稿会话身份或目录已变化')
+            previous = value['sessions'].get(sid) or {}
+            prior = (previous.get('previousAccountIdentities') or []) if (
+                previous.get('cwd') == saved['cwd'] and previous.get('provider') == provider and
+                previous.get('appliedIdentity') == snapshot['identity'] and
+                previous.get('accountIdentity') == snapshot['accountIdentity']) else []
+            lineage = list(dict.fromkeys([*prior, snapshot['accountIdentity']]))
+            lineage = [item for item in lineage if isinstance(item, str) and len(item) == 64
+                       and item != state['accountIdentity']][-32:]
+            updated['sessions'][sid] = {**saved, 'appliedIdentity': appliedIdentity,
+                'accountIdentity': state['accountIdentity'], 'previousAccountIdentities': lineage}
+            drafts.append({'id': sid, 'previousAccountIdentity': snapshot['accountIdentity'],
+                           'accountIdentity': state['accountIdentity']})
+        if self._account_draft_state(provider) != state:
+            raise IPCError('WSL 草稿续接配置身份已变化')
+        self.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        private_json(self.data_dir/'account-drafts.json', updated)
+        with self.lock:
+            self._draft_identity_cache[provider] = (time.monotonic(), state['accountIdentity'])
+        return drafts
+
+    def _account_draft_continuation(self, identifier):
+        try:
+            record = self._account_draft_records()['sessions'].get(identifier)
+            if not record:
+                return None
+            metadata = self.store.get(identifier)
+            provider = metadata.get('model_provider') or 'openai'
+            if metadata.get('id') != identifier or metadata.get('cwd') != record['cwd'] or provider != record['provider']:
+                return None
+            state = self._account_draft_state(provider)
+            if state['identity'] != record['appliedIdentity'] or state['accountIdentity'] != record['accountIdentity']:
+                return None
+            return {'id': identifier, 'entry': self.host, 'accountIdentity': state['accountIdentity'],
+                    'previousAccountIdentities': list(record['previousAccountIdentities'])}
+        except (OSError, ValueError, KeyError, TypeError, IPCError, RemoteUnavailable):
+            return None
+
     def view(self, identifier, **options):
         session = self.session(identifier, **options)
         result = session.view()
         result['draftAccountIdentity'] = self._management_identity(identifier, refresh=True)
+        continuation = self._account_draft_continuation(identifier)
+        if continuation is not None:
+            result['draftAccountIdentity'] = continuation['accountIdentity']
+            result['draftContinuation'] = continuation
         result.update(host=self.host, endpointId=self.host, hostLabel=self.row['label'],
                       files=[], queue=self._queue(identifier), submissions=self._submissions(identifier), goalRuntimeAvailable=False,
                       capabilities=CAPABILITIES, access=self._access(session),
@@ -824,10 +943,11 @@ class WslEntry(WslFeatures):
     def _probe_draft_identity(self, provider):
         identity = ''
         try:
-            source = source_text('features/accounts/draft_identity.py')
+            from bridge.features.accounts.wsl_account_payload import worker_source
+            source = worker_source()+'\n'+source_text('features/accounts/draft_identity.py')
             source += '\nimport os,json\nfrom pathlib import Path\n'
             source += 'home=os.environ.get("CODEX_HOME") or str(Path.home()/".codex")\n'
-            source += 'print(json.dumps({"identity":codex_account_identity(home,' + payload(provider) + ',os.environ)}))\n'
+            source += 'print(json.dumps({"identity":codex_account_identity(home,' + payload(provider) + ',os.environ,shared_auth=True,toml_loads=_toml_loads)}))\n'
             owner = self.read(self.row['distribution'], source).get('identity')
             if owner:
                 identity = draft_identity('codex', self.host, provider, owner)

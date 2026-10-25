@@ -505,9 +505,30 @@ def upload(found, request):
     return {'path': str(path.resolve())}
 
 
+def continuation_identity(directory):
+    files = {}
+    for name in ('settings.json', '.credentials.json'):
+        path = Path(directory)/name
+        if path.is_symlink():
+            raise ValueError('WSL 账号配置不可重定向')
+        try:
+            files[name] = base64.b64encode(path.read_bytes()).decode()
+        except FileNotFoundError:
+            files[name] = None
+    return hashlib.sha256(json.dumps(files, ensure_ascii=False, indent=2, sort_keys=True).encode()).hexdigest()
+
+
 def command(request):
     found = profile()
     operation = request.get('operation')
+    if operation == 'account-continuation':
+        if os.environ.get('MOBILE_BRIDGE_WSL_NATIVE') != '1' or not found:
+            raise ValueError('WSL 账号续接核验不可用')
+        identity = continuation_identity(found['directory'])
+        rows = sessions(found)
+        if found != profile() or identity != continuation_identity(found['directory']):
+            raise ValueError('WSL 账号配置在续接核验期间变化')
+        return {'identity': identity, 'profile': found, 'sessions': rows}
     if operation == 'list':
         return {'profile': found, 'sessions': sessions(found) if found else []}
     if operation == 'projects':

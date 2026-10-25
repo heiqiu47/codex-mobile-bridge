@@ -33,4 +33,7 @@ except ImportError:
     # The fallback loader has no external inputs and runs before target requests.
     models = source_text('features/auth/tls.py') + '\n'
     models += source_text('features/accounts/models.py').replace('from bridge.features.auth.tls import client_context', '') + '\n'
-    return 'import json\n'+loader+'\n'+models+source_text('features/accounts/wsl_account_worker.py')
+    helper = source_text('platforms/codex_process_identity.py')+'\n'
+    worker = source_text('features/accounts/wsl_account_worker.py').replace(
+        'from bridge.platforms.codex_process_identity import codex_updater', 'pass # standalone identity helper is defined above')
+    return 'import json\n'+loader+'\n'+models+helper+worker

@@ -140,11 +140,122 @@ class WslClaudeEntries:
 class WslClaudeCli(RemoteClaudeCli):
     transport_kind = 'wsl'
 
+    def __init__(self, hosts=None):
+        super().__init__(hosts)
+        self.continuations_path = Path(hosts.path).parent/'claude-wsl-continuations.json' if hosts is not None else None
+        self.continuations = {}
+        self.continuation_pending = {}
+        if self.continuations_path and self.continuations_path.exists():
+            value = json.loads(self.continuations_path.read_text(encoding='utf-8'))
+            if value.get('version') != 1 or not isinstance(value.get('sessions'), dict) or not isinstance(value.get('pending'), dict):
+                raise ValueError('WSL Claude Code 续接记录无效')
+            self.continuations = value['sessions']
+            self.continuation_pending = value['pending']
+
+    def _save_continuations(self):
+        if self.continuations_path:
+            private_json(self.continuations_path, {'version': 1, 'sessions': self.continuations,
+                                                 'pending': self.continuation_pending})
+
+    def prepare_account_switch(self, identifier, identity):
+        """Snapshot only freshly verified native threads already known to this gateway."""
+        row = self.hosts.selected(identifier)
+        result = self._remote(identifier, {'operation': 'account-continuation'})
+        profile = result.get('profile') or {}
+        if profile.get('directory') != row['configDir'] or result.get('identity') != identity:
+            raise ValueError('WSL Claude Code 账号身份已变化，请刷新')
+        fresh = {item['nativeId']: item for item in result.get('sessions', [])}
+        selected = {}
+        for sid, saved in self.index.items():
+            if saved.get('host') != identifier:
+                continue
+            native = saved.get('nativeId')
+            current = fresh.get(native)
+            if (not current or any(current.get(key) != saved.get(key) for key in
+                                   ('origin', 'cwd', 'model', 'permissionMode', 'permissionKnown', 'projectConfig')) or
+                    (current.get('stamp') or [])[:2] != (saved.get('stamp') or [])[:2]):
+                raise ValueError('原 WSL Claude Code 会话身份已变化，账号尚未切换')
+            selected[sid] = {key: current.get(key) for key in
+                             ('nativeId', 'cwd', 'origin', 'model', 'permissionMode', 'permissionKnown',
+                              'projectConfig', 'stamp', 'draftAccountIdentity')}
+        self.continuation_pending[identifier] = {'beforeIdentity': identity, 'sessions': selected}
+        self._save_continuations()
+
+    def complete_account_switch(self, identifier, identity):
+        """Bind the explicit transaction's new origin to the original gateway IDs."""
+        row = self.hosts.selected(identifier)
+        pending = self.continuation_pending.get(identifier)
+        if pending is None:
+            return []
+        pending['appliedIdentity'] = identity
+        self._save_continuations()
+        result = self._remote(identifier, {'operation': 'account-continuation'})
+        profile = result.get('profile') or {}
+        if profile.get('directory') != row['configDir'] or result.get('identity') != identity:
+            raise ValueError('WSL Claude Code 切换后身份尚未核验')
+        fresh = {item['nativeId']: item for item in result.get('sessions', [])}
+        aliases, updated, drafts = dict(self.continuations), {}, []
+        host = {**row, 'alias': identifier}
+        for sid, saved in pending['sessions'].items():
+            current = fresh.get(saved['nativeId'])
+            if (not current or current.get('origin') != profile.get('origin') or
+                    any(current.get(key) != saved.get(key) for key in
+                        ('cwd', 'model', 'permissionMode', 'permissionKnown', 'projectConfig')) or
+                    (current.get('stamp') or [])[:2] != (saved.get('stamp') or [])[:2]):
+                raise ValueError('原 WSL Claude Code 会话身份尚未核验')
+            prior = (aliases.get(sid) or {}).get('previousAccountIdentities', [])
+            lineage = list(dict.fromkeys([*prior, saved.get('draftAccountIdentity') or '']))
+            lineage = [item for item in lineage if re.fullmatch(r'[0-9a-f]{64}', item) and
+                       item != current.get('draftAccountIdentity')][-32:]
+            aliases[sid] = {'host': identifier, 'nativeId': saved['nativeId'],
+                            'cwd': saved['cwd'], 'origin': current['origin'], 'fileIdentity': current['stamp'][:2],
+                            'accountIdentity': current.get('draftAccountIdentity') or '',
+                            'previousAccountIdentities': lineage}
+            updated[sid] = {**super()._row(identifier, host, current), 'id': sid,
+                            'runtime': 'wsl', 'distribution': row['distribution'], 'user': row['user']}
+            drafts.append({'id': sid, 'previousAccountIdentity': saved.get('draftAccountIdentity') or '',
+                           'accountIdentity': current.get('draftAccountIdentity') or ''})
+        previous = self.continuations
+        self.continuations = aliases
+        self.continuation_pending.pop(identifier)
+        try:
+            self._save_continuations()
+        except Exception:
+            self.continuations = previous
+            self.continuation_pending[identifier] = pending
+            raise
+        self.index.update(updated)
+        targets = {item['nativeId'] for item in updated.values()}
+        self.index = {sid: item for sid, item in self.index.items() if
+                      item.get('host') != identifier or item.get('nativeId') not in targets or sid in updated}
+        self.history = {key: page for key, page in self.history.items() if key[0] not in updated}
+        return drafts
+
+    def call(self, action, sid, body):
+        value = super().call(action, sid, body)
+        if action == 'detail':
+            with self.lock:
+                alias, current = self.continuations.get(sid), self.index.get(sid)
+                if (alias and current and alias.get('host') == current.get('host') and
+                        all(alias.get(key) == current.get(key) for key in ('nativeId', 'cwd', 'origin')) and
+                        alias.get('fileIdentity') == (current.get('stamp') or [])[:2] and
+                        alias.get('accountIdentity') == (value.get('session') or {}).get('draftAccountIdentity')):
+                    value['draftContinuation'] = {'id': sid, 'entry': alias['host'],
+                        'accountIdentity': alias['accountIdentity'],
+                        'previousAccountIdentities': list(alias.get('previousAccountIdentities') or [])}
+        return value
+
     def _process_options(self):
         return wsl._options()
 
     def _row(self, host_id, host, raw):
         row = super()._row(host_id, host, raw)
+        for sid, saved in self.continuations.items():
+            if (saved.get('host') == host_id and
+                    all(saved.get(key) == raw.get(key) for key in ('nativeId', 'cwd', 'origin')) and
+                    saved.get('fileIdentity') == (raw.get('stamp') or [])[:2]):
+                row['id'] = sid
+                break
         return {**row, 'runtime': 'wsl', 'distribution': host['distribution'], 'user': host['user']}
 
     def _command(self, alias):

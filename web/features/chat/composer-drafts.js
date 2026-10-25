@@ -162,6 +162,16 @@ class ComposerDrafts {
     }
     return {resolved:resolved.map(({source,id,status})=>({source,id,status})),remaining:this.pendingRecords(scope,options)};
   }
+  continueAccount(previous,next){
+    if(!this.key(previous)||!this.key(next)||previous.account===next.account||
+       !['gateway','provider','host','session'].every(key=>previous[key]===next[key]))return null;
+    // Copy only unsent composition. Submission IDs and receipts remain in the
+    // original scope, and any unresolved send prevents copying its draft.
+    if(this.pendingRecords(previous).length||this.pendingRecords(next).length||this.load(next))return null;
+    const draft=this.load(previous);if(!draft)return null;
+    return this.save(next,{text:draft.text,selectionStart:draft.selectionStart,selectionEnd:draft.selectionEnd,
+      quotes:draft.quotes,sendMode:'send',workMode:'default'});
+  }
   migrate(scope,temporary,keys){
     if(!this.key(scope)||this.load(scope))return this.load(scope);
     let text;try{text=temporary.getItem(keys.text);}catch{return null;}

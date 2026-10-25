@@ -974,3 +974,31 @@ test('Claude trust refusal preserves creation fields and explicit retry uses a n
  await form.onsubmit({preventDefault(){}});assert.equal(dialog.open,true);assert.match(dialog.textContent,/信任工作区/);assert.equal(title.value,'Preserved title');assert.equal(message.value,'Preserved first instruction');
  await form.onsubmit({preventDefault(){}});assert.equal(attempts,2);assert.notEqual(ids[0],ids[1]);assert.equal(message.value,'Preserved first instruction');
 });
+
+test('verified WSL account continuation preserves same-session text selection and attachments without sending',async()=>{
+ const ui=await opened(),view=ui.view,entry='wsl-claude:'+ 'a'.repeat(32),previous='1'.repeat(64),next='2'.repeat(64);view.bindDraftGateway('gateway-a');view.bindDraftScope({draftAccountIdentity:previous});view.rows=[{id:'a',host:entry,runtime:'wsl'}];view.input.value='retained text';view.input.setSelectionRange(2,7);view.saveDraft();
+ view.attachments.rows.push({id:'attachment-a',name:'file.txt',size:10,status:'ready'});const attachmentKey=view.attachments.key;view.attachments.save(attachmentKey,view.attachments.rows);const savedAttachments=ui.sessionStore.get('attachments:'+attachmentKey),calls=ui.calls.filter(call=>call.body).length;
+ const result={provider:'claude',entry,draftContinuations:[{id:'a',previousAccountIdentity:previous,accountIdentity:next}]};assert.equal(view.continueWslAccountDrafts(result),1);assert.equal(view.input.value,'retained text');assert.equal(view.input.selectionStart,2);assert.equal(view.input.selectionEnd,7);assert.equal(view.draftScope.account,next);assert.equal(view.attachments.key,attachmentKey);assert.equal(view.attachments.rows[0].id,'attachment-a');assert.equal(ui.sessionStore.get('attachments:'+attachmentKey),savedAttachments);assert.equal(ui.calls.filter(call=>call.body).length,calls);assert.equal(view.pending.size,0);
+});
+test('WSL draft continuation rejects another provider host account and unresolved submissions',async()=>{
+ const ui=await opened(),view=ui.view,entry='wsl-claude:'+ 'a'.repeat(32),previous='1'.repeat(64),next='2'.repeat(64);view.bindDraftGateway('gateway-a');view.bindDraftScope({draftAccountIdentity:previous});view.rows=[{id:'a',host:entry,runtime:'wsl'}];view.input.value='private draft';view.saveDraft();const result={provider:'claude',entry,draftContinuations:[{id:'a',previousAccountIdentity:previous,accountIdentity:next}]};
+ for(const changed of [{provider:'codex'},{entry:'wsl-claude:'+'b'.repeat(32)},{continuationPending:true},{draftContinuations:[{id:'a',previousAccountIdentity:'3'.repeat(64),accountIdentity:next}]}])assert.equal(view.continueWslAccountDrafts({...result,...changed}),0);
+ const pendingKey=view.pendingKey('send',{text:'private draft'},'a','claude',previous);view.pending.set(pendingKey,'unknown-id');assert.equal(view.continueWslAccountDrafts(result),0);assert.equal(view.pending.get(pendingKey),'unknown-id');assert.equal(view.draftScope.account,previous);assert.equal(view.composerDrafts.load({...view.draftScope,account:next}),null);
+});
+
+test('fresh verified WSL detail continues an offline mobile draft after a switch from another client',async()=>{
+ const ui=await opened(),view=ui.view,entry='wsl-claude:'+'a'.repeat(32),old='1'.repeat(64),middle='2'.repeat(64),current='3'.repeat(64);view.bindDraftGateway('gateway-a');
+ const previous={gateway:'gateway-a',provider:'claude',account:old,host:'local',session:'a'};view.composerDrafts.save(previous,{text:'offline phone draft',selectionStart:3,selectionEnd:9});
+ const hint={id:'a',entry,accountIdentity:current,previousAccountIdentities:[old,middle]},value={session:{id:'a',runtime:'wsl',host:entry,draftAccountIdentity:current},draftContinuation:hint};
+ const calls=ui.calls.filter(call=>call.body).length;view.bindDraftScope(value);assert.equal(view.input.value,'offline phone draft');assert.equal(view.input.selectionStart,3);assert.equal(view.draftScope.account,current);assert.equal(ui.calls.filter(call=>call.body).length,calls);
+});
+test('unverified external account changes and other WSL entries cannot use draft lineage',async()=>{
+ const ui=await opened(),view=ui.view,entry='wsl-claude:'+'a'.repeat(32),old='1'.repeat(64),current='2'.repeat(64);view.bindDraftGateway('gateway-a');const previous={gateway:'gateway-a',provider:'claude',account:old,host:'local',session:'a'};view.composerDrafts.save(previous,{text:'private old draft'});
+ const session={id:'a',runtime:'wsl',host:entry,draftAccountIdentity:current},hint={id:'a',entry,accountIdentity:current,previousAccountIdentities:[old]};
+ for(const value of [{session},{session,draftContinuation:{...hint,entry:'wsl-claude:'+'b'.repeat(32)}},{session,draftContinuation:{...hint,id:'other'}},{session,draftContinuation:{...hint,accountIdentity:'3'.repeat(64)}}]){view.bindDraftScope(value);assert.equal(view.input.value,'');assert.notEqual(view.composerDrafts.load({...previous,account:current})?.text,'private old draft');}
+ view.composerDrafts.begin(previous,{text:'private old draft'},'unknown-original');view.bindDraftScope({session,draftContinuation:hint});assert.notEqual(view.composerDrafts.load({...previous,account:current})?.text,'private old draft');assert.equal(view.composerDrafts.pending(previous).id,'unknown-original');assert.equal(view.input.value,'');
+});
+
+test('mobile draft continuation consumes manager-wrapped account identities while session keeps raw native ownership',async()=>{
+ const ui=await opened(),view=ui.view,entry='wsl-claude:'+'a'.repeat(32),rawOld='1'.repeat(64),rawCurrent='2'.repeat(64),wrap=raw=>require('node:crypto').createHash('sha256').update(JSON.stringify(['draft-v1','claude','wsl-cli',entry,raw])).digest('hex'),old=wrap(rawOld),current=wrap(rawCurrent);view.bindDraftGateway('gateway-a');view.composerDrafts.save({gateway:'gateway-a',provider:'claude',account:old,host:'local',session:'a'},{text:'real wrapped scope draft'});view.bindDraftScope({draftAccountIdentity:current,session:{id:'a',runtime:'wsl',host:entry,draftAccountIdentity:rawCurrent},draftContinuation:{id:'a',entry,accountIdentity:current,previousAccountIdentities:[old]}});assert.notEqual(current,rawCurrent);assert.equal(view.input.value,'real wrapped scope draft');assert.equal(view.draftScope.account,current);
+});

@@ -744,6 +744,14 @@ class DesktopSessions:
                     result['draftAccountIdentity'] = self._draft_account_identity(provider, sid, result)
                 except (OSError, ValueError, KeyError, TypeError, AttributeError, BridgeUnavailable):
                     result['draftAccountIdentity'] = ''
+                hint = result.pop('draftContinuation', None)
+                session = result['session']
+                if (provider == 'claude' and result['draftAccountIdentity'] and hint and
+                        session.get('runtime') == 'wsl' and hint.get('entry') == session.get('host') and
+                        hint.get('id') == sid and hint.get('accountIdentity') == session.get('draftAccountIdentity')):
+                    result['draftContinuation'] = {**hint, 'accountIdentity': result['draftAccountIdentity'],
+                        'previousAccountIdentities': [draft_identity('claude', 'wsl-cli', hint['entry'], identity)
+                            for identity in hint.get('previousAccountIdentities', [])]}
             return result
         rid = str(uuid.UUID(body.get('id', '')))
         if action == 'send' and (not isinstance(body.get('text'), str) or

@@ -97,7 +97,7 @@ class Entries:
                          'running': True if connected else None if row['running'] else False,
                          'distributionRunning': row['running'],
                          'setupStatus': 'ready', 'canQuitDesktop': False, 'canForceQuit': False,
-                         'reason': ('可从手机新建、恢复 WSL 会话；账号与模型接入由原工具管理。'
+                         'reason': ('可从手机新建、恢复 WSL 会话，并在网关管理 API 接入；官方登录仍在原 Codex CLI 完成。'
                                     if row['running'] else '打开此应用时可启动已登记的 WSL 环境和原生共享服务。')})
         return rows
 

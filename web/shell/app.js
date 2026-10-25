@@ -617,6 +617,19 @@ function bindCodexDraft(view){
   if(!account&&codexDraftScope){saveDraft();sessionStorage.removeItem('draft:'+chatKey());sessionStorage.removeItem('skills:'+chatKey());codexDraftScope=null;codexDraftTouched=false;codexQuotes?.reset();$('message').value='';selectedSkills.clear();renderSkillPills();return;}
   if(!draftGateway||!account||!currentId||!composerDrafts)return;
   const scope={gateway:draftGateway,provider:'codex',account,host:currentHost,session:currentId};
+  const continuation=view?.draftContinuation;
+  if(/^wsl:[0-9a-f]{32}$/.test(currentHost)&&view?.id===currentId&&view.host===currentHost&&
+     continuation?.id===currentId&&continuation.entry===currentHost&&continuation.accountIdentity===account&&
+     /^[a-f0-9]{64}$/.test(account)&&Array.isArray(continuation.previousAccountIdentities)&&continuation.previousAccountIdentities.length<=32){
+    if(codexDraftScope&&codexDraftScope.account!==account)saveDraft();
+    const options={temporary:sessionStorage,temporaryKey:'pending:'+chatKey()};
+    if(!composerDrafts.pendingRecords(scope,options).length)for(const previousAccount of [...continuation.previousAccountIdentities].reverse()){
+      if(!/^[a-f0-9]{64}$/.test(previousAccount)||previousAccount===account)continue;
+      const previous={...scope,account:previousAccount},draft=composerDrafts.load(previous);
+      if(!draft||!(draft.text||draft.quotes?.length)||composerDrafts.pendingRecords(previous,options).length)continue;
+      if(composerDrafts.continueAccount(previous,scope))break;
+    }
+  }
   if(composerDrafts.key(scope)===composerDrafts.key(codexDraftScope))return;
   const switching=!!codexDraftScope;
   if(switching){saveDraft();sessionStorage.removeItem('draft:'+chatKey());sessionStorage.removeItem('skills:'+chatKey());let oldPending;try{oldPending=JSON.parse(sessionStorage.getItem('pending:'+chatKey()));}catch{}if(!oldPending?.account)sessionStorage.removeItem('pending:'+chatKey());}
@@ -1449,7 +1462,7 @@ function openCurrentAccounts(){
     const details=el('details','account-compact'),root=el('div'),summary=el('summary','',t('Claude Code CLI 接入'));summary.dataset.i18n='Claude Code CLI 接入';details.append(summary,root);dialog.append(details);
     claudeCliAccessPanel=new CliAccessPanel({root,provider:'claude',read:()=>api('/api/cli-access'),request:value=>api('/api/cli-access',value)});
     const selectorControls=el('div','accounts-runtime-controls'),selectorLabel=el('label','',t('运行环境')),selector=el('select'),wslRoot=el('div');selector.setAttribute('aria-label',t('运行环境'));selectorLabel.append(selector);selectorControls.append(selectorLabel);head.after(selectorControls);dialog.append(wslRoot);
-    claudeWslAccounts=new WslAccountsPanel({root:wslRoot,provider:'claude',read:entry=>api('/api/wsl-accounts?provider=claude&entry='+encodeURIComponent(entry)),request:value=>api('/api/wsl-accounts',value)});
+    claudeWslAccounts=new WslAccountsPanel({root:wslRoot,provider:'claude',onSwitched:value=>desktopSessions.continueWslAccountDrafts(value),read:entry=>api('/api/wsl-accounts?provider=claude&entry='+encodeURIComponent(entry)),request:value=>api('/api/wsl-accounts',value)});
     const entries=clientNavigation.clients.find(row=>row.id==='claude')?.entries||[];
     const targets=entries.filter(row=>row.id?.startsWith('wsl-claude:'));
     selector.append(new Option(t('此电脑'),'local'),...targets.map(row=>new Option(row.name||row.label||row.id,row.id)));selectorControls.hidden=!targets.length;

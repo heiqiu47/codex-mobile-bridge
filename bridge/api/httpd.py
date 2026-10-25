@@ -666,16 +666,23 @@ class Handler(BaseHTTPRequestHandler):
                     if path != '/api/wsl-accounts' or query:
                         raise ValueError('WSL 账号请求参数无效')
                     body = self.read_json()
-                    fields = {'switch': {'provider', 'entry', 'action', 'id', 'expectedIdentity'},
-                              'models': {'provider', 'entry', 'action', 'id'}}
-                    required = fields.get(body.get('action')) if isinstance(body, dict) else None
-                    optional = {'refresh'} if isinstance(body, dict) and body.get('action') == 'models' else set()
-                    if required is None or not required <= set(body) or set(body) - required - optional:
-                        raise ValueError('浏览器只支持查看模型及切换已保存的 WSL 账号')
+                    common = {'provider', 'entry', 'action'}
+                    fields = {'switch': (common | {'id', 'expectedIdentity'}, set()),
+                              'models': (common | {'id'}, {'refresh'}),
+                              'recover-restart': (common | {'expectedIdentity'}, set()),
+                              'save-api': (common | {'name', 'baseUrl', 'model'}, {'id', 'apiKey', 'authScheme'}),
+                              'import-api': (common | {'sourceId', 'sourceIdentity'}, set()),
+                              'import-sources': (common, set()), 'import-current': (common, set()),
+                              'delete': (common | {'id'}, set()), 'rename': (common | {'id', 'name'}, set())}
+                    schema = fields.get(body.get('action')) if isinstance(body, dict) else None
+                    if schema is None or not schema[0] <= set(body) or set(body) - schema[0] - schema[1]:
+                        raise ValueError('WSL 账号请求字段无效')
+                    if body['action'] == 'recover-restart' and body['provider'] != 'codex':
+                        raise ValueError('仅 Codex WSL 支持恢复共享服务')
                     if 'refresh' in body and type(body['refresh']) is not bool:
                         raise ValueError('模型刷新参数无效')
-                    if body['action'] == 'switch' and self.server.auth.config.get('mode') == 'none':
-                        raise PermissionError('免密访问不能切换 WSL 账号')
+                    if body['action'] != 'models' and self.server.auth.config.get('mode') == 'none':
+                        raise PermissionError('免密访问不能管理 WSL 账号')
                     return self.output(200, manager.change(body, desktop=False))
                 fields = {'provider'} if path.endswith('/environments') else {'provider', 'entry'}
                 if set(query) != fields or any(len(values) != 1 or not values[0] for values in query.values()):
@@ -685,7 +692,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.output(200, manager.environments(provider))
                 result = manager.read(provider, query['entry'][0])
                 if self.server.auth.config.get('mode') == 'none':
-                    result = {**result, 'capabilities': {**result.get('capabilities', {}), 'switch': False}}
+                    result = {**result, 'capabilities': {**result.get('capabilities', {}),
+                        'save': False, 'import': False, 'capture': False, 'switch': False, 'restore': False,
+                        'attemptSwitch': False, 'attemptRestore': False, 'recoverRestart': False}}
                 return self.output(200, result)
             if path == '/api/cli-access':
                 if query:

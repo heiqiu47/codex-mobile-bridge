@@ -138,11 +138,46 @@ class DesktopSessionsView {
     else{this.provisionalDrafts.set(key,{gateway:this.draftGateway,account:this.draftScope.account,...fields});this.drafts.set(key,fields.text);}
     return saved;
   }
+  continueWslAccountDrafts(result){
+    if(result?.provider!=='claude'||!/^wsl-claude:[0-9a-f]{32}$/.test(result.entry||'')||
+       result.continuationPending||!Array.isArray(result.draftContinuations)||!this.draftGateway||!this.composerDrafts)return 0;
+    if(this.provider==='claude'&&this.sid)this.saveDraft();
+    let copied=0;
+    for(const row of result.draftContinuations){
+      if(typeof row.id!=='string'||!row.id||!/^[a-f0-9]{64}$/.test(row.previousAccountIdentity||'')||
+         !/^[a-f0-9]{64}$/.test(row.accountIdentity||''))continue;
+      const known=this.rows.find(item=>item.id===row.id);
+      if(known&&(known.host!==result.entry||known.runtime!=='wsl'))continue;
+      if([...this.pending.keys()].some(key=>key.startsWith('claude:'+row.id+':send:')))continue;
+      const previous={gateway:this.draftGateway,provider:'claude',account:row.previousAccountIdentity,host:'local',session:row.id},next={...previous,account:row.accountIdentity};
+      const draft=this.composerDrafts.continueAccount(previous,next);if(!draft)continue;copied++;
+      // Attachments already use the unchanged provider/session key; retain the
+      // same upload references rather than copying or resubmitting uploads.
+      if(this.provider==='claude'&&this.sid===row.id&&this.composerDrafts.key(this.draftScope)===this.composerDrafts.key(previous)){
+        this.invalidateReads('claude');this.bindDraftScope({draftAccountIdentity:row.accountIdentity});
+      }
+    }
+    return copied;
+  }
   bindDraftScope(value){
     const account=value?.draftAccountIdentity||value?.session?.draftAccountIdentity||'';
     if(!account&&this.draftScope){this.saveDraft();this.drafts.delete(this.provider+':'+this.sid);this.draftScope=null;this.draftTouched=false;this.quotes?.reset();this.input.value='';this.selectedSkills().clear();this.updateComposer();return;}
     if(!this.draftGateway||!account||!this.sid||!this.composerDrafts)return;
     const scope={gateway:this.draftGateway,provider:this.provider,account,host:'local',session:this.sid};
+    const continuation=value?.draftContinuation,session=value?.session;
+    if(this.provider==='claude'&&session?.id===this.sid&&session.runtime==='wsl'&&
+       /^wsl-claude:[0-9a-f]{32}$/.test(continuation?.entry||'')&&session.host===continuation.entry&&
+       continuation.id===this.sid&&continuation.accountIdentity===account&&/^[a-f0-9]{64}$/.test(account)&&
+       Array.isArray(continuation.previousAccountIdentities)&&continuation.previousAccountIdentities.length<=32&&
+       ![...this.pending.keys()].some(key=>key.startsWith('claude:'+this.sid+':send:'))){
+      if(this.draftScope&&this.draftScope.account!==account)this.saveDraft();
+      for(const previousAccount of [...continuation.previousAccountIdentities].reverse()){
+        if(!/^[a-f0-9]{64}$/.test(previousAccount)||previousAccount===account)continue;
+        const previous={...scope,account:previousAccount},draft=this.composerDrafts.load(previous);
+        if(!draft||!(draft.text||draft.quotes?.length))continue;
+        if(this.composerDrafts.continueAccount(previous,scope))break;
+      }
+    }
     if(this.composerDrafts.key(scope)===this.composerDrafts.key(this.draftScope))return;
     const switching=!!this.draftScope;if(switching){this.saveDraft();this.drafts.delete(this.provider+':'+this.sid);for(const key of this.pending.keys())if(key.startsWith(this.provider+':'+this.sid+':send:')&&key.endsWith(':'+this.draftGateway+':'))this.pending.delete(key);}this.draftScope=scope;
     const key=this.provider+':'+this.sid,pending=this.provisionalDrafts.get(key);

@@ -13,6 +13,7 @@
   "bridge/features/accounts/models.py",
   "bridge/features/accounts/draft_identity.py",
   "bridge/features/accounts/wsl_account_worker.py",
+  "bridge/platforms/codex_process_identity.py",
   "bridge/vendor/wsl_tomli/__init__.py",
   "bridge/vendor/wsl_tomli/_types.py",
   "bridge/vendor/wsl_tomli/_re.py",

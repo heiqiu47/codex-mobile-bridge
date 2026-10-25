@@ -10,6 +10,7 @@ from bridge.features.accounts.wsl_account_models import WslAccountModels
 from bridge.platforms.windows import wsl
 from bridge.features.accounts.wsl_account_payload import worker_source
 from bridge.features.accounts.wsl_account_worker import ERROR_MESSAGES
+from bridge.features.accounts.draft_identity import draft_identity
 
 
 class WslAccounts:
@@ -77,6 +78,11 @@ class WslAccounts:
         return result['value']
 
     def _public(self, provider, row, value):
+        if provider == 'claude' and value.get('draftContinuations'):
+            value = dict(value)
+            value['draftContinuations'] = [{**item, **{key: draft_identity('claude', 'wsl-cli', row['id'], item[key])
+                if item.get(key) else '' for key in ('previousAccountIdentity', 'accountIdentity')}}
+                for item in value['draftContinuations']]
         return {**value, 'provider': provider, 'entry': row['id'], 'target': self._target(row),
                 'sharedWithDesktop': False}
 
@@ -99,16 +105,60 @@ class WslAccounts:
             # Do not hold registration while waiting for the Claude manager.
             # Eligibility is advisory; change() rechecks under the write gates.
             try:
-                with self._change_scope(provider, entry, 'inspect-switch'):
+                with self._change_scope(provider, entry, 'inspect-switch') as release:
                     current = self._row(provider, entry, enabled=True)
                     if self._target(current) != self._target(row):
                         raise ValueError('WSL 登记身份已变化')
-                    with self._guard(provider, current):
-                        pass
+                    if provider != 'codex' or release is None:
+                        with self._guard(provider, current):
+                            pass
+                    if (provider == 'codex' and release is not None and release.restartRequired and
+                            value.get('runtimeReleaseCandidate') is True):
+                        value['restartRequired'] = True
+                        if value.get('configurationBlockers') == []:
+                            value['capabilities']['attemptSwitch'] = True
+                        if value.get('activeId') and any(account.get('id') == 'native' for account in value.get('accounts', [])):
+                            value['capabilities']['attemptRestore'] = True
+                    if provider == 'claude' and release is not None and release.recovery_identity:
+                        if release.recovery_identity == value.get('identity'):
+                            try:
+                                value['draftContinuations'] = release.after_switch(value['identity'])
+                            except Exception:
+                                value['continuationPending'] = True
+                                value['continuationError'] = '账号配置已切换，原会话续接尚未核验；请刷新检查，不要重复提交切换'
+                        else:
+                            value['continuationPending'] = True
+                            value['continuationError'] = '原会话续接记录与当前账号不符，请检查原 WSL 配置'
+                    if (provider == 'claude' and release is not None and release.releasable and
+                            value.get('runtimeReleaseCandidate') is True):
+                        # An attempt is permitted, not proof of safe switching:
+                        # only the worker can rule out another native executor.
+                        configuration = value.get('configurationBlockers')
+                        if isinstance(configuration, list) and not configuration:
+                            value['capabilities']['attemptSwitch'] = True
+                        if value.get('activeId') and any(account.get('id') == 'native' for account in value.get('accounts', [])):
+                            value['capabilities']['attemptRestore'] = True
+            except ValueError as error:
+                value['blockers'].append(str(error) if type(error) is ValueError else
+                    '无法核验 WSL 切换条件，请刷新并检查运行状态及操作记录')
+                value['capabilities'].update(switch=False, restore=False)
             except Exception:
                 # Failed verification is not evidence that the target is busy.
                 value['blockers'].append('无法核验 WSL 切换条件，请刷新并检查运行状态及操作记录')
                 value['capabilities'].update(switch=False, restore=False)
+            if provider == 'codex':
+                path = Path(registry.directory)/row['id'][4:]/'account-restart.json'
+                if path.exists():
+                    try:
+                        pending = json.loads(path.read_text(encoding='utf-8'))
+                        expected = pending.get('appliedIdentity') or pending.get('beforeIdentity')
+                        if pending.get('phase') in ('prepared', 'stopped', 'applied'):
+                            value.update(restartPending=True, restartError='WSL 共享服务恢复尚未核验，请检查并恢复原服务')
+                            committed = (pending.get('plannedIdentity') == value.get('identity') and
+                                         pending.get('selectedAccount') == value.get('activeId'))
+                            value['capabilities']['recoverRestart'] = bool(committed or expected and expected == value.get('identity'))
+                    except (OSError, ValueError, TypeError):
+                        value['blockers'].append('WSL 共享服务恢复记录无法核验')
             return self._public(provider, row, value)
 
     @contextlib.contextmanager
@@ -143,6 +193,7 @@ class WslAccounts:
     def _change_scope(self, provider, entry, action):
         registry = self._registry(provider)
         with contextlib.ExitStack() as locks:
+            release = None
             if provider == 'claude' and action in ('switch', 'inspect-switch'):
                 with registry.lock:
                     row = self._row(provider, entry, enabled=True)
@@ -151,10 +202,19 @@ class WslAccounts:
                     raise ValueError('WSL Claude Code 操作记录保护尚不可用')
                 # Manager mutation lock precedes registry/remote locks, matching
                 # normal Claude sends. The hook rechecks target registration.
-                locks.enter_context(hook(provider, row, read_only=True) if action == 'inspect-switch'
-                                    else hook(provider, row))
+                release = locks.enter_context(hook(provider, row, read_only=True, release_idle=True) if action == 'inspect-switch'
+                                              else hook(provider, row, release_idle=True))
             locks.enter_context(registry.lock)
-            yield
+            if provider == 'codex' and action in ('switch', 'inspect-switch', 'recover-restart'):
+                row = self._row(provider, entry, enabled=True)
+                endpoint = getattr(registry, 'bridges', {}).get(entry)
+                if endpoint is None and hasattr(registry, 'get'):
+                    endpoint = registry.get(entry)
+                if endpoint is not None and hasattr(endpoint, 'connection_lock'):
+                    from bridge.features.accounts.wsl_codex_restart import CodexRestart
+                    release = locks.enter_context(CodexRestart(endpoint).scope(recover=action == 'recover-restart',
+                        advisory=action == 'inspect-switch'))
+            yield release
 
     def change(self, value, desktop=False):
         if not isinstance(value, dict):
@@ -164,12 +224,8 @@ class WslAccounts:
         if set(value)-allowed:
             raise ValueError('WSL 账号请求包含未知字段')
         provider, entry, action = value.get('provider'), value.get('entry'), value.get('action')
-        if action not in ('read', 'save-api', 'import-api', 'import-current', 'import-sources', 'switch', 'delete', 'rename', 'models'):
+        if action not in ('read', 'save-api', 'import-api', 'import-current', 'import-sources', 'switch', 'delete', 'rename', 'models', 'recover-restart'):
             raise ValueError('WSL 账号操作不支持')
-        if not desktop and action not in ('read', 'switch', 'models'):
-            raise ValueError('请在电脑端管理 WSL 账号凭据')
-        if not desktop and any(key in value for key in ('apiKey', 'sourceId', 'sourceIdentity', 'baseUrl', 'authScheme', 'name', 'model')):
-            raise ValueError('浏览器不能保存或导入 WSL 凭据')
         if action == 'models':
             return self.model_catalog.get(value)
         with self.lock:
@@ -177,19 +233,75 @@ class WslAccounts:
                 raise ValueError('网关正在停止')
             if action == 'read':
                 return self.read(provider, entry)
+            if action == 'recover-restart' and provider != 'codex':
+                raise ValueError('仅 WSL Codex 支持恢复共享服务')
             registry = self._registry(provider)
-            with self._change_scope(provider, entry, action):
+            with self._change_scope(provider, entry, action) as release:
                 row = self._row(provider, entry, enabled=action != 'read')
                 if action == 'import-sources':
                     return self._public(provider, row, {'sources': self.bridge.wsl_account_sources(provider)})
                 if row['distribution'] not in wsl.running_distributions():
                     raise ValueError('WSL 已停止，请在电脑端启动后操作')
+                if action == 'recover-restart':
+                    if release is None:
+                        raise ValueError('此网关无法核验 WSL 共享服务恢复')
+                    current = self._call(provider, row, {'action': 'read'})
+                    if not value.get('expectedIdentity') or current.get('identity') != value['expectedIdentity']:
+                        raise ValueError('WSL 账号身份已变化，请刷新')
+                    release.observe(current)
+                    release.restore(current['identity'])
+                    current.update(restartPending=False, restartVerified=True, restartRequired=True)
+                    return self._public(provider, row, current)
                 request = dict(value)
                 if action == 'import-api':
                     request.update(self.bridge.wsl_account_import(provider, value))
                     request['action'] = 'save-api'
-                with self._guard(provider, row) if action == 'switch' else contextlib.nullcontext():
-                    result = self._call(provider, row, request)
+                if action == 'switch' and release is not None:
+                    current = self._call(provider, row, {'action': 'read'})
+                    if (not value.get('expectedIdentity') or current.get('identity') != value['expectedIdentity'] or
+                            not any(account.get('id') == value.get('id') for account in current.get('accounts', []))):
+                        raise ValueError('WSL 账号配置已变化，请刷新后重新选择')
+                    if value.get('id') != 'native' and current.get('configurationBlockers'):
+                        raise ValueError(current['configurationBlockers'][0])
+                    if value.get('id') == 'native' and not current.get('activeId'):
+                        raise ValueError('原生配置已被外部修改，请使用原工具处理')
+                    if release.releasable and current.get('runtimeReleaseCandidate') is not True:
+                        raise ValueError((current.get('runtimeBlockers') or ['无法核验 WSL 执行器释放条件'])[0])
+                    release.identity = current['identity']
+                    if provider == 'codex' and release.record is not None:
+                        release.intent = self._call(provider, row, {'action': 'preview-switch', 'id': value['id'],
+                                                                  'expectedIdentity': current['identity']})
+                    release()
+                    if provider == 'codex' and release.record and release.record['daemon']:
+                        request['_verifiedUpdaters'] = release.record['daemon'].get('updaters', [])
+                try:
+                    with self._guard(provider, row) if action == 'switch' and (provider != 'codex' or release is None) else contextlib.nullcontext():
+                        result = self._call(provider, row, request)
+                except Exception:
+                    if provider == 'codex' and release is not None and release.record and release.record.get('phase') == 'stopped':
+                        try:
+                            current = self._call(provider, row, {'action': 'read'})
+                            committed = release.observe(current)
+                            release.restore(current['identity'])
+                            if committed:
+                                current.update(restartVerified=True, switchReconciled=True)
+                                return self._public(provider, row, current)
+                        except Exception:
+                            pass  # Persistent handoff record exposes explicit recovery on refresh.
+                    raise
+                if action == 'switch' and release is not None:
+                    try:
+                        result['draftContinuations'] = release.after_switch(result['identity'])
+                        if provider == 'codex':
+                            result['restartVerified'] = bool(release.restartRequired)
+                            result['restartRequired'] = bool(release.restartRequired)
+                    except Exception:
+                        if provider == 'codex':
+                            result.update(restartPending=True, restartError='账号配置已切换，原共享服务恢复尚未核验；请检查并恢复服务，不要重复切换')
+                            result['capabilities']['recoverRestart'] = True
+                        else:
+                            result['continuationPending'] = True
+                            result['continuationError'] = '账号配置已切换，原会话续接尚未核验；请刷新检查，不要重复提交切换'
                 return self._public(provider, row, result)
 
     def close(self):

@@ -159,7 +159,7 @@ class DesktopConnectionsPanel {
       const access=node('td'),toggle=node('input');toggle.type='checkbox';toggle.className='client-toggle';toggle.checked=client.enabled;toggle.disabled=(!client.enabled&&!(client.selectable??client.configured))||this.scanning||this.busy||!!this.choosingClient;toggle.setAttribute('aria-label',t('启用')+' '+client.name);toggle.title=t(client.reason);toggle.onchange=()=>this.toggleClient(client.id,toggle.checked);access.append(toggle,node('small',this.pendingClient?.id===client.id?(this.gatewayRunning===false?'正在保存…':this.pendingClient.enabled?(client.id==='claude'?'正在连接…':'正在打开应用…'):this.pendingClient.forceDesktop?'正在后台强制结束…':this.pendingClient.quitDesktop?'正在退出应用…':'正在停用接入…'):client.setupStatus==='unsupported'?'暂不可用':client.enabled?(this.gatewayRunning===false?'随网关启动':'已启用'):!client.installed&&!client.configured?'待配置':'未启用'));
       toggle.disabled=toggle.disabled||this.hasUncertain();const state=this.connection(client),failure=this.operationFailures?.get(client.id),status=node('td'),stateLabel=node('span',state.label,state.waiting?'state-pending client-connection-waiting':client.connected?'state-ready':state.error?'state-error':state.action?'state-pending':'');stateLabel.setAttribute('role','status');stateLabel.setAttribute('aria-busy',String(state.waiting));status.append(stateLabel,node('small',failure?ClientLifecycle.failureMessage(failure):state.reason));
       const account=node('td');account.dataset.clientAccount=client.id;
-      if(client.id!=='codex')account.append(node('span',client.configured?'已配置':'待配置'),node('small',['wsl-cli','wsl-claude-cli'].includes(client.kind)?'在 WSL 的原工具中管理接入':client.id==='claude'?'在 Claude 中管理账号':'在 Harness 中管理账号 / API'));
+      if(client.id!=='codex')account.append(node('span',client.configured?'已配置':'待配置'),node('small',['wsl-cli','wsl-claude-cli'].includes(client.kind)?'在网关中管理 WSL 账号与 API':client.id==='claude'?'在 Claude 中管理账号':'在 Harness 中管理账号 / API'));
       const actions=node('td'),buttons=node('div',undefined,'connection-actions'),manage=node('button',client.setupStatus==='unsupported'?'查看详情':client.configured?'管理':'配置');
       if(failure){const retry=node('button',failure.uncertain?'刷新状态':ClientLifecycle.retryLabel(failure.action),'primary');retry.type='button';retry.disabled=this.busy||this.scanning||!!this.choosingClient||!!this.clientsLoading||(!failure.uncertain&&this.hasUncertain());retry.onclick=()=>failure.uncertain?this.refreshClients(true):this.retryOperation(client.id);buttons.append(retry);}
       if(!failure&&state.retryable&&this.gatewayRunning!==false){const retry=node('button','重试连接','primary');retry.type='button';retry.disabled=this.busy||this.scanning||!!this.choosingClient||this.hasUncertain();retry.onclick=()=>this.toggleClient(client.id,true);buttons.append(retry);}
@@ -184,7 +184,16 @@ class DesktopConnectionsPanel {
     this.resumeAccounts();
   }
   wslDetails(client){
-    const dialog=document.createElement('dialog'),title=document.createElement('h2'),text=document.createElement('p'),close=document.createElement('button');title.textContent=client.name;text.textContent=BridgeI18n.t(client.reason);close.type='button';close.textContent=BridgeI18n.t('关闭');close.onclick=()=>dialog.close();dialog.append(title,text,close);dialog.addEventListener('close',()=>dialog.remove());document.body.append(dialog);dialog.showModal();
+    if(typeof WslAccountsPanel==='undefined'){this.feedback(BridgeI18n.t('WSL 账号管理面板尚未加载，请重新打开网关窗口'),true);return;}
+    const provider=client.kind==='wsl-claude-cli'?'claude':'codex',entry=client.id;
+    const dialog=document.createElement('dialog'),header=document.createElement('div'),title=document.createElement('h2'),root=document.createElement('div'),close=document.createElement('button');
+    dialog.id='wsl-account-management-dialog';dialog.className='wsl-accounts-dialog';dialog.dataset.provider=provider;dialog.dataset.entry=entry;
+    header.className='picker-head';title.textContent=BridgeI18n.t('WSL 账号与接入');close.type='button';close.textContent=BridgeI18n.t('关闭');close.onclick=()=>dialog.close();header.append(title,close);dialog.append(header,root);
+    const panel=new WslAccountsPanel({root,provider,desktop:true,
+      read:selected=>this.api.cliAccess({action:'wslAccounts',provider,entry:selected,operation:'list'}),
+      request:({action,provider:_provider,entry:_entry,...fields})=>this.api.cliAccess({action:'wslAccounts',provider,entry,operation:action,...fields})});
+    dialog.addEventListener('close',()=>{panel.dispose();dialog.remove();});document.body.append(dialog);dialog.showModal();panel.select(entry);
+    return panel;
   }
   resumeAccounts(){for(const panel of Object.values(this.accountPanels))panel.resume();}
   renderClientAccount(provider,value){

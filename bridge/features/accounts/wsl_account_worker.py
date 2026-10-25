@@ -26,6 +26,7 @@ ERROR_MESSAGES = {
     'profile_managed': '此接入包含外部管理、配置 profile 或系统凭据，请使用 WSL 原工具管理',
     'claude_managed': '此 Claude Code 接入由外部认证或组织策略管理',
     'native_exists': '已保存原始登录；请保留现有快照',
+    'active_edit': '请先切换到其他接入，再编辑当前接入；名称可直接重命名',
     'missing_account': '接入不存在',
     'toml_unavailable': '需要支持 TOML 核验的 WSL Python，或配置无法解析',
     'incomplete': '切换未完成；已保留原始快照，请刷新核验配置',
@@ -93,7 +94,7 @@ def _identity(files):
                                for k, v in files.items()})).hexdigest()
 
 
-def runtime_blockers(provider, directory):
+def runtime_blockers(provider, directory, verified_updaters=()):
     """Conservative: any same-user native client blocks, including idle daemons.
 
     Never attempt to decide that an idle daemon will reload new auth. A failed
@@ -137,9 +138,16 @@ def runtime_blockers(provider, directory):
                         return ['WSL 客户端目录无法核验，暂不能切换账号']
                     if selected.resolve() != Path(directory).resolve():
                         continue
+                    if provider == 'codex':
+                        from bridge.platforms.codex_process_identity import codex_updater
+                        expected = next((row for row in verified_updaters if row.get('pid') == int(process.name)), None)
+                        if codex_updater(process, executable, args, env, directory, expected):
+                            continue
                     return ['此 WSL 配置仍有客户端或共享服务运行，无法保证重新载入认证；请先在原终端退出后切换']
             except FileNotFoundError:
-                continue
+                if not process.exists():
+                    continue
+                return ['WSL 进程身份读取期间变化，暂不能切换账号']
             except OSError:
                 return ['无法核验 WSL 进程状态，暂不能切换账号']
     except OSError:
@@ -246,11 +254,16 @@ class AccountStore:
                             'active': active == 'native', 'keySaved': False,
                             'identity': _identity({k: base64.b64decode(v) if v is not None else None for k, v in self.store['native'].items()})})
         protected = self.protected(files)
+        configuration = list(protected)
+        if self.store.get('native') and self.store.get('appliedIdentity') != identity:
+            configuration.append(ERROR_MESSAGES['external_change'])
         runtime = self.guard(self.provider, self.directory)
-        blockers = protected + runtime
+        blockers = configuration + runtime
         restore = bool(self.store.get('native') and self.store.get('appliedIdentity') == identity and not runtime)
         return {'identity': identity, 'accounts': rows, 'activeId': active, 'available': True,
                 'activeVerified': False, 'blockers': blockers,
+                'configurationBlockers': configuration, 'runtimeBlockers': runtime,
+                'runtimeReleaseCandidate': runtime == [ERROR_MESSAGES['runtime_running']],
                 'capabilities': {'save': True, 'import': True, 'capture': not self.capture_blockers(files), 'switch': not blockers, 'restore': restore, 'models': True},
                 'captureNotice': (ERROR_MESSAGES['static_capture_notice']
                                   if not self.store.get('native') and not protected and self.capture_blockers(files) else None),
@@ -300,6 +313,8 @@ class AccountStore:
             row = self.row(identifier)
             if not re.fullmatch('[0-9a-f]{32}', identifier) or (value.get('id') and row is None):
                 raise AccountError('接入标识无效')
+            if row and self.store.get('activeId') == identifier:
+                raise AccountError(ERROR_MESSAGES['active_edit'])
             key = value.get('apiKey') or (row or {}).get('key')
             if not isinstance(key, str) or not 1 <= len(key) <= 8192 or any(c in key for c in '\0\r\n'):
                 raise AccountError('API Key 无效')
@@ -431,6 +446,26 @@ class AccountStore:
             raise AccountError('复杂 TOML 配置请使用原 CLI 管理')
         return {'config.toml': result.encode(), 'auth.json': _json({'auth_mode': 'apikey', 'OPENAI_API_KEY': row['key']})}
 
+    def preview_switch(self, value):
+        """Read-only preimage/intent proof for an explicit gateway cold handoff."""
+        before = self.files()
+        if value.get('expectedIdentity') != _identity(before):
+            raise AccountError('账号身份已变化，请刷新后重新选择')
+        restoring = value.get('id') == 'native' and self.store.get('native') and self.store.get('appliedIdentity') == _identity(before)
+        if not restoring and self.protected(before):
+            raise AccountError(self.protected(before)[0])
+        if self.store.get('native') and self.store.get('appliedIdentity') != _identity(before):
+            raise AccountError('原生配置已被外部修改，请使用原工具处理')
+        row = {'id': 'native'} if value.get('id') == 'native' else self.row(value.get('id'))
+        if not row:
+            raise AccountError('接入不存在')
+        basis = before
+        if self.store.get('activeId') and self.store.get('activeId') != 'native':
+            basis = {key: base64.b64decode(content) if content is not None else None
+                     for key, content in self.store['native'].items()}
+        return {'plannedIdentity': _identity(self.prepared(row, basis)), 'selectedAccount': row['id'],
+                'provider': _toml_loads((before['config.toml'] or b'').decode()).get('model_provider', 'openai')}
+
     def switch(self, value):
         before = self.files()
         if value.get('expectedIdentity') != _identity(before):
@@ -479,11 +514,14 @@ class AccountStore:
 
 
 def execute(request):
-    store = AccountStore(request['provider'], request['directory'])
+    guard = lambda provider, directory: runtime_blockers(provider, directory, request.get('_verifiedUpdaters') or ())
+    store = AccountStore(request['provider'], request['directory'], guard=guard)
     if request.get('action') == 'read':
         return store.public()
     if request.get('action') == 'models':
         return fetch_models(store, request)
+    if request.get('action') == 'preview-switch':
+        return store.preview_switch(request)
     store.root.mkdir(mode=0o700, exist_ok=True)
     import fcntl
     lock = store.root/'lock'
@@ -493,7 +531,7 @@ def execute(request):
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # Reload after acquiring cross-process serialization.
-        store = AccountStore(request['provider'], request['directory'])
+        store = AccountStore(request['provider'], request['directory'], guard=guard)
         return store.change(request)
     finally:
         os.close(fd)
