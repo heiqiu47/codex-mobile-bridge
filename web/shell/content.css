@@ -68,7 +68,7 @@
 .project-picker .project-picker-client{margin:0 0 18px;color:var(--muted);font-size:12px;letter-spacing:.02em}
 .project-picker form{min-width:0}.project-picker label{min-width:0;margin:0 0 16px}.project-picker label>span{display:block;font-size:12px;color:var(--muted)}
 .project-picker input:not([type=checkbox]),.project-picker textarea,.project-picker select{display:block;width:100%;max-width:100%;min-width:0;box-sizing:border-box;margin-top:7px;padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:var(--raised,#fff);color:inherit;font:inherit;font-size:14px;line-height:1.45}
-.project-picker textarea{resize:vertical;min-height:96px;max-height:30dvh}.project-picker select{text-overflow:ellipsis}.project-picker input[hidden],.project-picker select[hidden]{display:none}
+.project-picker textarea{resize:vertical;min-height:96px;max-height:30dvh}.project-picker select{overflow:hidden;text-overflow:ellipsis}.project-picker input[hidden],.project-picker select[hidden]{display:none}
 .project-picker-environment{display:flex;gap:12px}.project-picker-environment>label{flex:1;min-width:0}
 .project-picker-workspace{min-width:0;padding:15px;margin:0 0 18px;border:1px solid var(--line);border-radius:12px;background:var(--soft,#eef1e9)}
 .project-picker-workspace>label{margin:0}.project-picker-workspace select{background:var(--surface,#fff)}
@@ -86,7 +86,7 @@
 .folder-picker-create{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:4px 0 10px}.folder-picker-create input{min-width:100px;flex:1;margin:0!important;font-size:12px!important}.folder-picker-create button{padding:9px 8px;font-size:12px;white-space:normal}
 @media(max-width:380px){.project-picker{padding:18px}.project-picker-environment{gap:8px}.project-picker-workspace{padding:12px}.project-picker-actions{bottom:-18px}.project-picker .project-picker-actions .primary{min-width:0;flex:1}.project-picker-actions>.plain{padding:10px 8px}.project-picker input:not([type=checkbox]),.project-picker textarea,.project-picker select{font-size:13px;padding:10px}}
 
-@media(max-width:600px){.project-picker input:not([type=checkbox]),.project-picker textarea{font-size:16px}}
+@media(max-width:600px){.project-picker input:not([type=checkbox]),.project-picker textarea,.project-picker select{font-size:16px}}
 
 .project-folder-icon{display:block;width:16px;height:12px;border:1.5px solid currentColor;border-radius:2px;position:relative;flex:none;margin:3px 1px 0}.project-folder-icon::before{content:"";position:absolute;width:7px;height:4px;top:-5px;left:-1.5px;border:1.5px solid currentColor;border-bottom:0;border-radius:2px 2px 0 0}
 

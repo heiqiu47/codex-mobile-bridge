@@ -88,3 +88,9 @@ Codex 的环境路由、目录登记和创建回执由 `codex-entries.browser.js
 `?case=first` 获取列表后，打开 `?case=cached`：同一身份缓存应先显示，5 秒后刷新为新标题；`?case=identity` 使用另一缓存身份，旧列表不能提前出现。
 `?case=blocked` 对公式、终端和文件预览资源返回 503，列表仍应正常显示且不请求这些组件；实际渲染公式后应保留源码和重试按钮，不进入全屏启动错误。
 `?case=slow` 为脚本响应额外增加 300 ms；结合浏览器单页网络限速验证冷启动。`window.__listProbe` 记录首个列表／缓存更新时刻和运行时异常。仅在夹具中使用，禁止对真实网关注入测试数据。
+
+## WSL 弹窗宽度
+
+在隔离生产页面夹具中加载 `wsl-dialog-width.browser.js`，调用并等待 `runWslDialogWidthChecks({kind:"accounts"})` 或 `{kind:"new-chat"}`。使用合成长发行版名称、账号名、地址与导入选项；不调用真实账号接口或发送聊天。分别在 320/393/430/1280 宽度及中英文下检查元素边界、`scrollWidth === clientWidth`、横向滚动位置为零，窄屏原生选择框字号至少 16px。完成后调用 `window.__wslLayoutCleanup()`。
+
+选择框内部的长选项在 WebKit 中可能扩大祖先滚动区域，即使元素边界正常；需要在 WebKit 实际执行以上滚动断言，不能只检查 Chromium 或元素宽度。macOS WKWebView 的通过结果不能代替 iPhone 真机输入与选择验收。
