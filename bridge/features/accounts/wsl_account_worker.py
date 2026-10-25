@@ -116,6 +116,7 @@ def runtime_blockers(provider, directory, verified_updaters=()):
             return ['WSL shell 认证配置无法核验']
     try:
         native_claude = set()
+        native_names, native_paths = set(), set()
         if provider == 'claude':
             user_home = Path(os.path.expanduser('~'))
             candidates = [shutil.which('claude'), user_home/'.local/bin/claude', Path('/usr/local/bin/claude')]
@@ -134,6 +135,8 @@ def runtime_blockers(provider, directory, verified_updaters=()):
                             continue
                     info = path.stat()
                     native_claude.add((info.st_dev, info.st_ino))
+                    native_names.update((path.name, Path(candidate).name))
+                    native_paths.update((str(path), str(Path(candidate))))
                 except FileNotFoundError:
                     continue
         processes = list(Path('/proc').iterdir())
@@ -152,6 +155,10 @@ def runtime_blockers(provider, directory, verified_updaters=()):
                     if not any(args):
                         fields = (process/'stat').read_text().rsplit(')', 1)[-1].split()
                         if fields and fields[0] == 'Z':
+                            continue
+                    elif (not any(name in native_names for name in names) and
+                          not any(os.fsdecode(arg) in native_paths for arg in args[:3])):
+                        if (process/'comm').read_text().strip() not in native_names:
                             continue
                     info = (process/'exe').stat()
                     relevant = (info.st_dev, info.st_ino) in native_claude

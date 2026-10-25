@@ -442,3 +442,28 @@ class NativeClaudeRuntimeIdentityTests(unittest.TestCase):
         (self.process / 'stat').write_text('900003 (claude) S 1 0 0')
         (self.process / 'exe').unlink()
         self.assertTrue(worker.runtime_blockers('claude', self.config))
+
+    def test_unrelated_nondumpable_process_does_not_require_executable_access(self):
+        (self.process / 'cmdline').write_bytes(b'/usr/bin/unrelated-worker\0--session\0local\0')
+        (self.process / 'comm').write_text('unrelated-worker')
+        original = Path.stat
+        def denied(path, *args, **kwargs):
+            if path == self.process / 'exe':
+                raise PermissionError(13, 'fixture non-dumpable process')
+            return original(path, *args, **kwargs)
+        with patch.object(Path, 'stat', denied):
+            self.assertEqual(worker.runtime_blockers('claude', self.config), [])
+
+    def test_candidate_nondumpable_process_still_blocks_account_changes(self):
+        original = Path.stat
+        def denied(path, *args, **kwargs):
+            if path == self.process / 'exe':
+                raise PermissionError(13, 'fixture candidate identity unknown')
+            return original(path, *args, **kwargs)
+        with patch.object(Path, 'stat', denied):
+            self.assertTrue(worker.runtime_blockers('claude', self.config))
+
+    def test_installed_native_comm_hint_still_requires_matching_executable_inode(self):
+        (self.process / 'cmdline').write_bytes(b'opaque-process-title\0-p\0')
+        (self.process / 'comm').write_text(self.binary.name)
+        self.assertEqual(worker.runtime_blockers('claude', self.config), [worker.ERROR_MESSAGES['runtime_running']])
