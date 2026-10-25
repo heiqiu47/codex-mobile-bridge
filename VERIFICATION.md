@@ -1,3 +1,17 @@
+<a id="v215"></a>
+
+# v2.1.5 发布验收（进行中）
+
+候选基于 `1006a4e`，桌面与手机统一为 2.1.5，Android/iOS 构建号38。PR #64 的8个原始提交与 PR #70 的 `d62002b` 保留在历史中；最终正式包、CI 和升级回滚结果完成后补记于本节。尚未将候选测试等同于正式发布验收。
+
+- 原桌面、Android 和 iOS 应用标识、桌面更新验签公钥保持；覆盖升级与回滚使用隔离副本，不替换日常正式版或 Test 的账号、配置、手机绑定及草稿。
+- WSL 账号管理为实验性：已有隔离假 API、状态保护与配置恢复检查不代表真实备用账号全流程通过。
+- 最新 WSL 弹窗修订通过真实 macOS WKWebView 和 Chromium 的窄宽屏检查，Windows Test 已核验实际样式；不将 macOS WKWebView 宣称为 iPhone 真机。
+
+**English:** Release validation is in progress. Versions are 2.1.5/build38, original PR64/70 commits and application/update-signing identities are retained. Official artifact, CI, upgrade and rollback results will be recorded after completion. WSL account management remains experimental; isolated API and desktop-browser checks do not establish real multi-account or iPhone validation.
+
+---
+
 <a id="v215-pr70-integration"></a>
 
 # v2.1.5 PR #70 与文件变更摘要整合（2026-10-25，本地 Test）

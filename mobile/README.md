@@ -2,7 +2,15 @@
 
 手机扫描网关二维码后连接 Codex、Claude Desktop 和 DeepSeek Harness，电脑继续执行任务。手机 App 保存多台电脑，提供原生扫码、剪贴板、文件下载和通知；浏览器入口同时保留。
 
-**[v2.1.4 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
+**[v2.1.5 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.5)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
+
+## v2.1.5：WSL CLI 与聊天管理 / WSL CLI and message management
+
+网关与手机版本为 **2.1.5**，Android/iOS 构建号 **38**。支持 WSL Codex / Claude Code CLI、跨客户端新建项目、回复审查与引用、图片添加到对话，以及待发送消息的原位编辑、排序、撤回和未确认记录管理。WSL 账号管理为实验性，尚未完成真实多账号全流程验证。详情及升级边界见 [v2.1.5 更新说明](../RELEASE_NOTES.md#v215)。
+
+覆盖安装匹配的原 App，保留数据与绑定；iOS 仍需使用自己的签名。更新网关后刷新共享页面；旧 Android 请在原电脑连接选择“更多 → 刷新页面”，再打开聊天。
+
+**English:** v2.1.5/build 38 adds WSL CLI access, project creation, review/quote/image interactions and message management. WSL account management remains experimental without completed real multi-account end-to-end validation. Install over the matching existing app and retain data; iOS requires your own signing. Refresh the shared page after the gateway update; older Android apps may need **More → Refresh page** in the existing computer connection.
 
 ## v2.1.4：启动、长会话与 Web 复制 / Startup, long chats and Web copying
 

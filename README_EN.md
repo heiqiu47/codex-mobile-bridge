@@ -5,17 +5,28 @@
 
 # Codex Mobile Bridge · A remote workbench for desktop agents
 
-> **v2.1.4 (stable):** [Release page](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4) · [Full release notes](RELEASE_NOTES.md#v214) · [Mobile installation](mobile/README.md). Improved public-entry startup, long-chat loading and Web copying, with optional network-change recovery.
+> **v2.1.5 (stable):** [Release page](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.5) · [Full release notes](RELEASE_NOTES.md#v215) · [Mobile installation](mobile/README.md). WSL Codex / Claude Code CLI, cross-client project creation, reply interactions and message management.
 
 [简体中文](README.md) · [English](README_EN.md)
 
-**[Product guide and interactive demos ↗](https://try2love.github.io/codex-mobile-bridge/?lang=en)** · **[Download desktop and mobile apps](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.4)**
+**[Product guide and interactive demos ↗](https://try2love.github.io/codex-mobile-bridge/?lang=en)** · **[Download desktop and mobile apps](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.5)**
 
 [![Desktop gateway: clients and access, with demo data](site/assets/v2-clients.png)](https://try2love.github.io/codex-mobile-bridge/?lang=en)
 
 Continue **Codex, Claude Code / Cowork and DeepSeek Harness** sessions from a phone app or browser. Each client keeps its own chats, accounts and workspaces. Create chats within the selected client, read replies, send attachments, select available models/reasoning and respond to approval requests.
 
 Tasks run on the original computer, or the original SSH host for Codex remote sessions. Bridge reuses the desktop session, authentication and execution environment. Your phone does not need the same model-service account: use gateway login or revocable QR pairing.
+
+## v2.1.5 updates
+
+- **WSL CLI:** connect native Codex / Claude Code with their original accounts, history, workspaces, drafts and controls. Discover and resume explicitly; browsing history does not wake stopped distributions. [WSL guide](docs/wsl-codex.md)
+- **New project chats:** share an environment and directory picker across supported clients, browse other paths and create folders. Claude explicitly uses **Create and send**. [Project guide](docs/project-chats.md)
+- **Reply interactions:** review cards, follow-up draft actions, Codex/Claude message and selection quotes, image attachments, file citations and paged edited-file location links. Desktop review links preserve their original targets. [Interaction guide](docs/output-interactions.md)
+- **Message management:** withdraw unsent messages, edit in place, persist dispatch order, and reconcile or dismiss unconfirmed records. Fix explicit-send-rejection leftovers and interference between open pages. [Message guide](docs/message-management.md)
+- **Navigation and performance:** fix browser Back (#67) and Windows/UNC grouping; defer optional file/diagram resources, improve caching, slow-link recovery, native output and mobile connection lifecycle.
+- **Experimental WSL accounts:** import, switch and restore supported API configurations per environment, with task and external-manager guards. Compatibility is not guaranteed; real multi-account end-to-end validation remains incomplete. [Experimental guide](docs/wsl-accounts.md)
+
+Desktop/mobile version: **2.1.5**, Android/iOS build **38**. Thanks to [@we-worker](https://github.com/we-worker) for [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64) (all eight original commits retained), and [@lanchengjiu](https://github.com/lanchengjiu) for [PR #70](https://github.com/try2love/codex-mobile-bridge/pull/70) (original commit `d62002b` retained). [Full notes and upgrade limits](RELEASE_NOTES.md#v215)
 
 ## v2.1.4 updates
 
@@ -122,14 +133,14 @@ Download the desktop App for everyday use. **No deployment Agent, Python, Node.j
 
 | Platform | Download | Open |
 | --- | --- | --- |
-| Windows x64 (recommended installer) | [Download Setup.exe](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Windows-x64-Setup.exe) | Run the installer and launch from the shortcut |
-| Windows x64 (no installation) | [Download full ZIP](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Windows-x64.zip) | Extract the entire ZIP and run `Codex Mobile Bridge.exe`; do not move just the exe |
-| macOS Apple Silicon (M series) | [Download arm64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-macOS-arm64.dmg) | Open the DMG and drag the App to Applications |
-| macOS Intel | [Download x64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-macOS-x64.dmg) | Open the DMG and drag the App to Applications |
-| Ubuntu x64 (experimental) | [Download .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Linux-amd64.deb) | Ubuntu 22.04; launch as a regular user |
-| Ubuntu ARM64 (experimental) | [Download .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/Codex-Mobile-Bridge-2.1.3-Linux-arm64.deb) | Ubuntu 22.04 ARM64; no 32-bit ARM build |
+| Windows x64 (recommended installer) | [Download Setup.exe](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.5/Codex-Mobile-Bridge-2.1.5-Windows-x64-Setup.exe) | Run the installer and launch from the shortcut |
+| Windows x64 (no installation) | [Download full ZIP](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.5/Codex-Mobile-Bridge-2.1.5-Windows-x64.zip) | Extract the entire ZIP and run `Codex Mobile Bridge.exe`; do not move just the exe |
+| macOS Apple Silicon (M series) | [Download arm64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.5/Codex-Mobile-Bridge-2.1.5-macOS-arm64.dmg) | Open the DMG and drag the App to Applications |
+| macOS Intel | [Download x64 DMG](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.5/Codex-Mobile-Bridge-2.1.5-macOS-x64.dmg) | Open the DMG and drag the App to Applications |
+| Ubuntu x64 (experimental) | [Download .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.5/Codex-Mobile-Bridge-2.1.5-Linux-amd64.deb) | Ubuntu 22.04; launch as a regular user |
+| Ubuntu ARM64 (experimental) | [Download .deb](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.5/Codex-Mobile-Bridge-2.1.5-Linux-arm64.deb) | Ubuntu 22.04 ARM64; no 32-bit ARM build |
 
-[All releases and release notes](https://github.com/try2love/codex-mobile-bridge/releases) · [Download SHA256 checksums](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.3/SHA256SUMS.txt). Both Mac architectures also include ZIPs for in-app updates or manual replacement. Windows ARM packages are not available. The Mac build is ad-hoc signed but not notarized and may require manual approval; Windows builds have no certificate signature. See the macOS first-launch instructions below.
+[All releases and release notes](https://github.com/try2love/codex-mobile-bridge/releases) · [Download SHA256 checksums](https://github.com/try2love/codex-mobile-bridge/releases/download/v2.1.5/SHA256SUMS.txt). Both Mac architectures also include ZIPs for in-app updates or manual replacement. Windows ARM packages are not available. The Mac build is ad-hoc signed but not notarized and may require manual approval; Windows builds have no certificate signature. See the macOS first-launch instructions below.
 
 1. Install and sign in to the desktop clients you need. Open **Codex Mobile Bridge**, inspect **Clients and access**, complete required permissions and enable configured clients.
 2. Keep LAN access or add an HTTPS entry under **Network access**, save, and select **Start gateway** from Overview or Clients. Preserve your configured port.
@@ -138,7 +149,7 @@ Download the desktop App for everyday use. **No deployment Agent, Python, Node.j
 
 For remote access, choose [Tailscale HTTPS](docs/tailscale.md), bundled temporary Cloudflare HTTPS, a [fixed Cloudflare tunnel](docs/fixed-domain.md), an [existing HTTPS tunnel](docs/external-tunnel.md), [your own SSH server](docs/server-ssh.md) or an advanced NAS proxy. See [Parallel connections](#parallel-connections). Fixed addresses do not guarantee mainland China performance; test the actual cellular network.
 
-Android APK, unsigned iOS IPA and Xcode source downloads are in the same [v2.1.3 Release](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.3). Install Android over the existing app; iOS requires your own signing, with no App Store/TestFlight distribution. Source/custom setups are covered by the [Deployment Agent instructions](#deployment-agent-instructions).
+Android APK, unsigned iOS IPA and Xcode source downloads are in the same [v2.1.5 Release](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.5). Install Android over the existing app; iOS requires your own signing, with no App Store/TestFlight distribution. Source/custom setups are covered by the [Deployment Agent instructions](#deployment-agent-instructions).
 
 ### In-app updates
 
@@ -595,7 +606,7 @@ Thanks to [@jasongzy](https://github.com/jasongzy) for requesting general Webhoo
 
 Thanks to [@tiancai123123](https://github.com/tiancai123123) for diagnosing and reproducing repeated static-resource downloads on slow connections in [Issue #54](https://github.com/try2love/codex-mobile-bridge/issues/54), and contributing content-hash versioning, browser caching, conditional requests and tests in [PR #56](https://github.com/try2love/codex-mobile-bridge/pull/56). The integration preserves the original commit and reconciles it with the project's existing cache invalidation and resource-version handling.
 
-Thanks to [@we-worker](https://github.com/we-worker) for Windows WSL Codex support, Magpie compatibility and project-directory capabilities in [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64). The local v2.1.5 development branch retains all eight original commits; unified UI and project creation across connection types are separate follow-up changes.
+Thanks to [@we-worker](https://github.com/we-worker) for Windows WSL Codex support, Magpie compatibility and project-directory capabilities in [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64). v2.1.5 retains all eight original commits; unified UI and project creation across connection types are separate follow-up changes.
 
 ## License and references
 

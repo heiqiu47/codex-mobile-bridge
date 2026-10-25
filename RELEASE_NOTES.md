@@ -1,15 +1,51 @@
+<a id="v215"></a>
 <a id="v215-unreleased"></a>
 
-## v2.1.5 · 开发中，尚未发布 / Unreleased
+## v2.1.5 · WSL CLI、项目创建与聊天管理
 
-- **WSL Codex**：Windows 网关可接入已登记的 WSL 环境，与原生 APP、CLI 共用 Codex 页面，保留来源筛选以及各环境的账号、历史、草稿和工作目录。
-- **新建项目聊天**：Codex App/CLI、WSL、Claude Desktop/CLI 与 DSH Desktop 可使用已有项目或选择其他目录；支持在选定父目录中创建新文件夹。SSH 接入使用所选主机的目录。Claude 需要首条消息时明确显示“创建并发送”。
-- **创建界面**：统一中英文和宽窄屏布局，按运行环境选择项目，项目路径可展开，目录浏览器共用；只有一个环境时不显示多余的选择框。
-- 感谢 [@we-worker](https://github.com/we-worker) 在 [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64) 中的 WSL、Magpie 和项目目录贡献，8 个原始提交保留。
+本版扩展 Windows 网关的 WSL Codex / Claude Code CLI 接入，统一跨客户端新建项目，并完善回复阅读、消息队列和浏览器导航。桌面与手机 App 版本为 **2.1.5**，Android/iOS 构建号为 **38**。
 
-**English:** This unreleased work adds registered WSL Codex environments to the unified Codex page, preserving their original accounts, history, drafts and directories. New project chats use a shared directory picker across Codex App/CLI, WSL, Claude Desktop/CLI and DSH Desktop, including registered SSH environments where supported. The compact responsive dialog shows the selected environment and expandable project path; Claude explicitly labels its required initial-message action **Create and send**. Thanks to [@we-worker](https://github.com/we-worker) for [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64), with all eight original commits retained.
+### 新增与改进
 
-当前仅为本地开发内容，发布版本仍为 v2.1.4。使用方式见[新建项目聊天](docs/project-chats.md)与[WSL 接入](docs/wsl-codex.md)。
+- **WSL Codex 与 Claude Code CLI**：扫描并登记正在运行的发行版，在原 Linux 用户和配置目录中读取历史、显式继续或新建聊天；Codex 共用 APP / CLI / WSL 来源筛选，Claude 标注 CLI · WSL。按原生能力提供模型、推理、权限、Skill、审批、停止、文件、Git、附件、终端和通知；Codex 还支持原生 Goal 与持久队列。保留各环境的账号、工作目录、草稿、历史分页及操作回执；模型目录按身份缓存。被动浏览不唤醒已停止的发行版，关闭接入不退出原 CLI 任务，主题切换不重建 WSL Claude 会话。[WSL 使用说明](docs/wsl-codex.md)
+- **WSL 账号与接入（实验性）**：按发行版、用户和配置目录保存、导入及切换支持的 API 接入，并恢复原始文件配置。官方登录仍在原 WSL 完成；Windows 与 WSL 不自动同步凭据。切换前检查任务、审批、队列和未确认操作，空闲执行器正常交接，无法核验或外部工具管理的配置停止切换。此能力不保证所有账号与配置可用，尚未完成真实多账号全流程验证；保存或切换成功不代表上游认证成功。[实验性账号说明](docs/wsl-accounts.md)
+- **跨客户端新建项目聊天**：Codex App、本机/SSH CLI、WSL、Claude Desktop/CLI 和 DSH Desktop 共用运行环境及目录选择器，可选已有项目、浏览其他目录或在父目录中新建文件夹。沿用原生项目登记和权限；Claude 明确显示“创建并发送”，浏览目录本身不发送消息。新 SSH 目录、旧运行时及 DSH 连接器的能力边界见[使用说明](docs/project-chats.md)。
+- **回复审查、引用与附件**：完整代码审查标记展示为可复制的审查卡，授权文件可打开并高亮对应代码行；后续操作按钮先追加到草稿，再由用户发送。Codex / Claude 支持消息和选中文字引用，保留原草稿并按会话恢复；图片预览可添加到当前聊天附件。文件引用和修改文件摘要提供受权限约束的位置链接，长摘要保留分页。`codex://review` 保留 Desktop 目标，识别到 GitHub PR 时提供网页入口；不承诺在手机复现 Desktop 专属审查状态。Mermaid 继续沿用已有预览能力。[操作说明](docs/output-interactions.md)
+- **消息管理与多页面一致性（#71、PR #70）**：在“更多 → 消息管理”中撤回未发送消息、原位编辑并保留附件和队列位置、调整网关实际发送顺序，以及核对或显式忽略未确认记录。已交给 Claude / DSH 原生客户端的队列仍由原客户端管理。修复明确拒绝发送后的残留与旧页面记录互相干扰；不清空其他页面请求，不自动重发未知结果，编辑冲突保留内容并支持重新打开管理器。[消息管理](docs/message-management.md)
+- **返回与项目分组（#67、PR #70）**：浏览器返回遵循聊天、工具与全屏层级，避免意外离开工作台；修复 Windows / UNC 项目归类，并按实际执行主机的路径规则分组。
+- **按需资源与弱网**：聊天列表启动不再等待可选的文件和图表渲染器；打开对应功能时再加载，复用内容缓存并保留有限恢复。消息和配对等写入不自动重放。窄屏 WebKit 的 WSL 弹窗适配可用视区。
+- **客户端与手机生命周期**：改善连接入口恢复、原生聊天输出与分页记录还原，保留客户端任务及接入身份；区分关闭 Bridge 接入、停止任务与退出桌面程序，避免误影响其他原生进程。
+
+### 升级与边界
+
+覆盖安装对应平台原 App，不要先卸载或清除数据。Android 沿用原签名；iOS 仍需自行签名，使用相同应用标识与签名身份覆盖安装。独立 Test 与正式版互不覆盖。更新网关后刷新 Web / 手机共享页面；旧 Android 可在原电脑连接的“更多 → 刷新页面”主动加载新版。
+
+WSL 功能需要已安装且能力兼容的原生 CLI；扫描不安装程序，也不自动启用新入口。账号管理仍为实验性，不将模拟测试、配置写入或模型列表视为真实多账号认证与任务验证。各平台、构建和实测范围见[验证记录](VERIFICATION.md#v215)。
+
+### 贡献与反馈
+
+- 感谢 [@we-worker](https://github.com/we-worker) 在 [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64) 中贡献 WSL、Magpie 兼容与项目目录能力，全部 **8 个原始提交**保留。
+- 感谢 [@lanchengjiu](https://github.com/lanchengjiu) 在 [PR #70](https://github.com/try2love/codex-mobile-bridge/pull/70) 中修复 Windows 项目归类和发送拒绝残留，原始提交 **d62002b** 保留在历史中。
+- 感谢 [#67](https://github.com/try2love/codex-mobile-bridge/issues/67)、[#71](https://github.com/try2love/codex-mobile-bridge/issues/71) 及回复阅读相关反馈；[#46](https://github.com/try2love/codex-mobile-bridge/issues/46) 的 Desktop 审查链接按上述边界处理。
+
+### English
+
+**v2.1.5 expands WSL CLI access, project creation, reply interactions and message management.** Desktop/mobile version: **2.1.5**, Android/iOS build **38**.
+
+- **WSL Codex and Claude Code:** register running distributions and use their Linux user, configuration, account and workspace. Browse history, explicitly resume or create chats, and use native-supported models, reasoning, permissions, Skills, approvals, stop, files, Git, attachments, terminals and notifications. Codex also supports native Goal controls and durable queues. Preserve environment-scoped drafts, paging, receipts and identity-bound model caches. Passive reads do not wake stopped distributions; disconnecting Bridge does not quit original CLI tasks. Theme changes keep WSL Claude sessions intact. [WSL guide](docs/wsl-codex.md)
+- **Experimental WSL account management:** save, import, switch supported API connections and restore original file configuration per distribution/user/configuration directory. Official sign-in stays in WSL; Windows credentials are not synchronized automatically. Check tasks, approvals, queues and unconfirmed operations before graceful idle-runtime handoff; refuse unverifiable or externally managed configurations. Compatibility is not guaranteed, and real multi-account end-to-end validation remains incomplete. Saving or switching configuration does not establish upstream authentication. [Account guide](docs/wsl-accounts.md)
+- **New project chats:** a shared environment/directory picker serves Codex App, local/SSH CLI, WSL, Claude Desktop/CLI and DSH Desktop. Browse existing directories or create a folder, retaining native registration and permissions. Claude explicitly uses **Create and send**. New SSH paths, older runtimes and DSH connector requirements retain the limits in the [project guide](docs/project-chats.md).
+- **Reply interactions:** render complete code-review directives as copyable cards; open authorized code locations with line highlighting. Follow-up buttons append to the draft for explicit sending. Codex/Claude quotes preserve and restore scoped drafts, and image previews can add current-chat attachments. File citations and paged edited-file summaries link to authorized locations. Desktop review links retain their target, with a web action for recognized GitHub PRs; Desktop-only review state is not reproduced on mobile. Existing Mermaid preview remains available. [Interaction guide](docs/output-interactions.md)
+- **Message management and multiple pages (#71, PR #70):** withdraw unsent messages, edit in place while retaining attachments and queue position, persist actual dispatch order, and reconcile or explicitly dismiss unconfirmed records. Claude/DSH native queues remain with their clients. Fix residual records after explicit rejection and interference from older pages. Preserve other pages' submissions, do not replay unknown outcomes, and retain conflicting edits for reopening. [Message guide](docs/message-management.md)
+- **Navigation and grouping (#67, PR #70):** browser Back follows chat/tool/fullscreen navigation without unexpectedly leaving the workbench. Correct Windows/UNC project grouping using the execution host's path rules.
+- **Resources and slow links:** keep optional file/diagram renderers off chat-list startup, load them when needed, reuse cached content and retain bounded recovery. Writes are not replayed automatically. Fit WSL dialogs within narrow WebKit views.
+- **Client and mobile lifecycle:** improve connection-entry recovery and native-output/paged-history restoration while preserving task and connection identity. Keep Bridge disconnection, task stopping and desktop exit distinct.
+
+Install over the matching app without clearing data. Android retains its signing identity; iOS requires your own matching signing identity and app identifiers. Test apps remain separate. Refresh shared pages after updating the gateway; older Android apps may need **More → Refresh page** in the existing computer connection. WSL needs an installed, compatible native CLI; discovery neither installs nor automatically enables it. Experimental account configuration and simulated checks are not real multi-account authentication evidence. See [verification coverage](VERIFICATION.md#v215).
+
+Thanks to [@we-worker](https://github.com/we-worker) for [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64), with all **eight original commits** retained, and [@lanchengjiu](https://github.com/lanchengjiu) for [PR #70](https://github.com/try2love/codex-mobile-bridge/pull/70), retaining original commit **d62002b** in ancestry. Thanks to reporters of [#67](https://github.com/try2love/codex-mobile-bridge/issues/67), [#71](https://github.com/try2love/codex-mobile-bridge/issues/71) and reply-interaction issues; [#46](https://github.com/try2love/codex-mobile-bridge/issues/46) Desktop review links retain the limits above.
+
+---
 
 <a id="v214"></a>
 

@@ -2,6 +2,8 @@
 
 ## 中文
 
+**实验性功能**：当前仅支持可安全识别和交接的配置，不保证所有账号、提供商或 CLI 版本兼容。尚未完成真实多账号全流程验证；配置保存、切换及模型列表不代表上游认证或实际任务验证通过。
+
 Windows 本机与 WSL 中的 Codex、Claude Code 可以使用不同账号和 API。即使手动填入相同凭据，它们仍是独立配置，不会自动同步。每个 WSL 发行版、Linux 用户和配置目录分别管理；Codex 与 Claude Code 也分别管理。
 
 先在 **应用管理** 中登记并启用对应 WSL 入口，再打开 **账号管理**，选择该 WSL 环境。查看不会启动已停止的发行版或 CLI，也不会调用模型。
@@ -21,6 +23,8 @@ Windows 本机与 WSL 中的 Codex、Claude Code 可以使用不同账号和 API
 导入地址保持原样：`localhost`、`127.0.0.1` 和 `::1` 指向所选 WSL 环境，不能据此假定它们能访问 Windows 上的服务。
 
 ## English
+
+**Experimental:** only configurations that can be identified and handed off safely are supported. Account/provider/CLI compatibility is not guaranteed. Real multi-account end-to-end validation remains incomplete; saved configurations, successful switches and model lists do not establish upstream authentication or task execution.
 
 Windows and WSL Codex or Claude Code can use different accounts and APIs. Matching credentials do not make their settings shared or synchronized. Each distribution, Linux user, configuration directory and client has its own account selection.
 
