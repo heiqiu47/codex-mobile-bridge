@@ -29,3 +29,13 @@ test('exact native recovery capability does not permit switching other saved API
   await all(p.root).find(node=>node.textContent==='确认切换').onclick();
   assert.equal(calls.length,1);assert.equal(calls[0].id,'native');assert.equal(calls[0].expectedIdentity,'identity-wsl');
 });
+
+test('additional native credentials explain restoration without blocking a saved API switch',async()=>{
+  const notice='此接入包含附加认证；首次切换时将完整保留，之后可恢复。';
+  const p=panel({desktop:true,read:async entry=>({...snapshot(entry),captureNotice:notice,capabilities:{save:true,import:true,capture:false,switch:true,models:true}})});
+  await p.select('wsl');const nodes=all(p.root);
+  assert.ok(nodes.some(node=>node.textContent===notice));
+  assert.equal(nodes.some(node=>node.textContent==='保存当前原生接入'),false);
+  assert.equal(nodes.find(node=>node.textContent==='切换到此接入').disabled,false);
+  assert.ok(nodes.some(node=>node.textContent==='保存 API 接入'));
+});

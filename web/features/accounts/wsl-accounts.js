@@ -39,6 +39,7 @@ class WslAccountsPanel {
     if(data.sharedWithDesktop===false)notes.push(this.t('此 WSL 配置独立于本机接入。'));
     if(data.sharedWithDesktop||data.shared)notes.push(this.t('此配置目录与其他接入共用。'));
     if(notes.length)root.append(this.node('p',notes.join(' '),'account-muted wsl-account-notes'));
+    if(data.captureNotice)root.append(this.node('p',this.t(data.captureNotice),'account-muted'));
     if((data.blockers||[]).length){const notice=this.node('details','','wsl-account-limits');notice.append(this.node('summary',this.t('暂不能切换接入')));for(const reason of data.blockers)notice.append(this.node('p',this.t(typeof reason==='string'?reason:reason.message||reason.code),'account-muted'));root.append(notice);}
     if(!(data.accounts||[]).length){root.append(this.node('p',this.t('尚未保存 WSL 接入'),'accounts-current'));root.append(this.node('p',this.t(this.desktop?'添加或导入只保存接入，不会切换当前账号。':'请在网关电脑端添加或导入 API 接入，再在这里选择。'),'account-muted'));}
     const blocked=!data.available||(data.blockers||[]).length>0;

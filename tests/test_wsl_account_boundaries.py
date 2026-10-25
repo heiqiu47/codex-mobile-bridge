@@ -50,6 +50,104 @@ class WslAccountBoundaryTests(unittest.TestCase):
         self.store.change({'action': 'switch', 'id': 'native', 'expectedIdentity': result['identity']})
         self.assertEqual(self.store.files(), before)
 
+    def static_native(self, headers):
+        native = ('# Native fixture\nmodel_provider="original_api"\nmodel="old-model"\n'
+                  '[model_providers.original_api]\nname="Original"\n'
+                  'base_url="https://old.invalid/v1"\nwire_api="responses"\n'
+                  'experimental_bearer_token="old-static-private"\n' + headers +
+                  '\n[history]\npersistence="save-all"\n')
+        (self.home / 'config.toml').write_text(native)
+        (self.home / 'auth.json').write_text('{"OPENAI_API_KEY":"unrelated-auth-json-private"}')
+        return self.store.files()
+
+    def test_selected_static_auth_switch_removes_both_auth_sources_and_restores_exact_native(self):
+        before = self.static_native('http_headers={"x-openai-actor-authorization"="old-actor-private","Authorization"="old-header-private"}\n')
+        sessions = self.home / 'sessions'
+        sessions.mkdir()
+        history = sessions / 'existing.jsonl'
+        history.write_text('{"id":"original-thread","cwd":"/old-project","model_provider":"original_api"}\n')
+        original_history = history.read_bytes()
+        public = self.store.public()
+        self.assertFalse(public['capabilities']['capture'])
+        self.assertTrue(public['capabilities']['switch'])
+        self.assertTrue(public['capabilities']['save'])
+        self.assertTrue(public['capabilities']['import'])
+        self.assertEqual(public['captureNotice'], worker.ERROR_MESSAGES['static_capture_notice'])
+        result = self.switch()
+        config = worker._toml_loads(self.store.files()['config.toml'].decode())
+        definition = config['model_providers']['original_api']
+        self.assertEqual(config['model_provider'], 'original_api')
+        self.assertNotIn('experimental_bearer_token', definition)
+        self.assertNotIn('http_headers', definition)
+        self.assertEqual(definition['base_url'], 'https://fixture.invalid/v1')
+        self.assertEqual(json.loads(self.store.files()['auth.json'])['OPENAI_API_KEY'], 'fixture-secret')
+        self.assertNotIn(b'old-static-private', self.store.files()['config.toml'])
+        self.assertNotIn(b'old-actor-private', self.store.files()['config.toml'])
+        self.assertIsNone(result['captureNotice'])
+        self.assertTrue(self.store.route_summary()['valid'])
+        self.assertEqual(history.read_bytes(), original_history)
+        self.store.change({'action': 'switch', 'id': 'native', 'expectedIdentity': result['identity']})
+        self.assertEqual(self.store.files(), before)
+        self.assertEqual(history.read_bytes(), original_history)
+
+    def test_quoted_inline_static_auth_and_empty_bearer_are_removed(self):
+        self.static_native('"http_headers"={"AUTHORIZATION"="old-header-private"}\n')
+        source = (self.home / 'config.toml').read_text().replace(
+            'experimental_bearer_token="old-static-private"', '"experimental_bearer_token"=""')
+        (self.home / 'config.toml').write_text(source)
+        self.switch()
+        definition = worker._toml_loads(self.store.files()['config.toml'].decode())['model_providers']['original_api']
+        self.assertNotIn('experimental_bearer_token', definition)
+        self.assertNotIn('http_headers', definition)
+
+    def test_static_auth_capture_rejects_without_snapshot_or_credentials_mutation(self):
+        before = self.static_native('http_headers={"x-openai-actor-authorization"="old-actor-private"}\n')
+        with patch.object(worker, '_write', side_effect=AssertionError('capture must not write')):
+            with self.assertRaisesRegex(worker.AccountError, '不能保存为 auth.json'):
+                self.store.change({'action': 'import-current'})
+        self.assertEqual(self.store.files(), before)
+        self.assertNotIn('native', self.store.store)
+        rendered = json.dumps(self.store.public())
+        self.assertNotIn('old-static-private', rendered)
+        self.assertNotIn('old-actor-private', rendered)
+        self.assertNotIn('unrelated-auth-json-private', rendered)
+
+    def test_nested_selected_static_auth_headers_are_removed_without_dropping_other_tables(self):
+        before = self.static_native('[model_providers.original_api.http_headers]\n'
+                                    '"X-OpenAI-Actor-Authorization"="old-actor-private"\n'
+                                    '"authorization"="old-header-private"\n')
+        result = self.switch()
+        config = worker._toml_loads(self.store.files()['config.toml'].decode())
+        self.assertNotIn('http_headers', config['model_providers']['original_api'])
+        self.assertNotIn('experimental_bearer_token', config['model_providers']['original_api'])
+        self.assertEqual(config['history'], {'persistence': 'save-all'})
+        self.store.change({'action': 'switch', 'id': 'native', 'expectedIdentity': result['identity']})
+        self.assertEqual(self.store.files(), before)
+
+    def test_unknown_headers_or_other_provider_static_auth_remain_blocked(self):
+        for extra in ('http_headers={"X-Unknown"="fixture"}\n',
+                      '[model_providers.other]\nexperimental_bearer_token="other-private"\n',
+                      '[model_providers.other.http_headers]\nAuthorization="other-private"\n'):
+            with self.subTest(extra=extra):
+                before = self.static_native(extra)
+                self.assertFalse(self.store.public()['capabilities']['switch'])
+                with self.assertRaises(worker.AccountError):
+                    self.switch()
+                self.assertEqual(self.store.files(), before)
+                self.assertNotIn('native', self.store.store)
+
+    def test_managed_summary_rejects_reinjected_static_auth_even_with_matching_file_identity(self):
+        self.switch()
+        for field in ('experimental_bearer_token="injected-private"\n',
+                      'http_headers={"x-openai-actor-authorization"="injected-private"}\n'):
+            with self.subTest(field=field):
+                original = self.store.files()['config.toml']
+                (self.home / 'config.toml').write_bytes(original + field.encode())
+                self.store.store['appliedIdentity'] = worker._identity(self.store.files())
+                self.assertFalse(self.store.route_summary()['valid'])
+                (self.home / 'config.toml').write_bytes(original)
+                self.store.store['appliedIdentity'] = worker._identity(self.store.files())
+
     def test_selected_custom_provider_keeps_history_route_with_new_endpoint_and_key(self):
         native = ('model_provider = "original_api"\nmodel = "original-model"\n'
                   '[model_providers.original_api]\nname = "Original API"\n'

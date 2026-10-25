@@ -206,7 +206,7 @@ class WslAccountWorkerTests(unittest.TestCase):
         directory.mkdir()
         configs = ('model_provider="custom"\n[model_providers.custom]\nrequires_openai_auth=true\n[model_providers.openai]\nbase_url="https://old.invalid"\n',
                    'model_provider = "custom"\n[model_providers.custom]\nbase_url="https://old.invalid"\nenv_key="CUSTOM_API_KEY"\n',
-                   '[model_providers.openai]\nhttp_headers={Authorization="Bearer old"}\n',
+                   '[model_providers.openai]\nhttp_headers={"X-Unknown-Authorization"="Bearer old"}\n',
                    '[model_providers.old_history]\nrequires_openai_auth=true\nbase_url="https://old.invalid"\n',
                    'model_provider="custom"\n[model_providers.custom]\nwire_api="chat"\n',
                    'profile="work"\n[profiles.work]\nmodel="example"\n',

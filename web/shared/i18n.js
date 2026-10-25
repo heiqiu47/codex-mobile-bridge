@@ -4,6 +4,8 @@ const BridgeI18n=(()=>{
 const en={
 "暂不能切换接入":"Switching is currently unavailable",
 "尚未保存 WSL 接入":"No saved WSL profiles",
+"此接入包含附加认证；首次切换时将完整保留，之后可恢复。":"This profile uses additional credentials. Your first switch preserves it in full for later restoration.",
+"当前提供商使用静态 Bearer 或认证请求头，不能保存为 auth.json 登录；切换已保存 API 时会自动保留可完整恢复的原始快照":"This provider uses a static bearer token or authentication headers. Switching to a saved API will preserve the complete original profile for restoration.",
 "添加或导入只保存接入，不会切换当前账号。":"Adding or importing saves a profile without switching the current account.",
 "请在网关电脑端添加或导入 API 接入，再在这里选择。":"Add or import an API profile in the gateway desktop app, then select it here.",
 "上游未提供":"Not reported by upstream",

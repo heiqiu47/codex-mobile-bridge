@@ -21,6 +21,8 @@ ERROR_MESSAGES = {
     'runtime_running': '此 WSL 配置仍有客户端或共享服务运行，无法保证重新载入认证；请先在原终端退出后切换',
     'runtime_unknown': '无法核验 WSL 进程状态，暂不能切换账号',
     'custom_routing': '原生配置包含其他共享认证提供商或不支持的路由，历史会话可能固定此路由，请使用原 CLI 管理',
+    'static_capture_notice': '此接入包含附加认证；首次切换时将完整保留，之后可恢复。',
+    'static_capture': '当前提供商使用静态 Bearer 或认证请求头，不能保存为 auth.json 登录；切换已保存 API 时会自动保留可完整恢复的原始快照',
     'profile_managed': '此接入包含外部管理、配置 profile 或系统凭据，请使用 WSL 原工具管理',
     'claude_managed': '此 Claude Code 接入由外部认证或组织策略管理',
     'native_exists': '已保存原始登录；请保留现有快照',
@@ -174,6 +176,19 @@ class AccountStore:
         names = ('auth.json', 'config.toml') if self.provider == 'codex' else ('settings.json', '.credentials.json')
         return {name: _bytes(self.directory/name) for name in names}
 
+    @staticmethod
+    def static_auth(config):
+        definition = (config.get('model_providers') or {}).get(config.get('model_provider', 'openai')) or {}
+        return 'experimental_bearer_token' in definition or bool(definition.get('http_headers'))
+
+    def capture_blockers(self, files):
+        protected = self.protected(files)
+        if protected:
+            return protected
+        if self.provider == 'codex' and self.static_auth(_toml_loads((files['config.toml'] or b'').decode())):
+            return [ERROR_MESSAGES['static_capture']]
+        return []
+
     def protected(self, files):
         if self.provider == 'codex':
             try:
@@ -196,9 +211,15 @@ class AccountStore:
                     config.get('model_catalog_json') or
                     config.get('cli_auth_credentials_store', 'file') != 'file' or
                     config.get('profile') or config.get('profiles') or config.get('credential_store') or config.get('api_key_helper') or
-                    any(isinstance(v, dict) and any(v.get(key) for key in ('env_key', 'experimental_bearer_token', 'http_headers',
-                            'env_http_headers', 'auth', 'aws', 'query_params', 'gateway_oauth'))
-                        for v in config.get('model_providers', {}).values())):
+                    any(isinstance(v, dict) and (
+                        any(v.get(key) for key in ('env_key', 'env_http_headers', 'auth', 'aws', 'query_params', 'gateway_oauth'))
+                        or (key != selected and ('experimental_bearer_token' in v or v.get('http_headers')))
+                        or ('experimental_bearer_token' in v and not isinstance(v['experimental_bearer_token'], str))
+                        or (v.get('http_headers') and (not isinstance(v['http_headers'], dict)
+                            or any(not isinstance(header, str) or header.lower() not in
+                                   ('authorization', 'x-openai-actor-authorization') or not isinstance(value, str)
+                                   for header, value in v['http_headers'].items()))))
+                        for key, v in definitions.items())):
                 return ['此接入包含外部管理、配置 profile 或系统凭据，请使用 WSL 原工具管理']
         else:
             if any(path.exists() for path in (self.directory/'managed-settings.json', Path('/etc/claude-code/managed-settings.json'))):
@@ -230,7 +251,9 @@ class AccountStore:
         restore = bool(self.store.get('native') and self.store.get('appliedIdentity') == identity and not runtime)
         return {'identity': identity, 'accounts': rows, 'activeId': active, 'available': True,
                 'activeVerified': False, 'blockers': blockers,
-                'capabilities': {'save': True, 'import': True, 'capture': not protected, 'switch': not blockers, 'restore': restore, 'models': True},
+                'capabilities': {'save': True, 'import': True, 'capture': not self.capture_blockers(files), 'switch': not blockers, 'restore': restore, 'models': True},
+                'captureNotice': (ERROR_MESSAGES['static_capture_notice']
+                                  if not self.store.get('native') and not protected and self.capture_blockers(files) else None),
                 'loginGuidance': '官方登录请在此 WSL 环境的原 CLI 完成；文件切换后请重新打开 CLI，登录有效性尚未验证。'}
 
     def route_summary(self):
@@ -245,7 +268,7 @@ class AccountStore:
                 or self.store.get('appliedAccountIdentity') != _account_identity(row)):
             return {'managed': True, 'valid': False}
         config = _toml_loads((files['config.toml'] or b'').decode())
-        return {'managed': True, 'valid': not self.protected(files),
+        return {'managed': True, 'valid': not self.protected(files) and not self.static_auth(config),
                 'appliedIdentity': identity, 'accountIdentity': _account_identity(row),
                 'provider': config.get('model_provider', 'openai'), 'baseUrl': row['baseUrl']}
 
@@ -294,8 +317,9 @@ class AccountStore:
             files = self.files()
             if self.store.get('activeId') not in (None, 'native') or self.store.get('native'):
                 raise AccountError('已保存原始登录；请保留现有快照')
-            if self.protected(files):
-                raise AccountError(self.protected(files)[0])
+            capture = self.capture_blockers(files)
+            if capture:
+                raise AccountError(capture[0])
             self.store['native'] = {k: base64.b64encode(v).decode() if v is not None else None for k, v in files.items()}
             self.store.update(activeId='native', appliedIdentity=_identity(files))
             self._save()
@@ -353,6 +377,9 @@ class AccountStore:
         selected = config.get('model_provider', 'openai')
         definitions = config.get('model_providers', {})
         definition = dict(definitions.get(selected) or {})
+        removed = ('experimental_bearer_token', 'http_headers') if self.static_auth(config) else ()
+        for key in removed:
+            definition.pop(key, None)
         fields = {'base_url': row['baseUrl'], 'wire_api': 'responses',
                   'requires_openai_auth': True, 'supports_websockets': False}
         if not definition.get('name'):
@@ -360,6 +387,17 @@ class AccountStore:
         table = re.compile(r'^\s*\[model_providers\.(?:' + re.escape(selected)
                            + r'|"' + re.escape(selected) + r'"|\'' + re.escape(selected)
                            + r'\')\]\s*(?:#.*)?$', re.MULTILINE)
+        if 'http_headers' in removed:
+            # An explicit header subtable must be removed as a complete table,
+            # rather than leaving old credentials attached to the stable ID.
+            headers = re.compile(r'^\s*\[model_providers\.(?:' + re.escape(selected)
+                                 + r'|"' + re.escape(selected) + r'"|\'' + re.escape(selected)
+                                 + r'\')\.(?:http_headers|"http_headers"|\'http_headers\')\]\s*(?:#.*)?$', re.MULTILINE)
+            header_match = headers.search(section_text)
+            if header_match:
+                following = re.search(r'^\s*\[', section_text[header_match.end():], re.MULTILINE)
+                end = header_match.end() + following.start() if following else len(section_text)
+                section_text = section_text[:header_match.start()] + section_text[end:]
         match = table.search(section_text)
         body = ''
         if match:
@@ -368,7 +406,8 @@ class AccountStore:
             body = section_text[match.end():end]
             retained = []
             for line in body.splitlines(keepends=True):
-                if any(re.match(r'^\s*' + key + r'\s*=', line) for key in fields):
+                if any(re.match(r'^\s*(?:' + key + r'|"' + key + r'"|\'' + key + r'\')\s*=', line)
+                       for key in (*fields, *removed)):
                     if line.count('"""') or line.count("'''"):
                         raise AccountError('复杂 TOML 配置请使用原 CLI 管理')
                     continue
