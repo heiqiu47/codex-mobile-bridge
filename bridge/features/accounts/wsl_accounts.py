@@ -249,8 +249,9 @@ class WslAccounts:
                     if not value.get('expectedIdentity') or current.get('identity') != value['expectedIdentity']:
                         raise ValueError('WSL 账号身份已变化，请刷新')
                     release.observe(current)
-                    release.restore(current['identity'])
-                    current.update(restartPending=False, restartVerified=True, restartRequired=True)
+                    current['draftContinuations'] = release.restore(current['identity'])
+                    restarted = bool(release.record.get('daemon'))
+                    current.update(restartPending=False, restartVerified=restarted, restartRequired=restarted)
                     return self._public(provider, row, current)
                 request = dict(value)
                 if action == 'import-api':
@@ -282,9 +283,11 @@ class WslAccounts:
                         try:
                             current = self._call(provider, row, {'action': 'read'})
                             committed = release.observe(current)
-                            release.restore(current['identity'])
+                            drafts = release.restore(current['identity'])
                             if committed:
-                                current.update(restartVerified=True, switchReconciled=True)
+                                restarted = bool(release.record.get('daemon'))
+                                current.update(restartVerified=restarted, restartRequired=restarted,
+                                               switchReconciled=True, draftContinuations=drafts)
                                 return self._public(provider, row, current)
                         except Exception:
                             pass  # Persistent handoff record exposes explicit recovery on refresh.

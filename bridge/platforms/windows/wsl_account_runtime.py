@@ -11,6 +11,8 @@ import hashlib,select,signal,time
 root=Path(request['home']).resolve()
 def inspect():
     rows=[]; blockers=[]; helpers=[]
+    boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    if not boot_id: raise ValueError('WSL 内核启动代无法核验')
     unix={}
     for line in Path('/proc/net/unix').read_text().splitlines()[1:]:
         f=line.split()
@@ -51,7 +53,7 @@ def inspect():
                 sockets.append({'socket':path,'socketDevice':st.st_dev,'socketInode':st.st_ino})
             if len(sockets)!=1: raise ValueError('WSL 共享服务控制通道无法唯一核验')
             binary=Path(exe).stat()
-            rows.append({'pid':int(p.name),'startTicks':(p/'stat').read_text().rsplit(')',1)[1].split()[19],
+            rows.append({'pid':int(p.name),'startTicks':(p/'stat').read_text().rsplit(')',1)[1].split()[19],'bootId':boot_id,
                          'executable':exe,'executableDevice':binary.st_dev,'executableInode':binary.st_ino,
                          'user':user,'uid':uid,'home':str(root),'cwd':os.readlink(p/'cwd'),
                          'commandIdentity':hashlib.sha256((p/'cmdline').read_bytes()).hexdigest(),**sockets[0]})
@@ -88,9 +90,11 @@ elif action=='stop':
     result={'stopped':True}
 elif action=='start':
     expected=request['daemon']; found=inspect()
+    if expected.get('bootId')!=Path('/proc/sys/kernel/random/boot_id').read_text().strip():
+        raise ValueError('WSL 内核启动代已变化，请在原终端核验共享服务')
     if found['blockers']: raise ValueError(found['blockers'][0])
     if found['daemons']:
-        if request.get('terminationRequested') and any(row['pid']==expected['pid'] and row['startTicks']==expected['startTicks'] for row in found['daemons']):
+        if request.get('terminationRequested') and any(all(row.get(key)==expected.get(key) for key in ('pid','startTicks','bootId')) for row in found['daemons']):
             raise ValueError('原 WSL 共享服务尚未正常退出；不会再次发送退出信号')
         if any(row['executable']!=expected['executable'] for row in found['daemons']): raise ValueError('WSL 共享服务可执行文件已变化')
     else:
@@ -117,7 +121,8 @@ def _source():
 
 def _call(distribution, user, home, action, daemon=None, termination_requested=False):
     request = {'home': home, 'action': action, 'daemon': daemon, 'terminationRequested': termination_requested}
-    source = wsl._INVENTORY + '\nrequest=' + repr(request) + '\nsignal_sent=False\n'
+    source = 'import json,os,pwd,stat,subprocess\nfrom pathlib import Path\nuid=os.getuid(); user=pwd.getpwuid(uid).pw_name; home=Path.home()\n'
+    source += 'request=' + repr(request) + '\nsignal_sent=False\n'
     source += 'try:\n exec(' + repr(_source()) + ')\n print(json.dumps({"ok":True,"value":result}))\nexcept Exception as error:\n print(json.dumps({"ok":False,"error":str(error),"signalSent":signal_sent}))\n'
     result = wsl.read(distribution, source, user, timeout=30, allow_start=False)
     if not isinstance(result, dict) or not result.get('ok'):

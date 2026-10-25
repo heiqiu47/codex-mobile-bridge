@@ -96,7 +96,7 @@ class WslClaudeEntries:
                  'distributionRunning': row['distribution'] in running,
                  'setupStatus': 'ready', 'accessManagement': 'external',
                  'canQuitDesktop': False, 'canForceQuit': False,
-                 'reason': '通过原 Claude Code 接入；账号和配置由 WSL 中的原工具管理。'}
+                 'reason': '可在本网关管理此 WSL API 接入；官方登录仍在原 Claude Code CLI 完成。'}
                 for row in rows.values()]
 
     def configure(self, identifier, enabled):

@@ -1,6 +1,7 @@
 """Standalone Linux identity proof for Codex's native PID-backed updater."""
 import json
 import os
+import stat
 from pathlib import Path
 
 
@@ -30,7 +31,7 @@ def codex_updater(process, executable, args, environment, directory, expected=No
             return None
         try:
             info = path.stat()
-            if info.st_uid != uid or info.st_mode & 0o022:
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_mode & 0o022:
                 return None
             return json.loads(path.read_text())
         except FileNotFoundError:

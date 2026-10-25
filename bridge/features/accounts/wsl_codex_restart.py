@@ -145,7 +145,7 @@ class CodexRestart:
             previous = json.loads(self.path.read_text(encoding='utf-8'))
             before = previous.get('daemon') or {}
             if (self.record['daemon'] and previous.get('terminationRequested') and
-                    all(before.get(key) == self.record['daemon'].get(key) for key in ('pid', 'startTicks'))):
+                    all(before.get(key) == self.record['daemon'].get(key) for key in ('pid', 'startTicks', 'bootId'))):
                 raise ValueError('原服务退出结果尚未核验；不会再次发送退出信号，请检查并恢复服务')
         self.record['beforeIdentity'] = self.identity
         self.record.update(self.intent)
@@ -261,6 +261,11 @@ class CodexRestart:
             with session.condition:
                 session.state['currentPermissions'] = actual
                 session.state['latestModel'] = expected['model']
+                session.state.update(id=sid, cwd=current['cwd'], modelProvider=current['modelProvider'],
+                                     threadRuntimeStatus=copy.deepcopy(current.get('status') or {}))
+                session.connected = current.get('canAcceptDirectInput') is True
+                session.loading, session.error = False, None
+                session.changed()
             self.endpoint.subscriptions[sid] = self.endpoint.generation
             proof = self.endpoint._check_account_route(runtime, thread)
             if proof is not None:

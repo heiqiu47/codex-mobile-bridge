@@ -1,5 +1,7 @@
 """Cold WSL switch fixtures: fake processes/RPC, real private account files."""
 import copy
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,7 @@ from unittest.mock import Mock, patch
 import uuid
 
 from bridge.features.accounts import wsl_account_worker as worker
+from bridge.clients.codex.ipc import IPCError
 from bridge.features.accounts.wsl_accounts import WslAccounts
 from bridge.features.endpoints.registry import entry_id
 from bridge.features.endpoints.wsl import WslEntry
@@ -121,6 +124,8 @@ class WslCodexColdRestartTests(unittest.TestCase):
         return {'stopped': True}
 
     def start_native(self, *args):
+        if self.running and self.entry.server is self.old and not self.old.closed and args[-1]:
+            raise ValueError('original service is still draining; no second signal')
         self.running = True
         return {'started': True, 'daemon': {**self.daemon, 'pid': 124, 'startTicks': 'replacement'}}
 
@@ -188,6 +193,157 @@ class WslCodexColdRestartTests(unittest.TestCase):
         self.assertEqual(self.session.state['latestModel'], 'original-model')
         record = json.loads((self.entry.data_dir / 'account-restart.json').read_text())
         self.assertEqual(record['threads'][self.identifier]['model'], 'original-model')
+
+    def test_account_read_is_advisory_without_native_thread_queries_or_subscription(self):
+        result = self.accounts.read('codex', self.row['id'])
+        self.assertTrue(result['restartRequired'])
+        self.assertTrue(result['capabilities']['attemptSwitch'])
+        self.assertFalse(self.old.calls)
+        self.native_lock.acquire.assert_not_called()
+        self.stop.assert_not_called()
+
+    def test_timeout_retry_never_sends_second_term_and_recovery_waits_for_original_exit(self):
+        before = self.store.files()
+        self.stop.side_effect = ValueError('fixture drain timeout')
+        with self.assertRaisesRegex(ValueError, 'timeout'):
+            self.accounts.change(self.request())
+        with self.assertRaisesRegex(ValueError, '不会再次'):
+            self.accounts.change(self.request())
+        self.stop.assert_called_once()
+        with self.assertRaisesRegex(ValueError, 'still draining'):
+            self.accounts.change(self.request(action='recover-restart', id=None))
+        self.running = False
+        self.old.close()
+        restored = self.accounts.change(self.request(action='recover-restart', id=None))
+        self.assertTrue(restored['restartVerified'])
+        self.assertEqual(self.store.files(), before)
+        self.assertEqual(sum(call['action'] == 'switch' for call in self.calls), 0)
+        self.stop.assert_called_once()
+
+    def test_confirmed_rejection_before_signal_does_not_leave_an_unrecoverable_intent(self):
+        self.stop.side_effect = native.HandoffError('fixture identity changed before signal', False)
+        with self.assertRaises(native.HandoffError):
+            self.accounts.change(self.request())
+        pending = json.loads((self.entry.data_dir / 'account-restart.json').read_text())
+        self.assertFalse(pending['terminationRequested'])
+        self.assertEqual(pending['phase'], 'cancelled')
+        self.stop.side_effect = self.stop_native
+        self.assertTrue(self.accounts.change(self.request())['restartVerified'])
+
+    def test_committed_worker_response_loss_reconciles_from_exact_intent_without_replay(self):
+        original = self.call.side_effect
+        def lost(provider, row, request):
+            result = original(provider, row, request)
+            if request['action'] == 'switch':
+                raise TimeoutError('fixture response lost after durable commit')
+            return result
+        self.call.side_effect = lost
+        result = self.accounts.change(self.request())
+        self.assertTrue(result['switchReconciled'])
+        self.assertTrue(result['restartVerified'])
+        self.assertEqual(result['activeId'], self.target)
+        self.assertEqual(sum(call['action'] == 'switch' for call in self.calls), 1)
+        self.stop.assert_called_once()
+
+    def test_stop_response_loss_recovers_prepared_record_without_rewriting_account(self):
+        before = self.store.files()
+        def lost(*args):
+            self.stop_native(*args)
+            self.old.close()
+            raise TimeoutError('fixture stop response lost')
+        self.stop.side_effect = lost
+        with self.assertRaises(TimeoutError):
+            self.accounts.change(self.request())
+        pending = json.loads((self.entry.data_dir / 'account-restart.json').read_text())
+        self.assertEqual(pending['phase'], 'prepared')
+        recovered = self.accounts.change(self.request(action='recover-restart', id=None))
+        self.assertTrue(recovered['restartVerified'])
+        self.assertEqual(self.store.files(), before)
+        self.assertEqual(sum(call['action'] == 'switch' for call in self.calls), 0)
+
+    def test_partial_thread_restore_resumes_after_gateway_subscription_cache_loss(self):
+        second = str(uuid.uuid4())
+        second_thread = {**self.old.thread, 'id': second}
+        original_old, original_new = self.old.request, self.new.request
+        second_loaded = [False]
+        fail = [True]
+        def old_request(method, params):
+            if method == 'thread/loaded/list':
+                return {'data': [self.identifier, second], 'nextCursor': None}
+            if params.get('threadId') == second:
+                return {'thread': copy.deepcopy(second_thread), 'approvalPolicy': 'on-request', 'sandbox': {'type': 'workspaceWrite'}}
+            return original_old(method, params)
+        def new_request(method, params):
+            if method == 'thread/loaded/list':
+                return {'data': ([self.identifier] if self.new.loaded else []) + ([second] if second_loaded[0] else []), 'nextCursor': None}
+            if params.get('threadId') == second:
+                if method == 'thread/resume':
+                    if fail[0]:
+                        raise IPCError('fixture second thread unavailable')
+                    second_loaded[0] = True
+                thread = {**second_thread, 'status': {'type': 'idle' if second_loaded[0] else 'notLoaded'}}
+                return {'thread': thread, 'approvalPolicy': 'on-request', 'sandbox': {'type': 'workspaceWrite'}}
+            return original_new(method, params)
+        self.old.request, self.new.request = old_request, new_request
+        self.entry.subscriptions[second] = self.entry.generation
+        self.entry.session(second, attach=False).loading = False
+        first = self.accounts.change(self.request())
+        self.assertTrue(first['restartPending'])
+        pending = json.loads((self.entry.data_dir / 'account-restart.json').read_text())
+        self.assertIn(self.identifier, pending['restoredThreads'])
+        self.entry.subscriptions.clear()
+        self.entry._managed_routes.clear()
+        fail[0] = False
+        recovered = self.accounts.change(self.request(action='recover-restart', id=None))
+        self.assertTrue(recovered['restartVerified'])
+        self.assertTrue(second_loaded[0])
+        self.assertEqual(sum(call['action'] == 'switch' for call in self.calls), 1)
+        self.stop.assert_called_once()
+
+    def test_cold_switch_integrates_real_draft_capture_and_standalone_identity_without_native_messages(self):
+        del self.entry.capture_account_drafts
+        del self.entry.complete_account_drafts
+        metadata = {'id': self.identifier, 'cwd': '/home/fixture/project', 'model_provider': 'original_api'}
+        self.entry.store.list = lambda **options: [dict(metadata)] if not options['archived'] and not options['offset'] else []
+        def read(_alias, source, **_options):
+            output = io.StringIO()
+            with patch.dict(os.environ, {}, clear=True), contextlib.redirect_stdout(output):
+                exec(source, {'__file__': worker.__file__})
+            return json.loads(output.getvalue())
+        self.entry.read = read
+        self.session.state.update(cwd=metadata['cwd'], modelProvider='original_api')
+        old = self.entry._account_draft_state('original_api')['accountIdentity']
+        self.assertTrue(old)
+        result = self.accounts.change(self.request())
+        self.assertTrue(result['restartVerified'])
+        self.assertEqual(result['draftContinuations'][0]['id'], self.identifier)
+        self.assertEqual(result['draftContinuations'][0]['previousAccountIdentity'], old)
+        view = self.entry.view(self.identifier, attach=False)
+        self.assertEqual(view['draftContinuation']['accountIdentity'], view['draftAccountIdentity'])
+        self.assertEqual(view['draftContinuation']['previousAccountIdentities'], [old])
+
+    def test_stopped_daemon_offline_history_receives_draft_lineage_without_starting_codex(self):
+        del self.entry.capture_account_drafts
+        del self.entry.complete_account_drafts
+        metadata = {'id': self.identifier, 'cwd': '/home/fixture/project', 'model_provider': 'original_api'}
+        self.entry.store.list = lambda **options: [dict(metadata)] if not options['archived'] and not options['offset'] else []
+        def read(_alias, source, **_options):
+            output = io.StringIO()
+            with patch.dict(os.environ, {}, clear=True), contextlib.redirect_stdout(output):
+                exec(source, {'__file__': worker.__file__})
+            return json.loads(output.getvalue())
+        self.entry.read = read
+        self.running = False
+        self.old.close()
+        self.entry.server = None
+        self.entry.subscriptions.clear()
+        self.entry.live.clear()
+        result = self.accounts.change(self.request())
+        self.assertFalse(result['restartVerified'])
+        self.assertEqual(result['draftContinuations'][0]['id'], self.identifier)
+        self.stop.assert_not_called()
+        self.start.assert_not_called()
+        self.entry.runtime.assert_not_called()
 
 
 class ExitPatches:
