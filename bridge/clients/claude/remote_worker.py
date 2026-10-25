@@ -78,6 +78,13 @@ def auth_status(binary, directory, environment=None):
 def auth_fingerprint(binary, directory, environment=None):
     status = (auth_status(binary, directory) if environment is None
               else auth_status(binary, directory, environment))
+    if os.environ.get('MOBILE_BRIDGE_WSL_NATIVE') == '1' and type(status.get('loggedIn')) is not bool:
+        # A cold native CLI can time out once. Unknown evidence must never
+        # become a synthetic logged-out owner or replace an existing scope.
+        status = (auth_status(binary, directory) if environment is None
+                  else auth_status(binary, directory, environment))
+        if type(status.get('loggedIn')) is not bool:
+            raise ValueError('WSL Claude Code 登录状态暂无法核验，请稍后重试')
     stable = {key: status[key] for key in ('authMethod', 'apiProvider', 'email', 'accountId',
               'accountUuid', 'organizationId', 'organizationUuid', 'orgId', 'workspaceId')
               if isinstance(status.get(key), str) and status[key]}

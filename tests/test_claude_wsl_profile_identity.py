@@ -2,10 +2,12 @@
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
 import uuid
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from bridge.clients.claude import cli_session, remote_worker
@@ -112,6 +114,50 @@ class WslProfileIdentity(unittest.TestCase):
              patch.object(cli_session.shutil, 'which', return_value='/fixture/claude'):
             origin = cli_session._profile()['origin']
         self.assertEqual(origin, 'environment:'+str(self.directory)+':'+hashlib.sha256(raw).hexdigest())
+
+    def test_wsl_cold_status_failure_then_success_preserves_exact_successful_scope(self):
+        baseline = self.origin()
+        with patch.dict(os.environ, self.environment, clear=True), \
+                patch.object(remote_worker.shutil, 'which', return_value='/fixture/claude'), \
+                patch.object(remote_worker, 'native_wsl_binary', return_value=True), \
+                patch.object(remote_worker.subprocess, 'run', side_effect=[
+                    subprocess.TimeoutExpired('fixture auth status', 5),
+                    SimpleNamespace(returncode=0, stdout=json.dumps(self.status))]) as status:
+            recovered = remote_worker.profile()['origin']
+        self.assertEqual(recovered, baseline)
+        self.assertEqual(self.gateway_id(recovered), self.gateway_id(baseline))
+        self.assertEqual(status.call_count, 2)
+
+    def test_two_unknown_wsl_status_reads_never_create_a_logged_out_profile(self):
+        self.origin()
+        with patch.dict(os.environ, self.environment, clear=True), \
+                patch.object(remote_worker.shutil, 'which', return_value='/fixture/claude'), \
+                patch.object(remote_worker, 'native_wsl_binary', return_value=True), \
+                patch.object(remote_worker, 'auth_status', return_value={}) as status:
+            with self.assertRaisesRegex(ValueError, '暂无法核验'):
+                remote_worker.profile()
+        self.assertEqual(status.call_count, 2)
+
+    def test_explicit_logged_out_status_is_not_retried_or_replaced_by_unknown(self):
+        self.origin()
+        with patch.dict(os.environ, self.environment, clear=True), \
+                patch.object(remote_worker.shutil, 'which', return_value='/fixture/claude'), \
+                patch.object(remote_worker, 'native_wsl_binary', return_value=True), \
+                patch.object(remote_worker, 'auth_status', return_value={'loggedIn': False}) as status:
+            value = remote_worker.profile()
+        self.assertTrue(value['origin'])
+        status.assert_called_once()
+
+    def test_ssh_unknown_status_keeps_existing_behavior_without_retry(self):
+        self.origin()
+        env = dict(self.environment)
+        env.pop('MOBILE_BRIDGE_WSL_NATIVE')
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(remote_worker.shutil, 'which', return_value='/fixture/claude'), \
+                patch.object(remote_worker, 'auth_status', return_value={}) as status:
+            value = remote_worker.profile()
+        self.assertTrue(value['origin'])
+        status.assert_called_once()
 
 
 if __name__ == '__main__':
