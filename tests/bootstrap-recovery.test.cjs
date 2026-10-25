@@ -3,8 +3,8 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const root=path.resolve(__dirname,'..');
 
-function fixture({styles=[],scripts=[],deferred=false,shellSheet,preloadSupported=true}={}){
-  let now=0,id=0,reloads=0;const timers=new Map(),events=new Map(),nodes=new Map(),requests=[],preloads=[];
+function fixture({styles=[],scripts=[],deferred=false,shellSheet,preloadSupported=true,features=[]}={}){
+  let now=0,id=0,reloads=0;const timers=new Map(),events=new Map(),nodes=new Map(),requests=[],preloads=[],optionalRequests=[];
   function node(tag='div'){
     return {tagName:tag.toUpperCase(),hidden:false,textContent:'',style:{},dataset:{},open:false,relList:{supports:()=>preloadSupported},
       setAttribute(k,v){this[k]=v;},removeAttribute(){},remove(){this.removed=true;}};
@@ -14,10 +14,11 @@ function fixture({styles=[],scripts=[],deferred=false,shellSheet,preloadSupporte
   if(shellSheet!==undefined)nodes.set('bridge-shell-style',Object.assign(node('link'),{href:'/style.css?v=hash',sheet:shellSheet,parentNode:parent()}));
   const placeholders=(urls,tag)=>urls.map(url=>Object.assign(node(tag),{getAttribute:()=>url,parentNode:parent()}));
   const css=placeholders(styles,'link'),js=placeholders(scripts,'script');
+  const optional=features.map(({url,group})=>Object.assign(node(url.endsWith('.css')?'link':'script'),{dataset:{bridgeFeature:group},getAttribute:()=>url}));
   let domReady;
   const document={readyState:deferred?'loading':'complete',getElementById:id=>nodes.get(id),createElement:node,
     addEventListener(name,fn){if(name==='DOMContentLoaded')domReady=fn;},
-    head:{appendChild(n){preloads.push(n);}},querySelectorAll:selector=>selector.startsWith('link')?css:js};
+    head:{appendChild(n){(n.bridgeOptionalResource?optionalRequests:preloads).push(n);}},querySelectorAll:selector=>selector==='[data-bridge-feature]'?optional:selector.startsWith('link')?[...css,...optional.filter(n=>n.tagName==='LINK')]:[...js,...optional.filter(n=>n.tagName==='SCRIPT')]};
   const window={addEventListener(name,fn){if(!events.has(name))events.set(name,new Set());events.get(name).add(fn);},removeEventListener(name,fn){events.get(name)?.delete(fn);}};
   const dispatch=(name,event)=>{for(const fn of events.get(name)||[])fn(event);};
   const context=vm.createContext({window,document,navigator:{userAgent:'fixture-no-secrets'},location:{href:'https://gateway.test/',hash:'',search:'',reload(){reloads++;}},
@@ -27,7 +28,7 @@ function fixture({styles=[],scripts=[],deferred=false,shellSheet,preloadSupporte
   async function flush(){for(let i=0;i<8;i++)await Promise.resolve();}
   async function tick(ms){const end=now+ms;await flush();while(true){const due=[...timers].filter(([,t])=>t.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!due)break;now=due[1].at;timers.delete(due[0]);due[1].fn();await flush();}now=end;await flush();}
   function finish(n,failed=false){const callback=n[failed?'onerror':'onload'];assert.equal(typeof callback,'function');if(failed)dispatch('error',{target:n});callback();}
-  return {nodes,requests,preloads,window,dispatch,tick,finish,flush,domReady:()=>domReady(),
+  return {nodes,requests,preloads,optionalRequests,window,dispatch,tick,finish,flush,domReady:()=>domReady(),
     eagerFailure(){dispatch('error',{target:{id:'bridge-clipboard-script',tagName:'SCRIPT',src:'/message-actions.js?v=hash',parentNode:parent()}});},get reloads(){return reloads;}};
 }
 
@@ -180,4 +181,52 @@ test('back-forward cache suspension retains the current startup instead of aband
 test('a late timed-out auth result cannot replace the successful retry',async()=>{
   const ui=fixture();let late,calls=0;const result=ui.window.BridgeBootstrap.readAuth(()=>++calls===1?new Promise(resolve=>{late=resolve;}):Promise.resolve({authenticated:false}));
   await ui.tick(8500);assert.deepEqual(await result,{authenticated:false});late({authenticated:true});await ui.flush();assert.equal(calls,2);
+});
+
+
+test('optional math, terminal and file failures cannot prevent the list from starting',async()=>{
+  const ui=fixture({scripts:['/app.js'],features:[{url:'/katex.js',group:'math'},{url:'/xterm.css',group:'terminal'},{url:'/source.js',group:'files'}]});
+  assert.deepEqual(ui.requests.map(n=>n.src),['/app.js']);
+  assert.deepEqual(ui.preloads.map(n=>n.href),['/app.js']);
+  assert.equal(ui.optionalRequests.length,0);
+  // Failure can also occur before auth completes, without triggering the global fatal handler.
+  const load=ui.window.BridgeFeatures.load('math');await ui.flush();
+  ui.finish(ui.optionalRequests[0],true);await assert.rejects(load);
+  ui.finish(ui.requests[0]);ui.window.BridgeBootstrap.ready();
+  assert.equal(ui.nodes.get('bootstrap-status').hidden,true);
+  assert.equal(ui.optionalRequests.length,1);
+});
+
+test('lazy components share in-flight work, preserve order and reuse successful downloads after failure',async()=>{
+  const ui=fixture({features:[{url:'/xterm.css',group:'terminal'},{url:'/xterm.js',group:'terminal'},{url:'/fit.js',group:'terminal'}]});
+  const one=ui.window.BridgeFeatures.load('terminal'),two=ui.window.BridgeFeatures.load('terminal');
+  assert.equal(ui.optionalRequests.length,1);ui.finish(ui.optionalRequests[0]);await ui.flush();
+  assert.equal(ui.optionalRequests[1].src,'/xterm.js');ui.finish(ui.optionalRequests[1]);await ui.flush();
+  assert.equal(ui.optionalRequests[2].src,'/fit.js');ui.finish(ui.optionalRequests[2],true);
+  await Promise.all([assert.rejects(one),assert.rejects(two)]);
+  const retry=ui.window.BridgeFeatures.load('terminal');await ui.flush();
+  assert.equal(ui.optionalRequests.length,4);assert.equal(ui.optionalRequests[3].src,'/fit.js');
+  ui.finish(ui.optionalRequests[3]);await retry;await ui.window.BridgeFeatures.load('terminal');
+  assert.equal(ui.optionalRequests.length,4);
+});
+
+test('a slow lazy script is not duplicated when the caller retries after its waiting limit',async()=>{
+  const ui=fixture({features:[{url:'/source.js',group:'files'}]});
+  const first=ui.window.BridgeFeatures.load('files'),rejected=assert.rejects(first);await ui.tick(45000);await rejected;
+  const retry=ui.window.BridgeFeatures.load('files');await ui.flush();assert.equal(ui.optionalRequests.length,1);
+  ui.finish(ui.optionalRequests[0]);await retry;
+});
+
+test('weak networks with successful progress can take longer than 30 seconds in total',async()=>{
+  const ui=fixture({scripts:['/one.js','/two.js','/app.js']});
+  for(let i=0;i<3;i++){await ui.tick(11000);ui.finish(ui.requests[i]);}
+  ui.window.BridgeBootstrap.ready();assert.equal(ui.nodes.get('bootstrap-status').hidden,true);
+});
+
+test('production markup excludes optional renderers from critical loading but retains versionable URLs',()=>{
+  const html=fs.readFileSync(path.join(root,'web/index.html'),'utf8');
+  for(const [url,group] of [['/vendor/katex/katex.min.js','math'],['/vendor/katex/katex.min.css','math'],['/vendor/xterm/xterm.js','terminal'],['/terminal-panel.js','terminal'],['/source-view.js','files'],['/pdf-preview.js','files']]){
+    const tag=html.match(new RegExp('<(?:script|link)[^>]*data-bridge-(?:src|href)="'+url.replaceAll('.','\\.')+'(?:\\?[^"]*)?"[^>]*>'))?.[0];
+    assert.ok(tag,url);assert.ok(tag.includes('data-bridge-feature="'+group+'"'));
+  }
 });

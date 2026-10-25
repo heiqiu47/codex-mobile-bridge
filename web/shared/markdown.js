@@ -56,16 +56,28 @@
           const display = token.block || token.type === 'math_inline_double';
           const formula = document.createElement(token.block ? 'div' : 'span');
           formula.className = display ? 'math-display' : 'math-inline';
-          try {
-            window.katex.render(token.content, formula, {
+          const expression = document.createElement('span');
+          formula.append(expression);
+          const source = () => { const code=document.createElement('code');code.textContent=token.content;expression.replaceChildren(code); };
+          const render = () => {
+            try { window.katex.render(token.content, expression, {
               displayMode:display, throwOnError:true, trust:false,
               maxExpand:1000, maxSize:20, strict:'ignore'
+            }); } catch { source(); }
+          };
+          if(window.katex)render();
+          else {
+            source();
+            // Only replace this formula, never rerender the message or composer.
+            const load = () => window.BridgeFeatures?.load('math').then(() => {
+              if(formula.isConnected)render();
+            }).catch(() => {
+              if(!formula.isConnected)return;
+              const retry=document.createElement('button');retry.type='button';retry.className='plain';
+              retry.textContent=typeof BridgeI18n==='undefined'?'重试':BridgeI18n.t('重试');
+              retry.onclick=()=>{retry.remove();load();};expression.append(retry);
             });
-          } catch {
-            // Incomplete or unsupported TeX stays readable during streaming.
-            const source = document.createElement('code');
-            source.textContent = token.content;
-            formula.append(source);
+            load();
           }
           if (token.type.endsWith('_eqno')) {
             const number = document.createElement('span');

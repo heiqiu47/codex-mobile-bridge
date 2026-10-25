@@ -81,3 +81,10 @@ Codex 的环境路由、目录登记和创建回执由 `codex-entries.browser.js
 在隔离 `bootstrap-fixture.py?case=success` 页面加载 `composer-send.browser.js` 后，调用并等待 `runComposerSendCoordinationChecks()`。它使用两个独立同源文档、实际 IndexedDB 事务与专属合成 localStorage 键，验证同 ID 并发登记、拒绝顺序、未知结果保留和全部明确拒绝后允许改为排队；不请求发送 API。顶层标签页的同源共享行为需由浏览器驱动另行核验。
 
 `persistent-drafts.browser.js` 的 `runPersistentDraftTests()` 使用真实提交处理器和合成网络结果，补充账号切换、页面导航及等待回执期间的新草稿保护。两类检查不得在真实会话页面执行。
+
+## 聊天列表优先启动
+
+`python3 -B tests/browser/list-first-fixture.py` 启动隔离 loopback 服务，使用生产页面、版本化资源和合成账号／列表，拒绝聊天写入。
+`?case=first` 获取列表后，打开 `?case=cached`：同一身份缓存应先显示，5 秒后刷新为新标题；`?case=identity` 使用另一缓存身份，旧列表不能提前出现。
+`?case=blocked` 对公式、终端和文件预览资源返回 503，列表仍应正常显示且不请求这些组件；实际渲染公式后应保留源码和重试按钮，不进入全屏启动错误。
+`?case=slow` 为脚本响应额外增加 300 ms；结合浏览器单页网络限速验证冷启动。`window.__listProbe` 记录首个列表／缓存更新时刻和运行时异常。仅在夹具中使用，禁止对真实网关注入测试数据。

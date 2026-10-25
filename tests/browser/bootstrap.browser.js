@@ -27,12 +27,9 @@ async function runBootstrapBrowserChecks(){
     check(probe.executed.indexOf('/message-actions.js')<probe.executed.indexOf(scripts[0]),'Eager clipboard definition executed too late');
   }
   if(state.case==='slow'||state.case==='bootstrap-missing'){
-    check(probe.visibilitySamples.some(s=>s.at<300&&!s.visible),'Missing hidden initial frame');
-    check(!probe.visibilitySamples.some(s=>s.at<300&&s.visible),'Startup UI flashed before its delay');
-    check(probe.visibilitySamples.some(s=>s.visible),'Startup never showed feedback');
+    check(probe.visibilitySamples.some(s=>s.visible),'Startup never showed the list surface');
+    check(document.querySelector('.bootstrap-list-placeholder'),'Missing initial list placeholder');
   }
-  // Without the failed shell CSS, the plain HTML fallback is visible; it is not the overlay.
-  if(probe.readyAt<400)check(!probe.visibilitySamples.some(s=>s.styled&&s.visible),'Fast startup flashed');
   if(state.case==='shell-once')check(state.requests['/style.css']>=2,'Eager shell stylesheet was not retried');
   if(state.case==='shell-twice')check(state.requests['/style.css']>=3,'The repeated shell failure did not recover');
   // Chromium can fetch the parser-created link twice. Count link attempts, not HTTP retries.

@@ -346,8 +346,11 @@ class Workbench {
     }
     this.select('sidechat');
   }
-  terminal() {
+  async terminal() {
     const session=this.current;if(!session)return;
+    try { if(window.BridgeFeatures)await window.BridgeFeatures.load('terminal'); }
+    catch(error){this.notify(BridgeI18n.t('终端加载失败，请重试'));return;}
+    if(this.current!==session)return;
     if(!session.files.some(tab=>tab.id==='terminal')) {
       const tab={id:'terminal',name:BridgeI18n.t('终端'),body:this.node('div','wb-terminal')};
       session.files.push(tab);tab.terminal=new TerminalPanel(this,session,tab);
@@ -455,6 +458,7 @@ class Workbench {
       const result = pdf
         ? {...await this.request(downloadUrl + '&info=1', undefined, tab.controller.signal), kind:'pdf'}
         : await this.request(this.url(session, 'preview', entry.path), undefined, tab.controller.signal);
+      if (window.BridgeFeatures && ['pdf','text'].includes(result.kind)) await window.BridgeFeatures.load('files');
       if (tab.controller.signal.aborted || !this.sessions.has(session.key) || !session.files.includes(tab)) return;
       const head = this.node('div', 'wb-preview-head'), title = this.node('div', 'wb-preview-title'), actions = this.node('div', 'wb-preview-actions');
       title.append(this.raw(this.node('strong', '', result.name)), this.node('small', '', this.size(result.size) + ' · ' + entry.path));

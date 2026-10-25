@@ -1,4 +1,50 @@
 'use strict';
+// Optional renderers are shared across tabs, but never gate the chat list.
+(function () {
+  var resources = new Map(), groups = new Map();
+  function unavailable(slow) {
+    var zh = slow ? '组件加载时间较长，请重试' : '组件暂不可用，请重试';
+    return new Error(typeof BridgeI18n !== 'undefined' ? BridgeI18n.t(zh) : slow ? 'Component is taking too long to load. Please retry.' : 'Component unavailable. Please retry.');
+  }
+  function resource(placeholder) {
+    if (resources.has(placeholder)) return resources.get(placeholder);
+    var script = placeholder.tagName === 'SCRIPT';
+    var task = new Promise(function (resolve, reject) {
+      var node = document.createElement(script ? 'script' : 'link');
+      node.bridgeOptionalResource = true;
+      node.onload = function () { node.onload = node.onerror = null; resolve(); };
+      node.onerror = function () {
+        node.onload = node.onerror = null; node.remove(); resources.delete(placeholder);
+        reject(unavailable(false));
+      };
+      if (script) { node.async = false; node.src = placeholder.getAttribute('data-bridge-src'); }
+      else { node.rel = 'stylesheet'; node.href = placeholder.getAttribute('data-bridge-href'); }
+      document.head.appendChild(node);
+    });
+    resources.set(placeholder, task);
+    return task;
+  }
+  window.BridgeFeatures = {
+    load: function (name) {
+      if (!groups.has(name)) {
+        var nodes = Array.from(document.querySelectorAll('[data-bridge-feature]')).filter(function (node) { return node.dataset.bridgeFeature === name; });
+        var scripts = nodes.filter(function (node) { return node.tagName === 'SCRIPT'; });
+        var styles = nodes.filter(function (node) { return node.tagName === 'LINK'; });
+        var task = Promise.all(styles.map(resource)).then(function () {
+          return scripts.reduce(function (previous, node) { return previous.then(function () { return resource(node); }); }, Promise.resolve());
+        });
+        groups.set(name, task);
+        task.catch(function () { groups.delete(name); });
+      }
+      // A slow classic script may still execute. Keep its shared promise instead
+      // of inserting a second copy on timeout (which redeclares global classes).
+      return new Promise(function (resolve, reject) {
+        var timer = setTimeout(function () { reject(unavailable(true)); }, 45000);
+        groups.get(name).then(function () { clearTimeout(timer); resolve(); }, function (error) { clearTimeout(timer); reject(error); });
+      });
+    }
+  };
+})();
 // Keep this small and independent: even i18n or the main app may fail to load.
 (function () {
   var root = document.getElementById('bootstrap-status');
@@ -75,11 +121,12 @@
     if (complete || stopped) return;
     clearTimeout(timer);
     timer = setTimeout(recovering, 12000);
+    // Only a stalled startup expires; successful downloads renew the budget.
+    clearTimeout(deadline);
+    deadline = setTimeout(function () { fail('timeout'); }, 30000);
   }
   function beginPhase() {
     progress();
-    clearTimeout(deadline);
-    deadline = setTimeout(function () { fail('timeout'); }, 30000);
   }
   function cancelled() {
     var error = new Error('Startup cancelled');
@@ -146,6 +193,7 @@
     });
   }
   function onError(event) {
+    if (event.target && event.target.bridgeOptionalResource) return;
     // Resource errors reach the capture listener before the element's retry handler.
     if (event.target && event.target.bridgeStartupResource) return;
     if (event.target && event.target.id === 'bridge-clipboard-script') {
@@ -210,8 +258,8 @@
     load();
   }
   function loadResources() {
-    var styles = document.querySelectorAll('link[data-bridge-href]'), next = 0, active = 0;
-    var scripts = document.querySelectorAll('script[data-bridge-src]');
+    var styles = Array.from(document.querySelectorAll('link[data-bridge-href]')).filter(function (node) { return !node.dataset.bridgeFeature; }), next = 0, active = 0;
+    var scripts = Array.from(document.querySelectorAll('script[data-bridge-src]')).filter(function (node) { return !node.dataset.bridgeFeature; });
     function pumpStyles() {
       if (stopped) return;
       while (active < 4 && next < styles.length) {
@@ -276,8 +324,8 @@
     window.removeEventListener('error', onError, true);
     window.removeEventListener('unhandledrejection', onRejection);
   }
-  title.textContent = text('正在连接工作台…', 'Connecting to your workspace…');
-  message.textContent = text('首次加载可能需要片刻。若长时间没有响应，可重新加载页面。', 'The first load may take a moment. Reload the page if it stops responding.');
+  title.textContent = text('聊天', 'Chats');
+  message.textContent = text('正在同步聊天列表…', 'Syncing chats…');
   document.getElementById('bootstrap-details-label').textContent = text('查看详情', 'View details');
   details.hidden = true;
   retry.textContent = text('重新加载', 'Reload');

@@ -2,6 +2,9 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"组件加载时间较长，请重试":"Component is taking too long to load. Please retry.",
+"组件暂不可用，请重试":"Component unavailable. Please retry.",
+"终端加载失败，请重试":"Terminal failed to load. Please retry.",
 "此 WSL 会话有任务或待处理审批":"This WSL chat has an active task or pending approval.",
 "此 WSL 控制连接仍有未确认请求":"This WSL control connection still has unconfirmed requests.",
 "WSL 原生任务状态无法完整核验":"The native WSL task state could not be fully verified.",
