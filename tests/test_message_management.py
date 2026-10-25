@@ -70,7 +70,7 @@ class MessageManagementTests(unittest.TestCase):
         request={'action':'reorder','version':b.message_management(self.thread)['version'], 'expectedAccount':'account-a','ids':list(reversed(self.ids[:3]))}
         b.manage_messages(self.thread,request)
         with self.assertRaises(ValueError): b.manage_messages(self.thread,request)
-        b.submissions=json.loads(b.ledger_path.read_text()) # restart ledger
+        b.submissions=json.loads(b.ledger_path.read_text(encoding='utf-8')) # restart ledger
         self.assertEqual(list(b.submissions)[0],self.thread+':'+self.ids[2])
         b._send_queued(b.live[self.thread],first,old);b._dispatch.assert_not_called()
         head=next(iter(b.submissions));b._send_queued(b.live[self.thread],head,b.submissions[head])
@@ -98,7 +98,7 @@ class MessageManagementTests(unittest.TestCase):
 
     def test_wsl_reorder_persisted_and_dispatch_locks_head(self):
         b=self.wsl();self.action(b,'reorder',ids=list(reversed(self.ids[:3])))
-        b.receipts=json.loads(b.receipts_path.read_text());b._dispatch_queued(self.thread)
+        b.receipts=json.loads(b.receipts_path.read_text(encoding='utf-8'));b._dispatch_queued(self.thread)
         self.assertEqual(b._send.call_args.args[2],self.ids[2])
         self.action(b,'withdraw',id=self.ids[1]);b._dispatch_queued(self.thread)
         self.assertEqual(b._send.call_args.args[2],self.ids[0])
@@ -126,7 +126,7 @@ class MessageManagementTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             b.manage_messages(self.thread,{'action':'withdraw','id':self.ids[0],'version':old,'expectedAccount':'account-a'})
         self.action(b,'withdraw',id=self.ids[0])
-        b.submissions=json.loads(b.ledger_path.read_text())
+        b.submissions=json.loads(b.ledger_path.read_text(encoding='utf-8'))
         receipt=b.message_management(self.thread,[self.ids[0]])['receipts'][0]
         self.assertEqual(receipt['status'],'cancelled');self.assertNotIn('editor',receipt)
 
@@ -186,7 +186,7 @@ class MessageManagementTests(unittest.TestCase):
         self.assertEqual(list(b.submissions),order)
         self.assertEqual({k:v for k,v in b.submissions[key].items() if k not in ('text','_editId','_managementRevision')},{k:v for k,v in original.items() if k != 'text'})
         with self.assertRaises(ValueError):b.manage_messages(self.thread,request)
-        b.submissions=json.loads(b.ledger_path.read_text())
+        b.submissions=json.loads(b.ledger_path.read_text(encoding='utf-8'))
         self.assertEqual(b.message_management(self.thread,[identifier])['receipts'][0]['edit'],
                          {'id':edit_id,'text':'edited正文','status':'applied'})
         session=b.live[self.thread];session.runtime='desktop';session.state['latestModel']='same-model'
@@ -219,7 +219,7 @@ class MessageManagementTests(unittest.TestCase):
         b.receipts[key]['entry'].update(skills=[],workMode=None,goalActivation=None)
         self.action(b,'edit',id=identifier,text='new WSL正文',editId=edit_id)
         self.assertEqual(list(b.receipts),order)
-        b.receipts=json.loads(b.receipts_path.read_text());b.data_dir=Path(self.temp.name)
+        b.receipts=json.loads(b.receipts_path.read_text(encoding='utf-8'));b.data_dir=Path(self.temp.name)
         b.uploads=SimpleNamespace(resolve=Mock(return_value=[]));b._resolve_skills=Mock(return_value=[])
         b.row={'distribution':'Fixture','home':'/home/fixture/.codex'}
         b.read=Mock(return_value={'managed':False});b._managed_routes={};b.generation=0

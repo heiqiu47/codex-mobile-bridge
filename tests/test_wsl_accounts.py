@@ -1,4 +1,5 @@
 """Target-only account fixtures; no native CLI/network/account operations."""
+from contextlib import closing
 import json
 import os
 from pathlib import Path
@@ -318,9 +319,24 @@ class WslAccountModelCacheTests(unittest.TestCase):
         from bridge.clients.codex.catalog import ModelStore
         identity = ModelStore.key('wsl-saved-api', 'codex', self.row['id'], self.digest)
         self.accounts.models_store.write(identity, {'models': [{'id': 'cached-model'}]})
-        with self.accounts.models_store._connect() as db:
+        with closing(self.accounts.models_store._connect()) as db, db:
             db.execute('UPDATE catalogs SET updated_at=? WHERE identity=?', (time.time()-age, identity))
         return identity
+
+    def test_cache_fixture_closes_sqlite_connection(self):
+        import sqlite3
+        connect = self.accounts.models_store._connect
+        connections = []
+        def tracked_connect():
+            db = connect()
+            connections.append(db)
+            self.addCleanup(db.close)
+            return db
+        with patch.object(self.accounts.models_store, '_connect', side_effect=tracked_connect):
+            self.cache()
+        for db in connections:
+            with self.assertRaisesRegex(sqlite3.ProgrammingError, 'closed'):
+                db.execute('SELECT 1')
 
     def test_close_during_cache_read_cannot_publish_cached_result(self):
         self.cache()
