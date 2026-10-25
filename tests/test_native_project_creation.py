@@ -1,5 +1,6 @@
 """Native membership is separate from cwd; no fixture starts a model."""
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -139,13 +140,18 @@ class NativeSidebarRegistration(unittest.TestCase):
             self.assertEqual(self.bridge.creations[self.rid]['id'], self.tid)
 
     def test_late_native_registration_and_unknown_thread_never_replay_either_write(self):
+        monotonic = time.monotonic
+        clock = Mock(wraps=time)
+        clock.monotonic.side_effect = [0, 13]
         with patch('bridge.app.service.open_project_in_desktop') as launch, \
-             patch('bridge.app.service.time.monotonic', side_effect=[0, 13]), \
+             patch('bridge.app.service.time', clock), \
              patch('bridge.app.service.create_empty') as create:
             with self.assertRaisesRegex(CreationError, '尚未创建聊天'):
                 self.bridge.create_chat(self.project['key'], 'Chat', self.rid)
             launch.assert_called_once()
             create.assert_not_called()
+            self.assertIs(time.monotonic, monotonic)
+            self.assertEqual(clock.monotonic.call_count, 2)
         self.assertEqual(self.bridge.creations[self.rid]['phase'], 'registering-project')
         self.register_native(str(self.root))
         self.assertTrue(self.bridge.projects()[0]['nativeProject'])
