@@ -261,7 +261,7 @@ class DesktopSessionsView {
   }
   prepareChat(sid){
     this.resetMermaidScope();
-    this.modelDialog?.close();this.saveDraft();this.sid=sid;this.historyPage=null;this.historyMessages=[];this.historyBusy=false;this.historyRetry=false;this.draftScope=null;this.draftTouched=false;this.quotes?.reset();this.mode.value='send';this.state=null;this.freshDetail=false;this.detailRevision++;this.modelSelectionRevision++;const row=this.rows.find(r=>r.id===sid);this.title.textContent=row?.title||BridgeI18n.t('正在读取聊天…');this.status.textContent=BridgeI18n.t('正在连接…');this.input.value=this.draftGateway&&this.composerDrafts?'':this.drafts.get(this.provider+':'+sid)||'';this.requestStamp='';this.error.textContent='';this.notice.hidden=true;this.messages.replaceChildren(this.translated('p','正在读取聊天…','muted'));this.messageNodes.clear();this.lastMessages=[];this.requests.replaceChildren();this.showSelection(true);this.attachments.open(JSON.stringify([this.provider,sid]));this.workbench.open(sid,'local');const cached=this.detailCache.get(JSON.stringify([this.provider,sid]));if(cached){this.applyDetail(cached,true);this.messages.scrollTop=this.workbench.current.scroll||0;}this.activity.read(this.provider+'|'+sid);this.updateComposer();this.renderList();this.resizeInput();this.rememberView();this.onNavigation?.();
+    this.modelDialog?.close();this.saveDraft();this.sid=sid;this.historyPage=null;this.historyMessages=[];this.historyBusy=false;this.historyRetry=false;this.draftScope=null;this.draftTouched=false;this.quotes?.reset();this.mode.value='send';this.state=null;this.freshDetail=false;this.detailRevision++;this.modelSelectionRevision++;const row=this.rows.find(r=>r.id===sid);this.title.textContent=row?.title||BridgeI18n.t('正在读取聊天…');this.status.textContent=BridgeI18n.t('正在连接…');this.input.value=this.draftGateway&&this.composerDrafts?'':this.drafts.get(this.provider+':'+sid)||'';this.requestStamp='';this.error.textContent='';this.notice.hidden=true;this.messages.replaceChildren(this.translated('p','正在读取聊天…','muted'));this.messageNodes.clear();this.lastMessages=[];this.requests.replaceChildren();this.showSelection(true);this.attachments.open(JSON.stringify([this.provider,sid]));this.workbench.open(sid,'local');const cached=this.detailCache.get(JSON.stringify([this.provider,sid]));if(cached&&typeof renderMarkdown==='function'){this.applyDetail(cached,true);this.messages.scrollTop=this.workbench.current.scroll||0;}this.activity.read(this.provider+'|'+sid);this.updateComposer();this.renderList();this.resizeInput();this.rememberView();this.onNavigation?.();
   }
   async open(sid){
     if(this.previewOnly)return;
@@ -269,7 +269,11 @@ class DesktopSessionsView {
     try{await this.detail(generation);}catch(error){if(generation===this.generation&&sid===this.sid){this.error.textContent=BridgeI18n.t(error.message);this.status.textContent=BridgeI18n.t('连接失败');this.updateComposer();}}
   }
   async detail(generation){
-    const sid=this.sid,provider=this.provider,revision=this.detailRevision,task=this.sharedRead(provider,'detail',sid),current=()=>task.current()&&generation===this.generation&&provider===this.provider&&sid===this.sid&&revision===this.detailRevision;let value;
+    const sid=this.sid,provider=this.provider,revision=this.detailRevision;
+    if(window.BridgeFeatures)await window.BridgeFeatures.load('chat');
+    if(generation!==this.generation||provider!==this.provider||sid!==this.sid||revision!==this.detailRevision)return;
+    if(!this.mermaidScope)this.resetMermaidScope();
+    const task=this.sharedRead(provider,'detail',sid),current=()=>task.current()&&generation===this.generation&&provider===this.provider&&sid===this.sid&&revision===this.detailRevision;let value;
     try{value=await task.promise;}catch(error){if(current()){this.staleDetail();throw error;}return;}if(!current())return;this.applyDetail(value);
   }
   canMutate(){const client=this.clientStates?.find(row=>row.id===this.provider);if(!this.state||!this.freshDetail||client?.enabled===false)return false;if(this.provider==='claude'&&this.state.backend==='cli')return ['ready','active','awaiting'].includes(this.state.connectionState);return !client||client.connected===true;}

@@ -1002,3 +1002,22 @@ test('unverified external account changes and other WSL entries cannot use draft
 test('mobile draft continuation consumes manager-wrapped account identities while session keeps raw native ownership',async()=>{
  const ui=await opened(),view=ui.view,entry='wsl-claude:'+'a'.repeat(32),rawOld='1'.repeat(64),rawCurrent='2'.repeat(64),wrap=raw=>require('node:crypto').createHash('sha256').update(JSON.stringify(['draft-v1','claude','wsl-cli',entry,raw])).digest('hex'),old=wrap(rawOld),current=wrap(rawCurrent);view.bindDraftGateway('gateway-a');view.composerDrafts.save({gateway:'gateway-a',provider:'claude',account:old,host:'local',session:'a'},{text:'real wrapped scope draft'});view.bindDraftScope({draftAccountIdentity:current,session:{id:'a',runtime:'wsl',host:entry,draftAccountIdentity:rawCurrent},draftContinuation:{id:'a',entry,accountIdentity:current,previousAccountIdentities:[old]}});assert.notEqual(current,rawCurrent);assert.equal(view.input.value,'real wrapped scope draft');assert.equal(view.draftScope.account,current);
 });
+
+test('common chat demand waits for resources and Back cancels the pending detail read',async()=>{
+ const ui=fixture();await ui.view.choose('claude');
+ ui.run("var releaseChat;window.BridgeFeatures={load:()=>new Promise(resolve=>{releaseChat=resolve;})}");
+ const before=ui.calls.filter(call=>call.url.includes('/detail')).length;
+ const opening=ui.view.open('a');assert.equal(ui.view.sid,'a');
+ assert.equal(ui.calls.filter(call=>call.url.includes('/detail')).length,before);
+ ui.view.backToList();ui.run('releaseChat()');await opening;
+ assert.equal(ui.view.sid,null);assert.equal(ui.calls.filter(call=>call.url.includes('/detail')).length,before);
+});
+
+test('only the latest chat receives detail after shared renderer loading completes',async()=>{
+ const ui=fixture();await ui.view.choose('claude');
+ ui.run("var releaseChat;var chatReady=new Promise(resolve=>{releaseChat=resolve;});window.BridgeFeatures={load:()=>chatReady}");
+ const before=ui.calls.filter(call=>call.url.includes('/detail')).length;
+ const first=ui.view.open('a'),second=ui.view.open('b');ui.run('releaseChat()');await Promise.all([first,second]);
+ const reads=ui.calls.filter(call=>call.url.includes('/detail')).slice(before);
+ assert.equal(reads.length,1);assert.match(reads[0].url,/sessionId=b/);
+});

@@ -27,8 +27,8 @@ async function runBootstrapBrowserChecks(){
     check(probe.executed.indexOf('/message-actions.js')<probe.executed.indexOf(scripts[0]),'Eager clipboard definition executed too late');
   }
   if(state.case==='slow'||state.case==='bootstrap-missing'){
-    check(probe.visibilitySamples.some(s=>s.visible),'Startup never showed the list surface');
-    check(document.querySelector('.bootstrap-list-placeholder'),'Missing initial list placeholder');
+    check(probe.visibilitySamples.some(s=>s.visible),'Startup never showed waiting feedback');
+    check(!document.querySelector('.bootstrap-list-placeholder'),'Startup must not show skeleton bars');
   }
   if(state.case==='shell-once')check(state.requests['/style.css']>=2,'Eager shell stylesheet was not retried');
   if(state.case==='shell-twice')check(state.requests['/style.css']>=3,'The repeated shell failure did not recover');

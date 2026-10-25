@@ -459,6 +459,7 @@ class Workbench {
         ? {...await this.request(downloadUrl + '&info=1', undefined, tab.controller.signal), kind:'pdf'}
         : await this.request(this.url(session, 'preview', entry.path), undefined, tab.controller.signal);
       if (window.BridgeFeatures && ['pdf','text'].includes(result.kind)) await window.BridgeFeatures.load('files');
+      if (window.BridgeFeatures && result.kind === 'text' && /\.md$/i.test(result.name)) await window.BridgeFeatures.load('chat');
       if (tab.controller.signal.aborted || !this.sessions.has(session.key) || !session.files.includes(tab)) return;
       const head = this.node('div', 'wb-preview-head'), title = this.node('div', 'wb-preview-title'), actions = this.node('div', 'wb-preview-actions');
       title.append(this.raw(this.node('strong', '', result.name)), this.node('small', '', this.size(result.size) + ' · ' + entry.path));
@@ -471,7 +472,7 @@ class Workbench {
         content.classList.add('wb-pdf-content'); content.append(tab.pdf.element);
       } else if (result.kind === 'image') { const image = this.node('img'); image.src = 'data:' + result.mime + ';base64,' + result.data; image.alt = result.name; window.BridgeImageViewer?.registerWorkspaceImage(image, result, imageContext, imageComposerScope); content.append(image); }
       else if (result.kind === 'text') {
-        if (/\.md$/i.test(result.name) && !tab.sourceLocation) {content.__mermaidScope=this.mermaidScope;content.__mermaidIdentity=session.key+'|'+id;renderMarkdown(content, result.text);}
+        if (/\.md$/i.test(result.name) && !tab.sourceLocation) {if(!this.mermaidScope)this.mermaidScope=window.BridgeMermaidCards?.createScope();content.__mermaidScope=this.mermaidScope;content.__mermaidIdentity=session.key+'|'+id;renderMarkdown(content, result.text);}
         else if (/\.html?$/i.test(result.name)) {
           modes = this.node('div', 'wb-preview-modes');
           const preview = this.button('预览', () => show('preview'));

@@ -1,20 +1,32 @@
 'use strict';
+// Apply the saved/system palette before any visible startup content is painted.
+(function () {
+  var saved;
+  try { saved = JSON.parse(localStorage.getItem('bridge-appearance')); } catch (_) {}
+  var theme = saved && saved.theme;
+  var dark = theme === 'dark' || theme !== 'light' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = dark ? '#17181c' : '#ffffff';
+})();
 // Optional renderers are shared across tabs, but never gate the chat list.
 (function () {
-  var resources = new Map(), groups = new Map();
+  var resources = new Map(), groups = new Map(), resourceNodes = new Map(), backgroundGroups = new Map(), prefetchScheduled = false;
   function unavailable(slow) {
     var zh = slow ? '组件加载时间较长，请重试' : '组件暂不可用，请重试';
     return new Error(typeof BridgeI18n !== 'undefined' ? BridgeI18n.t(zh) : slow ? 'Component is taking too long to load. Please retry.' : 'Component unavailable. Please retry.');
   }
-  function resource(placeholder) {
+  function resource(placeholder, background) {
     if (resources.has(placeholder)) return resources.get(placeholder);
     var script = placeholder.tagName === 'SCRIPT';
     var task = new Promise(function (resolve, reject) {
       var node = document.createElement(script ? 'script' : 'link');
       node.bridgeOptionalResource = true;
+      node.fetchPriority = background ? 'low' : 'auto';
+      resourceNodes.set(placeholder, node);
       node.onload = function () { node.onload = node.onerror = null; resolve(); };
       node.onerror = function () {
-        node.onload = node.onerror = null; node.remove(); resources.delete(placeholder);
+        node.onload = node.onerror = null; node.remove(); resources.delete(placeholder); resourceNodes.delete(placeholder);
         reject(unavailable(false));
       };
       if (script) { node.async = false; node.src = placeholder.getAttribute('data-bridge-src'); }
@@ -25,13 +37,27 @@
     return task;
   }
   window.BridgeFeatures = {
-    load: function (name) {
+    prefetchChat: function () {
+      var connection = navigator.connection;
+      if (prefetchScheduled || document.hidden || connection && (connection.saveData || /(^|-)2g$/.test(connection.effectiveType) || connection.downlink < 1.5)) return;
+      prefetchScheduled = true;
+      // Give the visible list a paint and let its foreground reads settle first.
+      var schedule = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (run) { setTimeout(run, 0); };
+      schedule(function () { setTimeout(function () {
+        if (document.hidden) { prefetchScheduled = false; return; }
+        window.BridgeFeatures.load('chat', {background: true}).catch(function () { prefetchScheduled = false; });
+      }, 1500); });
+    },
+    load: function (name, options) {
+      var background = !!(options && options.background);
+      if (!groups.has(name) || !background) backgroundGroups.set(name, background);
+      if (!background) resourceNodes.forEach(function (node, placeholder) { if (placeholder.dataset.bridgeFeature === name) node.fetchPriority = 'auto'; });
       if (!groups.has(name)) {
         var nodes = Array.from(document.querySelectorAll('[data-bridge-feature]')).filter(function (node) { return node.dataset.bridgeFeature === name; });
         var scripts = nodes.filter(function (node) { return node.tagName === 'SCRIPT'; });
         var styles = nodes.filter(function (node) { return node.tagName === 'LINK'; });
-        var task = Promise.all(styles.map(resource)).then(function () {
-          return scripts.reduce(function (previous, node) { return previous.then(function () { return resource(node); }); }, Promise.resolve());
+        var task = Promise.all(styles.map(function (node) { return resource(node, backgroundGroups.get(name)); })).then(function () {
+          return scripts.reduce(function (previous, node) { return previous.then(function () { return resource(node, backgroundGroups.get(name)); }); }, Promise.resolve());
         });
         groups.set(name, task);
         task.catch(function () { groups.delete(name); });
@@ -46,7 +72,14 @@
   };
 })();
 // Keep this small and independent: even i18n or the main app may fail to load.
-(function () {
+(function startWhenParsed() {
+  if (startWhenParsed.started) return;
+  if (document.readyState === 'loading') {
+    // Interactive precedes deferred clipboard execution, whose failures we own.
+    document.addEventListener('readystatechange', startWhenParsed, {once: true});
+    return;
+  }
+  startWhenParsed.started = true;
   var root = document.getElementById('bootstrap-status');
   var title = document.getElementById('bootstrap-title');
   var message = document.getElementById('bootstrap-message');
@@ -325,7 +358,7 @@
     window.removeEventListener('unhandledrejection', onRejection);
   }
   title.textContent = text('聊天', 'Chats');
-  message.textContent = text('正在同步聊天列表…', 'Syncing chats…');
+  message.textContent = text('正在连接…', 'Connecting…');
   document.getElementById('bootstrap-details-label').textContent = text('查看详情', 'View details');
   details.hidden = true;
   retry.textContent = text('重新加载', 'Reload');
@@ -342,6 +375,6 @@
   beginPhase();
   window.BridgeBootstrap = {waitingForAuth: waitingForAuth, pairingSubmitted: pairingSubmitted,
     failed: function () { return fail('connection'); }, ready: ready, readAuth: readAuth};
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadResources);
+  if (document.readyState !== 'complete') document.addEventListener('DOMContentLoaded', loadResources, {once: true});
   else loadResources();
 })();
