@@ -221,12 +221,15 @@ class MessageManagementTests(unittest.TestCase):
         self.assertEqual(list(b.receipts),order)
         b.receipts=json.loads(b.receipts_path.read_text());b.data_dir=Path(self.temp.name)
         b.uploads=SimpleNamespace(resolve=Mock(return_value=[]));b._resolve_skills=Mock(return_value=[])
+        b.row={'distribution':'Fixture','home':'/home/fixture/.codex'}
+        b.read=Mock(return_value={'managed':False});b._managed_routes={};b.generation=0
         runtime=SimpleNamespace(request=Mock(return_value={'turn':{'id':'turn'}}))
         b._target=Mock(return_value=(runtime,{'status':{'type':'idle'},'cwd':'/original','modelProvider':'openai'}))
         b._subscribe=Mock();b._send=WslEntry._send.__get__(b)
         with self.assertRaises(ValueError):b._send(self.thread,identifier,identifier,mode='queue')
         runtime.request.assert_not_called()
         b._dispatch_queued(self.thread)
+        b.read.assert_called_once()
         self.assertEqual(runtime.request.call_args.args[1]['input'][0]['text'],'new WSL正文')
         self.assertEqual(b.receipts[key]['result']['status'],'accepted')
         receipt=b.message_management(self.thread,[identifier])['receipts'][0]
