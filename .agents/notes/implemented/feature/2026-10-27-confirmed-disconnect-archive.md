@@ -1,12 +1,12 @@
 # Agent Note: Confirmed stop, release and archive
 
-Status: implemented with the native-owner limits below
+Status: implemented
 
 ## Problem
 
 Disconnecting a Bridge reader does not release a native writer. Users explicitly request stopping the selected chat before archive, with a confirmation dialog whose left button is Confirm archive and right button is Cancel. A failed stop must not cause an archive or be replayed as a new stop after reconnect.
 
-## Implementation
+## Decision
 
 An explicit `disconnect:true` on an archive request opts into stopping the exact original target and its verified descendants. Older requests retain idle-only semantics; restore never stops work. The existing lifecycle gates exclude new Bridge submissions during the operation. Persist the existing unknown receipt before any stop or release, read fresh native state after stopping, and only then archive through the original runtime. Never close a shared application/daemon or kill unrelated processes to release one chat. Uncontrollable native owners remain a clear failure, not a fabricated success.
 
@@ -23,11 +23,11 @@ The confirmation displays title, execution host and interruption consequences. C
 
 Merely disconnecting Bridge leaves native writers alive. Exiting the whole desktop app releases writers but affects unrelated chats. Editing Codex storage bypasses native ownership. Direct native archive through the actual owner avoids unnecessary detach/reattach when supported; releasing a per-chat Claude executor is needed before file-level archive.
 
-## Acceptance criteria
+## Verification contract
 
 Dialog order and cancellation are exercised through the real event handlers. New synthetic native sessions demonstrate targeted stop/archive/restore while an unrelated session remains usable. Unknown stop/archive results are never replayed. Unsupported external owners are refused without stopping the whole app. Existing idle-only and restore callers retain their behavior.
 
-## Risks
+## Consequences
 
 Native client capabilities differ by version; a connected App follower is not its execution owner. Approval covers dedicated new test sessions only, not stopping existing user work. No whole-app shutdown, credential change or release publishing is part of this change.
 
@@ -39,10 +39,11 @@ Claude Code Desktop uses its existing native interrupt on the verified running s
 
 Owned Claude CLI/SSH/WSL executors acknowledge native interrupt, wait for result/pending-request settlement, close stdin and wait for process exit before the existing profile, version, registry and executable-census checks. There is no terminate/kill fallback. Installed CLI 2.1.292 emits a final `error_during_execution` result and exit code 1 after acknowledged user interruption; this specific active-stop exit is accepted, while timeout and signal/other abnormal exits prevent archive. File-level archive and restoration remain reversible and preserve the original native ID and bytes. The remote archive-state read may report unsafe without stopping anything; the remote mutation still requires all original writer checks.
 
-DSH uses the native `workspace/session-stop` providers for the selected session's turn, descendants, jobs and schedules, then verifies `workspace/session-activity`, current running state and pending questions before native `archiveSession(sid,{})`. The installed registry's `stopActivity:true` persists the archive before requesting stops and swallows stop failures; it was rejected for this stop-before-archive contract. Native default admission still guards the final write.
+DSH uses the native `workspace/session-stop` providers for the selected session's turn, descendants, jobs and schedules, then verifies `workspace/session-activity`, current running state and pending questions before native `archiveSession(sid,{})`. The installed registry's `stopActivity:true` persists the archive before requesting stops and swallows stop failures; it was rejected for this stop-before-archive contract. Native default admission still guards the final write. Bridge revision 7 distinguishes this contract from the previously loaded idle-only implementation. The verified revision 6 LF and CRLF source hashes remain recognized: discovery reuses the original transport, source location, credentials and receipts without rewriting a live plugin; upgrading the native plugin retains the existing explicit restart and fresh task-state gate. Unknown source hashes remain rejected.
 
 ## Verification and limits
 
+- DSH migration follow-up: 51 targeted Python tests and 6 native-provider Node tests passed. The installed revision 6 connector is recognized read-only with no configuration writes; explicit-upgrade fixtures retain its original credentials, receipts and insertion.
 - Frontend: 1,206 passed, one existing skipped test. Confirmation handlers verify left Confirm archive/right Cancel, default Cancel focus, no request on cancel/dismissal, exact host/provider identity, and restore without stopping. Actual connector/host fixture tests verify stop ordering, target-only scope and failure before archival.
 - Backend: 185 targeted tests passed before the final original-connection guard; 29 focused archive tests passed after that guard. Coverage includes HTTP auth/CSRF and flag validation, full-subtree receipts, no replay after unknown stop, owned CLI exit semantics, real synthetic file archive/restore, remote identity and WSL routing. Three existing remote archive tests had been accidentally nested below `unittest.main()`; they are now discovered and run.
 - Installed Codex 0.164.0-alpha.11.1: isolated home plus fake loopback Responses streaming, no account credentials. Two new native sessions actively streamed. Production stop helper stopped only the target; same-runtime archive and restore retained its ID; the second session remained active until explicit test cleanup. A concurrent second runtime was refused by the original writer lock. A restored/unloaded session passed the new preflight without being resumed. Evidence is under the ignored `.tmp/disconnect-archive-20261027/codex-native/`.

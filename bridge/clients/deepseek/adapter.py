@@ -14,10 +14,10 @@ from bridge.features.sessions.create import ArchiveNotSent
 from bridge.clients.deepseek.setup import MARKER, insertion, verified_directory, legacy_account_configured
 
 PLUGIN_ID = re.compile(r'''["']?id["']?\s*:\s*["']?codex-mobile-desktop(?:["'\s,}]|$)''')
-BRIDGE_REVISION = 6
-# Revisions 3–5 share the complete native-agent lifecycle schema; presentation
+BRIDGE_REVISION = 7
+# Revisions 3–6 share the complete native-agent lifecycle schema; presentation
 # and fork capability additions do not invalidate an older idle snapshot.
-LIFECYCLE_REVISIONS = (3, 4, 5, BRIDGE_REVISION)
+LIFECYCLE_REVISIONS = (3, 4, 5, 6, BRIDGE_REVISION)
 UPDATE_REASON = 'Harness 接入需要更新，请结束任务后点击“重启并接入”'
 
 
