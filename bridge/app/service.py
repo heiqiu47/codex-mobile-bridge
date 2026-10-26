@@ -23,6 +23,7 @@ from bridge.features.sessions import linux_permissions
 from bridge.clients.codex.ipc import DesktopIPC, IPCError
 from bridge.clients.codex.app_server import AppServerError, AppServerUnavailable
 from bridge.clients.codex.cli_session import CliSessions
+from bridge.clients.desktop_app import DesktopApp
 from bridge.clients.codex.transport import ipc_endpoint
 from bridge.features.sessions.model import apply_patches, attachment_prompt, computer_use_approval, items_array, normalize_state, normalize_request, ordered_turns, pending_requests, async_requests, request_id, user_display_text
 from bridge.features.sessions.store import SessionStore, StoreUnavailable
@@ -978,7 +979,7 @@ class Bridge:
                 self.remote_bridges[host].accounts = self.accounts
             return self.remote_bridges[host]
 
-    def assert_desktop_idle(self, timeout=20, identifiers=None, allow_missing_ipc=False):
+    def assert_desktop_idle(self, timeout=20, identifiers=None, allow_missing_ipc=False, allow_stopped_app=False):
         """Passively check every desktop owner before an application shutdown.
 
         The caller holds the account operation gate until shutdown completes.
@@ -1111,8 +1112,21 @@ class Bridge:
             try:
                 ipc.connect()
             except IPCError as exc:
-                if allow_missing_ipc and isinstance(exc.__cause__, FileNotFoundError):
-                    return
+                if isinstance(exc.__cause__, FileNotFoundError):
+                    if allow_missing_ipc:
+                        return
+                    if allow_stopped_app and self.host == 'local':
+                        try:
+                            executable = self.accounts.index.get('desktopExecutable') or DesktopApp.discover(self.catalog_reader.executable)
+                            if not executable:
+                                raise ValueError(unknown)
+                            app = DesktopApp(executable, self.codex_home)
+                            app.validate(self.catalog_reader.executable)
+                            if app.processes():
+                                raise ValueError(unknown)
+                        except (OSError, ValueError, subprocess.SubprocessError) as error:
+                            raise ValueError(unknown) from error
+                        return
                 raise
             for host, sid in threads:
                 try:
@@ -2502,7 +2516,8 @@ class Bridge:
             return self.store.get(thread_id)
         def prepare(metadata):
             identifiers = [row['id'] for row in self.store.lifecycle_threads(root_id=thread_id)]
-            self.assert_desktop_idle(identifiers=identifiers, allow_missing_ipc=metadata.get('origin') == 'cli')
+            self.assert_desktop_idle(identifiers=identifiers, allow_missing_ipc=metadata.get('origin') == 'cli',
+                                     allow_stopped_app=metadata.get('origin') == 'desktop')
             with self.submit_lock:
                 ledgers = (self.submissions, self.goal_commands, self.message_actions)
                 if any((key.split(':')[0] in identifiers or row.get('source') in identifiers or row.get('id') in identifiers) and row.get('status', row.get('state')) in

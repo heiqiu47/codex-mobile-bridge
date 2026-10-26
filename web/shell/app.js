@@ -301,10 +301,10 @@ function bindSessionMenu(button,chat){
   const show=()=>{
     const box=el('dialog','picker'),head=el('div','picker-head'),close=el('button','icon-button','×');
     close.type='button';close.setAttribute('aria-label',t('关闭'));close.onclick=()=>box.close();head.append(el('h2','',chat.title),close);box.append(head);
-    const action=(label,run)=>{const item=el('button','plain',t(label));item.type='button';item.onclick=async()=>{item.disabled=true;try{await run(item);box.close();}catch(error){toast(error.message);item.disabled=false;}};box.append(item);return item;};
+    const action=(label,run,disable=true)=>{const item=el('button','plain',t(label));item.type='button';item.onclick=async()=>{if(disable)item.disabled=true;try{await run(item);box.close();}catch(error){toast(error.message);item.disabled=false;}};box.append(item);return item;};
     action(chat.bridgePinned?'取消置顶':'置顶',async()=>{await api(sessionUrl(chat.id,'pin',chat.host),{pinned:!chat.bridgePinned});await loadList(true);});
     const identity={provider:'codex',id:chat.id,host:chat.host,runtime:chat.access?.runtime};
-    const copy=action('复制深度链接',item=>BridgeClipboard.copy(()=>window.BridgeSessionLinks?.text(identity),item));
+    const copy=action('复制深度链接',item=>BridgeClipboard.copy(()=>window.BridgeSessionLinks?.text(identity),item),false);
     copy.disabled=!window.BridgeSessionLinks?.text(identity);
     action(chat.archived?'取消归档':'归档聊天',async()=>{
       const result=await api(sessionUrl(chat.id,'archive',chat.host),{archived:!chat.archived,id:uuid()});

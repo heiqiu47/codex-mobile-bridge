@@ -12,11 +12,11 @@ Status: implemented
 
 归档和取消归档使用 `thread/archive`、`thread/unarchive`。App 路径复用原 home、原本机/SSH 运行时的短期官方连接；本机 CLI 使用同一原 daemon，WSL 使用已有 distribution/user/home 的共享服务，均不 resume、不创建模型轮次，也不修改 provider、auth、cwd。显式归档可以沿现有显式操作路径启动已安装的原 daemon，WSL 使用同一 ensure_daemon 归属核验；启动控制服务不恢复线程。原生方法不支持、控制面不可用或状态无法确认时拒绝操作。
 
-只读索引枚举根线程完整后代，不沿用界面 128 条上限。App 原 owner 与后代用即时 IPC discovery/follow 快照确认 idle；timeout、断连、错 owner、错 revision、审批或运行中均阻止。CLI 仅在 Desktop IPC connect 本身的 FileNotFoundError 证明该端点不存在时继续检查原 daemon；元数据错误不能使用该例外。其他连接错误不能当作无 owner。原 daemon 的 metadata-only `thread/read` 必须报告 idle/notLoaded，Bridge 保留的请求、队列、Goal 和消息写入 unknown/pending/sent 记录仍阻止归档。WSL 沿用 entry 写门，检查相同子树的原生状态及未确认回执。
+只读索引枚举根线程完整后代，不沿用界面 128 条上限。App 原 owner 与后代用即时 IPC discovery/follow 快照确认 idle；timeout、断连、错 owner、错 revision、审批或运行中均阻止。CLI 仅在 Desktop IPC connect 本身的 FileNotFoundError 证明该端点不存在时继续检查原 daemon；元数据错误不能使用该例外。本机 App 关闭时，只有同样的端点缺失证据加上即时核验的原 GUI 可执行文件确实无进程，才允许使用短期原生元数据操作；仍运行、进程可见性不足、路径未知或远端 App 均不使用此例外。其他连接错误不能当作无 owner。原 daemon 的 metadata-only `thread/read` 必须报告 idle/notLoaded，Bridge 保留的请求、队列、Goal 和消息写入 unknown/pending/sent 记录仍阻止归档。WSL 沿用 entry 写门，检查相同子树的原生状态及未确认回执。
 
 `ArchiveCommands` 在发送归档前持久化 unknown 意图，成功后读取原生索引确认 archived 值。连接丢失、进程重启或新请求 ID 均不自动重放未知写入；只有目标原生状态已经确认时才消解回执。能够证明原生写入尚未发出的本机预检失败清除该意图，允许修正状态后重新操作。原生拒绝或传输失败发生在已尝试写入后则保守保留未知状态。
 
-列表长按、右键和 Shift+F10 打开置顶、复制链接、归档/取消归档菜单。复制使用 issue74 的 `BridgeSessionLinks` 与共享剪贴板；该 helper 不支持的原生环境不伪造链接。详情复制入口由 issue74 提供。共享中继只扩展这两个准确的 POST 路径，登录与 CSRF 保持不变。
+列表长按、右键和 Shift+F10 打开置顶、复制链接、归档/取消归档菜单。复制按钮的忙碌状态交由共享剪贴板处理，避免菜单预先禁用按钮导致复制被跳过。复制使用 issue74 的 `BridgeSessionLinks` 与共享剪贴板；该 helper 不支持的原生环境不伪造链接。详情复制入口由 issue74 提供。共享中继只扩展这两个准确的 POST 路径，登录与 CSRF 保持不变。
 
 ## Existing-note audit
 

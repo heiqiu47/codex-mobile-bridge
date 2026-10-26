@@ -159,6 +159,30 @@ class SessionManagement(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, '读取'):
                 bridge.assert_desktop_idle(identifiers=[self.sid], allow_missing_ipc=True)
 
+    def test_stopped_app_requires_missing_ipc_and_fresh_verified_gui_absence(self):
+        bridge = Bridge.__new__(Bridge)
+        bridge.host = 'local'; bridge.codex_home = self.home
+        bridge.accounts = SimpleNamespace(blockers=lambda: [], index={'desktopExecutable': '/fixture/Codex'})
+        bridge.catalog_reader = SimpleNamespace(executable='/fixture/codex')
+        bridge.remote_bridges = {}; bridge.lock = threading.RLock(); bridge.live = {}
+        bridge.ipc = SimpleNamespace(path='fixture'); bridge.store = SimpleNamespace()
+        missing = IPCError('desktop absent'); missing.__cause__ = FileNotFoundError('endpoint')
+        follower = Mock(); follower.connect.side_effect = missing
+        app = Mock(); app.processes.return_value = []
+        with patch('bridge.app.service.DesktopIPC', return_value=follower), patch('bridge.app.service.DesktopApp', return_value=app) as desktop:
+            bridge.assert_desktop_idle(identifiers=[self.sid], allow_stopped_app=True)
+            desktop.assert_called_once_with('/fixture/Codex', self.home)
+            app.validate.assert_called_once_with('/fixture/codex')
+            app.processes.return_value = [123]
+            with self.assertRaisesRegex(ValueError, '无法确认'):
+                bridge.assert_desktop_idle(identifiers=[self.sid], allow_stopped_app=True)
+            app.processes.side_effect = PermissionError('process visibility denied')
+            with self.assertRaisesRegex(ValueError, '无法确认'):
+                bridge.assert_desktop_idle(identifiers=[self.sid], allow_stopped_app=True)
+            follower.connect.side_effect = IPCError('timeout')
+            with self.assertRaisesRegex(ValueError, '无法确认'):
+                bridge.assert_desktop_idle(identifiers=[self.sid], allow_stopped_app=True)
+
     def test_wsl_archive_and_unarchive_preserve_entry_runtime_and_guard_receipts(self):
         entry = WslEntry.__new__(WslEntry)
         entry.host = 'wsl:fixture'; entry.write_lock = threading.RLock(); entry.closed = threading.Event()
