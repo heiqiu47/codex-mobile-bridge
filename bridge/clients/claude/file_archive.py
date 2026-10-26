@@ -130,10 +130,14 @@ def _owned(path):
         raise ValueError('Claude 归档文件归属不可验证')
 
 
-def _digest(path):
+def _regular_file(path):
     if path.is_symlink() or not path.is_file():
         raise ValueError('Claude 归档文件不可验证')
     _owned(path)
+
+
+def _digest(path):
+    _regular_file(path)
     value = hashlib.sha256()
     with path.open('rb') as source:
         for block in iter(lambda: source.read(1024*1024), b''):
@@ -216,13 +220,13 @@ def archive_paths(directory, errors=None):
     return result
 
 
-def state(directory, path, native):
+def state(directory, path, native, *, verify=False):
     bundle, manifest = _manifest(directory, native)
     if not manifest:
         original = _original(directory, Path(path).parent.name, native)
         if Path(path) != original:
             raise ValueError('Claude 原会话路径不可验证')
-        _digest(original)
+        _regular_file(original)
         return {'archived': False}
     original = _original(directory, manifest['project'], native)
     archived = bundle/(native+'.jsonl')
@@ -231,9 +235,9 @@ def state(directory, path, native):
         raise ValueError('Claude 文件归档事务中断，请在电脑端核对；不会自动重放')
     expected, absent = (archived, original) if phase == 'archived' else (original, archived)
     if (absent.exists() or absent.is_symlink()
-            or (phase == 'archived' and _digest(expected) != manifest['sha256'])):
+            or (verify and phase == 'archived' and _digest(expected) != manifest['sha256'])):
         raise ValueError('Claude 归档文件冲突或已变化，请在电脑端核对')
-    _digest(expected)
+    _regular_file(expected)
     return {'archived': phase == 'archived'}
 
 
@@ -316,7 +320,7 @@ def change(directory, path, native, archived):
     except FileExistsError as exc:
         raise ValueError('Claude 文件归档事务待核对，不会自动重放') from exc
     try:
-        before = state(directory, path, native)
+        before = state(directory, path, native, verify=True)
         if before['archived'] == archived:
             return before
         bundle, manifest = _manifest(directory, native)
@@ -357,6 +361,6 @@ def change(directory, path, native, archived):
                 manifest['phase'] = previous
                 _write(bundle/'manifest.json', manifest)
             raise
-        return state(directory, target, native)
+        return state(directory, target, native, verify=True)
     finally:
         lock.rmdir()

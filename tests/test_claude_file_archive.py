@@ -125,6 +125,25 @@ class FileArchiveTests(unittest.TestCase):
         self.assertFalse(bad['runtimeKnown']);self.assertFalse(bad['capabilities']['archive'])
         self.assertFalse(listing['complete'])
 
+    def test_passive_active_and_archived_list_does_not_hash_transcripts(self):
+        profile={'directory':self.directory,'origin':'synthetic','binary':'/synthetic/claude'}
+        cli=ClaudeCli(Path(self.temp.name)/'uploads',profile_resolver=lambda:profile)
+        with patch.object(archive,'_digest',side_effect=AssertionError('passive archive hash')):
+            self.assertFalse(archive.state(self.directory,self.path,self.native)['archived'])
+            self.assertEqual(len(cli.listing()['sessions']),1)
+        self.archive()
+        with patch.object(archive,'_digest',side_effect=AssertionError('passive archive hash')):
+            self.assertEqual(archive.archive_paths(self.directory),[self.stored()])
+            self.assertTrue(archive.state(self.directory,self.stored(),self.native)['archived'])
+            self.assertTrue(cli.listing()['sessions'][0]['archived'])
+
+    def test_tampered_primary_refused_at_explicit_restore(self):
+        self.archive();self.stored().write_bytes(b'tampered transcript')
+        self.assertTrue(archive.state(self.directory,self.stored(),self.native)['archived'])
+        with self.assertRaises(ValueError):archive.state(self.directory,self.stored(),self.native,verify=True)
+        with self.assertRaises(ValueError):archive.change(self.directory,self.stored(),self.native,False)
+        self.assertFalse(self.path.exists())
+
     def test_interrupted_journal_no_auto_replay(self):
         self.archive();manifest=self.stored().parent/'manifest.json'
         value=json.loads(manifest.read_text());value['phase']='preparing';manifest.write_text(json.dumps(value))

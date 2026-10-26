@@ -767,7 +767,7 @@ class ClaudeCli:
                     assert_session_closed(profile['directory'])
                     file_archive.assert_no_cli(profile['binary'])
                     safe = True
-                result = {**public, **file_archive.state(profile['directory'], row['path'], native),
+                result = {**public, **file_archive.state(profile['directory'], row['path'], native, verify=True),
                           'archiveSafe': safe, 'runtimeKnown': True,
                           'capabilities': {'archive': enabled, 'unarchive': enabled}}
                 if action == 'archive-state':
