@@ -106,6 +106,7 @@ async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,lo
 test('desktop tab transitions update visibility before Codex account polling resumes',async()=>{
   const events=[],accounts={dataset:{panel:'accounts'},hidden:true},overview={dataset:{panel:'overview'},hidden:false};
   const ui=await renderer('zh-CN',{AccountsPanel:class{
+    attachApiAccess(panel,details){this.apiAccess=panel;this.apiDetails=details;}
     visible(){return !accounts.hidden;}
     refresh(){events.push(['refresh',accounts.hidden]);}
     resume(){events.push(['resume',accounts.hidden]);}
@@ -1107,7 +1108,7 @@ test('Windows startup lookup handles Electron quoted paths with spaces',()=>{
 });
 
 test('desktop WSL scope uses registered environment transport and restores native content',async()=>{
- let nativeReads=0;const ui=await renderer('zh-CN',{AccountsPanel:class{visible(){return true;}refresh(){nativeReads++;}resume(){}render(){}clear(){this.generation=(this.generation||0)+1;}}}),entry='wsl:'+'a'.repeat(32),requests=[];
+ let nativeReads=0;const ui=await renderer('zh-CN',{AccountsPanel:class{attachApiAccess(panel,details){this.apiAccess=panel;this.apiDetails=details;}visible(){return true;}refresh(){nativeReads++;}resume(){}render(){}clear(){this.generation=(this.generation||0)+1;}}}),entry='wsl:'+'a'.repeat(32),requests=[];
  ui.api.cliAccess=async payload=>{requests.push(structuredClone(payload));return payload.operation==='environments'?{provider:'codex',environments:[{id:entry,label:'Ubuntu',distribution:'Ubuntu',user:'developer',configDir:'/home/developer/.codex'}]}:{provider:'codex',entry,identity:'wsl-digest',available:true,accounts:[],capabilities:{switch:true,models:true},blockers:[]};};
  await ui.run('wslAccountScopes[0].load()');const native=ui.nodes.get('accounts-content'),wrapper=native.beforeNode,select=wrapper.children[0].children[1];
  assert.equal(select.options.length,2);assert.equal(select.options[1].value,entry);select.value=entry;await select.onchange();await new Promise(setImmediate);
