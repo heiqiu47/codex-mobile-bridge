@@ -199,12 +199,14 @@ class Workspace:
             if stat.S_ISDIR(info.st_mode):
                 # Re-walk the full directory using the same no-link boundary.
                 with self.directory(parts):
-                    return {'name': parts[-1], 'path': path, 'size': None, 'kind': 'directory'}
+                    return {'name': parts[-1], 'path': path, 'size': None, 'kind': 'directory',
+                            'absolutePath': str(self.root.joinpath(*parts))}
             handle = self.open_file(directory, fd, parts[-1], os.O_RDONLY)
             with os.fdopen(handle, 'rb') as stream:
                 info = os.fstat(stream.fileno())
                 if not stat.S_ISREG(info.st_mode): raise ValueError('仅支持普通文件')
-                return {'name': parts[-1], 'path': path, 'size': info.st_size, 'kind': 'file'}
+                return {'name': parts[-1], 'path': path, 'size': info.st_size, 'kind': 'file',
+                        'absolutePath': str(self.root.joinpath(*parts))}
 
     @contextmanager
     def archive(self, path, range_header='', if_range='', limit=None):

@@ -664,6 +664,7 @@ const en={
 "超过阈值仅显示定位；文件标签页中长按或右键下载不限此大小。":"Larger files offer Locate only. Long-press or right-click downloads in the Files tab are exempt.",
 "已保存，立即生效":"Saved. Applies immediately.",
 "下载到本地":"Download to this device",
+"复制绝对路径":"Copy absolute path",
 "定位并打开所在文件夹":"Locate in Files",
 "文件夹将打包为 ZIP，准备完成后显示下载总量。":"The folder will be prepared as a ZIP. The total size appears when ready.",
 "文件超过点击下载阈值，请在文件标签页中定位后长按下载。":"This file exceeds the click-to-download limit. Locate it in Files, then long-press to download.",

@@ -26,6 +26,17 @@ class WorkspaceTests(unittest.TestCase):
 
     def tearDown(self): self.temp.cleanup()
 
+    def test_info_absolute_path_uses_authorized_target_root(self):
+        for path in ('hello.txt', 'folder'):
+            self.assertEqual(operate(self.root, 'info', {'path': path})['absolutePath'], str(self.root / path))
+        with self.assertRaises(PermissionError):
+            self.work.info('../private')
+        outside = Path(self.temp.name) / 'private'
+        outside.write_text('private')
+        (self.root / 'link').symlink_to(outside)
+        with self.assertRaises(OSError):
+            self.work.info('link')
+
     def test_listing_hidden_search_and_paging(self):
         self.assertEqual([x['name'] for x in self.work.listing()['entries']], ['folder', 'hello.txt'])
         self.assertEqual(self.work.listing(hidden=True)['total'], 3)
