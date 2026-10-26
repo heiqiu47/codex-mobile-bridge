@@ -24,11 +24,11 @@ from bridge.resources import source_text
 
 def worker_source():
     source = source_text('clients/claude/remote_worker.py')
-    marker = 'from bridge.clients.claude.file_archive import archive_paths, state as archive_file_state, change as archive_file_change, supported as archive_supported, recorded_writer as archive_recorded_writer'
+    marker = 'from bridge.clients.claude.file_archive import archive_paths, state as archive_file_state, change as archive_file_change, supported as archive_supported, assert_no_cli as archive_assert_no_cli'
     if source.count(marker) != 1:
         raise ValueError('Claude Code 远端归档模块无法加载')
     helper = source_text('clients/claude/file_archive.py')
-    return source.replace(marker, helper + '\narchive_file_state = state\narchive_file_change = change\narchive_supported = supported\narchive_recorded_writer = recorded_writer\n')
+    return source.replace(marker, helper + '\narchive_file_state = state\narchive_file_change = change\narchive_supported = supported\narchive_assert_no_cli = assert_no_cli\n')
 
 
 def _command(alias):
@@ -120,6 +120,8 @@ class RemoteClaudeCli:
                     rows.update({sid: row for sid, row in previous.items()
                                  if row['host'] == host_id and row['alias'] == host['alias']})
                     continue
+                if result.get('complete') is False:
+                    complete = False
                 for item in result.get('sessions') or []:
                     if isinstance(item, dict) and item.get('nativeId') and item.get('origin'):
                         row = self._row(host_id, host, item)
@@ -259,6 +261,9 @@ class RemoteClaudeCli:
         if live:
             value['model'] = owned.model or value['model']
             value['permissionMode'] = owned.permission or value['permissionMode']
+        if row.get('archiveIncomplete'):
+            value.update(runtimeKnown=False, status='unknown', connectionState='closed', requests=[],
+                         capabilities={'archive': False, 'unarchive': False})
         return value
 
     def _upload_files(self, row, files):

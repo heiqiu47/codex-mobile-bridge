@@ -264,13 +264,14 @@ class RemoteWorkerContract(unittest.TestCase):
         before = self.path.read_bytes()
         with patch.object(remote_worker, 'profile', return_value=found), \
              patch.object(remote_worker, 'archive_supported', return_value=True), \
-             patch.object(remote_worker, 'archive_recorded_writer', return_value=True), \
+             patch.object(remote_worker, 'archive_assert_no_cli'), \
              patch.object(remote_worker, 'assert_session_closed') as guard:
             result = remote_worker.command({'operation': 'archive', 'native': self.native,
                                             'origin': found['origin'], 'archived': True})
             self.assertTrue(result['archived'])
             self.assertTrue(result['archiveSafe'])
-            guard.assert_called_once_with(found, self.native)
+            self.assertEqual(guard.call_count, 2)
+            self.assertTrue(all(call.args == (found,) for call in guard.call_args_list))
             self.assertFalse(self.path.exists())
             rows = remote_worker.sessions(found)
             self.assertEqual([row['nativeId'] for row in rows], [self.native])
@@ -284,7 +285,7 @@ class RemoteWorkerContract(unittest.TestCase):
             self.assertFalse(restored['archived'])
             self.assertEqual(self.path.read_bytes(), before)
 
-    def test_remote_archive_rejects_unproven_capability_missing_registry_and_live_writer(self):
+    def test_remote_archive_rejects_unproven_capability_unknown_profile_registry_and_live_census(self):
         found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
         request = {'operation': 'archive', 'native': self.native, 'origin': found['origin'], 'archived': True}
         before = self.path.read_bytes()
@@ -293,14 +294,42 @@ class RemoteWorkerContract(unittest.TestCase):
             with self.assertRaises(ValueError): remote_worker.command(request)
         with patch.object(remote_worker, 'profile', return_value=found), \
              patch.object(remote_worker, 'archive_supported', return_value=True), \
-             patch.object(remote_worker, 'archive_recorded_writer', return_value=False):
+             patch.object(remote_worker, 'assert_session_closed', side_effect=ValueError('unknown registry')):
             with self.assertRaises(ValueError): remote_worker.command(request)
         with patch.object(remote_worker, 'profile', return_value=found), \
              patch.object(remote_worker, 'archive_supported', return_value=True), \
-             patch.object(remote_worker, 'archive_recorded_writer', return_value=True), \
-             patch.object(remote_worker, 'assert_session_closed', side_effect=ValueError('live writer')):
+             patch.object(remote_worker, 'archive_assert_no_cli', side_effect=ValueError('live writer')), \
+             patch.object(remote_worker, 'assert_session_closed'):
             with self.assertRaisesRegex(ValueError, 'live writer'): remote_worker.command(request)
         self.assertEqual(self.path.read_bytes(), before)
+
+    def test_incomplete_archive_keeps_other_remote_sessions_visible(self):
+        bad = str(uuid.uuid4());bundle = self.config/'bridge-archives'/bad;bundle.mkdir(parents=True)
+        (bundle/'manifest.json').write_text('{}')
+        found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=False):
+            listing = remote_worker.command({'operation': 'list'})
+            self.assertFalse(listing['complete'])
+            rows = {row['nativeId']: row for row in listing['sessions']}
+            self.assertIn(self.native, rows)
+            self.assertTrue(rows[bad]['archived'])
+            self.assertTrue(rows[bad]['archiveIncomplete'])
+            self.assertFalse(rows[bad]['runtimeKnown'])
+            self.assertFalse(rows[bad]['capabilities']['unarchive'])
+            self.assertEqual(remote_worker.session(found, self.native)['nativeId'], self.native)
+            with self.assertRaises(ValueError): remote_worker.session(found, bad)
+
+    def test_full_profile_guard_rejects_another_live_native_session(self):
+        other = str(uuid.uuid4());pid = 4321
+        (self.config/'sessions'/(str(pid)+'.json')).write_text(json.dumps({
+            'pid': pid, 'sessionId': other, 'procStart': '123456', 'pidDomain': 'linux:fixture:pid:[123]'}))
+        found = {'directory': str(self.config)}
+        with patch.object(remote_worker.sys, 'platform', 'linux'), \
+             patch.object(remote_worker, 'pid_domain', return_value='linux:fixture:pid:[123]'), \
+             patch.object(remote_worker, 'linux_process_start', return_value='123456'):
+            with self.assertRaises(ValueError): remote_worker.assert_session_closed(found)
+
 
 
 class RemoteAdapterContract(unittest.TestCase):
@@ -506,3 +535,14 @@ if __name__ == '__main__':
         row = self.cli._row('ssh:test', self.hosts.hosts()['ssh:test'], self.row);sid = row['id'];self.cli.index[sid] = row
         with patch.object(self.cli, '_remote', return_value={**self.row, 'origin': 'another-profile'}):
             with self.assertRaisesRegex(ValueError, '身份已变化'): self.cli.call('archive-state', sid, {})
+
+    def test_incomplete_archive_rows_preserve_unknown_runtime_and_list_completeness(self):
+        broken = {**self.row, 'archived': True, 'archiveIncomplete': True, 'runtimeKnown': False,
+                  'capabilities': {'archive': False, 'unarchive': False}}
+        with patch.object(self.cli, '_remote', return_value={'profile': {'origin': self.row['origin']},
+                         'sessions': [broken], 'complete': False}):
+            self.cli._refresh(self.hosts.hosts())
+        listing = self.cli.listing()
+        self.assertFalse(listing['complete'])
+        self.assertFalse(listing['sessions'][0]['runtimeKnown'])
+        self.assertEqual(listing['sessions'][0]['status'], 'unknown')
