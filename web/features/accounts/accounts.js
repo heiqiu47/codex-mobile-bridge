@@ -322,8 +322,8 @@ class AccountsPanel {
       if(!row.transient){const choose=this.button(active?'当前接入':'切换到此接入',()=>this.choose(row));choose.disabled=this.busy||switching||active||external||(!this.desktop&&value.canSwitch===false);actions.append(choose);}
 
       if(this.cliAccess&&row.kind==='api'&&!row.transient){
-        if(!active)actions.append(this.button('修改',()=>this.cliAccess.edit('codex',row)));
-        for(const [label,action] of [['查看上游模型','models'],['测试模型接口','test']])actions.append(this.button(label,()=>{this.apiDetails.open=true;return this.cliAccess.probe(row,action);}));
+        if(!active){const edit=this.button('修改',()=>{this.apiDetails.open=true;this.cliAccess.edit('codex',row);});edit.disabled=this.busy||switching||this.cliAccess.busy;actions.append(edit);}
+        for(const [label,action] of [['查看上游模型','models'],['测试模型接口','test']]){const probe=this.button(label,()=>{this.apiDetails.open=true;return this.cliAccess.probe(row,action);});probe.disabled=this.busy||switching||this.cliAccess.busy;actions.append(probe);}
       }
       if(this.desktop&&!row.transient){
         const edit=this.button(row.kind==='chatgpt'?'重新登录':'修改',()=>{this.resetForm();this.editId=row.id;this.addDetails.open=true;this.name.input.value=row.name;this.kind.value=row.kind;this.kind.disabled=true;this.kind.onchange();this.url.input.value=row.baseUrl||'';this.model.input.value=row.model||'';this.key.input.value='';this.name.input.focus();});

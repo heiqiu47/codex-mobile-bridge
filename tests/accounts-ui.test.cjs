@@ -406,7 +406,14 @@ test('one inventory delegates API edit and probes to the editor before reminders
  const ui=fixture(),details=ui.panel.node('details'),calls=[];
  ui.panel.attachApiAccess({edit:(...args)=>calls.push(args),probe:(...args)=>calls.push(args)},details);
  await ui.panel.refresh();assert.ok(ui.panel.management.children.indexOf(details)<ui.panel.management.children.indexOf(ui.panel.tools));
- ui.all().find(node=>node.textContent==='修改').onclick();assert.equal(calls[0][0],'codex');
+ ui.all().find(node=>node.textContent==='修改').onclick();assert.equal(details.open,true);assert.equal(calls[0][0],'codex');
  ui.all().find(node=>node.textContent==='测试模型接口').onclick();assert.equal(details.open,true);assert.equal(calls[1][1],'test');
  assert.equal(ui.all().filter(node=>node.className==='account-bucket').length,1);
+});
+
+test('desktop API edit opens the outer editor even with a nested article and respects switch locks',async()=>{
+ const ui=fixture(true),details=ui.panel.node('details'),article=ui.panel.node('article'),root=ui.panel.node('div'),calls=[];article.append(root);details.append(article);
+ ui.panel.attachApiAccess({root,edit:()=>calls.push('edit'),probe:()=>{}},details);await ui.panel.refresh();
+ const edits=()=>ui.all().filter(node=>node.textContent==='修改'&&!node.hidden);assert.equal(edits().length,1);edits()[0].onclick();assert.equal(details.open,true);assert.deepEqual(calls,['edit']);
+ ui.setValue({...ui.value(),switch:{phase:'applying'}});await ui.panel.refresh();assert.equal(edits()[0].disabled,true);assert.equal(ui.all().find(node=>node.textContent==='测试模型接口').disabled,true);
 });
