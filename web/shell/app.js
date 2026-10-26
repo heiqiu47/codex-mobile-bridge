@@ -1526,3 +1526,9 @@ $('permissions-button').onclick=()=>{
 
 const fileTransferSettings=window.BridgeFileActions?.mountSettings($('appearance-dialog'),value=>api('/api/file-transfer',value));
 if(fileTransferSettings)$('appearance-dialog').querySelector('.settings-action-row')?.after(fileTransferSettings);
+
+$('copy-session-link').onclick=()=>{
+  const text=window.BridgeSessionLinks.text({provider:'codex',id:currentId,host:currentHost});
+  if(text===null){toast(t('此接入暂无可用的桌面会话链接'));return;}
+  return window.BridgeClipboard.copy(()=>text,$('copy-session-link'));
+};

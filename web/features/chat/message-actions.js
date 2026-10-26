@@ -1,5 +1,15 @@
 'use strict';
 const actionText=source=>typeof BridgeI18n==='undefined'?source:BridgeI18n.t(source);
+// Native identities only: Bridge endpoint digests are not Desktop host IDs.
+window.BridgeSessionLinks={
+  text({provider,id,host='local',runtime}={}){
+    if(typeof id!=='string'||!id.trim())return null;
+    if(provider==='deepseek')return id;
+    if(provider!=='codex'||runtime==='wsl'||typeof host!=='string'||!host||host.startsWith('wsl:'))return null;
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))return null;
+    return 'codex://threads/'+id+(host==='local'?'':'?hostId='+encodeURIComponent(host));
+  }
+};
 window.BridgeClipboard=(()=>{
   function modernCopy(value){
     try{
