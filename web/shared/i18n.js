@@ -2,6 +2,9 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"复制深度链接":"Copy deep link",
+"复制 Session ID":"Copy Session ID",
+"此接入暂无可用的桌面会话链接":"No Desktop session link is available for this access.",
 "组件加载时间较长，请重试":"Component is taking too long to load. Please retry.",
 "组件暂不可用，请重试":"Component unavailable. Please retry.",
 "终端加载失败，请重试":"Terminal failed to load. Please retry.",
