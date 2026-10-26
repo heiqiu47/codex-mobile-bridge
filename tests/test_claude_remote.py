@@ -320,6 +320,21 @@ class RemoteWorkerContract(unittest.TestCase):
             self.assertEqual(remote_worker.session(found, self.native)['nativeId'], self.native)
             with self.assertRaises(ValueError): remote_worker.session(found, bad)
 
+    def test_native_binary_proof_is_rechecked_immediately_before_remote_write(self):
+        found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
+        before = self.path.read_bytes()
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', side_effect=[True, False]) as supported, \
+             patch.object(remote_worker, 'archive_assert_no_cli'), \
+             patch.object(remote_worker, 'assert_session_closed'), \
+             patch.object(remote_worker, 'archive_file_change') as change:
+            with self.assertRaisesRegex(ValueError, '二进制归档能力已变化'):
+                remote_worker.command({'operation': 'archive', 'native': self.native,
+                                       'origin': found['origin'], 'archived': True})
+            self.assertEqual(supported.call_count, 2)
+            change.assert_not_called()
+        self.assertEqual(self.path.read_bytes(), before)
+
     def test_explicit_remote_archive_state_verifies_archived_content(self):
         found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
         request = {'operation': 'archive', 'native': self.native, 'origin': found['origin'], 'archived': True}

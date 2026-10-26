@@ -574,6 +574,8 @@ def command(request):
         if operation == 'archive':
             assert_session_closed(found)
             archive_assert_no_cli(found['binary'])
+            if not archive_supported(found['binary'], os.environ.copy()):
+                raise ValueError('原 Claude Code 二进制归档能力已变化，请重新核对')
             archive_file_change(found['directory'], session_path(found, native), native, request.get('archived'))
             row = session(found, native)
         return {**row, 'archiveSafe': True, 'runtimeKnown': True, 'status': 'idle', 'requests': []}
