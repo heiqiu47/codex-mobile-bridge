@@ -1,5 +1,6 @@
 """Loopback proxy bursts and request framing, without any real client sessions."""
 import http.client
+import json
 import socket
 import threading
 import unittest
@@ -14,6 +15,7 @@ from bridge.api.httpd import GatewayServer
 
 ROOT = Path(__file__).resolve().parents[1]
 HOST = 'phone.example.com'
+THREAD = '11111111-1111-4111-8111-111111111111'
 
 
 class ProxyHTTPTests(unittest.TestCase):
@@ -76,7 +78,9 @@ class ProxyHTTPTests(unittest.TestCase):
         for headers, body in [
                 ('Transfer-Encoding: chunked\r\n', b'0\r\n\r\n'),
                 ('Content-Length: 1\r\n', b'x'),
-                ('Content-Length: 0\r\nContent-Length: 1\r\n', b'x')]:
+                ('Content-Length: 0\r\nContent-Length: 1\r\n', b'x'),
+                ('Content-Length: invalid\r\n', b'x'),
+                ('Transfer-Encoding: \r\n', b'0\r\n\r\n')]:
             with self.subTest(headers=headers):
                 connection = self.connect()
                 response, payload = self.request(connection, headers, body)
@@ -102,6 +106,67 @@ class ProxyHTTPTests(unittest.TestCase):
             b'0\r\n\r\n', method='POST', path='/api/login')
         self.assertEqual(response.status, 400)
         self.assertEqual(response.getheader('Connection'), 'close')
+
+
+    def session_target(self):
+        target = self.server.bridge
+        target.for_host = lambda host: target
+        target.pin = MagicMock(return_value={'id': THREAD, 'bridgePinned': True})
+        target.archive = MagicMock(return_value={'id': THREAD, 'archived': True, 'status': 'confirmed'})
+        token, session = self.server.auth.new_session('127.0.0.1')
+        cookie = 'Cookie: ' + self.server.auth.cookie_name + '=' + token + '\r\n'
+        return target, cookie, 'X-CSRF-Token: ' + session['csrf'] + '\r\n'
+
+    def test_framed_get_cannot_dispatch_pipelined_session_mutations(self):
+        target, cookie, csrf = self.session_target()
+        self.start()
+        for action, value in [('pin', {'pinned': True}), ('archive', {'archived': True, 'id': THREAD})]:
+            body = json.dumps(value).encode()
+            pipeline = (f'POST /api/sessions/{THREAD}/{action} HTTP/1.1\r\nHost: {HOST}\r\n'
+                        f'Origin: https://{HOST}\r\n' + cookie + csrf +
+                        f'Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n').encode() + body
+            # Without close, the unread GET body itself is a valid authenticated
+            # POST, so this checks actual mutation suppression, not just a 400 tail.
+            for headers in [f'Content-Length: {len(pipeline)}\r\n',
+                            f'Content-Length: 0\r\nContent-Length: {len(pipeline)}\r\n',
+                            'Content-Length: invalid\r\n']:
+                with self.subTest(action=action, headers=headers):
+                    connection = self.connect()
+                    response, _ = self.request(connection, headers, pipeline)
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.getheader('Connection'), 'close')
+                    self.assertEqual(connection.recv(1), b'')
+                    target.pin.assert_not_called()
+                    target.archive.assert_not_called()
+
+    def test_session_write_auth_csrf_origin_and_framing_guards_remain_effective(self):
+        target, cookie, csrf = self.session_target()
+        self.start()
+        for action, value in [('pin', {'pinned': True}), ('archive', {'archived': True, 'id': THREAD})]:
+            payload = json.dumps(value).encode()
+            common = f'Content-Type: application/json\r\nContent-Length: {len(payload)}\r\n'
+            origin = f'Origin: https://{HOST}\r\n'
+            cases = [
+                (origin + common, payload, 401),
+                (origin + cookie + common, payload, 403),
+                ('Origin: https://other.example.com\r\n' + cookie + csrf + common, payload, 403),
+                (origin + cookie + csrf + 'Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n', b'0\r\n\r\n', 400),
+                (origin + cookie + csrf + common + f'Content-Length: {len(payload)}\r\n', payload, 400),
+                (origin + cookie + csrf + 'Content-Type: application/json\r\nContent-Length: invalid\r\n', payload, 400),
+            ]
+            for headers, body, status in cases:
+                with self.subTest(action=action, status=status, headers=headers):
+                    connection = self.connect()
+                    response, _ = self.request(connection, headers, body, method='POST', path=f'/api/sessions/{THREAD}/{action}')
+                    self.assertEqual(response.status, status)
+                    self.assertEqual(response.getheader('Connection'), 'close')
+                    target.pin.assert_not_called()
+                    target.archive.assert_not_called()
+            response, _ = self.request(self.connect(), origin + cookie + csrf + common + 'Connection: close\r\n',
+                                       payload, method='POST', path=f'/api/sessions/{THREAD}/{action}')
+            self.assertEqual(response.status, 200)
+            getattr(target, action).assert_called_once()
+            getattr(target, action).reset_mock()
 
 
 if __name__ == '__main__':
