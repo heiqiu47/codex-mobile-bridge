@@ -50,6 +50,17 @@ class WslClaudeContract(unittest.TestCase):
             self.assertEqual(self.entries.applications()[0]['running'], False)
             process.assert_not_called()
 
+    def test_stopped_distribution_archive_never_launches_worker(self):
+        cli = WslClaudeCli(self.entries)
+        self.addCleanup(cli.close)
+        native = {'nativeId': str(uuid.uuid4()), 'origin': 'fixture', 'cwd': '/work'}
+        row = cli._row(self.identifier, {**self.row, 'alias': self.identifier}, native)
+        cli.index[row['id']] = row
+        with patch('bridge.clients.claude.wsl.wsl.running_distributions', return_value=[]), \
+             patch('bridge.clients.claude.wsl.subprocess.run') as process:
+            with self.assertRaises(ValueError): cli.call('archive', row['id'], {'archived': True})
+            process.assert_not_called()
+
     def test_command_preserves_distro_user_config_and_native_guard(self):
         cli = WslClaudeCli(self.entries)
         with patch('bridge.clients.claude.wsl.wsl.command', return_value=['wsl.exe', '--exec', 'python3']) as command:
@@ -65,6 +76,8 @@ class WslClaudeContract(unittest.TestCase):
         source = zlib.decompress(base64.b64decode(__import__('ast').literal_eval(encoded))).decode()
         self.assertIn('os.environ["CLAUDE_CONFIG_DIR"]=\'/home/alice/.claude\'', source)
         self.assertIn('os.environ["MOBILE_BRIDGE_WSL_NATIVE"]="1"', source)
+        self.assertIn('def archive_paths(', source)
+        self.assertNotIn('from bridge.', source)
 
     def test_wsl_read_rechecks_selected_identity_and_retains_native_errors(self):
         cli = WslClaudeCli(self.entries)

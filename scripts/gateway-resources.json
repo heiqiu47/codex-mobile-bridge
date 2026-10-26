@@ -29,6 +29,7 @@
   "bridge/platforms/windows/codex-quit-helper.cs",
   "bridge/clients/claude/connector.js",
   "bridge/clients/claude/remote_worker.py",
+  "bridge/clients/claude/file_archive.py",
   "bridge/clients/deepseek/host.mjs",
   "bridge/clients/LICENSE.coding-mobile",
   "web/features/workspace/source-view.js",

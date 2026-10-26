@@ -11,6 +11,8 @@ import sys
 import uuid
 from pathlib import Path
 
+from bridge.clients.claude.file_archive import archive_paths, state as archive_file_state, change as archive_file_change, supported as archive_supported, recorded_writer as archive_recorded_writer
+
 MODES = {'default', 'acceptEdits', 'plan', 'dontAsk', 'auto', 'bypassPermissions'}
 
 
@@ -371,38 +373,42 @@ def saved(path, found, *, include_events=False):
     return row
 
 
-def sessions(found):
+def session_paths(found):
     root = Path(found['directory'])/'projects'
-    if not root.is_dir() or root.is_symlink():
-        return []
     result = []
-    for directory in root.iterdir():
-        if not directory.is_dir() or directory.is_symlink():
-            continue
-        for path in directory.glob('*.jsonl'):
-            row = saved(path, found)
-            if row:
-                result.append(row)
+    if root.is_dir() and not root.is_symlink():
+        for directory in root.iterdir():
+            if directory.is_dir() and not directory.is_symlink():
+                result.extend(path for path in directory.glob('*.jsonl') if not path.is_symlink())
+    return result + archive_paths(found['directory'])
+
+
+def sessions(found):
+    result = []
+    capable = archive_supported(found['binary'], os.environ.copy())
+    for path in session_paths(found):
+        row = saved(path, found)
+        if row:
+            result.append({**row, 'archived': path.parent.parent == Path(found['directory'])/'bridge-archives',
+                           'capabilities': {'archive': capable, 'unarchive': capable}})
     return result
 
 
 def session_path(found, native):
     native = str(uuid.UUID(native))
-    root = Path(found['directory'])/'projects'
-    if not root.is_dir() or root.is_symlink():
-        raise ValueError('原 Claude Code 会话不可用')
-    for directory in root.iterdir():
-        if directory.is_dir() and not directory.is_symlink():
-            path = directory/(native+'.jsonl')
-            if path.is_file() and not path.is_symlink():
-                return path
-    raise ValueError('原 Claude Code 会话不可用')
+    matches = [path for path in session_paths(found) if path.stem == native and path.is_file()]
+    if len(matches) != 1:
+        raise ValueError('原 Claude Code 会话路径不可用或存在冲突')
+    return matches[0]
 
 
 def session(found, native):
-    row = saved(session_path(found, native), found)
+    path = session_path(found, native)
+    row = saved(path, found)
     if row:
-        return row
+        capable = archive_supported(found['binary'], os.environ.copy())
+        return {**row, **archive_file_state(found['directory'], path, native),
+                'capabilities': {'archive': capable, 'unarchive': capable}}
     raise ValueError('原 Claude Code 会话不可用')
 
 
@@ -543,6 +549,18 @@ def command(request):
                 'authReady': auth_ready(found) if found else False}
     if not found or found['origin'] != request.get('origin'):
         raise ValueError('原 Claude Code 配置已变化或不可用')
+    if operation in ('archive-state', 'archive'):
+        native = str(uuid.UUID(request['native']))
+        row = session(found, native)
+        if not row['capabilities']['archive'] or not archive_recorded_writer(found['directory'], native):
+            raise ValueError('原 Claude Code 归档能力或停止状态尚未确认')
+        assert_session_closed(found, native)
+        if found != profile():
+            raise ValueError('原 Claude Code 配置已变化或不可用')
+        if operation == 'archive':
+            archive_file_change(found['directory'], session_path(found, native), native, request.get('archived'))
+            row = session(found, native)
+        return {**row, 'archiveSafe': True, 'runtimeKnown': True, 'status': 'idle', 'requests': []}
     if operation == 'detail':
         return session(found, request['native'])
     if operation == 'history':
@@ -564,6 +582,8 @@ def resume(request):
     if not found or found['origin'] != request.get('origin'):
         raise ValueError('原 Claude Code 配置已变化或不可用')
     row = session(found, request['native'])
+    if row.get('archived'):
+        raise ValueError('请先恢复归档的 Claude Code 会话')
     if row['cwd'] != request.get('cwd') or row['model'] != request.get('model') or row['permissionMode'] != request.get('permissionMode'):
         raise ValueError('原 Claude Code 会话设置已变化')
     if not row['permissionKnown'] or not auth_ready(found):

@@ -20,7 +20,7 @@ from bridge.resources import source_text
 
 class RemoteWorkerContract(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]/'.tmp')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.config = self.root/'remote-profile'; self.config.mkdir()
@@ -48,11 +48,18 @@ class RemoteWorkerContract(unittest.TestCase):
         self.binary = binary
 
     def run_worker(self, request):
-        process = subprocess.run([sys.executable, '-u', '-c', source_text('clients/claude/remote_worker.py')],
+        process = subprocess.run([sys.executable, '-u', '-c', remote.worker_source()],
                                  input=json.dumps(request)+'\n', text=True, encoding='utf-8', capture_output=True,
-                                 env=self.env, timeout=5)
+                                 env={**self.env, 'PYTHONPATH': ''}, cwd=self.root, timeout=5)
         self.assertEqual(process.returncode, 0, process.stderr)
         return json.loads(process.stdout)
+
+    def test_payload_embeds_archive_helper_and_resource_is_explicitly_bundled(self):
+        source = remote.worker_source()
+        self.assertNotIn('from bridge.', source)
+        self.assertIn('def archive_paths(', source)
+        resources = json.loads((Path(__file__).resolve().parents[1]/'scripts/gateway-resources.json').read_text())
+        self.assertIn('bridge/clients/claude/file_archive.py', resources)
 
     def test_standalone_passive_history_and_host_profile(self):
         listed = self.run_worker({'operation': 'list'})['value']
@@ -252,6 +259,50 @@ class RemoteWorkerContract(unittest.TestCase):
                 self.assertEqual(self.path.read_bytes(), before)
 
 
+    def test_archive_roundtrip_keeps_native_identity_and_archived_history_discoverable(self):
+        found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
+        before = self.path.read_bytes()
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=True), \
+             patch.object(remote_worker, 'archive_recorded_writer', return_value=True), \
+             patch.object(remote_worker, 'assert_session_closed') as guard:
+            result = remote_worker.command({'operation': 'archive', 'native': self.native,
+                                            'origin': found['origin'], 'archived': True})
+            self.assertTrue(result['archived'])
+            self.assertTrue(result['archiveSafe'])
+            guard.assert_called_once_with(found, self.native)
+            self.assertFalse(self.path.exists())
+            rows = remote_worker.sessions(found)
+            self.assertEqual([row['nativeId'] for row in rows], [self.native])
+            self.assertTrue(rows[0]['archived'])
+            stored = remote_worker.session_path(found, self.native)
+            self.assertEqual(stored.read_bytes(), before)
+            detail = remote_worker.command({'operation': 'detail', 'native': self.native, 'origin': found['origin']})
+            self.assertTrue(detail['archived'])
+            restored = remote_worker.command({'operation': 'archive', 'native': self.native,
+                                              'origin': found['origin'], 'archived': False})
+            self.assertFalse(restored['archived'])
+            self.assertEqual(self.path.read_bytes(), before)
+
+    def test_remote_archive_rejects_unproven_capability_missing_registry_and_live_writer(self):
+        found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
+        request = {'operation': 'archive', 'native': self.native, 'origin': found['origin'], 'archived': True}
+        before = self.path.read_bytes()
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=False):
+            with self.assertRaises(ValueError): remote_worker.command(request)
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=True), \
+             patch.object(remote_worker, 'archive_recorded_writer', return_value=False):
+            with self.assertRaises(ValueError): remote_worker.command(request)
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=True), \
+             patch.object(remote_worker, 'archive_recorded_writer', return_value=True), \
+             patch.object(remote_worker, 'assert_session_closed', side_effect=ValueError('live writer')):
+            with self.assertRaisesRegex(ValueError, 'live writer'): remote_worker.command(request)
+        self.assertEqual(self.path.read_bytes(), before)
+
+
 class RemoteAdapterContract(unittest.TestCase):
     def setUp(self):
         self.native = str(uuid.uuid4())
@@ -431,3 +482,27 @@ class RemoteAdapterContract(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+    def test_archive_rechecks_host_and_owned_executor_and_propagates_native_state(self):
+        row = self.cli._row('ssh:test', self.hosts.hosts()['ssh:test'], self.row)
+        sid = row['id'];self.cli.index[sid] = row
+        with patch.object(self.cli, '_remote', return_value={**self.row, 'archived': True,
+                         'capabilities': {'archive': True, 'unarchive': True}, 'archiveSafe': True}) as request:
+            result = self.cli.call('archive', sid, {'archived': True})
+            self.assertTrue(result['archived'])
+            self.assertEqual(request.call_args.args, ('fixture-loopback', {'operation': 'archive',
+                             'native': self.native, 'origin': self.row['origin'], 'archived': True}))
+            self.assertEqual(result['id'], sid)
+            self.cli.owned[sid] = SimpleNamespace(process=SimpleNamespace(poll=lambda: None))
+            request.reset_mock()
+            with self.assertRaises(BridgeUnavailable): self.cli.call('archive-state', sid, {})
+            request.assert_not_called()
+            self.cli.owned.clear()
+            self.hosts.hosts.return_value = {}
+            with self.assertRaises(ValueError): self.cli.call('archive', sid, {'archived': False})
+            request.assert_not_called()
+
+    def test_archive_identity_change_is_rejected(self):
+        row = self.cli._row('ssh:test', self.hosts.hosts()['ssh:test'], self.row);sid = row['id'];self.cli.index[sid] = row
+        with patch.object(self.cli, '_remote', return_value={**self.row, 'origin': 'another-profile'}):
+            with self.assertRaisesRegex(ValueError, '身份已变化'): self.cli.call('archive-state', sid, {})
