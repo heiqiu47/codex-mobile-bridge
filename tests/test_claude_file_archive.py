@@ -323,3 +323,89 @@ class DurableLinuxIdentityTests(unittest.TestCase):
 
     def test_other_machine_cannot_restore_archive(self):
         self.run_roundtrip(other_machine=True)
+
+
+class LinuxExecutableCensus(unittest.TestCase):
+    def stat_text(self, start='123'):
+        return '4321 (2.1.308) '+' '.join(['S']+['0']*18+[start])
+
+    def metadata(self, executable='/home/synthetic/.local/share/claude/versions/2.1.308', namespace='pid:[100]'):
+        def link(path):
+            return executable if str(path).endswith('/exe') else namespace
+        return patch.object(archive.os, 'readlink', side_effect=link)
+
+    def test_full_executable_path_replaces_truncated_comm(self):
+        result=SimpleNamespace(returncode=0,stdout='1000 4321 2.1.308\n')
+        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000), \
+             patch.object(archive.os,'readlink',return_value='pid:[100]'), \
+             patch.object(archive,'_linux_executable',return_value='/home/synthetic/.local/share/claude/versions/2.1.308') as read, \
+             patch.object(archive.subprocess,'run',return_value=result):
+            with self.assertRaises(ValueError):archive.assert_no_cli('/selected/claude')
+            read.assert_called_once_with(4321,1000,'pid:[100]')
+
+    def test_noncandidate_unreadable_process_does_not_expand_guard_scope(self):
+        result=SimpleNamespace(returncode=0,stdout='1000 4321 session-helper\n')
+        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000), \
+             patch.object(archive.os,'readlink',return_value='pid:[100]'), \
+             patch.object(archive,'_linux_executable',side_effect=PermissionError()) as read, \
+             patch.object(archive.subprocess,'run',return_value=result) as commands:
+            archive.assert_no_cli('/selected/claude')
+            read.assert_not_called();self.assertEqual(commands.call_count,1)
+
+    def test_native_candidate_unreadable_is_refused_without_argument_reads(self):
+        result=SimpleNamespace(returncode=0,stdout='1000 4321 2.1.308\n')
+        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000), \
+             patch.object(archive.os,'readlink',return_value='pid:[100]'), \
+             patch.object(archive,'_linux_executable',side_effect=ValueError('unknown executable')), \
+             patch.object(archive.subprocess,'run',return_value=result) as commands:
+            with self.assertRaisesRegex(ValueError,'unknown executable'):archive.assert_no_cli('/selected/claude')
+            self.assertEqual(commands.call_count,1)
+
+    def test_other_native_version_candidate_is_refused(self):
+        result=SimpleNamespace(returncode=0,stdout='1000 4321 2.1.307\n')
+        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000), \
+             patch.object(archive.os,'readlink',return_value='pid:[100]'), \
+             patch.object(archive,'_linux_executable',return_value='/home/synthetic/.local/share/claude/versions/2.1.307'), \
+             patch.object(archive.subprocess,'run',return_value=result) as commands:
+            with self.assertRaises(ValueError):archive.assert_no_cli('/selected/2.1.308')
+            self.assertEqual(commands.call_count,1)
+
+    def test_selected_long_basename_is_a_candidate(self):
+        binary='/selected/native-selected-binary-long'
+        comm=Path(binary).name[:15];result=SimpleNamespace(returncode=0,stdout='1000 4321 '+comm+'\n')
+        with patch.object(Path,'resolve',lambda path,**options:path), \
+             patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000), \
+             patch.object(archive.os,'readlink',return_value='pid:[100]'), \
+             patch.object(archive,'_linux_executable',return_value=binary) as read, \
+             patch.object(archive.subprocess,'run',return_value=result):
+            with self.assertRaises(ValueError):archive.assert_no_cli(binary)
+            read.assert_called_once()
+
+    def test_deleted_executable_retains_native_install_identity(self):
+        with patch.object(Path,'stat',return_value=SimpleNamespace(st_uid=1000)), \
+             patch.object(Path,'read_text',return_value=self.stat_text()), \
+             self.metadata('/home/synthetic/.local/share/claude/versions/2.1.308 (deleted)'):
+            self.assertEqual(archive._linux_executable(4321,1000,'pid:[100]'), '/home/synthetic/.local/share/claude/versions/2.1.308')
+
+    def test_pid_generation_change_fails_closed(self):
+        with patch.object(Path,'stat',return_value=SimpleNamespace(st_uid=1000)), \
+             patch.object(Path,'read_text',side_effect=[self.stat_text(),self.stat_text('456')]),self.metadata():
+            with self.assertRaises(ValueError):archive._linux_executable(4321,1000,'pid:[100]')
+
+    def test_uid_and_namespace_changes_fail_closed(self):
+        with patch.object(Path,'stat',return_value=SimpleNamespace(st_uid=1001)):
+            with self.assertRaises(ValueError):archive._linux_executable(4321,1000,'pid:[100]')
+        with patch.object(Path,'stat',return_value=SimpleNamespace(st_uid=1000)),self.metadata(namespace='pid:[200]'):
+            with self.assertRaises(ValueError):archive._linux_executable(4321,1000,'pid:[100]')
+
+    def test_definitely_exited_process_is_skipped(self):
+        with patch.object(Path,'stat',side_effect=FileNotFoundError()):
+            self.assertIsNone(archive._linux_executable(4321,1000,'pid:[100]'))
+
+    def test_missing_exe_but_live_process_and_permissions_fail_closed(self):
+        for error in (FileNotFoundError(),PermissionError()):
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(Path,'stat',return_value=SimpleNamespace(st_uid=1000)), \
+                 patch.object(Path,'read_text',return_value=self.stat_text()), \
+                 patch.object(archive.os,'readlink',side_effect=lambda path: (_ for _ in ()).throw(error) if str(path).endswith('/exe') else 'pid:[100]'):
+                with self.assertRaises(ValueError):archive._linux_executable(4321,1000,'pid:[100]')

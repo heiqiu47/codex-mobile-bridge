@@ -13,7 +13,10 @@ import tempfile
 from pathlib import Path
 
 # Populated only after native picker hide/restore acceptance for an exact version.
-VERIFIED_PICKER_VERSIONS = {('darwin', '2.1.292'): '97a01e5bc74a199e67189435d0331ea3a24eac2e07db4b76d9148c5b0386138f'}
+VERIFIED_PICKER_VERSIONS = {
+    ('darwin', '2.1.292'): '97a01e5bc74a199e67189435d0331ea3a24eac2e07db4b76d9148c5b0386138f',
+    ('linux', '2.1.308'): '356733f185fa988e6bf3aa9a555269fdd167982a2e2a80d3c8a78037bb92ad58',
+}
 
 
 def supported(binary, environment):
@@ -46,10 +49,47 @@ def _binary_hash(path, device, inode, size, modified):
     return digest.hexdigest()
 
 
+def _linux_executable(pid, uid, namespace):
+    """Read the actual executable with same-UID/namespace/generation evidence."""
+    process = Path('/proc')/str(pid)
+    def proof():
+        if process.stat().st_uid != uid or os.readlink(process/'ns/pid') != namespace:
+            raise ValueError('Claude 进程归属或 PID 命名空间已变化')
+        value = (process/'stat').read_text()
+        fields = value.rpartition(')')[2].split()
+        if not value.startswith(str(pid)+' (') or len(fields) < 20 or not fields[19].isdigit():
+            raise ValueError('Claude 进程代际不可验证')
+        return fields[19]
+    try:
+        before = proof()
+        executable = os.readlink(process/'exe')
+        if proof() != before:
+            raise ValueError('Claude 进程代际已变化')
+        return executable.removesuffix(' (deleted)')
+    except FileNotFoundError:
+        # A missing exe can also mean an exited main thread with live workers.
+        # Only a vanished process directory proves there is no current writer.
+        try:
+            process.stat()
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise ValueError('无法核验 Claude 进程可执行文件') from error
+        raise ValueError('无法核验 Claude 进程可执行文件') from None
+    except OSError as error:
+        raise ValueError('无法核验 Claude 进程可执行文件') from error
+
+
 def assert_no_cli(binary):
     """Fresh process identity census; no environment or conversation reads."""
     if sys.platform not in ('darwin', 'linux'):
         raise ValueError('当前系统的 Claude 原生进程清单未验证')
+    namespace = None
+    if sys.platform == 'linux':
+        try: namespace = os.readlink('/proc/self/ns/pid')
+        except OSError as error: raise ValueError('无法核验 Claude PID 命名空间') from error
+        if not re.fullmatch(r'pid:\[\d+\]', namespace):
+            raise ValueError('无法核验 Claude PID 命名空间')
     result = subprocess.run(['ps', '-axo', 'uid=,pid=,comm='], capture_output=True,
                             text=True, timeout=5)
     if result.returncode:
@@ -60,6 +100,15 @@ def assert_no_cli(binary):
             raise ValueError('Claude 原生进程清单不完整')
         if int(parts[0]) != os.getuid():continue
         pid, executable = int(parts[1]), parts[2]
+        if sys.platform == 'linux':
+            comm = Path(executable).name
+            if comm in ('claude', 'claude.exe', 'claude-code'):
+                raise ValueError('仍有 Claude CLI 进程运行，请先在原终端结束')
+            candidate = (comm == Path(binary).name[:15] or comm in ('node', 'nodejs', 'bun')
+                         or re.fullmatch(r'\d+\.\d+\.\d+(?:[-+].*)?', comm))
+            if not candidate: continue
+            executable = _linux_executable(pid, os.getuid(), namespace)
+            if executable is None: continue
         name = Path(executable).name
         if (name in ('claude', 'claude.exe', 'claude-code')
                 or '@anthropic-ai/claude-code/' in executable
