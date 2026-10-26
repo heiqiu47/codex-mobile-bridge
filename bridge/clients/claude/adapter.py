@@ -17,7 +17,6 @@ from bridge.features.sessions.create import ArchiveNotSent
 from bridge.clients.claude.mailbox import FileDesktop, MAX_REQUEST, CONNECTOR_REVISION, workspace_trust_rejection
 from bridge.clients.claude.cli_session import ClaudeCli, project_account_identity
 from bridge.clients.claude.remote import RemoteClaudeCli
-from bridge.clients.claude.wsl import ClaudeCliRemotes
 from bridge.app.lifecycle import private_json
 from bridge.platforms.windows import session as windows_session
 from bridge.platforms.windows.session import DesktopUnavailable
@@ -30,7 +29,11 @@ class Claude:
         self.directory = Path(directory)
         self.hosts = hosts
         self.cli = ClaudeCli(self.directory.parent/'uploads')
-        self.remote_cli = ClaudeCliRemotes(hosts, wsl_entries) if wsl_entries is not None else RemoteClaudeCli(hosts)
+        if wsl_entries is not None:
+            from bridge.clients.claude.wsl import ClaudeCliRemotes
+            self.remote_cli = ClaudeCliRemotes(hosts, wsl_entries)
+        else:
+            self.remote_cli = RemoteClaudeCli(hosts)
         self.desktop = None
         self.index = {}
         self.loop = None

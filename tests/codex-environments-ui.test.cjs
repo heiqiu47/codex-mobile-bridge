@@ -6,14 +6,14 @@ const environmentsCode=section("let codexAccountEntry='desktop'",'clientNavigati
 const creationCode=section('let newChatProjects=[]','const messageActions=');
 const accountCode=section("const codexCliRoot=el('div');",'window.BridgeNavigation=');
 const ubuntu='wsl:'+'a'.repeat(32),debian='wsl:'+'b'.repeat(32),disabled='wsl:'+'c'.repeat(32);
-function fixture({native=true,listSource='all',host='local'}={}){
+function fixture({native=true,listSource='all',host='local',wslSupported=true}={}){
  const nodes=new Map(),calls=[],opened=[],store=new Map(),notices=[];
  function node(tag='div'){
   let value='';const n={tagName:tag.toUpperCase(),children:[],dataset:{},textContent:'',hidden:false,disabled:false,checked:false,open:false,
    get value(){return value;},set value(next){value=String(next);},get options(){return this.children;},
    append(...children){for(const child of children){this.children.push(child);child.parentElement=this;if(this.tagName==='SELECT'&&!value)value=child.value;}},
    replaceChildren(...children){this.children=[];if(this.tagName==='SELECT')value='';this.append(...children);},
-   showModal(){this.open=true;},close(){this.open=false;},addEventListener(){},dispatchEvent(){},setAttribute(key,v){this[key]=v;},closest(selector){return selector==='.picker-head'?this:null;},after(){},
+   remove(){if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(child=>child!==this);},showModal(){this.open=true;},close(){this.open=false;},addEventListener(){},dispatchEvent(){},setAttribute(key,v){this[key]=v;},closest(selector){return selector==='.picker-head'?this:null;},after(){},
    querySelector(){return this.labelNode||(this.labelNode=node('span'));},querySelectorAll(){return [];},classList:{add(){},remove(){},toggle(){},contains(){return false;}}};return n;
  }
  const html=fs.readFileSync(path.join(__dirname,'../web/index.html'),'utf8');
@@ -27,10 +27,10 @@ function fixture({native=true,listSource='all',host='local'}={}){
  class AccountsPanel{constructor(options){Object.assign(this,options);this.clears=0;this.refreshButton=node('button');}attachApiAccess(panel,details){this.apiPanel=panel;this.apiDetails=details;}clear(){this.clears++;}refresh(){return this.read();}}
  class CliAccessPanel{constructor(options){Object.assign(this,options);this.clears=0;this.refreshes=0;}clear(){this.clears++;}refresh(){this.refreshes++;return this.read();}}
  class WslAccountsPanel{constructor(options){Object.assign(this,options);}clear(){}select(entry){this.entry=entry;return this.read(entry);}}
- const close=node('button'),context=vm.createContext({$,api,Option,AccountsPanel,CliAccessPanel,WslAccountsPanel,URL,Event:class{constructor(type){this.type=type;}},window:{},BridgeI18n:{t:value=>value},document:{getElementById:$,createElement:node,querySelector:()=>close},
+ const close=node('button'),context=vm.createContext({$,api,Option,AccountsPanel,CliAccessPanel,WslAccountsPanel,URL,Event:class{constructor(type){this.type=type;}},window:{BridgeFeatures:{load:async name=>{calls.push({feature:name});}}},BridgeI18n:{t:value=>value,locale:()=> 'zh'},document:{getElementById:$,createElement:node,querySelector:()=>close},
   t:value=>value,el:(tag,_class='',text='')=>Object.assign(node(tag),{textContent:text}),
-  clientNavigation:{provider:'codex',clients:[{id:'codex',entries}]},currentHost:host,currentId:null,listSource,listRows:[],
-  uuid:()=> '11111111-1111-4111-8111-111111111111',setLanguageBusy(){},loadList:async()=>{},openChat:async(id,where)=>opened.push({id,host:where}),toast:message=>notices.push(message),isCodexClient:id=>id==='codex',
+  clientNavigation:{wslSupported,provider:'codex',clients:[{id:'codex',entries}]},currentHost:host,currentId:null,listSource,listRows:[],
+  renderSourceFilter(){},uuid:()=> '11111111-1111-4111-8111-111111111111',setLanguageBusy(){},loadList:async()=>{},openChat:async(id,where)=>opened.push({id,host:where}),toast:message=>notices.push(message),isCodexClient:id=>id==='codex',
   sessionStorage:{getItem:key=>store.get(key)||null,setItem:(key,value)=>store.set(key,value),removeItem:key=>store.delete(key)}});
  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/shared/project-picker.js'),'utf8'),context);
  vm.runInContext(environmentsCode+creationCode+accountCode,context);
@@ -79,15 +79,15 @@ test('WSL directory project creation and browsing use only the selected environm
 });
 test('switching account environments routes WSL reads and edits without invoking native CLI access',async()=>{
  const ui=fixture();ui.setHandler(async()=>({accounts:[],current:{kind:'external'},management:{external:true}}));
- ui.run("accountEntrySelect.value='"+ubuntu+"';accountEntrySelect.onchange();");await Promise.resolve();
+ ui.run("renderAccountEntries();$('accounts-dialog').showModal();accountEntrySelect.value='"+ubuntu+"';accountEntrySelect.onchange();");await new Promise(setImmediate);
  assert.equal(ui.run('codexCliDetails.hidden'),true);assert.ok(ui.run('codexCliAccessPanel.clears')>0);assert.equal(ui.calls.some(call=>call.url==='/api/cli-access'),false);
  await ui.run("codexWslAccounts.request({provider:'codex',entry:codexWslAccounts.entry,action:'switch',id:'saved'})");assert.equal(ui.calls.at(-1).url,'/api/wsl-accounts');assert.equal(ui.calls.at(-1).body.entry,ubuntu);assert.equal(ui.calls.at(-1).body.action,'switch');
- ui.run("accountEntrySelect.value='"+debian+"';accountEntrySelect.onchange();");await Promise.resolve();assert.equal(ui.calls.at(-1).url,'/api/wsl-accounts?provider=codex&entry='+encodeURIComponent(debian));assert.equal(ui.calls.some(call=>call.url==='/api/cli-access'),false);
- ui.run("accountEntrySelect.value='desktop';accountEntrySelect.onchange();");await Promise.resolve();assert.equal(ui.run('codexCliDetails.hidden'),false);assert.equal(ui.calls.at(-1).url,'/api/cli-access');
+ ui.run("accountEntrySelect.value='"+debian+"';accountEntrySelect.onchange();");await new Promise(setImmediate);assert.equal(ui.calls.at(-1).url,'/api/wsl-accounts?provider=codex&entry='+encodeURIComponent(debian));assert.equal(ui.calls.some(call=>call.url==='/api/cli-access'),false);
+ ui.run("accountEntrySelect.value='desktop';accountEntrySelect.onchange();");await new Promise(setImmediate);assert.equal(ui.run('codexCliDetails.hidden'),false);assert.equal(ui.calls.at(-1).url,'/api/cli-access');
 });
 test('opening accounts from an active WSL chat selects its environment without a local request',async()=>{
- const ui=fixture({native:false,host:ubuntu});ui.setHandler(async()=>({accounts:[],current:{kind:'external'},management:{external:true}}));assert.equal(ui.run('openCurrentAccounts()'),true);await Promise.resolve();
- assert.equal(ui.run('codexAccountEntry'),ubuntu);assert.equal(ui.run('codexCliDetails.hidden'),true);assert.equal(ui.calls.length,1);assert.equal(ui.calls[0].url,'/api/wsl-accounts?provider=codex&entry='+encodeURIComponent(ubuntu));
+ const ui=fixture({native:false,host:ubuntu});ui.setHandler(async()=>({accounts:[],current:{kind:'external'},management:{external:true}}));assert.equal(ui.run('openCurrentAccounts()'),true);await new Promise(setImmediate);
+ assert.equal(ui.run('codexAccountEntry'),ubuntu);assert.equal(ui.run('codexCliDetails.hidden'),true);assert.equal(ui.calls.filter(call=>call.url).length,1);assert.equal(ui.calls.find(call=>call.url).url,'/api/wsl-accounts?provider=codex&entry='+encodeURIComponent(ubuntu));
 });
 
 test('a stopped WSL can create an independent chat when passive project inventory fails',async()=>{
@@ -130,4 +130,10 @@ test('changing the selected WSL invalidates an open directory picker before it c
  ui.$('new-chat-entry').value=debian;await ui.$('new-chat-entry').onchange();const count=ui.calls.length;
  ui.$('folder-picker-name').value='must-not-create';await ui.$('folder-picker-create').onclick();
  assert.equal(ui.calls.length,count);assert.equal(ui.$('folder-picker').open,false);assert.equal(ui.$('new-chat-directory-path').value,'');
+});
+
+test('non-Windows gateway omits WSL form controls and does not load or query WSL',async()=>{
+ const ui=fixture({wslSupported:false,listSource:'wsl'});await ui.$('new-chat').onclick();ui.run('openCurrentAccounts()');await new Promise(setImmediate);
+ assert.equal(ui.$('new-chat-type').options.some(option=>option.value==='wsl'),false);assert.equal(ui.run('accountEntryControls'),null);assert.equal(ui.run('codexWslAccounts'),null);
+ assert.equal(ui.calls.some(call=>call.feature==='wsl'||call.url?.includes('wsl')||call.url?.includes('entry=')),false);
 });

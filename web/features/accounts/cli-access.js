@@ -2,7 +2,7 @@
 class CliAccessPanel {
   constructor({root,provider,read,request,formOnly=false,onChanged=()=>{}}){
     if(!['codex','claude'].includes(provider))throw Error('Invalid CLI provider');
-    Object.assign(this,{root,provider,read,request,formOnly,onChanged});this.value=null;this.busy=false;this.generation=0;this.apiResults=new Map();
+    Object.assign(this,{root,provider,read,request,formOnly,onChanged});this.value=null;this.busy=false;this.generation=0;this.draftRevision=0;this.apiResults=new Map();
     this.build();
   }
   t(key){return BridgeI18n.t(key);}
@@ -32,7 +32,31 @@ class CliAccessPanel {
     for(const field of [this.baseUrl.label,this.key.label,this.schemeRow])field.classList.add('cli-access-full-row');
     this.save.classList.add('primary');
     const actions=this.node('div',null,'cli-access-form-actions');actions.append(this.cancel,this.save);
-    this.form.append(this.name.label,this.model.label,modelHint,this.baseUrl.label,this.key.label,this.schemeRow,actions);
+    if(this.formOnly&&this.provider==='codex'){
+      this.root.classList.add('codex-api-editor');
+      const connection=this.node('div',null,'codex-api-connection'),models=this.node('div',null,'codex-api-models');
+      this.model.label.firstElementChild.remove();
+      this.model.input.placeholder=this.t('获取后自动填入，或手动输入');
+      this.model.input.id='codex-api-model-'+(++CliAccessPanel.editorId);
+      this.model.label.htmlFor=this.model.input.id;
+      this.modelSelect=this.node('select');this.modelSelect.id=this.model.input.id+'-select';this.modelSelect.hidden=true;
+      this.modelSelect.setAttribute('aria-label',this.t('默认模型'));
+      this.modelSelect.onchange=()=>{this.model.input.value=this.modelSelect.value;this.draftAutoModel=null;};
+      this.model.input.oninput=()=>{this.draftAutoModel=null;};
+      this.fetchModels=this.button('获取上游模型',()=>this.discoverModels());
+      this.fetchModels.className='codex-api-fetch';
+      this.modelFeedback=this.node('p',null,'account-muted codex-api-model-feedback');this.modelFeedback.setAttribute('role','status');
+      this.manualModel=this.button('手动填写',()=>{const selected=this.modelSelect.hidden;if(selected)this.model.input.value=this.modelSelect.value;this.draftAutoModel=null;this.modelSelection(selected);});this.manualModel.className='codex-api-fetch';this.manualModel.hidden=true;
+      const modelHead=this.node('div',null,'codex-api-model-head'),modelFooter=this.node('div',null,'codex-api-model-footer');
+      this.modelCaption=this.node('label','默认模型');this.modelCaption.htmlFor=this.model.input.id;
+      modelHead.append(this.modelCaption,this.fetchModels);modelFooter.append(this.modelFeedback,this.manualModel);
+      models.append(modelHead,this.model.label,this.modelSelect,modelFooter);
+      connection.append(this.name.label,this.baseUrl.label,this.key.label);
+      this.cancel.hidden=false;this.cancel.textContent=this.t('取消');this.cancel.onclick=()=>{this.resetForm();if(this.root.parentNode?.tagName==='DETAILS')this.root.parentNode.open=false;};
+      this.baseUrl.input.placeholder='https://api.example.com/v1';
+      this.baseUrl.input.oninput=this.key.input.oninput=()=>this.clearDraftModels();
+      this.form.append(connection,models,actions);
+    }else this.form.append(this.name.label,this.model.label,modelHint,this.baseUrl.label,this.key.label,this.schemeRow,actions);
     this.native=this.button('保存当前原生接入',()=>this.perform({provider:this.provider,action:'importCurrent',name:this.t('本机原生接入')}));
     this.root.append(...(this.formOnly?[this.status,this.error,this.form]:[heading,refresh,this.status,this.error,this.rows,this.form,this.native]));
     this.onLanguage=()=>this.render();document.addEventListener('bridge-language',this.onLanguage);
@@ -40,20 +64,53 @@ class CliAccessPanel {
   setBusy(busy){
     this.busy=busy;
     this.root.querySelectorAll('button,input,select').forEach(control=>{control.disabled=busy;});
+    if(this.fetchModels){this.fetchModels.disabled=busy||!!this.draftLoading;this.save.disabled=busy||!!this.draftLoading;}
+  }
+  modelSelection(selected){
+    this.modelSelect.hidden=!selected;this.model.input.hidden=selected;
+    this.model.label.htmlFor=selected?this.modelSelect.id:this.model.input.id;
+    this.modelCaption.htmlFor=this.model.label.htmlFor;
+    this.manualModel.textContent=this.t(selected?'手动填写':'从列表选择');
+  }
+  clearDraftModels(){
+    this.draftRevision=(this.draftRevision||0)+1;this.draftLoading=false;
+    if(!this.modelSelect)return;
+    if(this.draftAutoModel&&this.model.input.value===this.draftAutoModel)this.model.input.value='';this.draftAutoModel=null;this.save.disabled=this.busy;
+    this.modelSelect.replaceChildren();this.modelSelection(false);this.manualModel.hidden=true;
+    this.modelFeedback.textContent='';this.fetchModels.textContent=this.t('获取上游模型');this.fetchModels.disabled=this.busy;
+  }
+  async discoverModels(){
+    if(this.busy||this.draftLoading)return;
+    const revision=this.draftRevision,context=()=>JSON.stringify([this.editId,this.baseUrl.input.value,this.key.input.value]),started=context();
+    const request={provider:'codex',action:'modelsDraft',baseUrl:this.baseUrl.input.value,apiKey:this.key.input.value,...(this.editId?{id:this.editId}:{})};
+    this.draftLoading=true;this.save.disabled=true;this.fetchModels.disabled=true;this.fetchModels.textContent=this.t('正在获取…');this.modelFeedback.textContent='';
+    try{
+      const result=await this.request(request);
+      if(revision!==this.draftRevision||started!==context())return;
+      const models=Array.isArray(result.models)?result.models.filter(id=>typeof id==='string'&&id.trim()):[];
+      if(!models.length)throw Error('上游未返回兼容的模型列表，请手动填写模型 ID');
+      this.modelSelect.replaceChildren(...models.map(id=>{const option=this.node('option');option.value=id;option.textContent=id;return option;}));
+      if(!this.model.input.value.trim()){this.model.input.value=models[0];this.draftAutoModel=models[0];}
+      const selected=models.includes(this.model.input.value);if(selected)this.modelSelect.value=this.model.input.value;
+      this.modelSelection(selected);this.manualModel.hidden=false;
+      this.modelFeedback.textContent=this.t('已获取模型，可修改默认选择。');
+    }catch(error){if(revision===this.draftRevision&&started===context())this.modelFeedback.textContent=this.t(error.message);}
+    finally{request.apiKey='';if(revision===this.draftRevision){this.draftLoading=false;this.save.disabled=this.busy;this.fetchModels.disabled=this.busy;this.fetchModels.textContent=this.t('获取上游模型');}}
   }
   clear(){
     this.generation++;
+    this.clearDraftModels();
     this.value=null;
     this.apiResults.clear();
     this.setBusy(false);
     this.form.reset();
     this.key.input.value='';
-    this.editId=null;this.editKind=null;this.cancel.hidden=true;
+    this.editId=null;this.editKind=null;this.cancel.hidden=!this.modelSelect;
     this.status.textContent='';this.error.textContent='';
     this.render();
   }
   dispose(){this.clear();document.removeEventListener('bridge-language',this.onLanguage);}
-  resetForm(){this.editId=null;this.editKind=null;this.form.reset();this.key.input.value='';this.cancel.hidden=true;this.render();}
+  resetForm(){this.clearDraftModels();this.editId=null;this.editKind=null;this.form.reset();this.key.input.value='';this.cancel.hidden=!this.modelSelect;this.render();}
   async refresh(){
     if(this.busy)return;
     const generation=++this.generation;
@@ -92,7 +149,7 @@ class CliAccessPanel {
     const provider=this.provider,data=this.value?.[provider];
     this.schemeRow.hidden=provider!=='claude'||this.editKind==='rename';for(const field of [this.baseUrl,this.model,this.key])field.label.hidden=this.editKind==='rename';this.save.textContent=this.t(this.editKind==='rename'?'保存名称':'保存 API 接入');this.rows.replaceChildren();
     if(!data){this.status.textContent='';return;}
-    this.status.textContent=provider==='codex'?this.t('Codex CLI 与 Desktop 共用本机接入配置。'):this.t('Claude Code CLI 使用所选配置目录。');
+    this.status.textContent=provider==='codex'?(this.formOnly?'':this.t('Codex CLI 与 Desktop 共用本机接入配置。')):this.t('Claude Code CLI 使用所选配置目录。');
     if(provider==='claude'&&data.verification?.status==='configured')this.status.textContent+=' '+this.t((data.accounts||[]).find(row=>row.id===data.activeId)?.kind==='api'?'API 配置已核对；未验证 Key 的远端有效性。':'原生配置已核对。');
     if(data.cliSwitch?.phase==='pending')this.rows.append(this.node('p','正在切换接入…','account-muted'));
     if(data.cliSwitch?.phase==='failed'){const error=this.node('p',null,'error');error.textContent=this.t(data.cliSwitch.error);this.rows.append(error);}
@@ -127,6 +184,7 @@ class CliAccessPanel {
     if(this.busy)this.setBusy(true);
   }
   edit(provider,row,rename=false){
+    this.clearDraftModels();
     this.editId=row.id;this.editKind=rename?'rename':'api';this.name.input.value=row.name;
     this.baseUrl.input.value=row.baseUrl||'';this.model.input.value=row.model||'';
     this.scheme.value=row.authScheme||'x-api-key';this.key.input.value='';this.cancel.hidden=false;this.render();
@@ -148,3 +206,4 @@ class CliAccessPanel {
     this.perform({provider,action:'switch',id,confirmed:true});
   }
 }
+CliAccessPanel.editorId=0;

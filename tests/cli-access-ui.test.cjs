@@ -39,7 +39,7 @@ const cli={source:'cli',runtime:null,readOnly:true,canSend:false,canInterrupt:fa
 test('source selector uses full inventory and preserves its open options across unchanged refreshes',()=>{
   const nodes=new Map(),$=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,value:'',rebuilds:0,replaceChildren(...children){this.children=children;this.rebuilds++;}});return nodes.get(id);};
   const saved=[];let locale='zh-CN';
-  const ctx={$ ,availableSources:['desktop','cli'],listSource:'all',sourceFilterStamp:'',localStorage:{setItem(...args){saved.push(args);}},BridgeI18n:{locale:()=>locale},t:key=>key,el:(tag,cls,label)=>({tag,cls,textContent:label,value:''})};
+  const ctx={$ ,clientNavigation:{wslSupported:true},availableSources:['desktop','cli'],listSource:'all',sourceFilterStamp:'',localStorage:{setItem(...args){saved.push(args);}},BridgeI18n:{locale:()=>locale},t:key=>key,el:(tag,cls,label)=>({tag,cls,textContent:label,value:''})};
   vm.createContext(ctx);vm.runInContext(sourceFilterCode,ctx);
   assert.equal(ctx.renderSourceFilter(),true);assert.equal($('source-filter-label').hidden,false);
   assert.deepEqual($('source-filter').children.map(option=>option.value),['all','cli','desktop','wsl']);
@@ -47,6 +47,7 @@ test('source selector uses full inventory and preserves its open options across 
   locale='en-US';ctx.renderSourceFilter();assert.equal($('source-filter').rebuilds,rebuilds+1);
   ctx.listSource='wsl';ctx.availableSources=['desktop'];assert.equal(ctx.renderSourceFilter(),true);
   assert.equal($('source-filter-label').hidden,false);assert.equal(ctx.listSource,'wsl');assert.equal(saved.length,0);
+  ctx.clientNavigation.wslSupported=false;ctx.renderSourceFilter();assert.deepEqual($('source-filter').children.map(option=>option.value),['all','cli','desktop']);assert.equal(ctx.listSource,'all');assert.equal(saved.at(-1)[1],'all');
 });
 test('every Codex row identifies its source even with a single-source inventory',()=>{
   const {ctx,$}=fixture();$('list-mode').value='recent';

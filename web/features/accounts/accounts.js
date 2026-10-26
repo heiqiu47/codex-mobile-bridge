@@ -10,7 +10,6 @@ class AccountsPanel {
   }
   attachApiAccess(panel,details){
     this.cliAccess=panel;this.apiDetails=details;this.management.insertBefore(details,this.tools);
-    if(this.desktop)for(const option of this.kind.children)if(option.value==='api')option.hidden=true;
   }
   text(value){return typeof BridgeI18n==='undefined'?value:BridgeI18n.t(value);}
   node(tag,text,className){const n=document.createElement(tag);if(text!==undefined){n.textContent=this.text(text);if(typeof BridgeI18n!=='undefined'&&Object.hasOwn(BridgeI18n.dictionary,text))n.setAttribute('data-i18n',text);}if(className)n.className=className;return n;}
@@ -46,7 +45,7 @@ class AccountsPanel {
     this.renameForm.append(this.renameName.wrap,this.renameSave,this.button('取消编辑',()=>{this.renameForm.hidden=true;}));
     this.renameForm.onsubmit=async event=>{event.preventDefault();if(await this.perform({action:'rename',id:this.renameId,name:this.renameName.input.value}))this.renameForm.hidden=true;};
     this.root.append(this.renameForm);
-    const details=this.node('details');details.append(this.node('summary','官方账号登录与配置导入'));
+    const details=this.node('details');details.append(this.node('summary','添加账号或 API'));
     this.form=this.node('form');this.name=this.field('名称');this.name.input.maxLength=80;this.name.input.required=true;
     this.kind=document.createElement('select');this.kind.setAttribute('aria-label',this.text('接入类型'));
     for(const [value,label] of [['chatgpt','官方 ChatGPT 账号'],['api','自定义 API']]){const option=this.node('option',label);option.value=value;this.kind.append(option);}
@@ -60,6 +59,7 @@ class AccountsPanel {
       const payload=this.importId?{action:'models',candidateId:this.importId}:{action:'models',id:this.editId,baseUrl:this.url.input.value,apiKey:this.key.input.value};
       if(await this.perform(payload)){if(started!==context())return;this.modelOptions.replaceChildren(this.node('option','请选择模型'));
         this.modelOptions.children[0].value='';for(const id of this.value.models||[]){const option=this.node('option');option.textContent=id;option.value=id;this.modelOptions.append(option);}
+        if(!this.model.input.value.trim()&&this.value.models?.length){this.model.input.value=this.value.models[0];this.modelOptions.value=this.value.models[0];}
         this.modelOptions.hidden=false;this.modelMessage.textContent=this.text('模型列表不保证支持 Responses API，请选择可用于对话的模型。');}
     });
     this.modelMessage=this.node('p',undefined,'account-muted');

@@ -109,6 +109,23 @@
 
 .accounts-model-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.accounts-model-controls>small{flex:1;min-width:0}.accounts-model-controls>button{flex:none}
 
+.codex-api-editor .cli-access-form{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;margin:14px 0 0;padding:0;border:0}
+.codex-api-editor .codex-api-connection,.codex-api-editor .codex-api-models{min-width:0;padding:0 14px;border:1px solid var(--line);border-radius:14px;background:var(--raised)}
+.codex-api-editor .codex-api-connection>label{display:grid;gap:2px;margin:0;padding:12px 0 6px;font-size:13px;color:var(--muted)}
+.codex-api-editor .codex-api-connection>label+label{border-top:1px solid var(--line)}
+.codex-api-editor .codex-api-connection input{width:100%;min-width:0;padding:8px 0;border:0;border-radius:0;background:transparent;color:var(--text);font-size:16px}
+.codex-api-editor .codex-api-connection input:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.codex-api-editor .codex-api-models{padding:10px 14px 12px}
+.codex-api-editor .codex-api-model-head,.codex-api-editor .codex-api-model-footer{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.codex-api-editor .codex-api-model-head>label{margin:0;font-size:13px;color:var(--muted)}
+.codex-api-editor .codex-api-fetch{flex:none;min-height:44px;margin:0;padding:8px 0;border:0;background:transparent;color:var(--accent);font-size:13px;white-space:nowrap}
+.codex-api-editor .codex-api-models>label{display:block;margin:0}
+.codex-api-editor .codex-api-models input,.codex-api-editor .codex-api-models select{box-sizing:border-box;width:100%;min-width:0;font-size:16px;background:var(--surface);color:var(--text);border:1px solid var(--line)}
+.codex-api-editor .codex-api-model-feedback{margin:8px 0 0;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.codex-api-editor .codex-api-model-feedback:empty,.codex-api-editor>.account-muted:empty,.codex-api-editor>.error:empty{display:none}
+.codex-api-editor .cli-access-form-actions{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin:0}
+.codex-api-editor .cli-access-form-actions>button{min-width:0;min-height:46px;border-radius:12px}
+
 /* WSL account controls keep long Linux paths and translated actions within the panel. */
 .wsl-accounts-panel{min-width:0;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;margin-block:12px}.wsl-accounts-panel[hidden]{display:none}.wsl-accounts-panel h3,.wsl-accounts-panel p{margin:0}.wsl-account-target,.wsl-account-row strong,.wsl-account-row small,.wsl-account-models{overflow-wrap:anywhere;word-break:break-word}.wsl-account-row{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;padding:12px;border:1px solid var(--border,#8885);border-radius:10px;min-width:0}.wsl-account-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.wsl-account-actions button{white-space:normal;max-width:100%}.wsl-account-actions h3{flex:1 1 150px}.wsl-account-editor{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr));gap:10px;margin-block:10px}.wsl-account-editor label{display:grid;grid-template-columns:minmax(0,1fr);gap:5px;min-width:0}.wsl-account-editor input,.wsl-account-editor select{box-sizing:border-box;width:100%;min-width:0}.wsl-account-confirm{padding:12px;border:1px solid var(--border,#8885);border-radius:10px;display:flex;flex-wrap:wrap;gap:8px}.wsl-account-confirm p{flex-basis:100%}.wsl-account-models{display:grid;gap:6px}.wsl-account-models button{justify-self:start}
 

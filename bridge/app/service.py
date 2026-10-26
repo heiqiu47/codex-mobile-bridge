@@ -8,6 +8,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -46,7 +47,6 @@ from bridge.features.accounts.account import Account
 from bridge.features.accounts.accounts import Accounts, operation
 from bridge.features.accounts.draft_identity import codex_account_identity, draft_identity
 from bridge.features.accounts.cli_access import CliAccess
-from bridge.features.accounts.wsl_accounts import WslAccounts
 from bridge.features.sessions.goal import GoalRPC, GoalError, GoalUnavailable, GoalUnsupported, goal_activation, goal_identity, normalize_goal_result, normalize_ui_locale, goal_command_fingerprint, goal_state_confirms_command, native_goal_absent, normalize_goal, plan_goal_command, read_native_goal
 from bridge.features.workspace.uploads import Uploads, image_type
 from bridge.clients.codex.remote import upload_file
@@ -230,7 +230,7 @@ class Bridge:
         self.archive_commands = ArchiveCommands(data_dir)
         self.hosts = AppHosts(codex_home)
         self.directory_projects = Projects(data_dir)
-        if host == 'local':
+        if host == 'local' and sys.platform == 'win32':
             from bridge.features.endpoints.registry import Entries
             self.entries = Entries(data_dir, codex_home)
         else:
@@ -252,7 +252,10 @@ class Bridge:
         self.account = Account(codex_home, data_dir, codex_bin, executable_getter=executable_getter) if host == 'local' else None
         self.accounts = Accounts(self) if host == "local" else None
         self.cli_access = CliAccess(self) if host == "local" else None
-        self.wsl_accounts = WslAccounts(self) if host == "local" else None
+        self.wsl_accounts = None
+        if host == 'local' and sys.platform == 'win32':
+            from bridge.features.accounts.wsl_accounts import WslAccounts
+            self.wsl_accounts = WslAccounts(self)
         self.goal = goal_rpc or (GoalRPC(codex_home, codex_bin, executable_getter=executable_getter) if host == 'local' else None)
         self.owner_goal = owner_goal
         self.goal_transport = 'owner' if owner_goal else 'sidecar'

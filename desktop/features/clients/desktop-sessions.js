@@ -150,12 +150,10 @@ class DesktopConnectionsPanel {
     const node=(tag,text,cls='')=>{const n=document.createElement(tag);n.className=cls;if(text!==undefined)n.textContent=t(text);return n;};
     const table=node('table',undefined,'connection-table'),head=node('thead'),tr=node('tr'),body=node('tbody');
     for(const title of ['客户端','应用开关','连接状态','当前接入 / 剩余额度','管理'])tr.append(node('th',title));head.append(tr);table.append(head,body);
-    const groups=new Set();
     for(const client of this.managementClients()){
-      if(client.parentId&&!groups.has(client.parentId)){const group=node('tr'),title=node('th',client.parentId==='codex'?'Codex':'Claude');title.colSpan=5;title.setAttribute('scope','rowgroup');group.append(title);body.append(group);groups.add(client.parentId);}
       const row=node('tr'),identity=node('td'),name=node('div',undefined,'connection-name'),logo=node('span',undefined,'client-logo');row.dataset.clientId=client.id;if(client.parentId)row.dataset.clientParent=client.parentId;
       const img=node('img');img.src='../web/client-icons/'+(client.icon||client.id)+'.png';img.alt='';logo.append(img);
-      const label=node('div');label.append(node('strong',client.parentId==='codex'&&client.id==='codex'?'APP / CLI':client.name),node('small',client.kind==='wsl-claude-cli'?'WSL Claude Code':client.kind==='wsl-cli'?'WSL Codex CLI':({codex:'Codex Desktop',claude:'Claude Desktop',deepseek:'DeepSeek Harness'})[client.id]));name.append(logo,label);identity.append(name);
+      const label=node('div');label.append(node('strong',client.name),node('small',client.kind==='wsl-claude-cli'?'WSL Claude Code':client.kind==='wsl-cli'?'WSL Codex CLI':({codex:'Codex Desktop',claude:'Claude Desktop',deepseek:'DeepSeek Harness'})[client.id]));name.append(logo,label);identity.append(name);
       const access=node('td'),toggle=node('input');toggle.type='checkbox';toggle.className='client-toggle';toggle.checked=client.enabled;toggle.disabled=(!client.enabled&&!(client.selectable??client.configured))||this.scanning||this.busy||!!this.choosingClient;toggle.setAttribute('aria-label',t('启用')+' '+client.name);toggle.title=t(client.reason);toggle.onchange=()=>this.toggleClient(client.id,toggle.checked);access.append(toggle,node('small',this.pendingClient?.id===client.id?(this.gatewayRunning===false?'正在保存…':this.pendingClient.enabled?(client.id==='claude'?'正在连接…':'正在打开应用…'):this.pendingClient.forceDesktop?'正在后台强制结束…':this.pendingClient.quitDesktop?'正在退出应用…':'正在停用接入…'):client.setupStatus==='unsupported'?'暂不可用':client.enabled?(this.gatewayRunning===false?'随网关启动':'已启用'):!client.installed&&!client.configured?'待配置':'未启用'));
       toggle.disabled=toggle.disabled||this.hasUncertain();const state=this.connection(client),failure=this.operationFailures?.get(client.id),status=node('td'),stateLabel=node('span',state.label,state.waiting?'state-pending client-connection-waiting':client.connected?'state-ready':state.error?'state-error':state.action?'state-pending':'');stateLabel.setAttribute('role','status');stateLabel.setAttribute('aria-busy',String(state.waiting));status.append(stateLabel,node('small',failure?ClientLifecycle.failureMessage(failure):state.reason));
       const account=node('td');account.dataset.clientAccount=client.id;
@@ -183,8 +181,9 @@ class DesktopConnectionsPanel {
     for(const [provider,panel] of Object.entries(this.accountPanels)){this.renderClientAccount(provider,panel.value);}
     this.resumeAccounts();
   }
-  wslDetails(client){
-    if(typeof WslAccountsPanel==='undefined'){this.feedback(BridgeI18n.t('WSL 账号管理面板尚未加载，请重新打开网关窗口'),true);return;}
+  async wslDetails(client){
+    try{if(typeof WslAccountsPanel==='undefined')await window.loadWslAccounts();}
+    catch(error){this.feedback(error.message,true);return;}
     const provider=client.kind==='wsl-claude-cli'?'claude':'codex',entry=client.id;
     const dialog=document.createElement('dialog'),header=document.createElement('div'),title=document.createElement('h2'),root=document.createElement('div'),close=document.createElement('button');
     dialog.id='wsl-account-management-dialog';dialog.className='wsl-accounts-dialog';dialog.dataset.provider=provider;dialog.dataset.entry=entry;
@@ -211,7 +210,10 @@ class DesktopConnectionsPanel {
   renderAccount(value){
     if(value)this.accountValue=value;else value=this.accountValue;
     const cell=document.querySelector('[data-client-account="codex"]');if(!cell)return;cell.replaceChildren();const t=BridgeI18n.t,name=document.createElement('span');name.textContent=value?.current?.name||t('暂未识别');cell.append(name);
-    const row=value?.accounts?.find(row=>row.id===value.activeId);if(row?.kind!=='chatgpt')return;
+    const row=value?.loginAccount||value?.accounts?.find(row=>row.id===value.activeId);if(row?.kind!=='chatgpt')return;
+    if(row.name&&row.name!==value?.current?.name){const login=document.createElement('small');login.textContent=t('已登录')+' · '+row.name;cell.append(login);}
+    if(!row.details?.usage||row.details.usage.status==='loading'){const loading=document.createElement('small');loading.textContent=t('正在读取额度…');cell.append(loading);}
+    else if(row.details.usage.status==='error'||!row.details.usage.limits?.length){const notice=document.createElement('small');notice.textContent=t(row.details.usage.error||'暂未提供额度信息');cell.append(notice);}
     const usage=row.details?.usage;if(usage?.status==='ready'){const credits=document.createElement('small');credits.textContent=t('重置卡')+' · '+(usage.resetCredits?.availableCount??t('暂未提供'));cell.append(credits);}for(const bucket of usage?.limits||[])for(const window of bucket.windows||[]){const note=document.createElement('small');note.textContent=bucket.name+' · '+(window.remainingPercent==null?t('暂未提供'):t('剩余 ')+Math.round(window.remainingPercent)+'%');cell.append(note);if(window.remainingPercent!=null){const bar=document.createElement('progress');bar.max=100;bar.value=window.remainingPercent;cell.append(bar);}}
     const refresh=document.createElement('button');refresh.type='button';refresh.className='quota-link';refresh.textContent=t('查看剩余额度');refresh.disabled=usage?.status==='loading';refresh.onclick=async()=>{refresh.disabled=true;try{this.renderAccount(await this.api.accounts({action:'details',id:row.id,section:'usage',refresh:true}));}catch(error){this.feedback(error.message,true);refresh.disabled=false;}};cell.append(refresh);
   }

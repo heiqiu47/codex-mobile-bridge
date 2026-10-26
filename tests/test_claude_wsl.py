@@ -143,7 +143,8 @@ class WslClaudeContract(unittest.TestCase):
             auth.assert_not_called()
 
     def test_wsl_only_dispatch_excludes_local_and_unknown_sessions(self):
-        manager = DesktopSessions(self.root/'manager')
+        with patch('bridge.clients.manager.sys.platform', 'win32'):
+            manager = DesktopSessions(self.root/'manager')
         self.addCleanup(manager.close)
         manager.claude_wsl.entries = [{**self.row, 'enabled': True}]
         manager.config['enabled'] = {'claude': False}
@@ -167,7 +168,8 @@ class WslClaudeContract(unittest.TestCase):
             self.assertEqual(profile()['binary'], str(binary.resolve()))
 
     def test_explicit_scan_discovers_claude_but_internal_scan_does_not(self):
-        manager = DesktopSessions(self.root/'manager')
+        with patch('bridge.clients.manager.sys.platform', 'win32'):
+            manager = DesktopSessions(self.root/'manager')
         self.addCleanup(manager.close)
         manager.clients = Mock(return_value={'clients': []})
         manager.claude_wsl.scan = Mock()
@@ -182,7 +184,8 @@ class WslClaudeContract(unittest.TestCase):
             manager.claude_wsl.scan.assert_called_once_with()
 
     def test_wsl_only_selection_cannot_offer_or_run_native_reconnect(self):
-        manager = DesktopSessions(self.root/'manager', gateway_running=True)
+        with patch('bridge.clients.manager.sys.platform', 'win32'):
+            manager = DesktopSessions(self.root/'manager', gateway_running=True)
         self.addCleanup(manager.close)
         manager.claude_wsl.entries = [{**self.row, 'enabled': True}]
         manager.config['enabled'] = {'claude': False}
@@ -209,7 +212,8 @@ class WslClaudeContract(unittest.TestCase):
             self.assertTrue(row['canReconnect'])
 
     def test_wsl_task_does_not_block_unrelated_native_lifecycle(self):
-        manager = DesktopSessions(self.root/'manager')
+        with patch('bridge.clients.manager.sys.platform', 'win32'):
+            manager = DesktopSessions(self.root/'manager')
         self.addCleanup(manager.close)
         adapter = manager.adapters['claude']
         adapter.cli.busy = Mock(return_value=False)
@@ -221,7 +225,8 @@ class WslClaudeContract(unittest.TestCase):
         self.assertTrue(manager._claude_native_cli_busy())
 
     def test_wsl_model_cache_identity_is_scoped_and_revoked_with_entry(self):
-        manager = DesktopSessions(self.root/'manager')
+        with patch('bridge.clients.manager.sys.platform', 'win32'):
+            manager = DesktopSessions(self.root/'manager')
         self.addCleanup(manager.close)
         manager.claude_wsl.entries = [{**self.row, 'enabled': True}]
         remote = manager.adapters['claude'].remote_cli.wsl
@@ -257,7 +262,8 @@ class WslClaudeContract(unittest.TestCase):
         adapter.create_cli.assert_called_once_with(project, body)
 
     def test_wsl_directory_operations_use_selected_native_transport(self):
-        manager = DesktopSessions(self.root/'manager')
+        with patch('bridge.clients.manager.sys.platform', 'win32'):
+            manager = DesktopSessions(self.root/'manager')
         self.addCleanup(manager.close)
         manager.claude_wsl.read = Mock(return_value={'cwd': '/work/new'})
         environment = {'host': self.identifier}

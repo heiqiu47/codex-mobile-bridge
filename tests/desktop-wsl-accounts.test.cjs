@@ -12,7 +12,7 @@ const wiring=renderer.slice(renderer.indexOf('const wslAccountScopes=[];'),rende
 async function fixture(){
   const local=new Node('article'),cli=new Node('div'),calls=[];let accounts=[];
   const state=()=>({provider:'codex',entry:'wsl-test',identity:'fixture',available:true,target:{distribution:'Fixture',user:'test'},blockers:['自定义 provider 路由','runningCLI'],capabilities:{save:true,import:false,switch:false,models:false},accounts:accounts.map(row=>({...row}))});
-  const context={document:{createElement:tag=>new Node(tag),addEventListener(){},removeEventListener(){}},Option:class extends Node{constructor(text,value){super('option',text);this.value=value;}},$:id=>id==='accounts-content'?local:id==='cli-access-content'?cli:null,t:key=>key,BridgeI18n:{t:key=>key,locale:()=> 'en'},Date,clearTimeout,desktopConnections:null,accountsPanel:{visible:()=>true,clear(){},refresh(){}},codexCliAccessPanel:{clear(){},refresh(){}},claudeCliAccessPanel:null,api:{cliAccess:async value=>{
+  const context={window:{loadWslAccounts:async()=>{}},activeTab:'overview',document:{createElement:tag=>new Node(tag),addEventListener(){},removeEventListener(){}},Option:class extends Node{constructor(text,value){super('option',text);this.value=value;}},$:id=>id==='accounts-content'?local:id==='cli-access-content'?cli:null,t:key=>key,BridgeI18n:{t:key=>key,locale:()=> 'en'},Date,clearTimeout,desktopConnections:null,accountsPanel:{visible:()=>true,clear(){},refresh(){}},codexCliAccessPanel:{clear(){},refresh(){}},claudeCliAccessPanel:null,api:{platform:'win32',cliAccess:async value=>{
     calls.push({...value});assert.equal(value.action,'wslAccounts');assert.equal(value.provider,'codex');
     if(value.operation==='environments')return{environments:[{id:'wsl-test',distribution:'Fixture',user:'test'}]};
     assert.equal(value.entry,'wsl-test');
@@ -21,7 +21,7 @@ async function fixture(){
     return state();
   }}};
   vm.createContext(context);vm.runInContext(fs.readFileSync('web/features/accounts/wsl-accounts.js','utf8')+'\n'+wiring+'\nthis.scopes=wslAccountScopes;',context);
-  await context.scopes[0].load();const select=all(local.wrapper).find(node=>node.tagName==='select');select.value='wsl-test';select.onchange();
+  await new Promise(setImmediate);await context.scopes[0].load();const select=all(local.wrapper).find(node=>node.tagName==='select');select.value='wsl-test';select.onchange();
   await new Promise(resolve=>setImmediate(resolve));return{context,local,cli,calls,panel:context.scopes[0].panel};
 }
 async function submit(panel,name){
@@ -30,7 +30,7 @@ async function submit(panel,name){
   form.onsubmit({preventDefault(){}});await new Promise(resolve=>setImmediate(resolve));
 }
 test('desktop WSL wiring can add and edit isolated API credentials despite switch blockers',async()=>{
-  const {panel,calls,local,cli}=await fixture();assert.equal(panel.desktop,true);assert.equal(local.hidden,true);assert.equal(cli.hidden,true);
+  const {panel,calls,local,cli}=await fixture();assert.equal(panel.desktop,true);assert.equal(local.hidden,true);assert.equal(cli.hidden,false,'Codex no longer has a separate API editor');
   await submit(panel,'Added fixture');assert.equal(panel.value.accounts[0].name,'Added fixture');assert.equal(panel.key.value,'');
   const edit=all(panel.root).find(node=>node.tagName==='button'&&node.textContent==='编辑');assert.ok(edit);edit.onclick();
   await submit(panel,'Edited fixture');assert.equal(panel.value.accounts[0].name,'Edited fixture');

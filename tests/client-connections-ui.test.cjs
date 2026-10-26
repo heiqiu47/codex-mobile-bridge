@@ -362,9 +362,9 @@ function codexEntries({native=true,wsl=true,nativeSelectable=true}={}){
   {id:entry,kind:'wsl-cli',icon:'codex',name:'WSL Codex · Ubuntu',enabled:wsl,configured:true,selectable:true,installed:true,running:wsl,connected:wsl,canQuitDesktop:false}
  ]};
 }
-test('desktop client management groups native and WSL Codex switches in one Codex section',()=>{
+test('desktop client management keeps native and WSL rows without redundant provider headings',()=>{
  const ui=fixture();ui.panel.clients=[codexEntries()];ui.panel.renderClients();
- const rows=ui.all().filter(node=>node.tag==='tr'),group=rows.find(row=>row.children[0]?.attributes.scope==='rowgroup');assert.ok(group);assert.equal(group.children[0].textContent,'Codex');assert.equal(group.children[0].colSpan,5);
+ const rows=ui.all().filter(node=>node.tag==='tr'),group=rows.find(row=>row.children[0]?.attributes.scope==='rowgroup');assert.equal(group,undefined);assert.ok(ui.all().some(node=>node.tag==='strong'&&node.textContent==='Codex'));assert.ok(ui.all().some(node=>node.tag==='strong'&&node.textContent==='WSL Codex · Ubuntu'));
  const entries=rows.filter(row=>row.dataset.clientParent==='codex');assert.deepEqual(entries.map(row=>row.dataset.clientId),['codex','wsl:'+'c'.repeat(32)]);
  assert.equal(ui.all().filter(node=>node.tag==='input'&&node.className==='client-toggle').length,2);assert.equal(ui.all().some(node=>node.textContent==='关闭电脑 App…'),false);
 });
@@ -391,10 +391,20 @@ test('desktop WSL Manage buttons mount the real account panel for the exact prov
  for(const [provider,kind,prefix] of [['codex','wsl-cli','wsl:'],['claude','wsl-claude-cli','wsl-claude:']]){
   const ui=fixture(),entry=prefix+'a'.repeat(32),client={id:entry,kind,name:'Fixture WSL',configured:true,enabled:true,installed:true,canQuitDesktop:false};ui.panel.clients=[client];
   ui.setHandler(async value=>{assert.equal(value.action,'wslAccounts');assert.equal(value.provider,provider);assert.equal(value.entry,entry);return{provider,entry,identity:'fixture',available:true,target:{distribution:'Fixture',user:'tester',configDir:'/home/tester/.config'},accounts:[],blockers:['External CLI remains running'],capabilities:{save:true,import:true,capture:false,switch:false}};});
-  ui.panel.renderClients();assert.ok(ui.text().includes('在网关中管理 WSL 账号与 API'));const button=ui.all().find(node=>node.tag==='button'&&node.textContent==='管理');const panel=button.onclick();await new Promise(resolve=>setImmediate(resolve));
+  ui.panel.renderClients();assert.ok(ui.text().includes('在网关中管理 WSL 账号与 API'));const button=ui.all().find(node=>node.tag==='button'&&node.textContent==='管理');const panel=await button.onclick();await new Promise(resolve=>setImmediate(resolve));
   const dialog=ui.document.body.children.find(node=>node.id==='wsl-account-management-dialog');assert.ok(dialog?.open);assert.equal(dialog.dataset.provider,provider);assert.equal(dialog.dataset.entry,entry);assert.equal(dialog.children[0].className,'picker-head');assert.equal(dialog.children[0].children[0].textContent,'WSL 账号与接入');assert.equal(dialog.children[0].children[1].textContent,'关闭');assert.equal(dialog.children.length,2);const labels=dialog.querySelectorAll('button').map(node=>node.textContent);assert.ok(labels.includes('保存 API 接入'));assert.ok(labels.includes('从本机导入 API 接入'));assert.equal(labels.includes('确认切换'),false);assert.equal(panel.entry,entry);dialog.close();assert.equal(panel.entry,'');assert.equal(ui.document.body.children.includes(dialog),false);
  }
 });
-test('desktop resources load WSL account UI before its client management entry point',()=>{
- const html=fs.readFileSync(path.join(__dirname,'../desktop/index.html'),'utf8');assert.ok(html.includes('../web/features/accounts/account.css'));const panel=html.indexOf('src="../web/features/accounts/wsl-accounts.js"'),entry=html.indexOf('src="features/clients/desktop-sessions.js"');assert.ok(panel>0&&entry>panel);assert.ok(fs.existsSync(path.join(__dirname,'../web/features/accounts/wsl-accounts.js')));
+test('desktop WSL resource is optional and remains in the package',()=>{
+ const html=fs.readFileSync(path.join(__dirname,'../desktop/index.html'),'utf8');assert.ok(html.includes('../web/features/accounts/account.css'));assert.equal(html.includes('src="../web/features/accounts/wsl-accounts.js"'),false);assert.ok(fs.existsSync(path.join(__dirname,'../web/features/accounts/wsl-accounts.js')));
+});
+
+test('Codex overview shows unsaved native login quota and refreshes that exact login',async()=>{
+ const ui=fixture();ui.document.querySelector=selector=>ui.all().find(node=>node.matches(selector))||null;
+ ui.panel.clients=[{id:'codex',name:'Codex',enabled:true,configured:true}];ui.panel.renderClients();
+ const login={id:'native-login',kind:'chatgpt',name:'fixture@example.invalid',details:{usage:{status:'ready',resetCredits:{availableCount:2},limits:[{name:'5h',windows:[{remainingPercent:75}]}]}}};
+ const value={activeId:null,accounts:[],loginAccount:login,current:{name:login.name}};
+ ui.panel.renderAccount(value);assert.match(ui.text(),/75%/);assert.match(ui.text(),/重置卡 · 2/);assert.equal(ui.all().find(node=>node.tag==='progress').value,75);
+ const calls=[];ui.panel.api.accounts=async request=>{calls.push(request);return value;};await ui.all().find(node=>node.textContent==='查看剩余额度').onclick();assert.deepEqual(JSON.parse(JSON.stringify(calls)),[{action:'details',id:'native-login',section:'usage',refresh:true}]);
+ ui.panel.renderAccount({accounts:[{...login,id:'another'}],activeId:null,current:{name:'Unknown'}});assert.doesNotMatch(ui.text(),/75%|重置卡/);
 });

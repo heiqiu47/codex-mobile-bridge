@@ -70,3 +70,27 @@ test('unified Codex editor suppresses duplicate inventory while retaining model 
  instance.request=async()=>({...result({models:['model-a']}),codex:{accounts:[row]},probe:{provider:'codex',id:row.id,status:'reachable',scope:'models',models:['model-a'],cache:{identity:row.modelCatalogIdentity,updatedAt:1000}}});
  await instance.probe(row,'models');assert.equal(instance.rows.children.length,0);assert.match(instance.status.textContent,/model-a/);
 });
+
+function draftPanel(){
+ const {instance}=panel();instance.provider='codex';instance.draftRevision=0;
+ instance.baseUrl={input:{value:'https://example.invalid/v1'}};instance.model={input:{value:'',id:'model'},label:{}};instance.modelCaption={};
+ instance.modelSelect={id:'model-select',hidden:true,value:'',replaceChildren(...children){this.children=children;this.value=children[0]?.value||'';}};
+ instance.fetchModels={};instance.save={};instance.manualModel={};instance.modelFeedback={};instance.node=()=>({});
+ return instance;
+}
+test('draft model fetch fills the default without saving, and manual input survives a response',async()=>{
+ const ui=draftPanel(),calls=[];ui.request=async request=>{calls.push({...request});return {models:['first','second']};};
+ await ui.discoverModels();assert.equal(ui.model.input.value,'first');assert.equal(ui.modelSelect.value,'first');assert.equal(ui.modelSelect.hidden,false);assert.equal(ui.save.disabled,false);assert.equal(calls[0].action,'modelsDraft');assert.equal(calls.length,1);
+ ui.clearDraftModels();assert.equal(ui.model.input.value,'');ui.model.input.value='custom-model';await ui.discoverModels();assert.equal(ui.model.input.value,'custom-model');assert.equal(ui.modelSelect.hidden,true);assert.equal(ui.manualModel.hidden,false);
+});
+test('URL or key changes invalidate draft models without allowing an old response to replace the new one',async()=>{
+ const ui=draftPanel(),first=deferred(),second=deferred();let call=0;ui.request=()=>++call===1?first.promise:second.promise;
+ const old=ui.discoverModels();assert.equal(ui.save.disabled,true);ui.baseUrl.input.value='https://new.invalid/v1';ui.clearDraftModels();const fresh=ui.discoverModels();
+ first.resolve({models:['stale']});await old;assert.equal(ui.model.input.value,'');assert.equal(ui.fetchModels.disabled,true);
+ second.resolve({models:['fresh']});await fresh;assert.equal(ui.model.input.value,'fresh');assert.equal(ui.fetchModels.disabled,false);
+ ui.key.input.value='new-key';ui.clearDraftModels();assert.equal(ui.model.input.value,'');assert.equal(ui.modelSelect.hidden,true);
+});
+test('empty or failed model lookup keeps manual entry available and never saves',async()=>{
+ const ui=draftPanel();ui.request=async()=>({models:[]});await ui.discoverModels();assert.match(ui.modelFeedback.textContent,/手动填写/);assert.equal(ui.modelSelect.hidden,true);assert.equal(ui.save.disabled,false);
+ ui.request=async()=>{throw Error('Offline');};await ui.discoverModels();assert.equal(ui.modelFeedback.textContent,'Offline');assert.equal(ui.save.disabled,false);
+});

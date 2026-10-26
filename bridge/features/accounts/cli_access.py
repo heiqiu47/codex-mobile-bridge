@@ -185,6 +185,18 @@ class CliAccess:
         if not isinstance(value, dict) or value.get('provider') not in ('codex', 'claude'):
             raise ValueError('CLI 接入请求无效')
         provider, action = value['provider'], value.get('action')
+        if action == 'modelsDraft':
+            if provider != 'codex' or set(value) - {'provider', 'action', 'id', 'baseUrl', 'apiKey'}:
+                raise ValueError('API 模型查询参数无效')
+            accounts = self.bridge.accounts
+            with accounts.lock:
+                accounts.assert_editable()
+                if value.get('id') and value.get('apiKey', '') == '':
+                    row = accounts.row(value['id'])
+                    if row['kind'] != 'api' or accounts.api_url(value.get('baseUrl', '')) != row.get('baseUrl'):
+                        raise ValueError('修改 API 地址后，请重新填写 API Key')
+                url, key = accounts.api_credentials(value)
+            return {'models': model_ids(url, key)}
         if action in ('models', 'test'):
             return self._probe_api(provider, value)
         saved_id = None

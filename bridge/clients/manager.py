@@ -78,8 +78,10 @@ class DesktopSessions:
         self.model_lock = threading.Lock()
         self.config_path = self.directory/'settings.json'
         self.config = json.loads(self.config_path.read_text()) if self.config_path.exists() else {}
-        from bridge.clients.claude.wsl import WslClaudeEntries
-        self.claude_wsl = WslClaudeEntries(self.directory)
+        self.claude_wsl = None
+        if sys.platform == 'win32':
+            from bridge.clients.claude.wsl import WslClaudeEntries
+            self.claude_wsl = WslClaudeEntries(self.directory)
         self.adapters = {'deepseek': DeepSeek(self.directory/'deepseek', self.config.get('deepseekHome')),
                          'claude': Claude(self.directory/'claude', auto_connect=False,
                                           hosts=bridge.hosts if bridge is not None and hasattr(bridge, 'hosts') else None,
@@ -886,6 +888,8 @@ class DesktopSessions:
         return result
 
     def _wsl_claude_enabled(self):
+        if self.claude_wsl is None:
+            return False
         with self.claude_wsl.lock:
             return any(row.get('enabled', True) for row in self.claude_wsl.entries)
 
@@ -1315,10 +1319,9 @@ class DesktopSessions:
             raise ValueError('Claude 进程已变化，请重新检查后再确认退出') from None
 
     def _claude_native_cli_busy(self):
-        from bridge.clients.claude.wsl import ClaudeCliRemotes
         adapter = self.adapters['claude']
         remote = getattr(adapter, 'remote_cli', None)
-        if isinstance(remote, ClaudeCliRemotes):
+        if self.claude_wsl is not None:
             remote = remote.ssh
         return adapter.cli.busy() is True or remote is not None and remote.busy() is True
 
@@ -1554,7 +1557,7 @@ class DesktopSessions:
                 codex.update(setupStatus='ready', reason='WSL Codex 接入可用')
             claude = next(row for row in rows if row['id'] == 'claude')
             claude['nativeEnabled'] = self.config.get('enabled', {}).get('claude', False)
-            claude['entries'] = self.claude_wsl.applications()
+            claude['entries'] = self.claude_wsl.applications() if self.claude_wsl is not None else []
             if any(row['enabled'] for row in claude['entries']):
                 claude.update(enabled=True, selectable=True, configured=True)
             result = {'clients': rows, 'computer': socket.gethostname(), 'gatewayRunning': self.gateway_running,
@@ -1681,6 +1684,8 @@ class DesktopSessions:
     def toggle_client(self, value):
         provider, enabled = value.get('provider'), value.get('enabled')
         if isinstance(provider, str) and provider.startswith('wsl-claude:'):
+            if self.claude_wsl is None:
+                raise ValueError('当前电脑不支持 WSL 应用')
             if type(enabled) is not bool or set(value) - {'action', 'provider', 'enabled', 'quitDesktop'}:
                 raise ValueError('WSL Claude Code 应用开关无效')
             if value.get('quitDesktop', False) is not False:

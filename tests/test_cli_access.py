@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 from bridge.features.accounts.cli_access import CliAccess
 from bridge.features.accounts.cli_sync import LocalCliSync
-from bridge.features.accounts.accounts import private_json
+from bridge.features.accounts.accounts import Accounts, private_json
 from bridge.clients.claude.cli_session import ClaudeCli, ResumePreflightBlocked
 
 
@@ -100,6 +100,38 @@ class CliAccessTests(unittest.TestCase):
         self.assertIsInstance(result['probe']['cache']['updatedAt'], float)
         self.assertNotIn('saved-private-key', json.dumps(result))
         self.assertFalse(self.manager.codex_switch)
+
+    def test_codex_draft_models_validate_credentials_without_saving_or_switching(self):
+        self.accounts.assert_editable = Mock()
+        self.accounts.api_url = Accounts.api_url
+        self.accounts.api_credentials = lambda value: Accounts.api_credentials(self.accounts, value)
+        before = {str(path.relative_to(self.root)): path.read_bytes() for path in self.root.rglob('*') if path.is_file()}
+        request = {'provider': 'codex', 'action': 'modelsDraft', 'baseUrl': 'https://fixture.invalid/v1', 'apiKey': 'fake-draft-key'}
+        with patch('bridge.features.accounts.cli_access.model_ids', return_value=['model-a']) as models:
+            self.assertEqual(self.manager.change(request), {'models': ['model-a']})
+            models.assert_called_once_with(request['baseUrl'], request['apiKey'])
+        self.assertFalse(self.manager.codex_switch)
+        after = {str(path.relative_to(self.root)): path.read_bytes() for path in self.root.rglob('*') if path.is_file()}
+        self.assertEqual(before, after)
+        with patch('bridge.features.accounts.cli_access.model_ids') as models:
+            for invalid in ({'baseUrl': 'file:///etc/passwd'}, {'apiKey': ''}, {'apiKey': 'bad\nkey'}, {'provider': 'claude'}, {'confirmed': True}):
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    self.manager.change({**request, **invalid})
+            models.assert_not_called()
+
+    def test_draft_models_cannot_send_a_saved_key_to_a_changed_url(self):
+        self.accounts.assert_editable = Mock()
+        self.accounts.api_url = Accounts.api_url
+        self.accounts.row = Mock(return_value={'kind': 'api', 'baseUrl': 'https://original.invalid/v1'})
+        self.accounts.api_credentials = Mock(return_value=('https://original.invalid/v1', 'fake-saved-key'))
+        request = {'provider': 'codex', 'action': 'modelsDraft', 'id': 'saved', 'apiKey': '', 'baseUrl': 'https://different.invalid/v1'}
+        with patch('bridge.features.accounts.cli_access.model_ids', return_value=['model-a']) as models:
+            with self.assertRaisesRegex(ValueError, '重新填写 API Key'):
+                self.manager.change(request)
+            self.accounts.api_credentials.assert_not_called()
+            models.assert_not_called()
+            self.manager.change({**request, 'baseUrl': 'https://original.invalid/v1/'})
+            models.assert_called_once_with('https://original.invalid/v1', 'fake-saved-key')
 
     def test_models_probe_persists_and_explicit_refresh_retains_last_success(self):
         identifier = self.save_api()
@@ -390,7 +422,7 @@ class CliAccessTests(unittest.TestCase):
             finally:
                 resume_done.set()
         with self.sync_patch(sync), patch.object(cli, '_get', return_value={
-                'nativeId': 'old-session', 'origin': 'old-origin'}), \
+                'nativeId': 'old-session', 'origin': 'old-origin', 'archived': False}), \
                 patch.object(cli, '_public', return_value={'permissionMode': 'default'}):
             switch_thread = threading.Thread(target=switch, daemon=True)
             switch_thread.start()

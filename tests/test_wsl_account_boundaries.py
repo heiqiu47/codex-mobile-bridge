@@ -514,7 +514,8 @@ class ClaudeWslDurableGuardTests(unittest.TestCase):
         (ROOT / '.tmp').mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.tmp')
         self.addCleanup(self.temp.cleanup)
-        self.manager = DesktopSessions(self.temp.name)
+        with patch('bridge.clients.manager.sys.platform', 'win32'):
+            self.manager = DesktopSessions(self.temp.name)
         self.addCleanup(self.manager.close)
         self.row = {'distribution': 'FixtureUbuntu', 'user': 'fixture', 'configDir': '/home/fixture/.claude',
                     'label': 'Fixture', 'enabled': True}
