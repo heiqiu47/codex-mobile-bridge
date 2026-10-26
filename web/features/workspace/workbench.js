@@ -203,7 +203,7 @@ class Workbench {
     const session = this.current; if (!session) return;
     const restoreMain=this.chat.classList.contains('workbench-active')&&!this.isFileVisible;
     for (const node of this.panel.querySelectorAll('.wb-file-list,.wb-preview-content,.wb-git-list,.wb-git-diff,.wb-branch-list,.wb-side-messages')) this.scrollPositions.set(node, node.scrollTop);
-    for (const stage of this.panel.querySelectorAll('.wb-pdf-stage')) this.scrollPositions.set(stage, {top:stage.scrollTop, left:stage.scrollLeft});
+    for (const stage of this.panel.querySelectorAll('.wb-pdf-stage,.wb-source-body')) this.scrollPositions.set(stage, {top:stage.scrollTop, left:stage.scrollLeft});
     this.splitEligible=this.canSplit();
     this.tabs.replaceChildren();
     for (const tab of [{id: 'chat', name: BridgeI18n.t('聊天')}, ...session.files]) {
@@ -224,7 +224,7 @@ class Workbench {
     if(this.panel.firstElementChild!==active?.body)this.panel.replaceChildren(...(active?[active.body]:[]));
     if (active) {
       for (const node of active.body.querySelectorAll('.wb-file-list,.wb-preview-content,.wb-git-list,.wb-git-diff,.wb-branch-list,.wb-side-messages')) node.scrollTop = this.scrollPositions.get(node) || 0;
-      for (const stage of active.body.querySelectorAll('.wb-pdf-stage')) { const position=this.scrollPositions.get(stage); if(position){stage.scrollTop=position.top;stage.scrollLeft=position.left;} }
+      for (const stage of active.body.querySelectorAll('.wb-pdf-stage,.wb-source-body')) { const position=this.scrollPositions.get(stage); if(position){stage.scrollTop=position.top;stage.scrollLeft=position.left;} }
     }
     if(restoreMain)this.chat.querySelector('.timeline').scrollTop=session.scroll;
     this.refreshThumbnails();
