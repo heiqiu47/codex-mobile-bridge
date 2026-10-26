@@ -1263,9 +1263,9 @@ class WslEntry(WslFeatures):
         return {**self.archive_commands.perform(identifier, archived, request_id, read, prepare), 'host': self.host}
 
     @_entry_write
-    def pin(self, identifier, pinned):
-        self.store.get(identifier)
-        return {**self.session_pins.set(identifier, pinned), 'host': self.host}
+    def pin(self, identifier, pinned, client_id=None, revision=None):
+        uuid.UUID(identifier)
+        return {**self.session_pins.set(identifier, pinned, client_id, revision), 'host': self.host}
 
     @_entry_write
     def rename(self, identifier, title):

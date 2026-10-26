@@ -29,7 +29,7 @@ from bridge.clients.codex.remote import ssh_read, payload
 from bridge.resources import source_text
 
 READS = {'list', 'detail', 'catalog', 'projects', 'account', 'access'}
-WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume', 'fork'}
+WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume', 'fork', 'pin'}
 
 
 class TaskStateUnavailable(ValueError):
@@ -66,6 +66,8 @@ class DesktopSessions:
         self.claude_quit = None
         self.directory = Path(directory)/'desktop-sessions'
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        from bridge.features.sessions.pins import SessionPins
+        self.session_pins = {provider: SessionPins(self.directory/provider, provider) for provider in ('claude', 'deepseek')}
         self.model_store = ModelStore(self.directory)
         self.directory_projects = Projects(self.directory/'projects')
         self.model_locks = {}
@@ -588,6 +590,8 @@ class DesktopSessions:
         with self.read_lock:
             binding, adapter = self.binding_epochs[provider], self.adapters[provider]
         value = self.call(provider, 'list')
+        pins = set(self.session_pins[provider].identifiers())
+        value = {**value, 'sessions': [{**row, 'bridgePinned': row['id'] in pins} for row in value.get('sessions', [])]}
         if value.get('connected') is not False:
             self._list_activity(provider, adapter, binding, value.get('sessions', []))
         with self.read_lock:
@@ -717,6 +721,11 @@ class DesktopSessions:
         body = body or {}
         if any(key in body for key in ('directoryProject', 'projectDirectory')):
             raise ValueError('项目目录必须通过目录选择器登记')
+        if action == 'pin':
+            self.require_enabled(provider)
+            if set(body) not in ({'pinned'}, {'pinned', 'clientId', 'revision'}):
+                raise ValueError('聊天置顶设置无效')
+            return self.session_pins[provider].set(sid, body['pinned'], body.get('clientId'), body.get('revision'))
         adapter = self.adapters[provider]
         if action == 'account':
             return self._account_models(provider, refresh=body.get('refresh') is True)

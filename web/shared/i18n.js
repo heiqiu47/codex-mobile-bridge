@@ -2,6 +2,9 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"置顶设置待同步":"Pin preference pending sync",
+"已在此设备保存，等待同步":"Saved on this device; waiting to sync",
+"无法保存此设备的置顶设置":"Unable to save pin preferences on this device",
 "复制深度链接":"Copy deep link",
 "复制 Session ID":"Copy Session ID",
 "此接入暂无可用的桌面会话链接":"No Desktop session link is available for this access.",

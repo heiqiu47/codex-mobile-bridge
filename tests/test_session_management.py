@@ -46,6 +46,41 @@ class SessionManagement(unittest.TestCase):
         self.assertEqual(web.identifiers(), ())
         with self.assertRaises(ValueError): web.set(self.sid, 'true')
 
+    def test_pin_revisions_reject_late_writes_after_reload_with_opaque_ids(self):
+        client = str(uuid.uuid4())
+        pins = SessionPins(self.home, 'claude')
+        sid = 'ssh:fixture:opaque/session-id'
+        pins.set(sid, True)
+        pins.set(sid, False, client, 2)
+        reloaded = SessionPins(self.home, 'claude')
+        before = reloaded.path.read_bytes()
+        stale = reloaded.set(sid, True, client, 1)
+        self.assertFalse(stale['bridgePinned'])
+        self.assertEqual(stale['revision'], 2)
+        self.assertEqual(reloaded.path.read_bytes(), before)
+        self.assertEqual(reloaded.identifiers(), ())
+        reloaded.set(sid, True, str(uuid.uuid4()), 1)
+        self.assertEqual(reloaded.identifiers(), (sid,))
+        for revision in (True, 0, -1, 1.5, 9007199254740992):
+            with self.assertRaises(ValueError): pins.set(sid, True, client, revision)
+        with self.assertRaises(ValueError): pins.set(sid, True, client)
+
+    def test_provider_pins_are_native_free_and_provider_isolated(self):
+        from bridge.clients.manager import DesktopSessions
+        with closing(DesktopSessions(self.home)) as manager:
+            sid = 'opaque/native-session'
+            with patch.object(manager, 'require_enabled'), patch.object(manager, '_read', side_effect=AssertionError('native read')):
+                result = manager.call('deepseek', 'pin', sid, {'pinned': True})
+                self.assertTrue(result['bridgePinned'])
+                self.assertEqual(manager.session_pins['claude'].identifiers(), ())
+                self.assertEqual(manager.session_pins['deepseek'].identifiers(), (sid,))
+            manager.call = Mock(return_value={'sessions': [{'id': sid}]})
+            with patch.object(manager, '_list_activity'):
+                self.assertTrue(manager.list_with_activity('deepseek')['sessions'][0]['bridgePinned'])
+                self.assertFalse(manager.list_with_activity('claude')['sessions'][0]['bridgePinned'])
+            validate_relay('POST', '/api/desktop-sessions/deepseek/pin')
+            with self.assertRaises(PermissionError): validate_relay('GET', '/api/desktop-sessions/deepseek/pin')
+
     def test_old_pin_is_sorted_before_sql_pagination_but_default_order_stays_recent(self):
         with closing(sqlite3.connect(self.home / 'state_5.sqlite')) as database, database:
             database.execute('CREATE TABLE threads(id TEXT, title TEXT, cwd TEXT, updated_at INT, archived INT, originator TEXT, source TEXT, is_pinned INT)')
@@ -265,6 +300,21 @@ class SessionManagementHttp(unittest.TestCase):
         self.assertTrue(recent[0]['bridgePinned'])
         project = self.request('GET', '/api/sessions?scope=host&host=local&order=project', headers=headers)[2]['sessions']
         self.assertNotIn(self.sid, [row['id'] for row in project])
+
+    def test_pin_metadata_preserves_auth_and_rejects_delayed_older_intent(self):
+        headers = self.login()
+        path = '/api/sessions/' + self.sid + '/pin'
+        client = str(uuid.uuid4())
+        latest = {'pinned': False, 'clientId': client, 'revision': 2}
+        self.assertEqual(self.request('POST', path, latest)[0], 401)
+        self.assertEqual(self.request('POST', path, latest, {'Cookie': headers['Cookie']})[0], 403)
+        self.assertEqual(self.request('POST', path, latest, headers)[0], 200)
+        status, _, stale = self.request('POST', path, {**latest, 'pinned': True, 'revision': 1}, headers)
+        self.assertEqual(status, 200)
+        self.assertFalse(stale['bridgePinned'])
+        self.assertEqual(stale['revision'], 2)
+        for body in ({'pinned': True, 'revision': 3}, {**latest, 'revision': True}, {**latest, 'extra': 1}):
+            self.assertEqual(self.request('POST', path, body, headers)[0], 400)
 
     def test_app_archive_and_unarchive_dispatch_native_metadata_only_and_confirm_store(self):
         headers = self.login()

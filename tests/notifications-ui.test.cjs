@@ -681,12 +681,12 @@ test('durable Codex list snapshots stay bounded across filters and oversized row
   const localStore=new Map(),ui=await fixture({localStore,skipStartup:true});
   ui.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${'a'.repeat(64)}'})`);
   ui.run("listRows=[{id:'saved',host:'local',title:'Saved',recency:1}];availableSources=['desktop'];listHostIds=[];listOffset=1;listHasMore=false");
-  for(let i=0;i<9;i++)ui.run(`saveListSnapshot('filter-${i}')`);
+  for(let i=0;i<9;i++)ui.run(`saveListSnapshot(JSON.stringify(['filter-${i}','all','all','recent']))`);
   const keys=[...localStore.keys()].filter(key=>key.startsWith('codex-list-v1:'));
-  assert.equal(keys.length,8);assert.equal(keys.some(key=>key.endsWith('filter-0')),false);
+  assert.equal(keys.length,8);assert.equal(keys.some(key=>key.includes('filter-0')),false);
   ui.run("listRows=[{id:'huge',host:'local',title:'X'.repeat(600*1024),recency:1}]");
-  ui.run("saveListSnapshot('oversized')");
-  assert.equal([...localStore.keys()].some(key=>key.endsWith('oversized')),false);
+  ui.run("saveListSnapshot(JSON.stringify(['oversized','all','all','recent']))");
+  assert.equal([...localStore.keys()].some(key=>key.includes('oversized')),false);
 });
 
 test('LAN HTTP list snapshots use the server identity without Web Crypto',async()=>{

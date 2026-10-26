@@ -69,9 +69,15 @@ function clearListSnapshot(){
   listIdentity='';listFilterKey='';listHostIds=[];listRows=[];listOffset=0;listHasMore=false;listComplete=false;listReadFinished=false;availableSources=[];listRenderStamp='';listGeneration++;
 }
 function authLost(){hideWebhookUrl();clearListSnapshot();if(!$('app').hidden)document.dispatchEvent(new Event('bridge-auth-lost'));showLogin();}
-async function api(path,body,signal){const options={signal,credentials:'same-origin',cache:'no-store',headers:{}};if(body!==undefined){options.method='POST';options.headers={'Content-Type':'application/json','X-CSRF-Token':csrf};options.body=JSON.stringify(body);}const response=await fetch(hostUrl(path),options);let data;try{data=await response.json();}catch(error){throw Object.assign(error,{status:response.status});}if(!response.ok){if(response.status===401)authLost();throw Object.assign(Error(data.error||t('请求失败')),{loginStatus:data.loginStatus,status:response.status,code:data.code});}return data;}
+async function api(path,body,signal,authCurrent){const options={signal,credentials:'same-origin',cache:'no-store',headers:{}};if(body!==undefined){options.method='POST';options.headers={'Content-Type':'application/json','X-CSRF-Token':csrf};options.body=JSON.stringify(body);}const response=await fetch(hostUrl(path),options);let data;try{data=await response.json();}catch(error){throw Object.assign(error,{status:response.status});}if(!response.ok){if(response.status===401&&(!authCurrent||authCurrent()))authLost();throw Object.assign(Error(data.error||t('请求失败')),{loginStatus:data.loginStatus,status:response.status,code:data.code});}return data;}
 const workbench=window.BridgeWorkbench=new Workbench({chat:$('chat'),request:api,csrf:()=>csrf,notify:toast,onUnauthorized:authLost,openChat});
-const desktopSessions=new DesktopSessionsView({root:$('app'),select:$('desktop-backend'),request:api,notify:toast,csrf:()=>csrf,onUnauthorized:authLost,onSelect:provider=>{
+async function sendSessionPin(identity,body,token){
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+  try{return await api(identity.provider==='codex'?sessionUrl(identity.id,'pin',identity.host):'/api/desktop-sessions/'+identity.provider+'/pin',identity.provider==='codex'?body:{...body,sessionId:identity.id},controller.signal,()=>sessionPins.current(token));}finally{clearTimeout(timer);}
+}
+const sessionPins=new LocalSessionPins({newId:uuid,send:sendSessionPin,onChange:()=>{listRenderStamp='';renderList();desktopSessions.listStamp='';desktopSessions.renderList();if(listFilterKey)saveListSnapshot(listFilterKey);desktopSessions.rememberView();}});
+function pinRow(row,provider='codex'){const identity={provider,id:row.id,host:row.host||'local'};return {...row,bridgePinned:sessionPins.value(identity,row.bridgePinned),pinPending:sessionPins.pending(identity)};}
+const desktopSessions=new DesktopSessionsView({root:$('app'),pinPreferences:sessionPins,onSessionMenu:(button,row,provider)=>bindSessionMenu(button,row,provider),select:$('desktop-backend'),request:api,notify:toast,csrf:()=>csrf,onUnauthorized:authLost,onSelect:provider=>{
   if(provider!=='codex'){saveDraft();chatTimeline?.dispose();chatTimeline=null;currentId=null;state=null;workbench.reset();$('chat').hidden=true;$('welcome').hidden=false;$('app').classList.remove('chat-open');if(!browserNavigation.enabled())history.replaceState(null,'',location.pathname);}
 }});
 const clientNavigation=new ClientNavigation({view:desktopSessions,request:api,notify:toast});
@@ -151,7 +157,7 @@ function renderLoginStatus(status=loginStatus){
 }
 function clearCodexProvisionalDrafts(){codexProvisionalDrafts.clear();for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(key?.startsWith('draft:')||key?.startsWith('skills:'))sessionStorage.removeItem(key);}}
 function clearQuoteComposer(){if(typeof codexQuotes!=='undefined')codexQuotes?.reset();}
-function showLogin(passwordless=false,status){clearQuoteComposer();if(typeof ChatTimeline!=='undefined')ChatTimeline.clearCache?.();draftGateway='';codexDraftScope=null;clearCodexProvisionalDrafts();codexActiveAccountId=undefined;window.BridgeDownloads?.clear();$('mobile-binding-status').hidden=true;if(typeof codexCliAccessPanel!=='undefined')codexCliAccessPanel?.clear();claudeCliAccessPanel?.clear();if(window.BridgeSharedRelay){location.replace((window.BridgeRelayBase||'')+'/relay/');return;}desktopSessions.clear();clientNavigation.clear?.();modelCatalogGeneration++;modelCatalogs.clear();catalogData.models=null;catalogResults.models=null;catalogTasks.models=null;workbench.reset();if(typeof accountsPanel!=='undefined')accountsPanel?.clear();chatTimeline?.dispose();chatTimeline=null;document.querySelectorAll('dialog[open]').forEach(d=>d.close());$('app').hidden=true;$('login').hidden=false;$('credentials').hidden=passwordless;$('noauth').hidden=!passwordless;$('username').required=!passwordless;$('password').value='';$('remember-login').parentElement.hidden=passwordless||BridgeHost.isNativeApp();$('login-attempts').hidden=passwordless;renderLoginStatus(status);if(window.BridgeBootstrap)window.BridgeBootstrap.ready();else $('bootstrap-status').hidden=true;}
+function showLogin(passwordless=false,status){sessionPins.suspend();clearQuoteComposer();if(typeof ChatTimeline!=='undefined')ChatTimeline.clearCache?.();draftGateway='';codexDraftScope=null;clearCodexProvisionalDrafts();codexActiveAccountId=undefined;window.BridgeDownloads?.clear();$('mobile-binding-status').hidden=true;if(typeof codexCliAccessPanel!=='undefined')codexCliAccessPanel?.clear();claudeCliAccessPanel?.clear();if(window.BridgeSharedRelay){location.replace((window.BridgeRelayBase||'')+'/relay/');return;}desktopSessions.clear();clientNavigation.clear?.();modelCatalogGeneration++;modelCatalogs.clear();catalogData.models=null;catalogResults.models=null;catalogTasks.models=null;workbench.reset();if(typeof accountsPanel!=='undefined')accountsPanel?.clear();chatTimeline?.dispose();chatTimeline=null;document.querySelectorAll('dialog[open]').forEach(d=>d.close());$('app').hidden=true;$('login').hidden=false;$('credentials').hidden=passwordless;$('noauth').hidden=!passwordless;$('username').required=!passwordless;$('password').value='';$('remember-login').parentElement.hidden=passwordless||BridgeHost.isNativeApp();$('login-attempts').hidden=passwordless;renderLoginStatus(status);if(window.BridgeBootstrap)window.BridgeBootstrap.ready();else $('bootstrap-status').hidden=true;}
 async function start(pairingToken=null){
   window.BridgeBootstrap?.waitingForAuth();
   const auth=window.BridgeBootstrap?.readAuth?await window.BridgeBootstrap.readAuth(signal=>api('/api/auth',undefined,signal)):await api('/api/auth');
@@ -188,6 +194,7 @@ async function enter(authInfo){
   if(!verified.authenticated)throw Error(t('登录状态暂不可用'));
   if(draftGateway&&draftGateway!==verified.draftIdentity){clearCodexProvisionalDrafts();if(typeof ChatTimeline!=='undefined')ChatTimeline.clearCache?.();}
   draftGateway=verified.draftIdentity||'';
+  sessionPins.bind(draftGateway?JSON.stringify([window.BridgeRelayBase||location.origin,draftGateway]):'');
   desktopSessions.bindDraftGateway?.(draftGateway);
   listIdentity=await listAuthIdentity(verified);
   desktopSessions.bindListCache(listIdentity,window.BridgeRelayBase||location.host);
@@ -228,7 +235,7 @@ function restoreListSnapshot(filter=currentListFilter()){
 }
 function saveListSnapshot(filter){
   const key=listSnapshotKey(filter);if(!key)return;
-  const rows=listRows.slice(0,200),snapshot=JSON.stringify({rows,sources:availableSources,hosts:listHostIds,offset:rows.length,hasMore:listHasMore||listRows.length>rows.length});
+  const rows=(JSON.parse(filter)[3]==='recent'?[...listRows].sort((a,b)=>Number(pinRow(b).bridgePinned)-Number(pinRow(a).bridgePinned)||(b.recency-a.recency)||b.id.localeCompare(a.id)):listRows).slice(0,200),snapshot=JSON.stringify({rows,sources:availableSources,hosts:listHostIds,offset:rows.length,hasMore:listHasMore||listRows.length>rows.length});
   if(snapshot.length>512*1024)return;
   try{
     localStorage.setItem(key,snapshot);sessionStorage.removeItem(key);
@@ -263,14 +270,15 @@ function sessionAccess(access){
 function currentAccess(){return sessionAccess(state?.access||listRows.find(row=>row.id===currentId&&row.host===currentHost)?.access);}
 function sourceLabel(access){return access?.runtime==='wsl'?'WSL':access?.source==='cli'?'CLI':access?.source==='ide'?'IDE':access?.source==='unknown'?t('其他来源'):'APP';}
 function renderList(){
-  const stamp=JSON.stringify([$('list-mode').value,currentId,currentHost,listHasMore,BridgeI18n.locale(),availableSources,listRows.length?null:[listComplete,listReadFinished],listRows.map(row=>[row.id,row.host,row.title,row.projectKey,row.projectName,row.hostLabel,row.recency,row.bridgePinned,row.archived,row.access])]);
+  const displayedRows=listRows.map(row=>pinRow(row));
+  const stamp=JSON.stringify([$('list-mode').value,currentId,currentHost,listHasMore,BridgeI18n.locale(),availableSources,listRows.length?null:[listComplete,listReadFinished],displayedRows.map(row=>[row.id,row.host,row.title,row.projectKey,row.projectName,row.hostLabel,row.recency,row.bridgePinned,row.pinPending,row.archived,row.access])]);
   if(stamp===listRenderStamp&&$('sessions').children.length){renderActivity();return;}
   listRenderStamp=stamp;
   const scrollTop=$('sessions').scrollTop;
   $('sessions').replaceChildren();
   const grouped=$('list-mode').value==='project', groups=new Map();
   let pinSection=null;
-  const ordered=grouped?[...listRows].sort((a,b)=>(b.recency-a.recency)||b.id.localeCompare(a.id)):[...listRows].sort((a,b)=>Number(!!b.bridgePinned)-Number(!!a.bridgePinned)||(b.recency-a.recency)||b.id.localeCompare(a.id));
+  const ordered=grouped?[...displayedRows].sort((a,b)=>(b.recency-a.recency)||b.id.localeCompare(a.id)):[...displayedRows].sort((a,b)=>Number(!!b.bridgePinned)-Number(!!a.bridgePinned)||(b.recency-a.recency)||b.id.localeCompare(a.id));
   const hasPins=!grouped&&ordered.some(chat=>chat.bridgePinned);
   for(const chat of ordered){
     let parent=$('sessions');
@@ -290,26 +298,29 @@ function renderList(){
     button.append(el('strong','',chat.title));
     button.append(el('span','session-source',sourceLabel(sessionAccess(chat.access))||t('其他来源')));
     const meta=el('small');meta.append(el('span','',chat.projectName+' · '+(chat.host==='local'?t('此电脑'):chat.hostLabel)),el('time','',dateText(chat.recency/1000)));
+    if(chat.pinPending)button.append(el('span','session-source',t('置顶设置待同步')));
     button.append(meta);button.onclick=()=>openChat(chat.id,chat.host).catch(e=>toast(e.message));bindSessionMenu(button,chat);parent.append(button);
   }
   if(listHasMore){const more=el('button','plain',t('加载更多聊天'));more.id='sessions-more';more.type='button';more.onclick=()=>loadList().catch(error=>toast(error.message));$('sessions').append(more);}
   if(!listRows.length)$('sessions').append(el('p','muted',t(listComplete?'没有找到聊天。':listReadFinished?'暂不可用':'正在读取…')));renderActivity();$('sessions').scrollTop=scrollTop;
 }
-function bindSessionMenu(button,chat){
+function bindSessionMenu(button,chat,provider='codex'){
   let timer=null,start=null,suppress=false;
   const clear=()=>{clearTimeout(timer);timer=null;};
   const show=()=>{
     const box=el('dialog','picker'),head=el('div','picker-head'),close=el('button','icon-button','×');
     close.type='button';close.setAttribute('aria-label',t('关闭'));close.onclick=()=>box.close();head.append(el('h2','',chat.title),close);box.append(head);
     const action=(label,run,disable=true)=>{const item=el('button','plain',t(label));item.type='button';item.onclick=async()=>{if(disable)item.disabled=true;try{await run(item);box.close();}catch(error){toast(error.message);item.disabled=false;}};box.append(item);return item;};
-    action(chat.bridgePinned?'取消置顶':'置顶',async()=>{await api(sessionUrl(chat.id,'pin',chat.host),{pinned:!chat.bridgePinned});await loadList(true);});
-    const identity={provider:'codex',id:chat.id,host:chat.host,runtime:chat.access?.runtime};
-    const copy=action('复制深度链接',item=>BridgeClipboard.copyWithFeedback(()=>window.BridgeSessionLinks?.text(identity),item,toast),false);
-    copy.classList.add('message-copy');copy.disabled=!window.BridgeSessionLinks?.text(identity);
-    action(chat.archived?'取消归档':'归档聊天',async()=>{
-      const result=await api(sessionUrl(chat.id,'archive',chat.host),{archived:!chat.archived,id:uuid()});
+    const identity={provider,id:chat.id,host:chat.host||'local',runtime:chat.access?.runtime};
+    action(chat.bridgePinned?'取消置顶':'置顶',()=>{sessionPins.set(identity,!chat.bridgePinned);toast(t('已在此设备保存，等待同步'));});
+    const copy=action(provider==='deepseek'?'复制 Session ID':'复制深度链接',item=>BridgeClipboard.copyWithFeedback(()=>window.BridgeSessionLinks?.text(identity),item,toast),false);
+    copy.classList.add('message-copy');
+    copy.disabled=!window.BridgeSessionLinks?.text(identity);
+    if(provider==='codex'||chat.capabilities?.[chat.archived?'unarchive':'archive']===true)action(chat.archived?'取消归档':'归档聊天',async()=>{
+      const body={archived:!chat.archived,id:uuid()};
+      const result=await api(provider==='codex'?sessionUrl(chat.id,'archive',chat.host):'/api/desktop-sessions/'+provider+'/archive',provider==='codex'?body:{...body,sessionId:chat.id});
       if(result.status!=='confirmed')throw Error(t('归档结果待核对，请检查原聊天；不会重复提交'));
-      await loadList(true);
+      if(provider==='codex')await loadList(true);else await desktopSessions.refresh();
     });
     box.addEventListener('close',()=>box.remove());document.body.append(box);box.showModal();
   };
@@ -322,7 +333,7 @@ function bindSessionMenu(button,chat){
 }
 async function loadList(reset=false){
   if(!reset&&(listLoading||!listHasMore))return;
-  const generation=++listGeneration,offset=reset?0:listOffset;
+  const generation=++listGeneration,offset=reset?0:listOffset,pinRead=sessionPins.capture();
   const query=$('search').value,archived=$('archived').checked,source=listSource,mode=$('list-mode').value;
   const filter=JSON.stringify([query,archived,source,mode]);
   if(reset&&filter!==listFilterKey){
@@ -335,7 +346,7 @@ async function loadList(reset=false){
   const sources=new Set(availableSources),freshSources=new Map(),errors=[];
   const publish=()=>{
     if(generation!==listGeneration)return [];
-    const merged=[...groups.values()].flat().sort((a,b)=>(mode==='recent'?Number(!!b.bridgePinned)-Number(!!a.bridgePinned):0)||(b.recency-a.recency)||b.id.localeCompare(a.id)||b.host.localeCompare(a.host));
+    const merged=[...groups.values()].flat().sort((a,b)=>(mode==='recent'?Number(pinRow(b).bridgePinned)-Number(pinRow(a).bridgePinned):0)||(b.recency-a.recency)||b.id.localeCompare(a.id)||b.host.localeCompare(a.host));
     listRows=merged.slice(0,targetCount);availableSources=[...sources].sort();renderList();
     return merged;
   };
@@ -350,7 +361,9 @@ async function loadList(reset=false){
       if(result.complete===false||result.unavailableHosts?.length)errors.push(...(result.unavailableHosts||[{host,label:host,error:t('暂不可用')}]));
       else{
         for(const row of result.sessions){const key=chatKey(row.id,row.host);row.recency=Math.max(row.recency,recentInteractions.get(key)||0);}
-        groups.set(host,result.sessions);freshSources.set(host,result.availableSources||[]);
+        for(const row of result.sessions)sessionPins.observe({provider:'codex',host:row.host,id:row.id},row.bridgePinned,pinRead);
+        const retained=mode==='recent'?(groups.get(host)||[]).filter(row=>sessionPins.pending({provider:'codex',host:row.host,id:row.id})&&pinRow(row).bridgePinned&&!result.sessions.some(fresh=>fresh.id===row.id)):[];
+        groups.set(host,[...result.sessions,...retained]);freshSources.set(host,result.availableSources||[]);
         for(const item of result.availableSources||[])sources.add(item);
       }
       publish();return result;

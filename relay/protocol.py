@@ -19,7 +19,7 @@ WRITE = {'send', 'stop', 'history', 'respond', 'reconnect', 'queue', 'settings',
          'goal/cancel', 'goal/edit', 'goal/status', 'side-chat', 'terminal',
          'workspace/upload', 'workspace/git-action'}
 DESKTOP_READ = {'list', 'detail', 'catalog', 'projects', 'account', 'access', 'terminal', 'notifications'} | {action for action in READ if action.startswith('workspace')}
-DESKTOP_WRITE = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'uploads', 'terminal', 'notifications', 'workspace/upload', 'workspace/git-action'}
+DESKTOP_WRITE = {'pin', 'send', 'stop', 'settings', 'respond', 'create', 'access', 'uploads', 'terminal', 'notifications', 'workspace/upload', 'workspace/git-action'}
 
 
 def origin(value, test_http=False):

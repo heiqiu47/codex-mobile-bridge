@@ -2539,9 +2539,9 @@ class Bridge:
         return {**result, 'host': self.host}
 
     @operation
-    def pin(self, thread_id, pinned):
-        self.store.get(thread_id)
-        return {**self.session_pins.set(thread_id, pinned), 'host': self.host}
+    def pin(self, thread_id, pinned, client_id=None, revision=None):
+        uuid.UUID(thread_id)
+        return {**self.session_pins.set(thread_id, pinned, client_id, revision), 'host': self.host}
 
     @operation
     def rename(self, thread_id, title):

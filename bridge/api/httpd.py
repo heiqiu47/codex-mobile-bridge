@@ -1188,9 +1188,9 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('聊天归档设置无效')
                 result = bridge.archive(thread_id, body['archived'], body['id'])
             elif action == "pin":
-                if set(body) != {'pinned'}:
+                if set(body) not in ({'pinned'}, {'pinned', 'clientId', 'revision'}):
                     raise ValueError('聊天置顶设置无效')
-                result = bridge.pin(thread_id, body['pinned'])
+                result = bridge.pin(thread_id, body['pinned'], **({'client_id': body['clientId'], 'revision': body['revision']} if 'clientId' in body else {}))
             elif action == "rename":
                 result = bridge.rename(thread_id, body.get("title"))
             elif action == "permissions":
