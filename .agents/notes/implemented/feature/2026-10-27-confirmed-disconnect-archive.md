@@ -10,7 +10,7 @@ Disconnecting a Bridge reader does not release a native writer. Users explicitly
 
 An explicit `disconnect:true` on an archive request opts into stopping the exact original target and its verified descendants. Older requests retain idle-only semantics; restore never stops work. The existing lifecycle gates exclude new Bridge submissions during the operation. Persist the existing unknown receipt before any stop or release, read fresh native state after stopping, and only then archive through the original runtime. Never close a shared application/daemon or kill unrelated processes to release one chat. Uncontrollable native owners remain a clear failure, not a fabricated success.
 
-The confirmation displays title, execution host and interruption consequences. Confirm archive is on the left, Cancel on the right and initially focused. Cancel, Escape and dismissal perform no request. Restore retains its separate action.
+The confirmation displays title, execution host and interruption consequences. Confirm archive is on the left, Cancel on the right and initially focused. Both buttons use the same existing primary style and equal grid columns; phone-width visual acceptance prevents a narrow/wrapped Cancel label. Cancel, Escape and dismissal perform no request. Restore retains its separate action.
 
 ## Existing-note audit
 

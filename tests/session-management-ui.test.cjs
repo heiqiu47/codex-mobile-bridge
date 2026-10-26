@@ -30,7 +30,7 @@ test('right-click exposes pin, copy and native archive with original host',async
  await box.children[1].onclick();assert.equal(ui.requests[0].url,'/remote/a/pin');assert.equal(ui.requests[0].body.pinned,true);
  await box.children[2].onclick();assert.deepEqual(ui.copies,['codex://threads/a']);
  const archive=box.children[3].onclick();const confirmation=ui.dialogs.at(-1),actions=confirmation.children.at(-1);
- assert.deepEqual(actions.children.map(item=>item.textContent),['确认归档','取消']);assert.equal(actions.children[1].focused,true);actions.children[0].onclick();await archive;
+ assert.deepEqual(actions.children.map(item=>item.textContent),['确认归档','取消']);assert.deepEqual(actions.children.map(item=>item.cls),['primary','primary']);assert.equal(actions.children[1].focused,true);actions.children[0].onclick();await archive;
  assert.equal(ui.requests[1].body.disconnect,true);assert.equal(ui.requests[1].url,'/remote/a/archive');assert.equal(ui.requests[1].body.archived,true);
 });
 test('long press suppresses navigation and movement cancels; archived menu restores',async()=>{
@@ -49,7 +49,7 @@ test('provider menus preserve opaque IDs and expose archive only for verified ca
  let box=ui.dialogs[0];assert.deepEqual(box.children.slice(1).map(n=>n.textContent),['置顶','复制 Session ID','断开连接并归档']);
  await box.children[1].onclick();assert.equal(ui.requests[0].body.pinned,true);
  const archive=box.children[3].onclick();const confirmation=ui.dialogs.at(-1),actions=confirmation.children.at(-1);
- assert.deepEqual(actions.children.map(item=>item.textContent),['确认归档','取消']);assert.equal(actions.children[1].focused,true);actions.children[0].onclick();await archive;
+ assert.deepEqual(actions.children.map(item=>item.textContent),['确认归档','取消']);assert.deepEqual(actions.children.map(item=>item.cls),['primary','primary']);assert.equal(actions.children[1].focused,true);actions.children[0].onclick();await archive;
  assert.equal(ui.requests[1].body.disconnect,true);assert.equal(ui.requests[1].url,'/api/desktop-sessions/deepseek/archive');assert.equal(ui.requests[1].body.sessionId,chat.id);
  const unsupported=ui.node('button');ui.context.bindSessionMenu(unsupported,{...chat,capabilities:{}},'claude');unsupported.events.contextmenu({preventDefault(){}});
  box=ui.dialogs.at(-1);assert.deepEqual(box.children.slice(1).map(n=>n.textContent),['置顶','复制深度链接']);

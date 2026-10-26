@@ -309,10 +309,10 @@ function renderList(){
 }
 function confirmSessionArchive(chat){
   return new Promise(resolve=>{
-    const box=el('dialog','picker'),actions=el('div','copy-dialog-actions');let confirmed=false;
+    const box=el('dialog','picker archive-confirm'),actions=el('div','copy-dialog-actions');let confirmed=false;
     box.append(el('h2','',t('断开连接并归档')),el('p','',chat.title),el('p','muted',chat.hostLabel||t('此电脑')),
       el('p','',t('将停止此聊天及其子任务，并在确认停止后归档。聊天记录会保留，未完成任务不会自动续跑。')));
-    const confirm=el('button','primary',t('确认归档')),cancel=el('button','plain',t('取消'));
+    const confirm=el('button','primary',t('确认归档')),cancel=el('button','primary',t('取消'));
     confirm.type=cancel.type='button';confirm.onclick=()=>{confirmed=true;box.close();};cancel.onclick=()=>box.close();
     actions.append(confirm,cancel);box.append(actions);
     box.addEventListener('close',()=>{box.remove();resolve(confirmed);});document.body.append(box);box.showModal();cancel.focus();
