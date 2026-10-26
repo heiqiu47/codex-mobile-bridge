@@ -54,6 +54,34 @@ class ClaudeCliContract(unittest.TestCase):
         self.addCleanup(self.prompt_patch.stop)
         self.cli = ClaudeCli(self.root/'uploads')
 
+    @unittest.skipUnless(os.name == 'posix', 'Real Claude file archive requires POSIX ownership and fsync semantics')
+    def test_confirmed_archive_releases_owned_executor_before_file_and_writer_checks(self):
+        from bridge.clients.claude import file_archive
+        owned = SimpleNamespace(origin=self.profile['origin'], native=self.native, error=None,
+            process=Mock(), condition=threading.Condition(), pending={}, active=True, model=None, permission=None)
+        owned.process.poll.return_value = None
+        owned.release_for_archive = Mock(side_effect=lambda: owned.process.poll.configure_mock(return_value=0))
+        self.cli.owned[self.native] = owned
+        before = self.path.read_bytes()
+        def stopped(*args):
+            self.assertEqual(owned.process.poll(), 0)
+        with patch.object(file_archive, 'supported', return_value=True), \
+             patch('bridge.clients.claude.cli_session.assert_session_closed', side_effect=stopped), \
+             patch.object(file_archive, 'assert_no_cli', side_effect=stopped):
+            state = self.cli.call('archive-state', self.sid, {})
+            self.assertFalse(state['archiveSafe'])
+            owned.release_for_archive.assert_not_called()
+            with self.assertRaises(BridgeUnavailable):
+                self.cli.call('archive', self.sid, {'archived': True})
+            result = self.cli.call('archive', self.sid, {'archived': True, 'disconnect': True})
+            self.assertTrue(result['archived'])
+            owned.release_for_archive.assert_called_once_with()
+            self.assertFalse(self.path.exists())
+            self.cli.call('archive', self.sid, {'archived': False})
+            self.assertEqual(self.path.read_bytes(), before)
+            owned.release_for_archive.assert_called_once_with()
+        self.cli.owned.clear()
+
     def test_saved_list_and_detail_are_passive_and_closed(self):
         with patch('bridge.clients.claude.cli_session.subprocess.Popen') as popen:
             listing = self.cli.listing()

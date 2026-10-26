@@ -20,7 +20,7 @@ from bridge.resources import source_text
 
 class RemoteWorkerContract(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]/'.tmp')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.config = self.root/'remote-profile'; self.config.mkdir()
@@ -48,11 +48,21 @@ class RemoteWorkerContract(unittest.TestCase):
         self.binary = binary
 
     def run_worker(self, request):
-        process = subprocess.run([sys.executable, '-u', '-c', source_text('clients/claude/remote_worker.py')],
+        # Run the exact standalone payload without Windows' command-line size limit.
+        worker = self.root/'standalone-worker.py'
+        worker.write_text(remote.worker_source(), encoding='utf-8')
+        process = subprocess.run([sys.executable, '-u', str(worker)],
                                  input=json.dumps(request)+'\n', text=True, encoding='utf-8', capture_output=True,
-                                 env=self.env, timeout=5)
+                                 env={**self.env, 'PYTHONPATH': ''}, cwd=self.root, timeout=5)
         self.assertEqual(process.returncode, 0, process.stderr)
         return json.loads(process.stdout)
+
+    def test_payload_embeds_archive_helper_and_resource_is_explicitly_bundled(self):
+        source = remote.worker_source()
+        self.assertNotIn('from bridge.', source)
+        self.assertIn('def archive_paths(', source)
+        resources = json.loads((Path(__file__).resolve().parents[1]/'scripts/gateway-resources.json').read_text())
+        self.assertIn('bridge/clients/claude/file_archive.py', resources)
 
     def test_standalone_passive_history_and_host_profile(self):
         listed = self.run_worker({'operation': 'list'})['value']
@@ -252,6 +262,112 @@ class RemoteWorkerContract(unittest.TestCase):
                 self.assertEqual(self.path.read_bytes(), before)
 
 
+    @unittest.skipUnless(os.name == 'posix', 'Remote archive storage runs on verified POSIX targets')
+    def test_archive_roundtrip_keeps_native_identity_and_archived_history_discoverable(self):
+        found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
+        before = self.path.read_bytes()
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=True), \
+             patch.object(remote_worker, 'archive_assert_no_cli'), \
+             patch.object(remote_worker, 'assert_session_closed') as guard:
+            result = remote_worker.command({'operation': 'archive', 'native': self.native,
+                                            'origin': found['origin'], 'archived': True})
+            self.assertTrue(result['archived'])
+            self.assertTrue(result['archiveSafe'])
+            self.assertEqual(guard.call_count, 2)
+            self.assertTrue(all(call.args == (found,) for call in guard.call_args_list))
+            self.assertFalse(self.path.exists())
+            rows = remote_worker.sessions(found)
+            self.assertEqual([row['nativeId'] for row in rows], [self.native])
+            self.assertTrue(rows[0]['archived'])
+            stored = remote_worker.session_path(found, self.native)
+            self.assertEqual(stored.read_bytes(), before)
+            detail = remote_worker.command({'operation': 'detail', 'native': self.native, 'origin': found['origin']})
+            self.assertTrue(detail['archived'])
+            restored = remote_worker.command({'operation': 'archive', 'native': self.native,
+                                              'origin': found['origin'], 'archived': False})
+            self.assertFalse(restored['archived'])
+            self.assertEqual(self.path.read_bytes(), before)
+
+    def test_remote_archive_rejects_unproven_capability_unknown_profile_registry_and_live_census(self):
+        found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
+        request = {'operation': 'archive', 'native': self.native, 'origin': found['origin'], 'archived': True}
+        before = self.path.read_bytes()
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=False):
+            with self.assertRaises(ValueError): remote_worker.command(request)
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=True), \
+             patch.object(remote_worker, 'assert_session_closed', side_effect=ValueError('unknown registry')):
+            with self.assertRaises(ValueError): remote_worker.command(request)
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=True), \
+             patch.object(remote_worker, 'archive_assert_no_cli', side_effect=ValueError('live writer')), \
+             patch.object(remote_worker, 'assert_session_closed'):
+            with self.assertRaisesRegex(ValueError, 'live writer'): remote_worker.command(request)
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_incomplete_archive_keeps_other_remote_sessions_visible(self):
+        bad = str(uuid.uuid4());bundle = self.config/'bridge-archives'/bad;bundle.mkdir(parents=True)
+        (bundle/'manifest.json').write_text('{}')
+        found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=False):
+            listing = remote_worker.command({'operation': 'list'})
+            self.assertFalse(listing['complete'])
+            rows = {row['nativeId']: row for row in listing['sessions']}
+            self.assertIn(self.native, rows)
+            self.assertTrue(rows[bad]['archived'])
+            self.assertTrue(rows[bad]['archiveIncomplete'])
+            self.assertFalse(rows[bad]['runtimeKnown'])
+            self.assertFalse(rows[bad]['capabilities']['unarchive'])
+            self.assertEqual(remote_worker.session(found, self.native)['nativeId'], self.native)
+            with self.assertRaises(ValueError): remote_worker.session(found, bad)
+
+    def test_native_binary_proof_is_rechecked_immediately_before_remote_write(self):
+        found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
+        before = self.path.read_bytes()
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', side_effect=[True, False]) as supported, \
+             patch.object(remote_worker, 'archive_assert_no_cli'), \
+             patch.object(remote_worker, 'assert_session_closed'), \
+             patch.object(remote_worker, 'archive_file_change') as change:
+            with self.assertRaisesRegex(ValueError, '二进制归档能力已变化'):
+                remote_worker.command({'operation': 'archive', 'native': self.native,
+                                       'origin': found['origin'], 'archived': True})
+            self.assertEqual(supported.call_count, 2)
+            change.assert_not_called()
+        self.assertEqual(self.path.read_bytes(), before)
+
+    @unittest.skipUnless(os.name == 'posix', 'Remote archive storage runs on verified POSIX targets')
+    def test_explicit_remote_archive_state_verifies_archived_content(self):
+        found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
+        request = {'operation': 'archive', 'native': self.native, 'origin': found['origin'], 'archived': True}
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=True), \
+             patch.object(remote_worker, 'archive_assert_no_cli'), \
+             patch.object(remote_worker, 'assert_session_closed'):
+            remote_worker.command(request)
+            stored = remote_worker.session_path(found, self.native)
+            stored.write_bytes(stored.read_bytes()+b'\n')
+            # Passive discovery remains metadata-only; an explicit mutation state
+            # must verify bytes before reporting a safe archived result.
+            self.assertTrue(remote_worker.sessions(found)[0]['archived'])
+            with self.assertRaises(ValueError):
+                remote_worker.command({**request, 'operation': 'archive-state'})
+
+    def test_full_profile_guard_rejects_another_live_native_session(self):
+        other = str(uuid.uuid4());pid = 4321
+        (self.config/'sessions'/(str(pid)+'.json')).write_text(json.dumps({
+            'pid': pid, 'sessionId': other, 'procStart': '123456', 'pidDomain': 'linux:fixture:pid:[123]'}))
+        found = {'directory': str(self.config)}
+        with patch.object(remote_worker.sys, 'platform', 'linux'), \
+             patch.object(remote_worker, 'pid_domain', return_value='linux:fixture:pid:[123]'), \
+             patch.object(remote_worker, 'linux_process_start', return_value='123456'):
+            with self.assertRaises(ValueError): remote_worker.assert_session_closed(found)
+
+
+
 class RemoteAdapterContract(unittest.TestCase):
     def setUp(self):
         self.native = str(uuid.uuid4())
@@ -262,6 +378,27 @@ class RemoteAdapterContract(unittest.TestCase):
         self.row = {'nativeId': self.native, 'origin': 'default:/remote/.claude:abc',
                     'cwd': '/remote/project', 'model': 'fixture-model', 'permissionMode': 'plan',
                     'permissionKnown': True, 'updatedAt': 1, 'title': 'remote fixture'}
+
+    def test_confirmed_remote_archive_stops_matching_owner_before_remote_writer_checks(self):
+        row = self.cli._row('ssh:test', self.hosts.hosts()['ssh:test'], self.row)
+        sid = row['id']; self.cli.index[sid] = row
+        owned = SimpleNamespace(origin=row['origin'], native=row['nativeId'], error=None,
+            process=Mock(), condition=threading.Condition(), pending={}, active=True, model=None, permission=None)
+        owned.process.poll.return_value = None
+        owned.release_for_archive = Mock(side_effect=lambda: owned.process.poll.configure_mock(return_value=0))
+        self.cli.owned[sid] = owned
+        def remote_call(alias, request):
+            if request['operation'] == 'archive':
+                self.assertEqual(owned.process.poll(), 0)
+            return {**self.row, 'archived': request['operation'] == 'archive', 'archiveSafe': True,
+                    'capabilities': {'archive': True, 'unarchive': True}}
+        with patch.object(self.cli, '_remote', side_effect=remote_call):
+            self.assertFalse(self.cli.call('archive-state', sid, {})['archiveSafe'])
+            owned.release_for_archive.assert_not_called()
+            with self.assertRaises(BridgeUnavailable):self.cli.call('archive', sid, {'archived': True})
+            self.assertTrue(self.cli.call('archive', sid, {'archived': True, 'disconnect': True})['archived'])
+            owned.release_for_archive.assert_called_once_with()
+        self.cli.owned.clear()
 
     def test_ssh_json_uses_utf8_for_unicode_requests(self):
         with patch.object(remote, '_command', return_value=['ssh', 'fixture']), \
@@ -427,6 +564,42 @@ class RemoteAdapterContract(unittest.TestCase):
                 self.cli.call('send', sid, body)
         owned.write.assert_called_once()
         owned.process.poll.return_value = 1
+
+
+    def test_archive_rechecks_host_and_owned_executor_and_propagates_native_state(self):
+        row = self.cli._row('ssh:test', self.hosts.hosts()['ssh:test'], self.row)
+        sid = row['id'];self.cli.index[sid] = row
+        with patch.object(self.cli, '_remote', return_value={**self.row, 'archived': True,
+                         'capabilities': {'archive': True, 'unarchive': True}, 'archiveSafe': True}) as request:
+            result = self.cli.call('archive', sid, {'archived': True})
+            self.assertTrue(result['archived'])
+            self.assertEqual(request.call_args.args, ('fixture-loopback', {'operation': 'archive',
+                             'native': self.native, 'origin': self.row['origin'], 'archived': True}))
+            self.assertEqual(result['id'], sid)
+            self.cli.owned[sid] = SimpleNamespace(process=SimpleNamespace(poll=lambda: None), origin='foreign', native=self.native, error=None)
+            request.reset_mock()
+            with self.assertRaises(BridgeUnavailable): self.cli.call('archive-state', sid, {})
+            request.assert_not_called()
+            self.cli.owned.clear()
+            self.hosts.hosts.return_value = {}
+            with self.assertRaises(ValueError): self.cli.call('archive', sid, {'archived': False})
+            request.assert_not_called()
+
+    def test_archive_identity_change_is_rejected(self):
+        row = self.cli._row('ssh:test', self.hosts.hosts()['ssh:test'], self.row);sid = row['id'];self.cli.index[sid] = row
+        with patch.object(self.cli, '_remote', return_value={**self.row, 'origin': 'another-profile'}):
+            with self.assertRaisesRegex(ValueError, '身份已变化'): self.cli.call('archive-state', sid, {})
+
+    def test_incomplete_archive_rows_preserve_unknown_runtime_and_list_completeness(self):
+        broken = {**self.row, 'archived': True, 'archiveIncomplete': True, 'runtimeKnown': False,
+                  'capabilities': {'archive': False, 'unarchive': False}}
+        with patch.object(self.cli, '_remote', return_value={'profile': {'origin': self.row['origin']},
+                         'sessions': [broken], 'complete': False}):
+            self.cli._refresh(self.hosts.hosts())
+        listing = self.cli.listing()
+        self.assertFalse(listing['complete'])
+        self.assertFalse(listing['sessions'][0]['runtimeKnown'])
+        self.assertEqual(listing['sessions'][0]['status'], 'unknown')
 
 
 if __name__ == '__main__':

@@ -75,6 +75,8 @@ def _runtime_operation(executable, codex_home, cwd, operation):
                     raise CreationError('创建聊天超时，请先检查桌面聊天列表')
                 continue
             if 'error' in result:
+                if method in ('thread/archive', 'thread/unarchive'):
+                    raise ArchiveRejected(result['error'])
                 raise CreationError(result['error'].get('message', '创建聊天失败'))
             return result['result']
 
@@ -337,3 +339,100 @@ def rename_thread(executable, codex_home, thread_id, title):
     uuid.UUID(thread_id)
     return _runtime_operation(executable, codex_home, str(codex_home),
                               lambda request: request('thread/name/set', {'threadId': thread_id, 'name': title}))
+
+
+class ArchiveRejected(CreationError):
+    """The native archive RPC replied with an explicit error, not a lost reply."""
+    def __init__(self, error):
+        self.rpc_error = error if isinstance(error, dict) else {'message': str(error)}
+        message = str(self.rpc_error.get('message', ''))
+        self.reason = ('active_writer' if 'already has an active writer' in message else
+                       'unsupported' if self.rpc_error.get('code') == -32601 else 'native_rejected')
+        public = ('聊天仍由原 Codex 客户端持有；当前原生连接无法归档，请在持有该聊天的原客户端操作'
+                  if self.reason == 'active_writer' else
+                  '原 Codex 运行时不支持此归档操作，请在原客户端操作' if self.reason == 'unsupported' else
+                  '原生客户端已拒绝此次归档操作，请检查原客户端后重试')
+        super().__init__(public)
+
+
+class ArchiveNotSent(CreationError):
+    """Archive validation failed before a native mutation was dispatched."""
+
+
+def check_archive_runtime(request, identifiers):
+    """Read only: never resume a thread to establish archive safety."""
+    for identifier in identifiers:
+        thread = request('thread/read', {'threadId': identifier, 'includeTurns': False})['thread']
+        status = (thread.get('status') or {}).get('type')
+        if (thread.get('id') != identifier or status not in ('idle', 'notLoaded') or
+                thread.get('requests') or any(turn.get('status') == 'inProgress' for turn in thread.get('turns', []))):
+            raise ValueError('聊天或子智能体正在运行、等待确认或状态未知，请先在原客户端处理')
+
+
+def stop_archive_runtime(request, identifiers, timeout=20):
+    """Stop verified turns and background terminals on their original runtime."""
+    turns = []
+    def background(identifier):
+        thread = request('thread/read', {'threadId': identifier, 'includeTurns': False})['thread']
+        if thread.get('id') != identifier:
+            raise ValueError('原会话身份已变化，尚未发送归档请求')
+        if (thread.get('status') or {}).get('type') == 'notLoaded':
+            return False
+        result = request('thread/backgroundTerminals/list', {'threadId': identifier, 'limit': 1})
+        if not isinstance(result.get('data'), list):
+            raise ValueError('无法确认原生后台任务状态')
+        return bool(result['data'] or result.get('nextCursor'))
+    # Complete preflight before the first stop; never resume to discover activity.
+    try:
+        for identifier in identifiers:
+            thread = request('thread/read', {'threadId': identifier, 'includeTurns': False})['thread']
+            status = (thread.get('status') or {}).get('type')
+            if thread.get('id') != identifier or status not in ('idle', 'notLoaded', 'active'):
+                raise ValueError('无法确认原会话状态，未停止或归档')
+            if status == 'active':
+                rows = request('thread/turns/list', {'threadId': identifier, 'limit': 1, 'sortDirection': 'desc'})['data']
+                if len(rows) != 1 or rows[0].get('status') != 'inProgress' or not isinstance(rows[0].get('id'), str):
+                    raise ValueError('无法确认可停止的原生任务，未停止或归档')
+                turns.append((identifier, rows[0]['id']))
+            elif thread.get('requests'):
+                raise ValueError('聊天有等待确认的请求，未停止或归档')
+            background(identifier)
+    except Exception as exc:
+        raise ArchiveNotSent(str(exc)) from exc
+    for identifier, turn_id in turns:
+        # Stopping a parent can already settle its descendants.
+        thread = request('thread/read', {'threadId': identifier, 'includeTurns': False})['thread']
+        if thread.get('id') != identifier:
+            raise CreationError('原会话身份已变化，尚未发送归档请求')
+        if (thread.get('status') or {}).get('type') == 'active':
+            request('turn/interrupt', {'threadId': identifier, 'turnId': turn_id})
+    for identifier in identifiers:
+        if background(identifier):
+            request('thread/backgroundTerminals/clean', {'threadId': identifier})
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            check_archive_runtime(request, identifiers)
+            if any(background(identifier) for identifier in identifiers):
+                raise ValueError('后台任务尚未停止')
+            return
+        except ValueError:
+            if time.monotonic() >= deadline:
+                raise CreationError('停止结果待核对，尚未发送归档请求') from None
+            time.sleep(.1)
+
+
+def archive_thread(executable, codex_home, thread_id, archived, identifiers):
+    uuid.UUID(thread_id)
+    sent = False
+    def dispatch(request):
+        nonlocal sent
+        check_archive_runtime(request, identifiers)
+        sent = True
+        return request('thread/archive' if archived else 'thread/unarchive', {'threadId': thread_id})
+    try:
+        return _runtime_operation(executable, codex_home, str(codex_home), dispatch)
+    except Exception as exc:
+        if not sent:
+            raise ArchiveNotSent(str(exc)) from exc
+        raise

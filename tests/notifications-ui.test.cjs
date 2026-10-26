@@ -630,7 +630,7 @@ test('Codex list snapshot survives a new storage session and remains scoped to i
 });
 
 test('legacy Codex tab snapshot migrates after authenticated reentry',async()=>{
-  const identity='a'.repeat(64),key=`codex-list-v1:${identity}:["",false,"all"]`;
+  const identity='a'.repeat(64),key=`codex-list-v1:${identity}:["",false,"all","recent"]`;
   const sessionStore=new Map([[key,JSON.stringify({rows:[{id:'legacy',host:'local',title:'Legacy',projectKey:'p',projectName:'P',recency:1}],sources:['desktop'],hosts:[],offset:1,hasMore:false})]]),localStore=new Map();
   const ui=await fixture({sessionStore,localStore,skipStartup:true});
   assert.equal(ui.run('restoreListSnapshot()'),false);
@@ -641,7 +641,7 @@ test('legacy Codex tab snapshot migrates after authenticated reentry',async()=>{
 });
 
 test('oversized or malformed Codex snapshots cannot block authenticated list startup',async()=>{
-  const identity='a'.repeat(64),key=`codex-list-v1:${identity}:["",false,"all"]`;
+  const identity='a'.repeat(64),key=`codex-list-v1:${identity}:["",false,"all","recent"]`;
   const valid={rows:[{id:'saved',host:'local',title:'Saved',projectKey:'p',projectName:'P',recency:1}],sources:['desktop'],hosts:[],offset:1,hasMore:false};
   const localStore=new Map([[key,JSON.stringify({...valid,rows:[{...valid.rows[0],title:'X'.repeat(600*1024)}]})]]);
   const sessionStore=new Map(),ui=await fixture({localStore,sessionStore,skipStartup:true});
@@ -681,12 +681,12 @@ test('durable Codex list snapshots stay bounded across filters and oversized row
   const localStore=new Map(),ui=await fixture({localStore,skipStartup:true});
   ui.run(`listIdentity=listAuthIdentity({authenticated:true,listCacheIdentity:'${'a'.repeat(64)}'})`);
   ui.run("listRows=[{id:'saved',host:'local',title:'Saved',recency:1}];availableSources=['desktop'];listHostIds=[];listOffset=1;listHasMore=false");
-  for(let i=0;i<9;i++)ui.run(`saveListSnapshot('filter-${i}')`);
+  for(let i=0;i<9;i++)ui.run(`saveListSnapshot(JSON.stringify(['filter-${i}','all','all','recent']))`);
   const keys=[...localStore.keys()].filter(key=>key.startsWith('codex-list-v1:'));
-  assert.equal(keys.length,8);assert.equal(keys.some(key=>key.endsWith('filter-0')),false);
+  assert.equal(keys.length,8);assert.equal(keys.some(key=>key.includes('filter-0')),false);
   ui.run("listRows=[{id:'huge',host:'local',title:'X'.repeat(600*1024),recency:1}]");
-  ui.run("saveListSnapshot('oversized')");
-  assert.equal([...localStore.keys()].some(key=>key.endsWith('oversized')),false);
+  ui.run("saveListSnapshot(JSON.stringify(['oversized','all','all','recent']))");
+  assert.equal([...localStore.keys()].some(key=>key.includes('oversized')),false);
 });
 
 test('LAN HTTP list snapshots use the server identity without Web Crypto',async()=>{
@@ -703,4 +703,30 @@ test('logout cache cleanup removes desktop provider snapshots with Codex snapsho
   assert.ok(sessionStore.get('bridge-browser-navigation'));
   assert.deepEqual([...sessionStore].filter(([key])=>key!=='bridge-browser-navigation'), [['unrelated','keep']]);
   assert.deepEqual([...localStore], [['unrelated','keep']]);
+});
+
+
+test('recent pins and project inventory have separate snapshots during offline fallback',async()=>{
+  const ui=await fixture({skipStartup:true});ui.nodes.get('app').hidden=false;
+  ui.run(`listIdentity='${'a'.repeat(64)}'`);
+  const row=id=>({id,host:'local',title:id,projectKey:'p',projectName:'P',recency:1,bridgePinned:id==='old-pin'});
+  ui.setList(url=>ui.response({sessions:[row(new URL(url,'http://fixture').searchParams.get('order')==='recent'?'old-pin':'recent-project')],remoteHosts:[],availableSources:['desktop'],unavailableHosts:[],complete:true}));
+  await ui.run('loadList(true)');const recentFilter=ui.run('currentListFilter()');
+  ui.nodes.get('list-mode').value='project';await ui.run('loadList(true)');const projectFilter=ui.run('currentListFilter()');
+  assert.notEqual(recentFilter,projectFilter);assert.equal([...ui.localStore.keys()].filter(key=>key.startsWith('codex-list-v1:')).length,2);
+  ui.setList(()=>{throw Error('offline');});
+  ui.nodes.get('list-mode').value='recent';await assert.rejects(ui.run('loadList(true)'),/offline/);
+  assert.equal(ui.run('listRows[0].id'),'old-pin');
+  ui.nodes.get('list-mode').value='project';await assert.rejects(ui.run('loadList(true)'),/offline/);
+  assert.equal(ui.run('listRows[0].id'),'recent-project');
+});
+
+test('a list generation keeps its captured mode for delayed remote host reads',async()=>{
+  const ui=await fixture({skipStartup:true});ui.nodes.get('app').hidden=false;
+  let resolveLocal;
+  ui.setList(url=>new URL(url,'http://fixture').searchParams.get('host')==='local'?new Promise(resolve=>{resolveLocal=resolve;}):ui.response({sessions:[],availableSources:[],complete:true}));
+  const pending=ui.run('loadList(true)');await new Promise(setImmediate);
+  ui.nodes.get('list-mode').value='project';
+  resolveLocal(ui.response({sessions:[],remoteHosts:['ssh:fixture'],availableSources:[],complete:true}));await pending;
+  assert.equal(ui.listRequests.length,2);assert.ok(ui.listRequests.every(url=>new URL(url,'http://fixture').searchParams.get('order')==='recent'));
 });

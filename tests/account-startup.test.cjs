@@ -50,7 +50,7 @@ async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage,accountS
 
 test('WSL account URLs follow the selected environment within a single Codex page',async()=>{
  const ui=await fixture(r=>r(official));
- ui.run("clientNavigation.clients=[{id:'codex',entries:[{id:'desktop',enabled:true},{id:'wsl:original',kind:'wsl-cli',enabled:true},{id:'wsl:selected',kind:'wsl-cli',enabled:true}]}];currentId='fixture';currentHost='wsl:original';refreshEntryAccounts();");
+ ui.run("clientNavigation.wslSupported=true;clientNavigation.clients=[{id:'codex',entries:[{id:'desktop',enabled:true},{id:'wsl:original',kind:'wsl-cli',enabled:true},{id:'wsl:selected',kind:'wsl-cli',enabled:true}]}];currentId='fixture';currentHost='wsl:original';refreshEntryAccounts();renderAccountEntries();");
  assert.equal(ui.run("accountUrl('/api/accounts')"),'/api/accounts?entry=wsl%3Aoriginal');
  assert.equal(ui.run("accountUrl('/api/account?cached=1')"),'/api/account?cached=1&entry=wsl%3Aoriginal');
  ui.run("accountEntrySelect.value='wsl:selected';accountEntrySelect.onchange();");assert.equal(ui.run("accountUrl('/api/accounts')"),'/api/accounts?entry=wsl%3Aselected');

@@ -207,7 +207,8 @@ class DeepSeekMigrationTests(unittest.TestCase):
         content = b'// verified workspace preview fixture'
         source.write_bytes(content)
         original_sha = hashlib.sha256
-        for predecessor in setup.PREVIOUS_WORKSPACE_SOURCES:
+        for predecessor in (*setup.PREVIOUS_WORKSPACE_SOURCES, *setup.PREVIOUS_ARCHIVE_SOURCES,
+                            *setup.PREVIOUS_DISCONNECT_SOURCES):
             source.write_bytes(content)
             before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
                       for path in (*self.old.directory.iterdir(), self.profile)}
@@ -230,9 +231,9 @@ class DeepSeekMigrationTests(unittest.TestCase):
         lf = current.read_bytes().replace(b'\r\n', b'\n')
         self.assertIn(b'\n', lf)
         self.assertEqual(hashlib.sha256(lf).hexdigest(),
-                         '0b7d749e831f181c7b0ea9ad9d4bc6fd5858355c8facb52e1a5e3e6a8c0fce8d')
+                         '74c6a26a7a8eca9a6dfe5e6256f595a174c58b3645d3bd15497c9877d1422938')
         self.assertEqual(hashlib.sha256(lf.replace(b'\n', b'\r\n')).hexdigest(),
-                         '0f3e7b0962a8f1a9de1a9333afaa74316c83ab6cad18b820a132b8179d3e592e')
+                         '740533827d3817803605c490bd95f3ffbff1bc841cf14f99820ebcf0db14ab4b')
         for content in (lf, lf.replace(b'\n', b'\r\n')):
             with self.subTest(line_ending='CRLF' if b'\r\n' in content else 'LF'):
                 source.write_bytes(content)
@@ -524,6 +525,24 @@ class DeepSeekMigrationTests(unittest.TestCase):
             self.assertIn('更新', row['reason'])
             launch.assert_not_called()
         self.assertEqual((self.old.directory/'mobile-host.mjs').read_bytes(), before)
+
+    def test_reconnect_keeps_running_legacy_host_and_source_until_explicit_restart(self):
+        self.legacy()
+        manager = self.migration_manager()
+        before = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+                  for p in (*self.old.directory.iterdir(), self.profile)}
+        with patch.object(DeepSeek, 'call', return_value={'connected': True, 'configured': True,
+                                                        'updateRequired': True, 'bridgeRevision': 6}), \
+                patch.object(manager, '_stop_client') as stop, \
+                patch('bridge.clients.lifecycle.launch_deepseek') as launch:
+            manager.scan()
+            manager.connect_deepseek()
+            stop.assert_not_called()
+            launch.assert_not_called()
+            self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before})
+            row = next(row for row in manager.clients(refresh=True)['clients'] if row['id'] == 'deepseek')
+            self.assertEqual(row['setupStatus'], 'restart-required')
+            self.assertFalse(row['configured'])
 
     def test_confirmed_restart_updates_source_and_waits_for_new_loaded_revision(self):
         self.legacy()

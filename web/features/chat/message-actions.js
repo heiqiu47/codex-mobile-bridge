@@ -1,5 +1,15 @@
 'use strict';
 const actionText=source=>typeof BridgeI18n==='undefined'?source:BridgeI18n.t(source);
+// Native identities only: Bridge endpoint digests are not Desktop host IDs.
+window.BridgeSessionLinks={
+  text({provider,id,host='local',runtime}={}){
+    if(typeof id!=='string'||!id.trim())return null;
+    if(provider==='deepseek')return id;
+    if(provider!=='codex'||runtime==='wsl'||typeof host!=='string'||!host||host.startsWith('wsl:'))return null;
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))return null;
+    return 'codex://threads/'+id+(host==='local'?'':'?hostId='+encodeURIComponent(host));
+  }
+};
 window.BridgeClipboard=(()=>{
   function modernCopy(value){
     try{
@@ -37,7 +47,19 @@ window.BridgeClipboard=(()=>{
     }
   }
   return {
-    async copy(getText,button){
+    async copyWithFeedback(getText,button,notify){
+      if(button.disabled)return;
+      let reported=false,requested=false,failed=false;
+      const acknowledged=()=>{if(!reported){reported=true;notify?.(actionText('已复制'));}};
+      const failure=()=>{failed=true;};document.addEventListener('bridge-message-error',failure);
+      try{
+        const copied=await window.BridgeClipboard.copy(()=>{requested=true;return getText();},button,acknowledged);
+        // Published shells ignore extra arguments and set this label only after
+        // native acknowledgement. A prior success label alone is not an ack.
+        if(copied===true||requested&&!failed&&button.textContent===actionText('已复制'))acknowledged();
+      }finally{document.removeEventListener('bridge-message-error',failure);}
+    },
+    async copy(getText,button,onCopied){
       if(button.disabled)return;
       const label=button.textContent;button.disabled=true;button.textContent=actionText('正在读取…');
       try{
@@ -49,10 +71,10 @@ window.BridgeClipboard=(()=>{
         if(pending===null)pending=modernCopy(text);
         const copied=(await pending)||(!selectionTried&&selectionCopy(text,button));
         const done=()=>{
-          button.textContent=actionText('已复制');
+          button.textContent=actionText('已复制');onCopied?.();
           setTimeout(()=>{button.textContent=label;},1500);
         };
-        if(copied)done();
+        if(copied){done();return true;}
         else{
           const dialog=document.createElement('dialog');dialog.className='picker copy-dialog';
           const heading=document.createElement('h2');heading.textContent=actionText('复制内容');

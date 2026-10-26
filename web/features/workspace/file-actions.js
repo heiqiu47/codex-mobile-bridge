@@ -9,6 +9,13 @@ window.BridgeFileActions = (() => {
     if(session!==workbench.current)return;
     const box=dialog(entry.name),url=workbench.url(session,'download',entry.path)+'&explicit=1'+(entry.kind==='directory'?'&archive=1':'');
     download(box,url,entry.name+(entry.kind==='directory'?'.zip':''));
+    const copy=node('button',t('复制绝对路径'),'plain message-copy');copy.type='button';
+    copy.onclick=()=>BridgeClipboard.copyWithFeedback(async()=>{
+      const info=await workbench.request(workbench.url(session,'info',entry.path));
+      if(session!==workbench.current||!box.open)throw Error(t('复制失败，请重试'));
+      if(typeof info.absolutePath!=='string')throw Error(t('复制失败，请重试'));
+      return info.absolutePath;
+    },copy,workbench.notify);box.append(copy);
     if(entry.kind==='directory')box.append(node('p',t('文件夹将打包为 ZIP，准备完成后显示下载总量。'),'muted'));
     box.showModal();
   }

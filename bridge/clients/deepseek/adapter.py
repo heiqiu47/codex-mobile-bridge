@@ -10,13 +10,14 @@ from pathlib import Path
 from bridge.features.accounts.models import NoRedirect
 from bridge.app.lifecycle import private_json
 from bridge.clients.errors import BridgeUnavailable
+from bridge.features.sessions.create import ArchiveNotSent
 from bridge.clients.deepseek.setup import MARKER, insertion, verified_directory, legacy_account_configured
 
 PLUGIN_ID = re.compile(r'''["']?id["']?\s*:\s*["']?codex-mobile-desktop(?:["'\s,}]|$)''')
-BRIDGE_REVISION = 5
-# Revisions 3–5 share the complete native-agent lifecycle schema; presentation
+BRIDGE_REVISION = 7
+# Revisions 3–6 share the complete native-agent lifecycle schema; presentation
 # and fork capability additions do not invalidate an older idle snapshot.
-LIFECYCLE_REVISIONS = (3, 4, BRIDGE_REVISION)
+LIFECYCLE_REVISIONS = (3, 4, 5, 6, BRIDGE_REVISION)
 UPDATE_REASON = 'Harness 接入需要更新，请结束任务后点击“重启并接入”'
 
 
@@ -197,6 +198,8 @@ class DeepSeek:
             raise BridgeUnavailable(message) from exc
         except (OSError, KeyError) as exc:
             raise BridgeUnavailable('DeepSeek 桌面未连接，请安装接入插件并重新打开 Harness') from exc
+        if action == 'archive' and value.get('archiveNotSent') is True:
+            raise ArchiveNotSent(value.get('message') or '原生客户端拒绝归档，操作未发送')
         if action == 'detail':
             records = value.pop('records', [])
             value['messages'] = messages(records)

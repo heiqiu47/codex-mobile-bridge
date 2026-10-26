@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 
 from bridge.api.assets import FONT_ROUTE, PDF_CMAP_ROUTE, PDF_FONT_ROUTE, STATIC
 from bridge.clients.codex.remote import RemoteCatalog, RemoteCliModels
+from bridge.clients.claude.remote import worker_source as claude_worker_source
 from bridge.features.auth import tls
 from bridge.features.accounts.wsl_account_payload import worker_source
 from bridge.resources import project_root, source_text
@@ -37,6 +38,7 @@ PUBLIC_URLS = set('''
 
 SSH_SOURCES = {
     'bridge/clients/claude/remote_worker.py': ['profile', 'command', 'resume'],
+    'bridge/clients/claude/file_archive.py': ['archive_paths', 'state', 'change', 'supported'],
     'bridge/features/sessions/store.py': ['SessionStore'],
     'bridge/features/sessions/message_management.py': ['snapshot', 'mutate'],
     'bridge/clients/codex/catalog.py': ['Catalog'],
@@ -174,7 +176,7 @@ class ResourceLayoutTests(unittest.TestCase):
                       'symbols': ['AccountStore', 'execute', 'fetch_models', 'model_catalog', 'codex_updater']})
         for relative, symbols in SSH_SOURCES.items():
             if relative not in combined:
-                cases.append({'name': relative, 'source': source_text(relative.removeprefix('bridge/')),
+                cases.append({'name': relative, 'source': claude_worker_source() if relative == 'bridge/clients/claude/remote_worker.py' else source_text(relative.removeprefix('bridge/')),
                               'symbols': symbols})
         (ROOT/'.tmp').mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as folder:

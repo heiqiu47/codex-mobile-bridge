@@ -1021,3 +1021,25 @@ test('only the latest chat receives detail after shared renderer loading complet
  const reads=ui.calls.filter(call=>call.url.includes('/detail')).slice(before);
  assert.equal(reads.length,1);assert.match(reads[0].url,/sessionId=b/);
 });
+
+test('Claude and DSH recent pins paint pending local state while project order stays unchanged',async()=>{
+ for(const provider of ['claude','deepseek']){
+  const ui=fixture(),menus=[];await ui.view.choose(provider);
+  ui.view.pinPreferences={value:(identity,server)=>identity.id==='old'||!!server,pending:identity=>identity.id==='old'};
+  ui.view.onSessionMenu=(button,row,kind)=>menus.push({button,row,kind});
+  ui.view.rows=[{id:'new',title:'New',cwd:'/project',updatedAt:30},{id:'old',title:'Old',cwd:'/project',updatedAt:1}];ui.view.listMode.value='recent';ui.view.renderList();
+  assert.deepEqual(ui.view.rowsRoot.querySelectorAll('.session').map(n=>n.dataset.id),['old','new']);
+  assert.match(ui.view.rowsRoot.textContent,/置顶设置待同步|Pin preference pending sync/);assert.equal(menus[0].kind,provider);assert.equal(menus[0].row.bridgePinned,true);
+  ui.view.listMode.value='project';ui.view.renderList();assert.deepEqual(ui.view.rowsRoot.querySelectorAll('.session').map(n=>n.dataset.id),['new','old']);
+ }
+});
+
+for(const provider of ['claude','deepseek'])for(const prefetched of [false,true])test(`${provider} successful list with local pin sync keeps its read token (prefetched=${prefetched})`,async()=>{
+ const ui=fixture();await ui.view.choose(provider);const token={scope:'gateway',generation:1,epoch:7},observed=[];
+ ui.view.pinPreferences={capture:()=>token,observe:(...args)=>observed.push(args),value:(_identity,value)=>!!value,pending:()=>false};
+ ui.setHandler(async()=>({connected:true,complete:true,sessions:[{id:'pinned-chat',title:'Pinned chat',bridgePinned:true}]}));
+ if(prefetched){ui.view.sharedRead(provider,'list');ui.view.pinPreferences.capture=()=>({...token,epoch:8});}
+ assert.equal(await ui.view.refreshList(),true);
+ assert.equal(observed.length,1);assert.equal(observed[0][2],token);assert.equal(observed[0][0].provider,provider);assert.equal(observed[0][0].id,'pinned-chat');assert.equal(observed[0][1],true);
+ assert.match(ui.view.rowsRoot.textContent,/Pinned chat/);assert.equal(ui.view.listSync.automaticFailures,0);
+});

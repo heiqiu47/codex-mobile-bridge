@@ -208,6 +208,36 @@ class CliSessions:
         self.client.request('thread/name/set', {'threadId': thread_id, 'name': title})
         return self.refresh(thread_id)
 
+    def archive_call(self, thread_id, archived, identifiers, disconnect=False, check_scope=None):
+        # Explicit archive may start the installed original daemon, never a thread.
+        info = self._connect_explicit()
+        home = Path(info.get('codexHome', ''))
+        expected = self.remote_home if self.alias else self.home
+        if not home.is_absolute() or (expected is not None and home != expected):
+            raise AppServerUnavailable('Codex CLI runtime belongs to another home')
+        from bridge.features.sessions.create import check_archive_runtime, stop_archive_runtime
+        if not disconnect:
+            check_archive_runtime(lambda method, params: self.client.request(method, params, replay_safe=True), identifiers)
+        with self.lock:
+            if not disconnect and any(identifier in self.requests and self.requests[identifier] for identifier in identifiers):
+                raise ValueError('聊天有等待确认的请求，请先在原客户端处理')
+        process = self.client.process
+        def call():
+            if self.client.process is not process:
+                from bridge.features.sessions.create import ArchiveNotSent
+                raise ArchiveNotSent('原运行时连接已变化，未停止或归档')
+            if disconnect:
+                def request(method, params):
+                    if self.client.process is not process:
+                        raise AppServerUnavailable('原运行时连接已变化，尚未发送归档请求')
+                    return self.client.request(method, params)
+                stop_archive_runtime(request, identifiers)
+                if check_scope:
+                    check_scope()
+                return request('thread/archive', {'threadId': thread_id})
+            return self.client.request('thread/archive' if archived else 'thread/unarchive', {'threadId': thread_id})
+        return call
+
     def attach(self, thread_id, explicit=False):
         """Passive inspection never starts or resumes a runtime."""
         if not explicit:

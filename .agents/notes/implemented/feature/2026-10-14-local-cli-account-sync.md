@@ -39,3 +39,5 @@ The same fixture passed on Windows 10.0.19045 with Python 3.11 and installed Cla
 Account configuration JSON and native Claude authentication output are read explicitly as UTF-8, independent of the Windows system code page. The legacy negative-control probe retains the same encoding and requires native exit status 1 together with logged-out JSON.
 
 [WSL account management](2026-10-25-wsl-account-management.md) uses a separate registered-environment transaction. It does not extend native-local account synchronization to WSL or automatically mirror Windows credentials.
+
+The Codex opt-in decision is superseded by [unified local Codex accounts](2026-10-26-unified-codex-accounts.md). Claude synchronization remains optional.

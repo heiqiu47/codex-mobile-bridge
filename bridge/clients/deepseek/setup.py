@@ -42,6 +42,15 @@ PREVIOUS_PROJECT_SOURCES = ('2f71a8c64cdf798843386310c359e41b57c3b2b26130f448f97
 PREVIOUS_WORKSPACE_SOURCES = ('b7f3c05ec967e736897f068b9da2820f7ce98a151a12051691e641540174e640',
                               '0d673a9d13fb7f32da07f36ff34e45d1fd48de555cb20661e4ab8192b1427582')
 
+# Revision 5 before reversible native archive and guarded activity semantics.
+PREVIOUS_ARCHIVE_SOURCES = ('0b7d749e831f181c7b0ea9ad9d4bc6fd5858355c8facb52e1a5e3e6a8c0fce8d',
+                            '0f3e7b0962a8f1a9de1a9333afaa74316c83ab6cad18b820a132b8179d3e592e')
+
+
+# Revision 6 before explicitly confirmed stop-before-archive, LF and CRLF.
+PREVIOUS_DISCONNECT_SOURCES = ('b8b05cd4d93af60913b505c842dc6b74d2860199980bab079fe2b4e17e153752',
+                               '95451e5ff26ba7e0e5f139a1109ceeaaf3dba1a51b169d3e5d5207d5ef29873b')
+
 
 def insertion(text):
     """Read only our JSON flow insertion, including Harness's line wrapping.
@@ -160,7 +169,8 @@ def verified_directory(entry, home):
         if digest not in current_sources and digest not in (
                 LEGACY_SOURCE, PREVIOUS_SOURCE, PREVIOUS_CLEANUP_SOURCE, PREVIOUS_CATALOG_SOURCE,
                 *PREVIOUS_QUIT_SOURCES, *PREVIOUS_CONTEXT_SOURCES, *PREVIOUS_HISTORY_SOURCES,
-                *PREVIOUS_PROJECT_SOURCES, *PREVIOUS_WORKSPACE_SOURCES):
+                *PREVIOUS_PROJECT_SOURCES, *PREVIOUS_WORKSPACE_SOURCES, *PREVIOUS_ARCHIVE_SOURCES,
+                *PREVIOUS_DISCONNECT_SOURCES):
             return None
         return directory, digest not in current_sources
     except (OSError, ValueError, KeyError, TypeError, IndexError):

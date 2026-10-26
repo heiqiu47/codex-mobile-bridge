@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from bridge.features.workspace.workspace import Workspace, operate, MAX_TRANSFER, MAX_PREVIEW
+from bridge.features.workspace.workspace import Workspace, operate, MAX_TRANSFER, MAX_PREVIEW, display_absolute_path
 from bridge.app.service import Bridge
 from bridge.clients.codex.remote import RemoteStore
 import test_bridge as support
@@ -26,6 +26,26 @@ class WorkspaceTests(unittest.TestCase):
 
     def tearDown(self): self.temp.cleanup()
 
+    def test_display_absolute_path_only_normalizes_windows_drive_and_unc_prefixes(self):
+        pairs = [
+            (r'\\?\D:\sample_project', r'D:\sample_project'),
+            (r'\\?\D:\sample_project\file.txt', r'D:\sample_project\file.txt'),
+            (r'\\?\UNC\server\share\file.txt', r'\\server\share\file.txt'),
+            (r'\\?\unc\server\share', r'\\server\share'),
+            (r'\\server\share\file.txt', r'\\server\share\file.txt'),
+            (r'\\?\GLOBALROOT\Device\HarddiskVolume1', r'\\?\GLOBALROOT\Device\HarddiskVolume1'),
+            (r'\\?\Volume{test}\file', r'\\?\Volume{test}\file'),
+            ('/workspace/sample', '/workspace/sample'),
+        ]
+        for original, expected in pairs:
+            with self.subTest(path=original):
+                self.assertEqual(display_absolute_path(original), expected)
+
+    def test_info_absolute_path_uses_authorized_target_root(self):
+        for path in ('hello.txt', 'folder'):
+            self.assertEqual(operate(self.root, 'info', {'path': path})['absolutePath'], str(self.root / path))
+        with self.assertRaises(PermissionError):
+            self.work.info('../private')
     def test_listing_hidden_search_and_paging(self):
         self.assertEqual([x['name'] for x in self.work.listing()['entries']], ['folder', 'hello.txt'])
         self.assertEqual(self.work.listing(hidden=True)['total'], 3)
@@ -88,6 +108,8 @@ class WorkspaceTests(unittest.TestCase):
             return json.loads(output.getvalue())
         with patch('bridge.app.service.ssh_read', side_effect=execute):
             self.assertEqual(Bridge.workspace(bridge, support.THREAD, 'preview', {'path': 'remote.txt'})['text'], 'remote')
+            self.assertEqual(Bridge.workspace(bridge, support.THREAD, 'info', {'path': 'remote.txt'})['absolutePath'], str(remote / 'remote.txt'))
+            with self.assertRaises(ValueError): Bridge.workspace(bridge, support.THREAD, 'info', {'path': '../project/hello.txt'})
             with self.assertRaises(ValueError): Bridge.workspace(bridge, support.THREAD, 'preview', {'path': '../project/hello.txt'})
 
 
@@ -108,6 +130,18 @@ class WorkspaceHttpTests(unittest.TestCase):
         connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=5)
         connection.request('POST', path, body=data, headers={'Origin': self.origin, **headers})
         response = connection.getresponse(); result = response.status, json.loads(response.read()); connection.close(); return result
+
+    def test_info_path_is_authenticated_and_workspace_bounded(self):
+        (self.root / 'target.txt').write_text('target')
+        target = self.path + '/info?path=target.txt'
+        self.assertEqual(self.request('GET', target)[0], 401)
+        auth = self.login()
+        status, _, info = self.request('GET', target, headers=auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(info['absolutePath'], str(self.root / 'target.txt'))
+        status, _, info = self.request('GET', self.path + '/info?path=../secret', headers=auth)
+        self.assertEqual(status, 403)
+        self.assertNotIn('absolutePath', info)
 
     def test_auth_csrf_and_origin_required_for_upload(self):
         self.assertEqual(self.request('GET', self.path)[0], 401)

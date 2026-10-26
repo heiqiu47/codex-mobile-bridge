@@ -22,6 +22,9 @@ from bridge.features.accounts.draft_identity import draft_identity
 from bridge.features.sessions.model import normalize_state, normalize_request, computer_use_approval
 from bridge.features.sessions.timeline import Timeline
 from bridge.features.sessions.store import StoreUnavailable
+from bridge.features.sessions.archive import ArchiveCommands
+from bridge.features.sessions.create import check_archive_runtime
+from bridge.features.sessions.pins import SessionPins
 from bridge.features.sessions.projects import Projects
 from bridge.features.endpoints.wsl_features import WslFeatures
 from bridge.features.endpoints.wsl_models import WslModelCatalog
@@ -95,6 +98,8 @@ class WslEntry(WslFeatures):
         self.row = dict(row)
         self.host = row['id']  # Gateway route only; never sent as a native hostId.
         self.data_dir = Path(directory)
+        self.session_pins = SessionPins(directory, self.host + ":" + row["user"] + ":" + row["home"])
+        self.archive_commands = ArchiveCommands(directory)
         self.lock = threading.RLock()
         self.connection_lock = threading.RLock()
         self.closed = threading.Event()
@@ -331,10 +336,12 @@ class WslEntry(WslFeatures):
                     if self.closed.is_set():
                         return
 
-    def list(self, query='', limit=100, offset=0, archived=False, source='all', include_sources=False):
+    def list(self, query='', limit=100, offset=0, archived=False, source='all', include_sources=False, pin_order=False):
         available = ['wsl'] if include_sources and self.store.available_sources() else []
+        pins = set(self.session_pins.identifiers())
         rows = [] if source == 'desktop' else self.store.list(query=query, limit=limit, offset=offset,
-            archived=archived, source='cli' if source == 'wsl' else source)
+            archived=archived, source='cli' if source == 'wsl' else source,
+            **({'pinned_ids': sorted(pins)} if pin_order else {}))
         for row in rows:
             cwd = row.get('cwd') or ''
             row.update(host=self.host, endpointId=self.host, hostLabel=self.row['label'],
@@ -344,6 +351,7 @@ class WslEntry(WslFeatures):
             with self.lock:
                 session = self.live.get(row['id'])
                 self.listed.add(row['id'])
+            row['bridgePinned'] = row['id'] in pins
             row['connected'] = bool(session and session.connected)
             row['access'] = self._access(session)
         return (rows, available) if include_sources else rows
@@ -1231,6 +1239,45 @@ class WslEntry(WslFeatures):
                 return {'status': 'submitted'}
             receipt = self._mutation(identifier, identifier + ':approval:' + self.generation + ':' + str(pending['id']), result, dispatch)
             return receipt
+
+    @_entry_write
+    def archive(self, identifier, archived, request_id, disconnect=False):
+        if type(disconnect) is not bool or (disconnect and archived is not True):
+            raise ValueError('聊天归档设置无效')
+        def read():
+            with self.store.lock:
+                self.store.cache.clear()
+            metadata = self.store.get(identifier)
+            metadata['_archiveFlags'] = self.store.archive_flags(identifier)
+            return metadata
+        def prepare(metadata):
+            identifiers = [row['id'] for row in self.store.lifecycle_threads(root_id=identifier)]
+            if any(key.split(':')[0] in identifiers and row['result'].get('status') in ('queued', 'unknown')
+                   for key, row in self.receipts.items()):
+                raise ValueError('聊天有排队或待核对操作，请先在原 WSL 处理')
+            runtime = self.runtime(allow_start=True)
+            if not disconnect:
+                check_archive_runtime(runtime.request, identifiers)
+            with self.lock:
+                sessions = [self.live[sid] for sid in identifiers if sid in self.live]
+            for session in sessions:
+                with session.condition:
+                    if session.activating or (not disconnect and session.state.get('requests')):
+                        raise ValueError('聊天有运行或等待确认的请求，请先在原 WSL 处理')
+            def call():
+                if disconnect:
+                    from bridge.features.sessions.create import stop_archive_runtime
+                    stop_archive_runtime(runtime.request, identifiers)
+                    if set(identifiers) != {row['id'] for row in self.store.lifecycle_threads(root_id=identifier)}:
+                        raise ValueError('子会话范围已变化，尚未发送归档请求')
+                return runtime.request('thread/archive' if archived else 'thread/unarchive', {'threadId': identifier})
+            return call
+        return {**self.archive_commands.perform(identifier, archived, request_id, read, prepare), 'host': self.host}
+
+    @_entry_write
+    def pin(self, identifier, pinned, client_id=None, revision=None):
+        uuid.UUID(identifier)
+        return {**self.session_pins.set(identifier, pinned, client_id, revision), 'host': self.host}
 
     @_entry_write
     def rename(self, identifier, title):

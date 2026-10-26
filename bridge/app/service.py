@@ -8,6 +8,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -23,6 +24,7 @@ from bridge.features.sessions import linux_permissions
 from bridge.clients.codex.ipc import DesktopIPC, IPCError
 from bridge.clients.codex.app_server import AppServerError, AppServerUnavailable
 from bridge.clients.codex.cli_session import CliSessions
+from bridge.clients.desktop_app import DesktopApp
 from bridge.clients.codex.transport import ipc_endpoint
 from bridge.features.sessions.model import apply_patches, attachment_prompt, computer_use_approval, items_array, normalize_state, normalize_request, ordered_turns, pending_requests, async_requests, request_id, user_display_text
 from bridge.features.sessions.store import SessionStore, StoreUnavailable
@@ -32,10 +34,12 @@ from bridge.clients.codex.catalog import Catalog, CatalogError, ModelStore, MODE
 from bridge.platforms.codex_daemon_env import DaemonEnvironmentUnavailable
 from bridge.clients.codex.remote import AppHosts, RemoteStore, RemoteCatalog, RemoteUnavailable, ssh_read, ssh_download, payload, project_path_name
 from bridge.features.sessions.create import (
-    rename_thread, independent_directory, create_empty, fork_copy, open_in_desktop, open_project_in_desktop,
+    archive_thread, rename_thread, independent_directory, create_empty, fork_copy, open_in_desktop, open_project_in_desktop,
     CreationError, CreationUnavailable, ForkUnavailable, project_directory,
     project_directory_listing,
 )
+from bridge.features.sessions.archive import ArchiveCommands
+from bridge.features.sessions.pins import SessionPins
 from bridge.features.sessions.projects import Projects
 from bridge.features.sessions.timeline import Timeline
 from bridge.features.sessions.tool_images import TOOL_IMAGE_CACHE, public_turns
@@ -43,7 +47,6 @@ from bridge.features.accounts.account import Account
 from bridge.features.accounts.accounts import Accounts, operation
 from bridge.features.accounts.draft_identity import codex_account_identity, draft_identity
 from bridge.features.accounts.cli_access import CliAccess
-from bridge.features.accounts.wsl_accounts import WslAccounts
 from bridge.features.sessions.goal import GoalRPC, GoalError, GoalUnavailable, GoalUnsupported, goal_activation, goal_identity, normalize_goal_result, normalize_ui_locale, goal_command_fingerprint, goal_state_confirms_command, native_goal_absent, normalize_goal, plan_goal_command, read_native_goal
 from bridge.features.workspace.uploads import Uploads, image_type
 from bridge.clients.codex.remote import upload_file
@@ -223,9 +226,11 @@ class Bridge:
         self._draft_remote_cache = {}
         self._draft_remote_pending = set()
         self.data_dir = Path(data_dir)
+        self.session_pins = SessionPins(data_dir, host + ":" + str(self.codex_home))
+        self.archive_commands = ArchiveCommands(data_dir)
         self.hosts = AppHosts(codex_home)
         self.directory_projects = Projects(data_dir)
-        if host == 'local':
+        if host == 'local' and sys.platform == 'win32':
             from bridge.features.endpoints.registry import Entries
             self.entries = Entries(data_dir, codex_home)
         else:
@@ -247,7 +252,10 @@ class Bridge:
         self.account = Account(codex_home, data_dir, codex_bin, executable_getter=executable_getter) if host == 'local' else None
         self.accounts = Accounts(self) if host == "local" else None
         self.cli_access = CliAccess(self) if host == "local" else None
-        self.wsl_accounts = WslAccounts(self) if host == "local" else None
+        self.wsl_accounts = None
+        if host == 'local' and sys.platform == 'win32':
+            from bridge.features.accounts.wsl_accounts import WslAccounts
+            self.wsl_accounts = WslAccounts(self)
         self.goal = goal_rpc or (GoalRPC(codex_home, codex_bin, executable_getter=executable_getter) if host == 'local' else None)
         self.owner_goal = owner_goal
         self.goal_transport = 'owner' if owner_goal else 'sidecar'
@@ -974,7 +982,7 @@ class Bridge:
                 self.remote_bridges[host].accounts = self.accounts
             return self.remote_bridges[host]
 
-    def assert_desktop_idle(self, timeout=20):
+    def assert_desktop_idle(self, timeout=20, identifiers=None, allow_missing_ipc=False, allow_stopped_app=False):
         """Passively check every desktop owner before an application shutdown.
 
         The caller holds the account operation gate until shutdown completes.
@@ -992,7 +1000,11 @@ class Bridge:
             return value
 
         def check_submissions():
-            if self.accounts.blockers():
+            if identifiers is not None:
+                blocked = [row for row in self.accounts.blockers() if row['host'] == self.host and row['id'] in identifiers]
+            else:
+                blocked = self.accounts.blockers()
+            if blocked:
                 raise ValueError('Codex 有任务或待确认操作，请先处理后再关闭')
 
         check_submissions()
@@ -1002,7 +1014,7 @@ class Bridge:
             metadata = self.codex_home / '.codex-global-state.json'
             if metadata.exists() and not isinstance(json.loads(metadata.read_text(encoding='utf-8')), dict):
                 raise ValueError('Invalid desktop metadata')
-            hosts = self.hosts.lifecycle_hosts()
+            hosts = self.hosts.lifecycle_hosts() if identifiers is None else {}
             sources = {self.host: self, **{key: value for key, value in self.remote_bridges.items() if key in hosts}}
             for host in hosts:
                 remaining()
@@ -1014,19 +1026,19 @@ class Bridge:
         # SSH metadata already has its own finite transport timeout. Waiting on
         # these read-only jobs is also bounded by this operation's deadline.
         executor = ThreadPoolExecutor(max_workers=min(4, len(sources)))
-        reads = {host: executor.submit(source.store.lifecycle_threads) for host, source in sources.items()}
+        reads = {host: executor.submit(source.store.lifecycle_threads) for host, source in sources.items()} if identifiers is None else {}
         threads = []
         try:
             for host, source in sources.items():
-                rows = reads[host].result(timeout=remaining())
-                identifiers = {row['id'] for row in rows}
+                rows = reads[host].result(timeout=remaining()) if identifiers is None else [{'id': sid} for sid in identifiers]
+                source_identifiers = {row['id'] for row in rows}
                 with source.lock:
-                    identifiers.update(sid for sid, live in source.live.items()
-                                       if getattr(live, "origin", "desktop") == "desktop" or
-                                       (getattr(live, "runtime", "desktop") == "desktop" and getattr(live, "connected", False)))
-                if any(not isinstance(sid, str) or not sid for sid in identifiers):
+                    source_identifiers.update(sid for sid, live in source.live.items() if identifiers is None and (
+                                       getattr(live, "origin", "desktop") == "desktop" or
+                                       (getattr(live, "runtime", "desktop") == "desktop" and getattr(live, "connected", False))))
+                if any(not isinstance(sid, str) or not sid for sid in source_identifiers):
                     raise ValueError('Invalid desktop session metadata')
-                threads.extend((host, sid) for sid in sorted(identifiers))
+                threads.extend((host, sid) for sid in sorted(source_identifiers))
         except Exception as exc:
             raise ValueError('无法读取 Codex 桌面和 SSH 会话，请检查连接后重试') from exc
         finally:
@@ -1100,7 +1112,25 @@ class Bridge:
         ipc = DesktopIPC(self.ipc.path, on_event=event, on_disconnect=disconnect)
         try:
             remaining()
-            ipc.connect()
+            try:
+                ipc.connect()
+            except IPCError as exc:
+                if isinstance(exc.__cause__, FileNotFoundError):
+                    if allow_missing_ipc:
+                        return
+                    if allow_stopped_app and self.host == 'local':
+                        try:
+                            executable = self.accounts.index.get('desktopExecutable') or DesktopApp.discover(self.catalog_reader.executable)
+                            if not executable:
+                                raise ValueError(unknown)
+                            app = DesktopApp(executable, self.codex_home)
+                            app.validate(self.catalog_reader.executable)
+                            if app.processes():
+                                raise ValueError(unknown)
+                        except (OSError, ValueError, subprocess.SubprocessError) as error:
+                            raise ValueError(unknown) from error
+                        return
+                raise
             for host, sid in threads:
                 try:
                     response = ipc.request('thread-owner-discovery', {'hostId': host, 'conversationId': sid},
@@ -1214,7 +1244,7 @@ class Bridge:
                 'remoteHostCount': len(sources) - 1, 'hosts': reports}
 
     def list(self, query="", limit=100, offset=0, archived=False, source='all', include_sources=False,
-             local_only=False, host_label=None, entry=None):
+             local_only=False, host_label=None, entry=None, pin_order=False):
         if source not in ('all', 'desktop', 'cli', 'wsl'):
             raise ValueError('不支持的会话来源')
         if entry and entry not in ('desktop', 'all'):
@@ -1222,7 +1252,7 @@ class Bridge:
             target = self.for_host(entry)
             try:
                 return target.list(query=query, limit=limit, offset=offset, archived=archived,
-                                   source=source, include_sources=include_sources)
+                                   source=source, include_sources=include_sources, pin_order=pin_order)
             except (RemoteUnavailable, StoreUnavailable) as exc:
                 self.host_errors = [{'host': entry, 'label': host_label or 'WSL', 'error': str(exc)}]
                 return ([], []) if include_sources else []
@@ -1238,18 +1268,21 @@ class Bridge:
                     # WSL is a display category; its native source remains CLI.
                     wsl_source = 'wsl' if source in ('all', 'wsl') else 'desktop'
                     value = bridge.list(query=query, limit=limit + offset, archived=archived,
-                                        source=wsl_source, include_sources=include_sources)
+                                        source=wsl_source, include_sources=include_sources, pin_order=pin_order)
                     rows, available = value if include_sources else (value, [])
                     return rows, None, available
                 available = bridge.store.available_sources() if include_sources else []
+                pins = set(bridge.session_pins.identifiers())
                 rows = ([] if source == 'wsl' else bridge.store.list(
-                    limit=limit + offset, archived=archived, query=query, source=source))
+                    limit=limit + offset, archived=archived, query=query, source=source,
+                    **({"pinned_ids": sorted(pins)} if pin_order else {})))
                 rows = self.hosts.decorate(rows, bridge.host, label)
                 with bridge.lock:
                     bridge.listed.update(row['id'] for row in rows)
                     for row in rows:
                         session = bridge.live.get(row['id'])
                         bridge.origins[row['id']] = row.get('origin', 'desktop')
+                        row['bridgePinned'] = row['id'] in pins
                         row['connected'] = bool(session and session.connected)
                         row['access'] = bridge._access(row.get('origin', 'desktop'), session)
                         row['title'] = row.get('name') or row.get('title') or '未命名聊天'
@@ -1261,7 +1294,7 @@ class Bridge:
         self.host_errors = [error for _, error, _ in results if error]
         rows = [row for group, _, _ in results for row in group]
         available_sources = {source for _, _, available in results for source in available}
-        rows.sort(key=lambda row: (row['recency'], row['id'], row['host']), reverse=True)
+        rows.sort(key=lambda row: (bool(pin_order and row.get('bridgePinned')), row['recency'], row['id'], row['host']), reverse=True)
         page = rows[offset:offset + limit]
         return (page, sorted(available_sources)) if include_sources else page
 
@@ -2476,6 +2509,51 @@ class Bridge:
                 raise ValueError("Skill 不可用，请刷新列表")
             selected.append({"id": key, "name": skill["name"], "path": skill["path"]})
         return selected
+
+    @operation
+    def archive(self, thread_id, archived, request_id, disconnect=False):
+        if type(disconnect) is not bool or (disconnect and archived is not True):
+            raise ValueError('聊天归档设置无效')
+        def read():
+            if isinstance(self.store, RemoteStore):
+                with self.store.lock:
+                    self.store.cache.clear()
+            metadata = self.store.get(thread_id)
+            metadata['_archiveFlags'] = self.store.archive_flags(thread_id)
+            return metadata
+        def prepare(metadata):
+            identifiers = [row['id'] for row in self.store.lifecycle_threads(root_id=thread_id)]
+            if not (disconnect and metadata.get('origin') == 'cli'):
+                self.assert_desktop_idle(identifiers=identifiers, allow_missing_ipc=metadata.get('origin') == 'cli',
+                                         allow_stopped_app=metadata.get('origin') == 'desktop')
+            with self.submit_lock:
+                ledgers = (self.submissions, self.goal_commands, self.message_actions)
+                if any((key.split(':')[0] in identifiers or row.get('source') in identifiers or row.get('id') in identifiers) and row.get('status', row.get('state')) in
+                       ('queued', 'unknown', 'pending', 'sent') for ledger in ledgers for key, row in ledger.items()):
+                    raise ValueError('聊天有排队或待核对操作，请先在原客户端处理')
+            if metadata.get('origin') == 'cli':
+                def check_scope():
+                    if set(identifiers) != {row['id'] for row in self.store.lifecycle_threads(root_id=thread_id)}:
+                        raise ValueError('子会话范围已变化，尚未发送归档请求')
+                return self.cli_sessions.archive_call(thread_id, archived, identifiers,
+                    **({'disconnect': True, 'check_scope': check_scope} if disconnect else {}))
+            def call():
+                if isinstance(self.store, RemoteStore):
+                    source = source_text('features/sessions/create.py')
+                    source += '\nimport shutil\nhome=Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex")))\n'
+                    source += 'runtime=shutil.which("codex") or str(Path.home()/".local/bin/codex")\n'
+                    source += 'archive_thread(runtime, home, **' + payload({'thread_id': thread_id, 'archived': archived, 'identifiers': identifiers}) + ')\nprint(json.dumps({"ok":True}))\n'
+                    ssh_read(self.store.alias, source, timeout=90)
+                else:
+                    archive_thread(self.catalog_reader.executable, self.codex_home, thread_id, archived, identifiers)
+            return call
+        result = self.archive_commands.perform(thread_id, archived, request_id, read, prepare)
+        return {**result, 'host': self.host}
+
+    @operation
+    def pin(self, thread_id, pinned, client_id=None, revision=None):
+        uuid.UUID(thread_id)
+        return {**self.session_pins.set(thread_id, pinned, client_id, revision), 'host': self.host}
 
     @operation
     def rename(self, thread_id, title):

@@ -1,5 +1,33 @@
 'use strict';
 
+const FileFont=(()=>{
+  const key='bridge-file-font-size',controls=new Set();
+  const allowed=value=>Number.isInteger(Number(value))&&Number(value)>=6&&Number(value)<=24;
+  let size=14;try{const saved=localStorage.getItem(key);if(allowed(saved))size=Number(saved);}catch{}
+  function paint(control){control.value.textContent=control.zoom?Math.round(size/14*100)+'%':size+'px';control.decrease.disabled=size<=6;control.increase.disabled=size>=24;}
+  function update(value){
+    if(!allowed(value))return;
+    size=Number(value);document.documentElement?.style?.setProperty('--wb-file-font-size',size+'px');
+    document.documentElement?.style?.setProperty('--wb-file-preview-zoom',String(size/14));
+    for(const control of controls)paint(control);
+  }
+  globalThis.addEventListener?.('storage',event=>{if(event.key===key)update(event.newValue===null?14:event.newValue);});
+  return {
+    size:()=>size,
+    set(value){if(!allowed(value))return;update(value);try{localStorage.setItem(key,String(size));}catch{}},
+    control(workbench){
+      const element=workbench.node('div','wb-file-font');element.setAttribute('role','group');
+      element.dataset.i18nAriaLabel='所有文件字号';element.setAttribute('aria-label',BridgeI18n.t('所有文件字号'));
+      const decrease=workbench.button('−',()=>FileFont.set(size-1),'减小所有文件字号');
+      const value=workbench.node('output','wb-file-font-value');
+      const increase=workbench.button('+',()=>FileFont.set(size+1),'增大所有文件字号');
+      element.append(decrease,value,increase);
+      const control={element,decrease,value,increase};controls.add(control);update(size);
+      return {...control,setZoom(zoom){control.zoom=zoom;const label=zoom?'HTML 预览缩放':'所有文件字号';element.dataset.i18nAriaLabel=label;element.setAttribute('aria-label',BridgeI18n.t(label));paint(control);},dispose:()=>controls.delete(control)};
+    }
+  };
+})();
+
 class Workbench {
   constructor({chat, request, csrf, notify, onUnauthorized, openChat}) {
     Object.assign(this, {chat, request, csrf, notify, onUnauthorized, openChat});
@@ -150,7 +178,7 @@ class Workbench {
     if (this.previewFullscreen && (!provider || this.previewFullscreen.session.provider === provider)) this.closePreviewFullscreen();
     const visible=!provider||this.current?.provider===provider;
     if(visible){this.stopThumbnails();this.uploadController?.abort();}
-    for(const [key,session] of this.sessions)if(!provider||session.provider===provider){for(const tab of session.files){tab.controller?.abort();tab.pdf?.dispose();tab.html?.dispose();tab.git?.dispose();tab.terminal?.dispose();tab.agents?.dispose();tab.sideChat?.dispose();}this.sessions.delete(key);}
+    for(const [key,session] of this.sessions)if(!provider||session.provider===provider){for(const tab of session.files){tab.controller?.abort();tab.pdf?.dispose();tab.html?.dispose();tab.markdown?.dispose();tab.fileFont?.dispose();tab.git?.dispose();tab.terminal?.dispose();tab.agents?.dispose();tab.sideChat?.dispose();}this.sessions.delete(key);}
     if(visible){this.current=null;this.chat.classList.remove('workbench-active','wb-split');this.endDrag();this.panel.replaceChildren();this.panel.hidden=true;this.tabs.replaceChildren();}
   }
   get isFileVisible() { return !!this.current && !this.splitMode && this.current.active !== 'chat'; }
@@ -175,7 +203,7 @@ class Workbench {
     const session = this.current; if (!session) return;
     const restoreMain=this.chat.classList.contains('workbench-active')&&!this.isFileVisible;
     for (const node of this.panel.querySelectorAll('.wb-file-list,.wb-preview-content,.wb-git-list,.wb-git-diff,.wb-branch-list,.wb-side-messages')) this.scrollPositions.set(node, node.scrollTop);
-    for (const stage of this.panel.querySelectorAll('.wb-pdf-stage')) this.scrollPositions.set(stage, {top:stage.scrollTop, left:stage.scrollLeft});
+    for (const stage of this.panel.querySelectorAll('.wb-pdf-stage,.wb-source-body')) this.scrollPositions.set(stage, {top:stage.scrollTop, left:stage.scrollLeft});
     this.splitEligible=this.canSplit();
     this.tabs.replaceChildren();
     for (const tab of [{id: 'chat', name: BridgeI18n.t('聊天')}, ...session.files]) {
@@ -196,7 +224,7 @@ class Workbench {
     if(this.panel.firstElementChild!==active?.body)this.panel.replaceChildren(...(active?[active.body]:[]));
     if (active) {
       for (const node of active.body.querySelectorAll('.wb-file-list,.wb-preview-content,.wb-git-list,.wb-git-diff,.wb-branch-list,.wb-side-messages')) node.scrollTop = this.scrollPositions.get(node) || 0;
-      for (const stage of active.body.querySelectorAll('.wb-pdf-stage')) { const position=this.scrollPositions.get(stage); if(position){stage.scrollTop=position.top;stage.scrollLeft=position.left;} }
+      for (const stage of active.body.querySelectorAll('.wb-pdf-stage,.wb-source-body')) { const position=this.scrollPositions.get(stage); if(position){stage.scrollTop=position.top;stage.scrollLeft=position.left;} }
     }
     if(restoreMain)this.chat.querySelector('.timeline').scrollTop=session.scroll;
     this.refreshThumbnails();
@@ -218,7 +246,7 @@ class Workbench {
     if (this.previewFullscreen?.tab === session.files[index]) this.closePreviewFullscreen();
     if (session.files[index].sideChat && !await session.files[index].sideChat.end()) return;
     if (!session.files[index] || session.files[index].id !== id) return;
-    session.files[index].controller?.abort(); session.files[index].pdf?.dispose(); session.files[index].html?.dispose(); session.files[index].git?.dispose(); session.files[index].terminal?.dispose(); session.files[index].agents?.dispose(); session.files[index].sideChat?.dispose(); session.files.splice(index, 1);
+    session.files[index].controller?.abort(); session.files[index].pdf?.dispose(); session.files[index].html?.dispose(); session.files[index].markdown?.dispose(); session.files[index].fileFont?.dispose(); session.files[index].git?.dispose(); session.files[index].terminal?.dispose(); session.files[index].agents?.dispose(); session.files[index].sideChat?.dispose(); session.files.splice(index, 1);
     if(session.splitTab===id)session.splitTab=(session.files[index]||session.files[index-1])?.id||null;
     const wasActive=session.active===id;
     if(wasActive)session.active=session.splitTab||(session.files.some(t=>t.id==='files')?'files':'chat');
@@ -439,6 +467,40 @@ class Workbench {
     button.dataset.i18nAriaLabel = description; button.dataset.i18nTitle = description;
     button.setAttribute('aria-label', BridgeI18n.t(description)); button.title = BridgeI18n.t(description);
   }
+  markdownPreview(session, tab, content, result) {
+    const modes=this.node('div','wb-preview-modes');
+    const reading=this.button('阅读',()=>show('reading',true));
+    const source=this.button('源代码',()=>show('source',true));
+    const copy=this.button('复制',()=>window.BridgeClipboard.copyWithFeedback(()=>result.text,copy,this.notify),'复制代码');
+    reading.className=source.className='wb-preview-mode';copy.className='wb-source-copy message-copy';modes.append(reading,source);
+    const positions={reading:{top:0,left:0},source:{top:0,left:0}};
+    let mode=null,scope=null,sourceView=null,sourcePosition={top:0,left:0};
+    const dispose=()=>{window.BridgeMermaidCards?.clearScope(scope);scope=null;};
+    const show=(next,remember=false)=>{
+      if(mode===next)return;
+      if(mode)positions[mode]={top:content.scrollTop,left:content.scrollLeft};
+      if(mode==='source'){const body=sourceView.querySelector('.wb-source-body');sourcePosition={top:body.scrollTop,left:body.scrollLeft};}
+      dispose();mode=next;
+      if(remember)try{localStorage.setItem('bridge-file-markdown-mode',mode);}catch{}
+      reading.setAttribute('aria-pressed',String(mode==='reading'));source.setAttribute('aria-pressed',String(mode==='source'));
+      if(mode==='reading'){
+        scope=window.BridgeMermaidCards?.createScope();content.__mermaidScope=scope;content.__mermaidIdentity=session.key+'|'+tab.id;
+        content.replaceChildren();renderMarkdown(content,result.text);
+      }else{
+        delete content.__mermaidScope;delete content.__mermaidIdentity;
+        sourceView ||= BridgeSourceView.create({name:result.name,text:result.text,location:tab.sourceLocation});
+        content.replaceChildren(sourceView);
+        const body=sourceView.querySelector('.wb-source-body');body.scrollTop=sourcePosition.top;body.scrollLeft=sourcePosition.left;
+      }
+      content.scrollTop=positions[mode].top;content.scrollLeft=positions[mode].left;
+      this.scrollPositions.set(content,content.scrollTop);
+    };
+    tab.markdown={dispose};
+    tab.showSourceLocation=()=>{show('source');BridgeSourceView.locate(content.firstChild,tab.sourceLocation.start,tab.sourceLocation.end);};
+    let initial='reading';try{if(localStorage.getItem('bridge-file-markdown-mode')==='source')initial='source';}catch{}
+    show(tab.sourceLocation?'source':initial);
+    return {modes,copy};
+  }
   async openSourceLocation(session, path, start, end = start) {
     if (session !== this.current || !path || !Number.isInteger(start) || start < 1 || start > 1000000 || !Number.isInteger(end) || end < start || end > 1000000) return;
     await this.preview(session, {path, name:path.split('/').pop(), sourceLocation:{start,end}});
@@ -472,19 +534,21 @@ class Workbench {
         content.classList.add('wb-pdf-content'); content.append(tab.pdf.element);
       } else if (result.kind === 'image') { const image = this.node('img'); image.src = 'data:' + result.mime + ';base64,' + result.data; image.alt = result.name; window.BridgeImageViewer?.registerWorkspaceImage(image, result, imageContext, imageComposerScope); content.append(image); }
       else if (result.kind === 'text') {
-        if (/\.md$/i.test(result.name) && !tab.sourceLocation) {if(!this.mermaidScope)this.mermaidScope=window.BridgeMermaidCards?.createScope();content.__mermaidScope=this.mermaidScope;content.__mermaidIdentity=session.key+'|'+id;renderMarkdown(content, result.text);}
+        tab.fileFont=FileFont.control(this);actions.append(tab.fileFont.element);
+        if (/\.md$/i.test(result.name)) { const markdown=this.markdownPreview(session,tab,content,result);modes=markdown.modes;copyAction=markdown.copy; }
         else if (/\.html?$/i.test(result.name)) {
           modes = this.node('div', 'wb-preview-modes');
           const preview = this.button('预览', () => show('preview'));
           const source = this.button('源代码', () => show('source'));
-          const copy = this.button('复制', () => window.BridgeClipboard.copy(() => result.text, copy), '复制代码');
-          preview.className = source.className = 'wb-preview-mode'; copy.className = 'wb-source-copy';
+          const copy = this.button('复制', () => window.BridgeClipboard.copyWithFeedback(() => result.text, copy, this.notify), '复制代码');
+          preview.className = source.className = 'wb-preview-mode'; copy.className = 'wb-source-copy message-copy';
           modes.append(preview, source); copyAction = copy;
           const show = mode => {
             tab.html?.dispose(); tab.html = null;
             preview.setAttribute('aria-pressed', String(mode === 'preview'));
             source.setAttribute('aria-pressed', String(mode === 'source'));
             copy.hidden = mode !== 'source';
+            tab.fileFont.setZoom(mode === 'preview');
             if (mode === 'preview') { tab.html = BridgeHtmlPreview.create({text:result.text, onEscape:() => { if (this.previewFullscreen?.tab === tab) this.closePreviewFullscreen(); }}); content.replaceChildren(tab.html.element); }
             else content.replaceChildren(BridgeSourceView.create({name:result.name, text:result.text, location:tab.sourceLocation}));
           };
@@ -492,8 +556,8 @@ class Workbench {
           show(tab.sourceLocation ? 'source' : 'preview');
         }
         else {
-          const copy = this.button('复制', () => window.BridgeClipboard.copy(() => result.text, copy), '复制代码');
-          copy.className = 'wb-source-copy'; copyAction = copy;
+          const copy = this.button('复制', () => window.BridgeClipboard.copyWithFeedback(() => result.text, copy, this.notify), '复制代码');
+          copy.className = 'wb-source-copy message-copy'; copyAction = copy;
           content.append(BridgeSourceView.create({name:result.name, text:result.text, location:tab.sourceLocation}));
         }
       } else content.append(this.node('p', 'wb-empty', BridgeI18n.t(result.size > 512 * 1024 ? '文件超过 512 KB，无法在线预览。可下载后打开。' : '此文件不是 UTF-8 文本或可预览图片，可下载后打开。')));

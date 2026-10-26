@@ -184,6 +184,7 @@ class IntegrationTests(unittest.TestCase):
             raise StoreUnavailable('Database temporarily unavailable')
         self.bridge.store.list = unavailable
         remote = SimpleNamespace(host='remote:test', lock=threading.RLock(), live={}, listed=set(), origins={}, _access=self.bridge._access,
+                                 session_pins=SimpleNamespace(identifiers=lambda: ()),
                                  store=SimpleNamespace(list=lambda **kw: [{'id': THREAD, 'title': 'Remote chat', 'cwd': '/remote', 'updated_at': 1}]))
         self.bridge.hosts.hosts = lambda: {'remote:test': {'alias': 'test'}}
         self.bridge.for_host = lambda host: remote
@@ -717,6 +718,7 @@ class IntegrationTests(unittest.TestCase):
         remote.live = {}
         remote.origins = {}
         remote._access = self.bridge._access
+        remote.session_pins.identifiers.return_value = ()
         remote.store.list.return_value = [{'id': 'remote-thread', 'cwd': '/work', 'updated_at': 50}]
         self.bridge.hosts.hosts = lambda: {'remote': {'alias': 'server'}}
         self.bridge.for_host = lambda host: remote
@@ -1503,6 +1505,20 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         passwordless = {'Cookie': headers['Set-Cookie'].split(';')[0], 'X-CSRF-Token': body['csrf']}
         self.assertEqual(self.request('POST', path, value, passwordless)[0], 403)
+        manager.change.assert_called_once_with(value)
+
+    def test_unsaved_model_catalog_requires_authenticated_same_origin_csrf(self):
+        from unittest.mock import Mock
+        manager = self.server.bridge.cli_access = Mock()
+        manager.change.return_value = {'models': ['fixture-model']}
+        value = {'provider': 'codex', 'action': 'modelsDraft', 'baseUrl': 'https://fixture.invalid/v1', 'apiKey': 'fake-key'}
+        path = '/api/cli-access'
+        self.assertEqual(self.request('POST', path, value)[0], 401)
+        auth = self.login()
+        self.assertEqual(self.request('POST', path, value, {'Cookie': auth['Cookie']})[0], 403)
+        self.assertEqual(self.request('POST', path, value, {**auth, 'Origin': 'https://other.test'})[0], 403)
+        manager.change.assert_not_called()
+        self.assertEqual(self.request('POST', path, value, auth)[2], {'models': ['fixture-model']})
         manager.change.assert_called_once_with(value)
 
     def test_account_routes_require_login_csrf_and_same_origin(self):

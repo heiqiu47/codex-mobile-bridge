@@ -322,6 +322,33 @@ class AccountsTests(unittest.TestCase):
         self.assertEqual(self.manager.state['phase'],'restored',recovery_errors[-1] if recovery_errors else 'no recovery exception captured')
         self.assertEqual(self.manager.snapshot_files(),self.original)
 
+    def test_stopped_desktop_unified_switch_verifies_cli_without_discovery(self):
+        row = self.api()
+        with patch('bridge.features.accounts.cli_sync.LocalCliSync.preflight', return_value={'desktopRunning': False}), \
+             patch('bridge.features.accounts.cli_sync.LocalCliSync.snapshot', return_value={}), \
+             patch('bridge.features.accounts.cli_sync.LocalCliSync.apply', return_value={'mutated': True}), \
+             patch('bridge.features.accounts.cli_sync.LocalCliSync.verify', return_value={'status': 'verified'}) as verify, \
+             patch('bridge.features.accounts.accounts.DesktopApp.discover') as discover:
+            self.switch(row, syncLocalCli=False)
+        verify.assert_called_once()
+        self.assertEqual(verify.call_args.args[0], 'codex')
+        self.assertEqual(verify.call_args.args[1]['id'], row['id'])
+        discover.assert_not_called()
+        self.app.start.assert_not_called()
+        self.assertEqual(self.manager.state['cliSync']['status'], 'verified')
+
+    def test_stopped_desktop_unified_switch_restores_on_verification_failure(self):
+        row = self.api()
+        with patch('bridge.features.accounts.cli_sync.LocalCliSync.preflight', return_value={'desktopRunning': False}), \
+             patch('bridge.features.accounts.cli_sync.LocalCliSync.snapshot', return_value={'fixture': True}), \
+             patch('bridge.features.accounts.cli_sync.LocalCliSync.apply', return_value={'mutated': True}), \
+             patch('bridge.features.accounts.cli_sync.LocalCliSync.verify', side_effect=ValueError('CLI mismatch')), \
+             patch('bridge.features.accounts.cli_sync.LocalCliSync.restore') as restore:
+            with self.assertRaisesRegex(ValueError, 'CLI mismatch'):
+                self.switch(row)
+        restore.assert_called_once_with('codex', {'fixture': True})
+        self.app.stop.assert_not_called()
+
     def test_busy_and_queued_tasks_block_before_shutdown(self):
         row=self.api()
         for status in ['queued','unknown']:

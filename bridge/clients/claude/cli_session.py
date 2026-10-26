@@ -13,7 +13,7 @@ import uuid
 from collections import deque
 from pathlib import Path
 
-from bridge.clients.claude import model
+from bridge.clients.claude import model, file_archive
 from bridge.clients.claude.history import file_stamp, page as history_page
 from bridge.clients.claude.context import context_fields
 from bridge.clients.claude.session_registry import assert_session_closed
@@ -486,6 +486,32 @@ class _Owned:
             raise BridgeUnavailable('Claude Code 控制请求未确认，请检查原会话')
         return response.get('response') or {}
 
+    def release_for_archive(self, timeout=20):
+        """Finish this owned CLI only; never terminate a foreign or shared process."""
+        deadline = time.monotonic() + timeout
+        with self.condition:
+            if self.error:
+                raise BridgeUnavailable(self.error)
+            active = self.active or bool(self.pending)
+        if self.process.poll() is not None:
+            return
+        if active:
+            self.control({'subtype': 'interrupt'}, timeout=max(.1, deadline-time.monotonic()))
+        with self.condition:
+            while (self.active or self.pending) and not self.finished and time.monotonic() < deadline:
+                self.condition.wait(max(0, deadline-time.monotonic()))
+            if self.error or self.active or self.pending:
+                raise BridgeUnavailable('停止结果待核对，尚未发送归档请求')
+        # EOF lets the original executor flush and exit; no terminate/kill fallback.
+        self.process.stdin.close()
+        try:
+            code = self.process.wait(timeout=max(.1, deadline-time.monotonic()))
+            # Native print mode exits 1 after an acknowledged user interruption.
+            if code != 0 and not (active and code == 1):
+                raise BridgeUnavailable('原会话未正常退出，尚未发送归档请求')
+        except subprocess.TimeoutExpired:
+            raise BridgeUnavailable('原会话连接尚未释放，尚未发送归档请求') from None
+
     def close(self):
         try:
             if self.native_process is not None:
@@ -574,10 +600,30 @@ class ClaudeCli:
                     row = self._saved_cached(path, profile['origin'])
                     if row:
                         rows[row['id']] = row
+        archive_errors = []
+        for path in file_archive.archive_paths(profile['directory'], archive_errors):
+            row = self._saved_cached(path, profile['origin'])
+            if row:
+                rows[row['id']] = row
+        for error in archive_errors:
+            native = error['nativeId']
+            sid = model.gateway_id('cli:' + profile['origin'], native)
+            rows[sid] = {'id': sid, 'nativeId': native, 'backend': 'cli', 'mode': 'cli',
+                         'host': 'local', 'title': error['notice'], 'cwd': '', 'model': '',
+                         'permissionMode': 'default', 'permissionKnown': False, 'updatedAt': 0,
+                         'archived': True, 'archiveIncomplete': True, 'origin': profile['origin'],
+                         'path': profile['directory']/'bridge-archives'/native/(native+'.jsonl'),
+                         'stamp': None, 'events': [], 'contextEvents': []}
+        env = managed_api_env() if profile.get('managedApi') else os.environ.copy()
+        env['CLAUDE_CONFIG_DIR'] = str(profile['directory'])
+        enabled = file_archive.supported(profile['binary'], env)
+        for row in rows.values():
+            allowed = enabled and not row.get('archiveIncomplete')
+            row['capabilities'] = {'archive': allowed, 'unarchive': allowed}
         with self.lock:
             self.index = rows
             public = [self._public(row) for row in rows.values()]
-        return {'connected': True, 'sessions': public}
+        return {'connected': True, 'sessions': public, 'complete': not archive_errors}
 
     def _public(self, row):
         value = {key: item for key, item in row.items() if key not in ('events', 'contextEvents', 'stamp', 'path', 'origin', 'permissionKnown')}
@@ -600,6 +646,8 @@ class ClaudeCli:
         if live:
             value['model'] = owned.model or value['model']
             value['permissionMode'] = owned.permission or value['permissionMode']
+        if row.get('archiveIncomplete'):
+            value.update(status='unknown', runtimeKnown=False, connectionState='unavailable')
         return value
 
     def _get(self, sid):
@@ -630,7 +678,13 @@ class ClaudeCli:
             cached = self.index.get(sid)
         if cached and cached['origin'] == origin and cached.get('stamp') == stamp and cached['path'] == path:
             return cached
-        return _saved(path, origin)
+        row = _saved(path, origin)
+        profile = self.profile_resolver()
+        if row and profile and profile['origin'] == origin:
+            if path.parent.parent == profile['directory']/'bridge-archives':
+                row.update(file_archive.state(profile['directory'], path, row['nativeId']))
+            row['capabilities'] = cached.get('capabilities', {}) if cached else {}
+        return row
 
     def contains(self, sid):
         profile = self.profile_resolver()
@@ -727,6 +781,38 @@ class ClaudeCli:
                 owned = None
             public = self._public(row)
             live = owned is not None
+            if action in ('archive-state', 'archive'):
+                profile = self.profile_resolver()
+                if not profile or profile['origin'] != row['origin']:
+                    raise BridgeUnavailable('原 Claude Code 配置已变化')
+                env = managed_api_env() if profile.get('managedApi') else os.environ.copy()
+                env['CLAUDE_CONFIG_DIR'] = str(profile['directory'])
+                enabled = file_archive.supported(profile['binary'], env)
+                safe = False
+                if enabled and live and action == 'archive' and body.get('disconnect') is True and body.get('archived') is True:
+                    owned.release_for_archive()
+                    live = False
+                    public = self._public(row)
+                if enabled and not live:
+                    assert_session_closed(profile['directory'])
+                    file_archive.assert_no_cli(profile['binary'])
+                    safe = True
+                result = {**public, **file_archive.state(profile['directory'], row['path'], native, verify=True),
+                          'archiveSafe': safe, 'runtimeKnown': True,
+                          'capabilities': {'archive': enabled, 'unarchive': enabled}}
+                if action == 'archive-state':
+                    return result
+                if not safe:
+                    raise BridgeUnavailable('无法确认原 Claude Code 会话已停止或原生归档能力未验证')
+                if self.profile_resolver() != profile:
+                    raise BridgeUnavailable('原 Claude Code 配置已变化')
+                assert_session_closed(profile['directory'])
+                file_archive.assert_no_cli(profile['binary'])
+                if not file_archive.supported(profile['binary'], env):
+                    raise BridgeUnavailable('Claude 原生程序在归档前变化或无法核验')
+                value = file_archive.change(profile['directory'], row['path'], native, body.get('archived'))
+                self.index.pop(sid, None)
+                return value
             if action == 'detail':
                 before = body.get('historyBefore')
                 if before is not None and (not isinstance(before, str) or len(before) > 1024):
@@ -743,7 +829,7 @@ class ClaudeCli:
                 public.update(context_fields(row['contextEvents'] + live_events))
                 messages = model.transcript(events)
                 unique = {item['id']: item for item in messages}
-                can_resume = (not live and row['permissionKnown'] and self._ready(self.profile_resolver())
+                can_resume = (not row['archived'] and not live and row['permissionKnown'] and self._ready(self.profile_resolver())
                               and Path(row['cwd']).is_dir())
                 return {'connected': True, 'session': public, 'messages': list(unique.values()),
                         'turns': model.turns(events),
@@ -753,7 +839,8 @@ class ClaudeCli:
                             'resume': can_resume,
                             'send': live and public['connectionState'] == 'ready',
                             'models': live, 'permissions': live, 'stop': live,
-                            'attachments': True, 'queue': False, 'steer': False, 'skills': live}}
+                            'attachments': True, 'queue': False, 'steer': False, 'skills': live,
+                            **row.get('capabilities', {})}}
             if action == 'catalog':
                 if not live:
                     return {'models': [], 'capabilities': {'models': False}, 'notice': '请先继续这条 Claude Code 会话'}
@@ -764,6 +851,8 @@ class ClaudeCli:
                 return {'status': 'accepted', 'mode': public['permissionMode'],
                         'options': options if live else []}
             if action == 'resume':
+                if row['archived']:
+                    raise ResumePreflightBlocked('请先恢复这条已归档的 Claude Code 会话')
                 if live:
                     return {'status': 'ready'}
                 profile = self.profile_resolver()

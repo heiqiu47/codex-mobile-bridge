@@ -13,10 +13,10 @@ import bridge.clients.claude.model as model
 from bridge.clients.claude.context import context_fields
 from bridge.clients.claude.setup import inspect_installation, console_source, developer_mode_enabled, native_action, running_app, claude_data_home, background_running_app
 from bridge.clients.errors import BridgeUnavailable
+from bridge.features.sessions.create import ArchiveNotSent
 from bridge.clients.claude.mailbox import FileDesktop, MAX_REQUEST, CONNECTOR_REVISION, workspace_trust_rejection
 from bridge.clients.claude.cli_session import ClaudeCli, project_account_identity
 from bridge.clients.claude.remote import RemoteClaudeCli
-from bridge.clients.claude.wsl import ClaudeCliRemotes
 from bridge.app.lifecycle import private_json
 from bridge.platforms.windows import session as windows_session
 from bridge.platforms.windows.session import DesktopUnavailable
@@ -29,7 +29,11 @@ class Claude:
         self.directory = Path(directory)
         self.hosts = hosts
         self.cli = ClaudeCli(self.directory.parent/'uploads')
-        self.remote_cli = ClaudeCliRemotes(hosts, wsl_entries) if wsl_entries is not None else RemoteClaudeCli(hosts)
+        if wsl_entries is not None:
+            from bridge.clients.claude.wsl import ClaudeCliRemotes
+            self.remote_cli = ClaudeCliRemotes(hosts, wsl_entries)
+        else:
+            self.remote_cli = RemoteClaudeCli(hosts)
         self.desktop = None
         self.index = {}
         self.loop = None
@@ -589,7 +593,7 @@ class Claude:
         for kind in ('code', 'cowork'):
             if 'getAll' in self.desktop.capabilities.get(kind, []):
                 raw = batch[kind] if batch is not None else await self.desktop.call(kind, 'getAll')
-                rows.extend(model.session(kind, row) for row in model.rows(raw))
+                rows.extend({**model.session(kind, row), 'capabilities': self.session_capabilities(kind)} for row in model.rows(raw))
                 coverage[kind] = True
         self.index = {row['id']: row for row in rows}
         return {'connected': True, 'sessions': rows, 'coverage': coverage, 'complete': all(coverage.values())}
@@ -612,6 +616,8 @@ class Claude:
                 'permissions': 'setPermissionMode' in methods, 'attachments': 'sendMessage' in methods,
                 'skills': 'getSupportedCommands' in methods, 'queue': kind == 'code', 'steer': kind == 'code',
                 'fork': kind == 'code' and 'mobileFork' in methods,
+                'archive': kind == 'code' and 'mobileArchive' in methods,
+                'unarchive': kind == 'code' and 'mobileArchive' in methods,
                 'contextUsage': any(method in methods for method in ('getContextUsageSummary', 'getContextUsage'))}
 
     def cli_projects(self, include_remote=True):
@@ -701,10 +707,10 @@ class Claude:
                 desktop = await self.listing()
                 return {'connected': True, 'sessions': desktop['sessions'] + cli['sessions'] + remote['sessions'],
                         'coverage': {**desktop['coverage'], 'cli': cli['connected']},
-                        'complete': desktop['complete'] and remote['complete']}
+                        'complete': desktop['complete'] and cli.get('complete', True) and remote['complete']}
             return {'connected': cli['connected'] or remote['connected'], 'sessions': cli['sessions'] + remote['sessions'],
                     'coverage': {'code': False, 'cowork': False, 'cli': cli['connected']},
-                    'complete': (cli['connected'] or remote['connected']) and remote['complete']}
+                    'complete': (cli['connected'] or remote['connected']) and cli.get('complete', True) and remote['complete']}
         if action == 'resume':
             if await asyncio.to_thread(self.remote_cli.contains, sid):
                 return await asyncio.to_thread(self.remote_cli.call, action, sid, body)
@@ -763,6 +769,26 @@ class Claude:
         if not saved:
             raise ValueError('找不到 Claude 会话')
         kind, native = saved['backend'], saved['nativeId']
+        if action in ('archive-state', 'archive'):
+            if kind != 'code' or not self.session_capabilities(kind)['archive']:
+                raise ValueError('当前接入尚未确认原生归档和恢复能力')
+            state = await self.desktop.call(kind, 'mobileArchiveState', native)
+            session = model.session(kind, state['session'])
+            if session['id'] != sid:
+                raise BridgeUnavailable('桌面返回的归档目标标识不一致')
+            result = {**session, '_archiveFlags': state['archiveFlags'], 'archiveSafe': state.get('archiveSafe') is True,
+                      'capabilities': self.session_capabilities(kind)}
+            if action == 'archive-state':
+                return result
+            if getattr(self.desktop, 'unconfirmed_mutations', None):
+                raise ArchiveNotSent('Claude 有待核对的原生写入，请先在原客户端处理')
+            options = {'archived': body['archived']}
+            if body.get('disconnect') is True:
+                options['disconnect'] = True
+            reply = await self.desktop.call(kind, 'mobileArchive', native, options)
+            if reply.get('archiveNotSent') is True:
+                raise ArchiveNotSent(reply['message'])
+            return {'status': 'accepted'}
         history_limit = body.get('historyLimit', 40)
         if action == 'detail' and (type(history_limit) is not int or not 1 <= history_limit <= 100):
             raise ValueError('历史页大小无效')
@@ -925,7 +951,7 @@ class Claude:
                 return {'connected': cli['connected'] or remote['connected'],
                         'sessions': cli['sessions'] + remote['sessions'],
                         'coverage': {'code': False, 'cowork': False, 'cli': cli['connected']},
-                        'complete': (cli['connected'] or remote['connected']) and remote['complete']}
+                        'complete': (cli['connected'] or remote['connected']) and cli.get('complete', True) and remote['complete']}
             if action == 'resume':
                 if self.remote_cli.contains(sid):
                     return self.remote_cli.call(action, sid, body or {})

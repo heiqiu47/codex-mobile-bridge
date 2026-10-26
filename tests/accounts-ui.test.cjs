@@ -32,16 +32,16 @@ test('native login card survives an empty saved list without enrollment or switc
 test('web exposes saved account selection without enrollment or credential inputs',async()=>{
  const ui=fixture();await ui.panel.refresh();assert.equal(ui.all().some(n=>n.tag==='input'&&n.type!=='checkbox'),false);assert.match(ui.text(),/API <script>/);assert.equal(ui.all().some(n=>n.tag==='script'),false);
  ui.confirm(false);await ui.panel.choose(ui.value().accounts[0]);assert.equal(ui.requests.length,0);
- ui.confirm(true);await ui.panel.choose(ui.value().accounts[0]);assert.deepEqual(Object.keys(ui.requests[0]).sort(),['action','confirmed','id','requestId','tasksConfirmed']);
+ ui.confirm(true);await ui.panel.choose(ui.value().accounts[0]);assert.deepEqual(Object.keys(ui.requests[0]).sort(),['action','confirmed','id','requestId','syncLocalCli','tasksConfirmed']);
  assert.equal(ui.requests[0].tasksConfirmed,true);assert.match(ui.prompts[0],/未在网页显示/);
 });
-test('Codex switch sends local CLI choice only after checkbox selection',async()=>{
- const ui=fixture();await ui.panel.refresh();const row=ui.value().accounts[0];
- assert.match(ui.text(),/共用账号配置；切换后 CLI 也会使用新接入/);
- const box=ui.all().find(n=>n.tag==='input'&&n.type==='checkbox'&&n.parent?.children.some(child=>child.textContent==='同时应用到本机 CLI'));
- assert.ok(box);box.checked=true;box.onchange();await ui.panel.choose(row);
- assert.equal(ui.requests[0].syncLocalCli,true);
+test('Codex switch always requests CLI verification without an opt-in checkbox',async()=>{
+ const ui=fixture();await ui.panel.refresh();
+ assert.match(ui.text(),/Desktop 与 CLI 共用接入/);
+ assert.equal(ui.all().some(n=>n.textContent==='同时应用到本机 CLI'),false);
+ await ui.panel.choose(ui.value().accounts[0]);assert.equal(ui.requests[0].syncLocalCli,true);
 });
+
 
 for(const desktop of [false,true])test(`${desktop?'desktop':'web'} merges imported login and keeps other official accounts and API cards separate`,async()=>{
  const ui=fixture(desktop),usage={status:'ready',checkedAt:ui.now()/1000,limits:[{name:'Codex',windows:[{remainingPercent:75,windowDurationMins:300}]}],resetCredits:{availableCount:2}};
@@ -113,7 +113,7 @@ test('scanned APIs fetch models using opaque candidate IDs and import the select
  const ui=fixture(true);await ui.panel.refresh();ui.panel.importCandidate({id:'candidate',kind:'api',name:'Local API',baseUrl:'https://example.test/v1',model:''});
  assert.equal(ui.panel.key.input.disabled,true);assert.equal(ui.panel.key.input.value,'');
  ui.setRequest(async()=>({...ui.value(),models:['model-one','model-two']}));await ui.panel.modelsButton.onclick();
- assert.equal(ui.requests[0].candidateId,'candidate');assert.equal(ui.requests[0].apiKey,undefined);assert.equal(ui.panel.modelOptions.hidden,false);
+ assert.equal(ui.requests[0].candidateId,'candidate');assert.equal(ui.requests[0].apiKey,undefined);assert.equal(ui.panel.modelOptions.hidden,false);assert.equal(ui.panel.model.input.value,'model-one');
  ui.panel.modelOptions.value='model-two';ui.panel.modelOptions.onchange();await ui.panel.form.onsubmit({preventDefault(){}});
  assert.equal(ui.requests[1].action,'import');assert.equal(ui.requests[1].model,'model-two');assert.equal(ui.requests[1].candidateId,'candidate');
 });
@@ -400,4 +400,20 @@ test('Codex model scroller survives status reads and model timestamp changes',as
  let finish;ui.setRequest(()=>new Promise(resolve=>finish=resolve));ui.focus(box.refresh);const pending=box.refresh.onclick();ui.blur();finish(ui.value());await pending;assert.equal(ui.active(),box.refresh);
  ui.setValue({...ui.value(),accounts:[{...row,accountKey:'new-profile'}],switch:{phase:'idle'}});await ui.panel.refresh();
  assert.notEqual(ui.all().find(node=>node.className==='accounts-models'),box);
+});
+
+test('one inventory delegates API edit and probes to the editor before reminders',async()=>{
+ const ui=fixture(),details=ui.panel.node('details'),calls=[];
+ ui.panel.attachApiAccess({edit:(...args)=>calls.push(args),probe:(...args)=>calls.push(args)},details);
+ await ui.panel.refresh();assert.ok(ui.panel.management.children.indexOf(details)<ui.panel.management.children.indexOf(ui.panel.tools));
+ ui.all().find(node=>node.textContent==='修改').onclick();assert.equal(details.open,true);assert.equal(calls[0][0],'codex');
+ ui.all().find(node=>node.textContent==='测试模型接口').onclick();assert.equal(details.open,true);assert.equal(calls[1][1],'test');
+ assert.equal(ui.all().filter(node=>node.className==='account-bucket').length,1);
+});
+
+test('desktop API edit opens the outer editor even with a nested article and respects switch locks',async()=>{
+ const ui=fixture(true),details=ui.panel.node('details'),article=ui.panel.node('article'),root=ui.panel.node('div'),calls=[];article.append(root);details.append(article);
+ ui.panel.attachApiAccess({root,edit:()=>calls.push('edit'),probe:()=>{}},details);await ui.panel.refresh();
+ const edits=()=>ui.all().filter(node=>node.textContent==='修改'&&!node.hidden);assert.equal(edits().length,1);edits()[0].onclick();assert.equal(details.open,true);assert.deepEqual(calls,['edit']);
+ ui.setValue({...ui.value(),switch:{phase:'applying'}});await ui.panel.refresh();assert.equal(edits()[0].disabled,true);assert.equal(ui.all().find(node=>node.textContent==='测试模型接口').disabled,true);
 });

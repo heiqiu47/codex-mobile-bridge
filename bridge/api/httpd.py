@@ -38,7 +38,7 @@ from bridge.features.sessions.goal import GoalError
 from bridge.clients.codex.catalog import CatalogError
 from bridge.features.sessions.store import StoreUnavailable
 from bridge.clients.codex.remote import RemoteUnavailable
-from bridge.features.sessions.create import CreationError
+from bridge.features.sessions.create import ArchiveRejected, CreationError
 from bridge.features.accounts.account import AccountError
 from bridge.features.terminals.manager import TerminalSessionMissing
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
@@ -59,7 +59,7 @@ def _prepared_static(data, content_type, use_gzip):
     etag = '"sha256-' + hashlib.sha256(data).hexdigest() + '"'
     return digest, data, compressed, etag
 
-THREAD_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})(?:/(events|send|stop|history|respond|reconnect|queue|catalog|settings|permissions|poll|timeline|changes|detail|notifications|uploads|message-action|message-management|rename))?$")
+THREAD_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})(?:/(events|send|stop|history|respond|reconnect|queue|catalog|settings|permissions|poll|timeline|changes|detail|notifications|uploads|message-action|message-management|rename|pin|archive))?$")
 UPLOAD_PREVIEW_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/uploads/([0-9a-f-]{36})/preview$")
 UPLOAD_THUMB_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/uploads/([0-9a-f-]{36})/thumb$")
 DESKTOP_IMAGE_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/desktop-images/([0-9a-f]{64})$")
@@ -809,7 +809,8 @@ class Handler(BaseHTTPRequestHandler):
                     host_info = host_infos.get(host, {})
                     options = dict(query=query.get('q', [''])[0][:200], limit=offset + 101,
                                    archived=query.get('archived', ['false'])[0] == 'true',
-                                   source=source, include_sources=True)
+                                   source=source, include_sources=True,
+                                   **({'pin_order': True} if query.get('order') == ['recent'] else {}))
                     if wsl_inventory_only:
                         rows, available, errors = [], [], []
                     elif host.startswith('wsl:'):
@@ -1182,6 +1183,14 @@ class Handler(BaseHTTPRequestHandler):
                 result = bridge.send(thread_id, body.get("text"), body.get("id", ""), body.get("mode", "send"),
                                      body.get("skills", []), work_mode=body.get("workMode"),
                                      attachments=body.get('attachments'), ui_locale=body.get("uiLocale"))
+            elif action == "archive":
+                if set(body) not in ({'archived', 'id'}, {'archived', 'id', 'disconnect'}):
+                    raise ValueError('聊天归档设置无效')
+                result = bridge.archive(thread_id, body['archived'], body['id'], **({'disconnect': body['disconnect']} if 'disconnect' in body else {}))
+            elif action == "pin":
+                if set(body) not in ({'pinned'}, {'pinned', 'clientId', 'revision'}):
+                    raise ValueError('聊天置顶设置无效')
+                result = bridge.pin(thread_id, body['pinned'], **({'client_id': body['clientId'], 'revision': body['revision']} if 'clientId' in body else {}))
             elif action == "rename":
                 result = bridge.rename(thread_id, body.get("title"))
             elif action == "permissions":
@@ -1234,6 +1243,9 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self.close_connection = True
             self.output(400, {"error": str(exc)})
+        except ArchiveRejected as exc:
+            self.close_connection = True
+            self.output(409, {'error': str(exc), 'code': 'archive_rejected', 'reason': exc.reason})
         except (IPCError, GoalError, CatalogError, RemoteUnavailable, CreationError, StoreUnavailable, AccountError) as exc:
             self.close_connection = True
             self.output(409, {"error": str(exc), "code": "desktop_unavailable"})

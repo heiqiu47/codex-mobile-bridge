@@ -22,8 +22,17 @@ from bridge.clients.uploads import DesktopUploads
 from bridge.resources import source_text
 
 
-def _command(alias):
+def worker_source():
     source = source_text('clients/claude/remote_worker.py')
+    marker = 'from bridge.clients.claude.file_archive import archive_paths, state as archive_file_state, change as archive_file_change, supported as archive_supported, assert_no_cli as archive_assert_no_cli'
+    if source.count(marker) != 1:
+        raise ValueError('Claude Code 远端归档模块无法加载')
+    helper = source_text('clients/claude/file_archive.py')
+    return source.replace(marker, helper + '\narchive_file_state = state\narchive_file_change = change\narchive_supported = supported\narchive_assert_no_cli = assert_no_cli\n')
+
+
+def _command(alias):
+    source = worker_source()
     inner = 'exec python3 -u -c ' + shlex.quote(source)
     return ssh_command(alias)[:-1] + ['exec "$SHELL" -lc ' + shlex.quote(inner)]
 
@@ -85,7 +94,7 @@ class RemoteClaudeCli:
         sid = model.gateway_id('cli:'+self.transport_kind+':'+host_id+':'+origin, native)
         return {**raw, 'id': sid, 'backend': 'cli', 'mode': 'cli', 'host': host_id,
                 'hostLabel': host.get('displayName') or host['alias'], 'alias': host['alias'],
-                'archived': False}
+                'archived': raw.get('archived') is True}
 
     def _fetch(self, item):
         host_id, host = item
@@ -111,6 +120,8 @@ class RemoteClaudeCli:
                     rows.update({sid: row for sid, row in previous.items()
                                  if row['host'] == host_id and row['alias'] == host['alias']})
                     continue
+                if result.get('complete') is False:
+                    complete = False
                 for item in result.get('sessions') or []:
                     if isinstance(item, dict) and item.get('nativeId') and item.get('origin'):
                         row = self._row(host_id, host, item)
@@ -250,6 +261,9 @@ class RemoteClaudeCli:
         if live:
             value['model'] = owned.model or value['model']
             value['permissionMode'] = owned.permission or value['permissionMode']
+        if row.get('archiveIncomplete'):
+            value.update(runtimeKnown=False, status='unknown', connectionState='closed', requests=[],
+                         capabilities={'archive': False, 'unarchive': False})
         return value
 
     def _upload_files(self, row, files):
@@ -363,7 +377,43 @@ class RemoteClaudeCli:
                 owned.close()
             raise
 
+    def _archive(self, action, sid, body):
+        with self.lock:
+            row = self.index.get(sid)
+            if row is None or self.hosts is None:
+                raise ValueError('找不到原 Claude Code 会话')
+            host = self.hosts.hosts().get(row['host'])
+            if not host or host['alias'] != row['alias']:
+                raise ValueError('原 SSH 主机配置已变化')
+            owned = self.owned.get(sid)
+            live = owned is not None and owned.process.poll() is None
+            if live and (owned.origin != row['origin'] or owned.native != row['nativeId'] or owned.error):
+                raise BridgeUnavailable('原 Claude Code 执行连接身份无法核验')
+            request = {'operation': action, 'native': row['nativeId'], 'origin': row['origin']}
+            if action == 'archive':
+                if (set(body) not in ({'archived'}, {'archived', 'disconnect'}) or type(body['archived']) is not bool or
+                        type(body.get('disconnect', False)) is not bool or (body.get('disconnect') and body['archived'] is not True)):
+                    raise ValueError('Claude 归档设置无效')
+                if live:
+                    if not body.get('disconnect'):
+                        raise BridgeUnavailable('原 Claude Code 会话仍有网关执行连接，请先在原客户端结束')
+                    owned.release_for_archive()
+                    live = False
+                request['archived'] = body['archived']
+            fresh = self._remote(row['alias'], request)
+            updated = self._row(row['host'], host, fresh)
+            if updated['id'] != sid:
+                raise ValueError('原 SSH Claude Code 会话身份已变化')
+            current_host = self.hosts.hosts().get(row['host'])
+            if not current_host or current_host['alias'] != row['alias']:
+                raise ValueError('原 SSH 主机配置已变化')
+            self.index[sid] = updated
+            self.history = {key: value for key, value in self.history.items() if key[0] != sid}
+            return {**self._public(updated), 'archiveSafe': not live and fresh.get('archiveSafe') is True}
+
     def call(self, action, sid, body):
+        if action in ('archive-state', 'archive'):
+            return self._archive(action, sid, body)
         try:
             with self.lock:
                 cached = self.index.get(sid)
@@ -432,7 +482,7 @@ class RemoteClaudeCli:
                 public.update(context_fields((row.get('contextEvents') or []) + live_events))
                 messages = model.transcript(history)
                 ready = False
-                if not live and row['permissionKnown']:
+                if not live and not row.get('archived') and row['permissionKnown']:
                     try:
                         ready = self._remote(row['alias'], {'operation': 'auth', 'origin': row['origin']}, timeout=12)['ready']
                     except BridgeUnavailable:
@@ -442,9 +492,11 @@ class RemoteClaudeCli:
                         'turns': model.turns(history),
                         'history': page['history'],
                         'notice': '无法确认原会话权限模式，请在远端终端继续' if not live and not row['permissionKnown'] else '',
-                        'capabilities': {'resume': not live and ready, 'send': live and public['connectionState'] == 'ready',
+                        'capabilities': {**row.get('capabilities', {}), 'resume': not live and not row.get('archived') and ready, 'send': live and public['connectionState'] == 'ready',
                                          'models': live, 'permissions': live, 'stop': live,
                                          'attachments': True, 'queue': False, 'steer': False, 'skills': live}}
+            if row.get('archived'):
+                raise BridgeUnavailable('请先恢复归档的 Claude Code 会话')
             if action == 'catalog':
                 if not live:
                     return {'models': [], 'capabilities': {'models': False}, 'notice': '请先继续这条 Claude Code 会话'}

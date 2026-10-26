@@ -28,10 +28,10 @@ test('CLI creation picker offers existing and custom folders with an accurate ac
   assert.equal($('new-chat-submit').textContent,'Create and open');
   assert.equal($('new-chat-project').children.some(option=>option.value==='__directory__'),true);
 });
-function node(){return {hidden:false,disabled:false,value:'',textContent:'',title:'',children:[],scrollTop:0,classList:{toggle(){}},append(...parts){this.children.push(...parts);},replaceChildren(...parts){this.children=parts;},querySelector(){return node();}};}
+function node(){return {addEventListener(){},hidden:false,disabled:false,value:'',textContent:'',title:'',children:[],scrollTop:0,classList:{toggle(){}},append(...parts){this.children.push(...parts);},replaceChildren(...parts){this.children=parts;},querySelector(){return node();}};}
 function fixture(){
   const nodes=new Map();const $=id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);};
-  const ctx={$ ,state:null,reconnectFailure:null,listRows:[],availableSources:[],listRenderStamp:'',listComplete:false,listReadFinished:false,listHasMore:false,currentId:'a',currentHost:'local',sending:false,catalogStarted:false,catalogLoads:0,startCatalog(){ctx.catalogLoads++;},selectedSkills:new Set(),invalidSkills:new Set(),renderSkillPills(){},BridgeI18n:{locale:()=> 'en-US'},t:key=>({'此电脑':'This computer','其他来源':'Other source','历史记录':'History','重新连接':'Reconnect','继续会话':'Continue chat'}[key]||key),localStorage:{getItem:()=>null,setItem(){}},dateText:()=> 'today',el:(tag,cls='',value='')=>Object.assign(node(),{tag,cls,textContent:value,dataset:{}}),renderActivity(){},contextUsageControl:{update(){}},fastModeControl:{sync(){}},visibleChat:()=>false,sessionActivity:{read(){}},attachments:{ready:()=>true},workModes:{render(view){ctx.modesView=view;}},workbench:{current:{}},chatTimeline:{refreshActions(){}},renderApprovals(rows){ctx.approvals=rows;},renderQueue(){},approvalStamp:'',chatKey:()=> 'local|a'};
+  const ctx={pinRow:row=>row,$ ,state:null,reconnectFailure:null,listRows:[],availableSources:[],listRenderStamp:'',listComplete:false,listReadFinished:false,listHasMore:false,currentId:'a',currentHost:'local',sending:false,catalogStarted:false,catalogLoads:0,startCatalog(){ctx.catalogLoads++;},selectedSkills:new Set(),invalidSkills:new Set(),renderSkillPills(){},BridgeI18n:{locale:()=> 'en-US'},t:key=>({'此电脑':'This computer','其他来源':'Other source','历史记录':'History','重新连接':'Reconnect','继续会话':'Continue chat'}[key]||key),localStorage:{getItem:()=>null,setItem(){}},dateText:()=> 'today',el:(tag,cls='',value='')=>Object.assign(node(),{tag,cls,textContent:value,dataset:{}}),renderActivity(){},contextUsageControl:{update(){}},fastModeControl:{sync(){}},visibleChat:()=>false,sessionActivity:{read(){}},attachments:{ready:()=>true},workModes:{render(view){ctx.modesView=view;}},workbench:{current:{}},chatTimeline:{refreshActions(){}},renderApprovals(rows){ctx.approvals=rows;},renderQueue(){},approvalStamp:'',chatKey:()=> 'local|a'};
   vm.createContext(ctx);vm.runInContext(accessCode+capabilitiesCode+listCode+stateCode,ctx);
   return {ctx,$,nodes};
 }
@@ -39,7 +39,7 @@ const cli={source:'cli',runtime:null,readOnly:true,canSend:false,canInterrupt:fa
 test('source selector uses full inventory and preserves its open options across unchanged refreshes',()=>{
   const nodes=new Map(),$=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,value:'',rebuilds:0,replaceChildren(...children){this.children=children;this.rebuilds++;}});return nodes.get(id);};
   const saved=[];let locale='zh-CN';
-  const ctx={$ ,availableSources:['desktop','cli'],listSource:'all',sourceFilterStamp:'',localStorage:{setItem(...args){saved.push(args);}},BridgeI18n:{locale:()=>locale},t:key=>key,el:(tag,cls,label)=>({tag,cls,textContent:label,value:''})};
+  const ctx={$ ,clientNavigation:{wslSupported:true},availableSources:['desktop','cli'],listSource:'all',sourceFilterStamp:'',localStorage:{setItem(...args){saved.push(args);}},BridgeI18n:{locale:()=>locale},t:key=>key,el:(tag,cls,label)=>({tag,cls,textContent:label,value:''})};
   vm.createContext(ctx);vm.runInContext(sourceFilterCode,ctx);
   assert.equal(ctx.renderSourceFilter(),true);assert.equal($('source-filter-label').hidden,false);
   assert.deepEqual($('source-filter').children.map(option=>option.value),['all','cli','desktop','wsl']);
@@ -47,6 +47,7 @@ test('source selector uses full inventory and preserves its open options across 
   locale='en-US';ctx.renderSourceFilter();assert.equal($('source-filter').rebuilds,rebuilds+1);
   ctx.listSource='wsl';ctx.availableSources=['desktop'];assert.equal(ctx.renderSourceFilter(),true);
   assert.equal($('source-filter-label').hidden,false);assert.equal(ctx.listSource,'wsl');assert.equal(saved.length,0);
+  ctx.clientNavigation.wslSupported=false;ctx.renderSourceFilter();assert.deepEqual($('source-filter').children.map(option=>option.value),['all','cli','desktop']);assert.equal(ctx.listSource,'all');assert.equal(saved.at(-1)[1],'all');
 });
 test('every Codex row identifies its source even with a single-source inventory',()=>{
   const {ctx,$}=fixture();$('list-mode').value='recent';

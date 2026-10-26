@@ -20,6 +20,10 @@ class ClientLifecycleTests(unittest.TestCase):
         from bridge.platforms.windows import wsl
         entries = self.bridge.entries = Entries(self.root)
         self.addCleanup(entries.close)
+        # The shared lifecycle fixture is macOS; supply both Windows registries.
+        from bridge.clients.claude.wsl import WslClaudeEntries
+        self.manager.claude_wsl = WslClaudeEntries(self.root)
+        self.manager.claude_wsl.scan = Mock(return_value={'errors': []})
         self.manager.config.setdefault('enabled', {})['codex'] = False
         info = {'user': 'fixture', 'homes': [{'home': '/home/fixture/.codex'}]}
         with patch.object(wsl, 'running_distributions', return_value=['Ubuntu']), patch.object(wsl, 'probe', return_value=info), \

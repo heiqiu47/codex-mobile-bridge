@@ -78,25 +78,25 @@ test('development launch keeps script as its own argument',()=>{
 
 // Exercise the real renderer's start and polling handlers with a controlled
 // backend and clock. DOM layout and input editing are outside these checks.
-async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,loginStartup,AccountsPanel}={}){
+async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,loginStartup,AccountsPanel,platform='darwin'}={}){
   const fs=require('node:fs'),vm=require('node:vm');
   const nodes=new Map();
   function node(){return {parentNode:{insertBefore(){}},getAnimations(){return [];},animate(){},scrollIntoView(){},focus(){},addEventListener(){},closest(){return null;},value:'',checked:false,hidden:false,textContent:'',dataset:{},
-    classList:{toggle(){},add(){}},before(item){this.beforeNode=item;},get options(){return this.children||[];},click(){return this.onclick?.();},append(...items){this.children=(this.children||[]).concat(items);},replaceChildren(...items){this.children=items;},setAttribute(){},removeAttribute(){},querySelectorAll(){return [];}};}
+    classList:{toggle(){},add(){},contains(){return false;}},before(item){this.beforeNode=item;},get options(){return this.children||[];},click(){return this.onclick?.();},append(...items){this.children=(this.children||[]).concat(items);},replaceChildren(...items){this.children=items;},setAttribute(){},removeAttribute(){},querySelectorAll(){return [];}};}
   const html=fs.readFileSync(path.join(__dirname,'../desktop/index.html'),'utf8');
   for(const match of html.matchAll(/\bid="([^"]+)"/g))nodes.set(match[1],node());
-  for(const id of ['clients-start','clients-stop'])nodes.set(id,node());
+  for(const id of ['clients-start','clients-stop','clients-page'])nodes.set(id,node());
   const value={loginStartup,runtime:{running:false,portOccupied:false,supportsNotifications:true},
     preferences:{port:8787,lan:true,tunnel:false,autoStart,connections:[]},
     auth:{mode:'password',username:'admin'},notifications:{enabled:false,server:'https://ntfy.sh',topic:'',webhookTemplates:{generic:'{"event":"{{event}}"}',feishu:JSON.stringify({msg_type:'text',content:{text:'{{title}}\n{{body}}\n{{url}}'}}),dingtalk:'{"msgtype":"text"}',discord:'{"content":"{{body}}"}',telegram:'{"chat_id":"","text":"{{body}}"}'}},
     notificationStatus:{},watches:[],origins:[],urls:[],dataDir:'/test',credentialsAvailable:false};
   let now=1000,poll;
   const calls=[];
-  const api={account:async()=>({visible:false}),language:async()=>initialLanguage,setLanguage:async value=>value,snapshot:async()=>{calls.push('snapshot');return structuredClone(value);},start:async()=>{calls.push('start');return {started:true,message:'正在启动网关'};},
+  const api={platform,account:async()=>({visible:false}),language:async()=>initialLanguage,setLanguage:async value=>value,snapshot:async()=>{calls.push('snapshot');return structuredClone(value);},start:async()=>{calls.push('start');return {started:true,message:'正在启动网关'};},
     save:async payload=>{value.preferences={...value.preferences,...payload.preferences};return structuredClone(value);},logs:async()=>({text:''})};
   api.cliAccess=async payload=>{calls.push({cliAccess:structuredClone(payload)});return payload.operation==='environments'?{provider:payload.provider,environments:[]}:{provider:payload.provider,entry:payload.entry,identity:'fixture-identity',available:true,accounts:[],blockers:[],capabilities:{switch:true,models:true}};};
   const context=vm.createContext({window:{bridgeDesktop:api},AccountsPanel,Option:function(text,value){return Object.assign(node(),{textContent:text,value});},
-    localStorage:{getItem(){return null;},setItem(){}},document:{hidden,addEventListener(name,fn){this[name]=fn;},documentElement:{},getElementById:id=>nodes.get(id),createElement:node,querySelectorAll:()=>[]},
+    localStorage:{getItem(){return null;},setItem(){}},document:{head:{append(script){script.onload?.();}},hidden,addEventListener(name,fn){this[name]=fn;},documentElement:{},getElementById:id=>nodes.get(id),createElement:node,querySelectorAll:()=>[]},
     URL,Date:class extends Date{static now(){return now;}},setTimeout(){},clearTimeout(){},clearInterval(){},setInterval:(callback,ms)=>{if(callback.name==='refresh')poll=callback;}});
   for(const name of ['web/shared/i18n.js','desktop/shared/secret-fields.js','desktop/features/connections/connections.js','desktop/features/connections/pairing.js','web/features/accounts/account.js','desktop/features/notifications/watches.js','web/features/accounts/wsl-accounts.js','desktop/shell/renderer.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',name),'utf8'),context);
   await new Promise(setImmediate);
@@ -106,6 +106,7 @@ async function renderer(initialLanguage='zh-CN',{autoStart=false,hidden=false,lo
 test('desktop tab transitions update visibility before Codex account polling resumes',async()=>{
   const events=[],accounts={dataset:{panel:'accounts'},hidden:true},overview={dataset:{panel:'overview'},hidden:false};
   const ui=await renderer('zh-CN',{AccountsPanel:class{
+    attachApiAccess(panel,details){this.apiAccess=panel;this.apiDetails=details;}
     visible(){return !accounts.hidden;}
     refresh(){events.push(['refresh',accounts.hidden]);}
     resume(){events.push(['resume',accounts.hidden]);}
@@ -496,7 +497,7 @@ test('Bark drafts survive polling and language changes and remain after saving',
 
 test('preload forwards the selected notification channel over private IPC',()=>{
   const fs=require('node:fs'),vm=require('node:vm'),calls=[];let api;
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../desktop/preload.cjs'),'utf8'),{require:()=>({
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../desktop/preload.cjs'),'utf8'),{process:{platform:'darwin'},require:()=>({
     contextBridge:{exposeInMainWorld:(name,value)=>{api=value;}},ipcRenderer:{invoke:(...args)=>{calls.push(args);}}
   })});
   assert.equal('documentsAccess' in api,false);
@@ -919,7 +920,7 @@ test('network recovery IPC is narrowly allowlisted and forwarded by preload',asy
   const script="let value='';process.stdin.on('data',data=>value+=data);process.stdin.on('end',()=>console.log(JSON.stringify({ok:true,result:{action:process.argv[1],payload:JSON.parse(value)}})));";
   const payload={action:'set',enabled:true};const result=await runWorker({executable:process.execPath,prefix:['-e',script],dataDir:'/fixture'},'network-adaptation',payload);
   assert.deepEqual(result,{action:'network-adaptation',payload});
-  let api;const calls=[];vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../desktop/preload.cjs'),'utf8'),{require:()=>({contextBridge:{exposeInMainWorld(_name,value){api=value;}},ipcRenderer:{invoke(...args){calls.push(args);}}})});
+  let api;const calls=[];vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../desktop/preload.cjs'),'utf8'),{process:{platform:'darwin'},require:()=>({contextBridge:{exposeInMainWorld(_name,value){api=value;}},ipcRenderer:{invoke(...args){calls.push(args);}}})});
   api.networkAdaptation(payload);assert.deepEqual(calls,[['bridge:network-adaptation',payload]]);
 });
 
@@ -1107,10 +1108,24 @@ test('Windows startup lookup handles Electron quoted paths with spaces',()=>{
 });
 
 test('desktop WSL scope uses registered environment transport and restores native content',async()=>{
- let nativeReads=0;const ui=await renderer('zh-CN',{AccountsPanel:class{visible(){return true;}refresh(){nativeReads++;}resume(){}render(){}clear(){this.generation=(this.generation||0)+1;}}}),entry='wsl:'+'a'.repeat(32),requests=[];
+ let nativeReads=0;const ui=await renderer('zh-CN',{platform:'win32',AccountsPanel:class{attachApiAccess(panel,details){this.apiAccess=panel;this.apiDetails=details;}visible(){return true;}refresh(){nativeReads++;}resume(){}render(){}clear(){this.generation=(this.generation||0)+1;}}}),entry='wsl:'+'a'.repeat(32),requests=[];
  ui.api.cliAccess=async payload=>{requests.push(structuredClone(payload));return payload.operation==='environments'?{provider:'codex',environments:[{id:entry,label:'Ubuntu',distribution:'Ubuntu',user:'developer',configDir:'/home/developer/.codex'}]}:{provider:'codex',entry,identity:'wsl-digest',available:true,accounts:[],capabilities:{switch:true,models:true},blockers:[]};};
  await ui.run('wslAccountScopes[0].load()');const native=ui.nodes.get('accounts-content'),wrapper=native.beforeNode,select=wrapper.children[0].children[1];
  assert.equal(select.options.length,2);assert.equal(select.options[1].value,entry);select.value=entry;await select.onchange();await new Promise(setImmediate);
  assert.equal(native.hidden,true);assert.equal(ui.run('wslAccountScopes[0].panel.value.entry'),entry);assert.deepEqual(requests.at(-1),{action:'wslAccounts',provider:'codex',entry,operation:'list'});
  const readsBeforeReturn=nativeReads;select.value='local';select.onchange();assert.equal(nativeReads,readsBeforeReturn+1);assert.equal(native.hidden,false);assert.equal(ui.run('wslAccountScopes[0].panel.value'),null);assert.equal(ui.run('wslAccountScopes[0].panel.entry'),'');
+});
+
+for(const platform of ['darwin','linux'])test(platform+' desktop does not initialize WSL account scopes',async()=>{
+ const ui=await renderer('zh-CN',{platform});assert.equal(ui.run('wslAccountScopes.length'),0);assert.equal(ui.calls.some(call=>call.cliAccess?.action==='wslAccounts'),false);
+ await assert.rejects(ui.context.window.loadWslAccounts(),/不支持 WSL/);
+});
+
+
+test('Codex quota remains visible in the client overview and pauses off the page',async()=>{
+ const ui=await renderer('zh-CN',{AccountsPanel:class{visible(){return false;}resume(){}render(){}refresh(){}}});
+ ui.nodes.get('clients-page').hidden=false;assert.equal(ui.run('accountsPanel.visible()'),true);
+ ui.nodes.get('clients-page').hidden=true;assert.equal(ui.run('accountsPanel.visible()'),false);
+ ui.nodes.get('clients-page').hidden=false;ui.context.document.hidden=true;assert.equal(ui.run('accountsPanel.visible()'),false);
+ ui.context.document.hidden=false;ui.nodes.get('clients-page').classList.contains=()=>true;assert.equal(ui.run('accountsPanel.visible()'),false);
 });

@@ -11,10 +11,9 @@ import threading
 import zlib
 
 from bridge.app.lifecycle import private_json
-from bridge.clients.claude.remote import RemoteClaudeCli
+from bridge.clients.claude.remote import RemoteClaudeCli, worker_source
 from bridge.clients.errors import BridgeUnavailable
 from bridge.platforms.windows import wsl
-from bridge.resources import source_text
 
 
 def entry_id(distribution, user, directory):
@@ -70,7 +69,7 @@ class WslClaudeEntries:
         candidates, errors = {}, []
         for distribution in wsl.running_distributions():
             try:
-                info = wsl.read(distribution, '__name__="wsl_claude_probe"\n'+source_text('clients/claude/remote_worker.py')+PROBE)
+                info = wsl.read(distribution, '__name__="wsl_claude_probe"\n'+worker_source()+PROBE)
                 for profile in info.get('profiles', []):
                     directory = profile['configDir']
                     identifier = entry_id(distribution, info['user'], directory)
@@ -261,7 +260,7 @@ class WslClaudeCli(RemoteClaudeCli):
     def _command(self, alias):
         row = self.hosts.selected(alias)
         source = 'import os\nos.environ["MOBILE_BRIDGE_WSL_NATIVE"]="1"\nos.environ["CLAUDE_CONFIG_DIR"]='+repr(row['configDir'])+'\n'
-        source += source_text('clients/claude/remote_worker.py')
+        source += worker_source()
         # wsl.command rechecks running state before each invocation. The worker
         # receives native stream-json stdin without another protocol envelope.
         encoded = base64.b64encode(zlib.compress(source.encode('utf-8'))).decode('ascii')

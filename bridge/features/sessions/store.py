@@ -209,7 +209,7 @@ class SessionStore:
                 bool(database and Path(str(database) + '-shm').exists()), exc)
             raise StoreUnavailable("暂时无法读取 Codex 会话数据库，请稍后重试或重新打开电脑 Codex。") from exc
 
-    def list(self, query="", limit=100, offset=0, archived=False, source='all'):
+    def list(self, query="", limit=100, offset=0, archived=False, source='all', pinned_ids=()):
         if source not in ('all', 'desktop', 'cli'):
             raise ValueError('不支持的会话来源')
         labels, matches = self._cli_inputs(query)
@@ -236,7 +236,11 @@ class SessionStore:
                 where.append("(" + " OR ".join([name + " LIKE ?" for name in search_fields] + ['bridge_cli_input_match(id)']) + ")")
                 params += ["%" + query + "%"] * len(search_fields)
             recency = "COALESCE(recency_at_ms, recency_at * 1000, updated_at * 1000)" if "recency_at_ms" in columns else "COALESCE(recency_at, updated_at)" if "recency_at" in columns else "updated_at"
-            rows = conn.execute("SELECT " + ",".join(fields) + " FROM threads WHERE " + " AND ".join(where) + " ORDER BY " + recency + " DESC, id DESC LIMIT ? OFFSET ?", params + [limit, offset]).fetchall()
+            pinned = set(pinned_ids)
+            if pinned:
+                conn.create_function('bridge_session_pinned', 1, lambda identifier: int(identifier in pinned))
+            priority = 'bridge_session_pinned(id) DESC, ' if pinned else ''
+            rows = conn.execute("SELECT " + ",".join(fields) + " FROM threads WHERE " + " AND ".join(where) + " ORDER BY " + priority + recency + " DESC, id DESC LIMIT ? OFFSET ?", params + [limit, offset]).fetchall()
             result = []
             for row in rows:
                 item = dict(row)
@@ -312,13 +316,17 @@ class SessionStore:
             return [dict(row) for row in conn.execute('SELECT id, ' + clock +
                     ' AS changed_at FROM threads WHERE ' + ' AND '.join(filters), (since,))]
 
-    def lifecycle_threads(self):
+    def lifecycle_threads(self, root_id=None):
         """Desktop roots and their complete agent subtree, using metadata only."""
         with self._connect() as conn:
             columns = {r[1] for r in conn.execute('PRAGMA table_info(threads)')}
             fields = [name for name in ('id', 'originator', 'source') if name in columns]
             rows = [dict(row) for row in conn.execute('SELECT ' + ','.join(fields) + ' FROM threads')]
-        if self.source == 'all':
+        if root_id is not None:
+            if not any(row['id'] == root_id for row in rows):
+                raise KeyError('找不到这个 Codex 会话')
+            roots = {root_id}
+        elif self.source == 'all':
             roots = {row['id'] for row in rows if
                      ('originator' not in columns and row.get('source') != 'cli') or
                      self._origin(row) == 'desktop'}
@@ -336,6 +344,17 @@ class SessionStore:
                     roots.add(child)
                     pending.append(child)
         return [{'id': identifier} for identifier in sorted(roots)]
+
+    def archive_flags(self, thread_id):
+        """Complete archive metadata for one authorized root and its descendants."""
+        self.get(thread_id)
+        identifiers = {row['id'] for row in self.lifecycle_threads(root_id=thread_id)}
+        with self._connect() as conn:
+            flags = {row['id']: bool(row['archived']) for row in conn.execute('SELECT id, archived FROM threads')
+                     if row['id'] in identifiers}
+        if flags.keys() != identifiers:
+            raise StoreUnavailable('无法完整核验聊天和子智能体的归档状态')
+        return flags
 
     def recencies(self, identifiers):
         if not identifiers:

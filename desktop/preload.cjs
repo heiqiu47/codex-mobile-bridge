@@ -2,6 +2,7 @@
 const {contextBridge,ipcRenderer}=require('electron');
 
 contextBridge.exposeInMainWorld('bridgeDesktop',{
+  platform:process.platform,
   checkUpdate:()=>ipcRenderer.invoke('bridge:check-update'),
   skipUpdate:()=>ipcRenderer.invoke('bridge:skip-update'),
   installUpdate:()=>ipcRenderer.invoke('bridge:install-update'),

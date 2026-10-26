@@ -116,6 +116,15 @@ def _cached_transfer(key, create, range_header, if_range):
         entry['lock'].release()
 
 
+def display_absolute_path(path):
+    """Presentation only; filesystem access keeps the validated native path."""
+    if path[:8].lower() == '\\\\?\\unc\\':
+        return '\\\\' + path[8:]
+    if path.startswith('\\\\?\\') and re.match(r'^[A-Za-z]:\\', path[4:]):
+        return path[4:]
+    return path
+
+
 class Workspace:
     def __init__(self, root):
         if not root or not Path(root).is_absolute():
@@ -199,12 +208,14 @@ class Workspace:
             if stat.S_ISDIR(info.st_mode):
                 # Re-walk the full directory using the same no-link boundary.
                 with self.directory(parts):
-                    return {'name': parts[-1], 'path': path, 'size': None, 'kind': 'directory'}
+                    return {'name': parts[-1], 'path': path, 'size': None, 'kind': 'directory',
+                            'absolutePath': display_absolute_path(str(self.root.joinpath(*parts)))}
             handle = self.open_file(directory, fd, parts[-1], os.O_RDONLY)
             with os.fdopen(handle, 'rb') as stream:
                 info = os.fstat(stream.fileno())
                 if not stat.S_ISREG(info.st_mode): raise ValueError('仅支持普通文件')
-                return {'name': parts[-1], 'path': path, 'size': info.st_size, 'kind': 'file'}
+                return {'name': parts[-1], 'path': path, 'size': info.st_size, 'kind': 'file',
+                        'absolutePath': display_absolute_path(str(self.root.joinpath(*parts)))}
 
     @contextmanager
     def archive(self, path, range_header='', if_range='', limit=None):

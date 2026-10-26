@@ -23,13 +23,14 @@ from bridge.clients.codex.catalog import ModelStore, MODEL_REFRESH_SECONDS
 from bridge.features.accounts.draft_identity import draft_identity
 from bridge.app.lifecycle import private_json
 from bridge.platforms.windows import session as windows_session
+from bridge.features.sessions.archive import ArchiveCommands
 from bridge.features.sessions.projects import Projects
 from bridge.features.sessions.create import project_directory, project_directory_listing
 from bridge.clients.codex.remote import ssh_read, payload
 from bridge.resources import source_text
 
 READS = {'list', 'detail', 'catalog', 'projects', 'account', 'access'}
-WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume', 'fork'}
+WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume', 'fork', 'pin', 'archive'}
 
 
 class TaskStateUnavailable(ValueError):
@@ -66,6 +67,8 @@ class DesktopSessions:
         self.claude_quit = None
         self.directory = Path(directory)/'desktop-sessions'
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        from bridge.features.sessions.pins import SessionPins
+        self.session_pins = {provider: SessionPins(self.directory/provider, provider) for provider in ('claude', 'deepseek')}
         self.model_store = ModelStore(self.directory)
         self.directory_projects = Projects(self.directory/'projects')
         self.model_locks = {}
@@ -75,8 +78,10 @@ class DesktopSessions:
         self.model_lock = threading.Lock()
         self.config_path = self.directory/'settings.json'
         self.config = json.loads(self.config_path.read_text()) if self.config_path.exists() else {}
-        from bridge.clients.claude.wsl import WslClaudeEntries
-        self.claude_wsl = WslClaudeEntries(self.directory)
+        self.claude_wsl = None
+        if sys.platform == 'win32':
+            from bridge.clients.claude.wsl import WslClaudeEntries
+            self.claude_wsl = WslClaudeEntries(self.directory)
         self.adapters = {'deepseek': DeepSeek(self.directory/'deepseek', self.config.get('deepseekHome')),
                          'claude': Claude(self.directory/'claude', auto_connect=False,
                                           hosts=bridge.hosts if bridge is not None and hasattr(bridge, 'hosts') else None,
@@ -588,6 +593,8 @@ class DesktopSessions:
         with self.read_lock:
             binding, adapter = self.binding_epochs[provider], self.adapters[provider]
         value = self.call(provider, 'list')
+        pins = set(self.session_pins[provider].identifiers())
+        value = {**value, 'sessions': [{**row, 'bridgePinned': row['id'] in pins} for row in value.get('sessions', [])]}
         if value.get('connected') is not False:
             self._list_activity(provider, adapter, binding, value.get('sessions', []))
         with self.read_lock:
@@ -707,6 +714,37 @@ class DesktopSessions:
                 'value': path, 'hidden': hidden, 'name': name, 'identity': identity}) + ')))\n'
             return self._project_read(selected, source)
 
+    def _archive(self, provider, sid, body):
+        if (set(body) not in ({'id', 'archived'}, {'id', 'archived', 'disconnect'}) or
+                not isinstance(body.get('archived'), bool) or not isinstance(body.get('id'), str) or
+                type(body.get('disconnect', False)) is not bool or (body.get('disconnect') and body['archived'] is not True)):
+            raise ValueError('归档请求格式无效')
+        uuid.UUID(body['id'])
+        with self._changing(provider, rebind=False):
+            self.require_enabled(provider)
+            adapter = self.adapters[provider]
+            directory = adapter.directory
+            scoped = str(uuid.uuid5(uuid.NAMESPACE_URL, json.dumps([provider, str(directory), str(getattr(adapter, 'home', '')), sid])))
+            commands = ArchiveCommands(directory)
+            def read():
+                return self._adapter_call(provider, 'archive-state', sid, {})
+            def prepare(state):
+                if not state.get('capabilities', {}).get('archive') or not state.get('capabilities', {}).get('unarchive'):
+                    raise ValueError('当前接入尚未确认原生归档和恢复能力')
+                if (state.get('runtimeKnown') is not True or state.get('status') not in ('idle', 'active') or
+                        (not body.get('disconnect') and (not state.get('archiveSafe') or state.get('status') != 'idle' or state.get('requests')))):
+                    raise ValueError('聊天有运行、排队、审批或未知状态，请先在原客户端处理')
+                with self.db_lock:
+                    db = self._receipts(adapter)
+                    if any(json.loads(row[0]).get('status') in ('unknown', 'queued') for row in db.execute('SELECT result FROM requests')):
+                        raise ValueError('此接入有排队或待核对操作，请先在原客户端处理')
+                options = {'archived': body['archived']}
+                if body.get('disconnect'):
+                    options['disconnect'] = True
+                return lambda: self._adapter_call(provider, 'archive', sid, options)
+            result = commands.perform(scoped, body['archived'], body['id'], read, prepare)
+            return {**result, 'id': sid}
+
     def call(self, provider, action, sid=None, body=None):
         if provider not in self.adapters or action not in READS | WRITES:
             raise ValueError('不支持的桌面操作')
@@ -717,7 +755,14 @@ class DesktopSessions:
         body = body or {}
         if any(key in body for key in ('directoryProject', 'projectDirectory')):
             raise ValueError('项目目录必须通过目录选择器登记')
+        if action == 'pin':
+            self.require_enabled(provider)
+            if set(body) not in ({'pinned'}, {'pinned', 'clientId', 'revision'}):
+                raise ValueError('聊天置顶设置无效')
+            return self.session_pins[provider].set(sid, body['pinned'], body.get('clientId'), body.get('revision'))
         adapter = self.adapters[provider]
+        if action == 'archive':
+            return self._archive(provider, sid, body)
         if action == 'account':
             return self._account_models(provider, refresh=body.get('refresh') is True)
         if action == 'catalog' and body.get('section') == 'models':
@@ -849,6 +894,8 @@ class DesktopSessions:
         return result
 
     def _wsl_claude_enabled(self):
+        if self.claude_wsl is None:
+            return False
         with self.claude_wsl.lock:
             return any(row.get('enabled', True) for row in self.claude_wsl.entries)
 
@@ -1167,7 +1214,11 @@ class DesktopSessions:
         needs_update = bool(installed.get('updateRequired') or previous.get('requiredBridgeRevision') and
                             status.get('bridgeRevision') != BRIDGE_REVISION or status.get('updateRequired'))
         needs_reload = needs_update or previous.get('setupStatus') == 'restart-required' and not status.get('connected')
-        if state['running'] and (restart or needs_reload):
+        if state['running'] and needs_reload and not restart:
+            self._deepseek_connection('idle', UPDATE_REASON, setupStatus='restart-required',
+                                      reason=UPDATE_REASON, requiredBridgeRevision=BRIDGE_REVISION)
+            return
+        if state['running'] and restart:
             self._stop_client('deepseek', row, state)
         if needs_update or getattr(adapter, 'reused', False) and (restart or not state['running']):
             adapter.update_existing()
@@ -1278,10 +1329,9 @@ class DesktopSessions:
             raise ValueError('Claude 进程已变化，请重新检查后再确认退出') from None
 
     def _claude_native_cli_busy(self):
-        from bridge.clients.claude.wsl import ClaudeCliRemotes
         adapter = self.adapters['claude']
         remote = getattr(adapter, 'remote_cli', None)
-        if isinstance(remote, ClaudeCliRemotes):
+        if self.claude_wsl is not None:
             remote = remote.ssh
         return adapter.cli.busy() is True or remote is not None and remote.busy() is True
 
@@ -1517,7 +1567,7 @@ class DesktopSessions:
                 codex.update(setupStatus='ready', reason='WSL Codex 接入可用')
             claude = next(row for row in rows if row['id'] == 'claude')
             claude['nativeEnabled'] = self.config.get('enabled', {}).get('claude', False)
-            claude['entries'] = self.claude_wsl.applications()
+            claude['entries'] = self.claude_wsl.applications() if self.claude_wsl is not None else []
             if any(row['enabled'] for row in claude['entries']):
                 claude.update(enabled=True, selectable=True, configured=True)
             result = {'clients': rows, 'computer': socket.gethostname(), 'gatewayRunning': self.gateway_running,
@@ -1644,6 +1694,8 @@ class DesktopSessions:
     def toggle_client(self, value):
         provider, enabled = value.get('provider'), value.get('enabled')
         if isinstance(provider, str) and provider.startswith('wsl-claude:'):
+            if self.claude_wsl is None:
+                raise ValueError('当前电脑不支持 WSL 应用')
             if type(enabled) is not bool or set(value) - {'action', 'provider', 'enabled', 'quitDesktop'}:
                 raise ValueError('WSL Claude Code 应用开关无效')
             if value.get('quitDesktop', False) is not False:
