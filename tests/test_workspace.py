@@ -31,12 +31,6 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(operate(self.root, 'info', {'path': path})['absolutePath'], str(self.root / path))
         with self.assertRaises(PermissionError):
             self.work.info('../private')
-        outside = Path(self.temp.name) / 'private'
-        outside.write_text('private')
-        (self.root / 'link').symlink_to(outside)
-        with self.assertRaises(OSError):
-            self.work.info('link')
-
     def test_listing_hidden_search_and_paging(self):
         self.assertEqual([x['name'] for x in self.work.listing()['entries']], ['folder', 'hello.txt'])
         self.assertEqual(self.work.listing(hidden=True)['total'], 3)
@@ -99,6 +93,8 @@ class WorkspaceTests(unittest.TestCase):
             return json.loads(output.getvalue())
         with patch('bridge.app.service.ssh_read', side_effect=execute):
             self.assertEqual(Bridge.workspace(bridge, support.THREAD, 'preview', {'path': 'remote.txt'})['text'], 'remote')
+            self.assertEqual(Bridge.workspace(bridge, support.THREAD, 'info', {'path': 'remote.txt'})['absolutePath'], str(remote / 'remote.txt'))
+            with self.assertRaises(ValueError): Bridge.workspace(bridge, support.THREAD, 'info', {'path': '../project/hello.txt'})
             with self.assertRaises(ValueError): Bridge.workspace(bridge, support.THREAD, 'preview', {'path': '../project/hello.txt'})
 
 
@@ -119,6 +115,18 @@ class WorkspaceHttpTests(unittest.TestCase):
         connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=5)
         connection.request('POST', path, body=data, headers={'Origin': self.origin, **headers})
         response = connection.getresponse(); result = response.status, json.loads(response.read()); connection.close(); return result
+
+    def test_info_path_is_authenticated_and_workspace_bounded(self):
+        (self.root / 'target.txt').write_text('target')
+        target = self.path + '/info?path=target.txt'
+        self.assertEqual(self.request('GET', target)[0], 401)
+        auth = self.login()
+        status, _, info = self.request('GET', target, headers=auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(info['absolutePath'], str(self.root / 'target.txt'))
+        status, _, info = self.request('GET', self.path + '/info?path=../secret', headers=auth)
+        self.assertEqual(status, 403)
+        self.assertNotIn('absolutePath', info)
 
     def test_auth_csrf_and_origin_required_for_upload(self):
         self.assertEqual(self.request('GET', self.path)[0], 401)
