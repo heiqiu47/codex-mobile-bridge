@@ -715,7 +715,9 @@ class DesktopSessions:
             return self._project_read(selected, source)
 
     def _archive(self, provider, sid, body):
-        if set(body) != {'id', 'archived'} or not isinstance(body.get('archived'), bool) or not isinstance(body.get('id'), str):
+        if (set(body) not in ({'id', 'archived'}, {'id', 'archived', 'disconnect'}) or
+                not isinstance(body.get('archived'), bool) or not isinstance(body.get('id'), str) or
+                type(body.get('disconnect', False)) is not bool or (body.get('disconnect') and body['archived'] is not True)):
             raise ValueError('归档请求格式无效')
         uuid.UUID(body['id'])
         with self._changing(provider, rebind=False):
@@ -729,13 +731,17 @@ class DesktopSessions:
             def prepare(state):
                 if not state.get('capabilities', {}).get('archive') or not state.get('capabilities', {}).get('unarchive'):
                     raise ValueError('当前接入尚未确认原生归档和恢复能力')
-                if not state.get('archiveSafe') or state.get('runtimeKnown') is not True or state.get('status') != 'idle' or state.get('requests'):
+                if (state.get('runtimeKnown') is not True or state.get('status') not in ('idle', 'active') or
+                        (not body.get('disconnect') and (not state.get('archiveSafe') or state.get('status') != 'idle' or state.get('requests')))):
                     raise ValueError('聊天有运行、排队、审批或未知状态，请先在原客户端处理')
                 with self.db_lock:
                     db = self._receipts(adapter)
                     if any(json.loads(row[0]).get('status') in ('unknown', 'queued') for row in db.execute('SELECT result FROM requests')):
                         raise ValueError('此接入有排队或待核对操作，请先在原客户端处理')
-                return lambda: self._adapter_call(provider, 'archive', sid, {'archived': body['archived']})
+                options = {'archived': body['archived']}
+                if body.get('disconnect'):
+                    options['disconnect'] = True
+                return lambda: self._adapter_call(provider, 'archive', sid, options)
             result = commands.perform(scoped, body['archived'], body['id'], read, prepare)
             return {**result, 'id': sid}
 

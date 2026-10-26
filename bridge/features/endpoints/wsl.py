@@ -1241,7 +1241,9 @@ class WslEntry(WslFeatures):
             return receipt
 
     @_entry_write
-    def archive(self, identifier, archived, request_id):
+    def archive(self, identifier, archived, request_id, disconnect=False):
+        if type(disconnect) is not bool or (disconnect and archived is not True):
+            raise ValueError('聊天归档设置无效')
         def read():
             with self.store.lock:
                 self.store.cache.clear()
@@ -1254,14 +1256,22 @@ class WslEntry(WslFeatures):
                    for key, row in self.receipts.items()):
                 raise ValueError('聊天有排队或待核对操作，请先在原 WSL 处理')
             runtime = self.runtime(allow_start=True)
-            check_archive_runtime(runtime.request, identifiers)
+            if not disconnect:
+                check_archive_runtime(runtime.request, identifiers)
             with self.lock:
                 sessions = [self.live[sid] for sid in identifiers if sid in self.live]
             for session in sessions:
                 with session.condition:
-                    if session.activating or session.state.get('requests'):
+                    if session.activating or (not disconnect and session.state.get('requests')):
                         raise ValueError('聊天有运行或等待确认的请求，请先在原 WSL 处理')
-            return lambda: runtime.request('thread/archive' if archived else 'thread/unarchive', {'threadId': identifier})
+            def call():
+                if disconnect:
+                    from bridge.features.sessions.create import stop_archive_runtime
+                    stop_archive_runtime(runtime.request, identifiers)
+                    if set(identifiers) != {row['id'] for row in self.store.lifecycle_threads(root_id=identifier)}:
+                        raise ValueError('子会话范围已变化，尚未发送归档请求')
+                return runtime.request('thread/archive' if archived else 'thread/unarchive', {'threadId': identifier})
+            return call
         return {**self.archive_commands.perform(identifier, archived, request_id, read, prepare), 'host': self.host}
 
     @_entry_write

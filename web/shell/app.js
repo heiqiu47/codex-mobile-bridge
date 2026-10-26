@@ -307,6 +307,17 @@ function renderList(){
   if(listHasMore){const more=el('button','plain',t('加载更多聊天'));more.id='sessions-more';more.type='button';more.onclick=()=>loadList().catch(error=>toast(error.message));$('sessions').append(more);}
   if(!listRows.length)$('sessions').append(el('p','muted',t(listComplete?'没有找到聊天。':listReadFinished?'暂不可用':'正在读取…')));renderActivity();$('sessions').scrollTop=scrollTop;
 }
+function confirmSessionArchive(chat){
+  return new Promise(resolve=>{
+    const box=el('dialog','picker'),actions=el('div','copy-dialog-actions');let confirmed=false;
+    box.append(el('h2','',t('断开连接并归档')),el('p','',chat.title),el('p','muted',chat.hostLabel||t('此电脑')),
+      el('p','',t('将停止此聊天及其子任务，并在确认停止后归档。聊天记录会保留，未完成任务不会自动续跑。')));
+    const confirm=el('button','primary',t('确认归档')),cancel=el('button','plain',t('取消'));
+    confirm.type=cancel.type='button';confirm.onclick=()=>{confirmed=true;box.close();};cancel.onclick=()=>box.close();
+    actions.append(confirm,cancel);box.append(actions);
+    box.addEventListener('close',()=>{box.remove();resolve(confirmed);});document.body.append(box);box.showModal();cancel.focus();
+  });
+}
 function bindSessionMenu(button,chat,provider='codex'){
   let timer=null,start=null,suppress=false;
   const clear=()=>{clearTimeout(timer);timer=null;};
@@ -319,8 +330,9 @@ function bindSessionMenu(button,chat,provider='codex'){
     const copy=action(provider==='deepseek'?'复制 Session ID':'复制深度链接',item=>BridgeClipboard.copyWithFeedback(()=>window.BridgeSessionLinks?.text(identity),item,toast),false);
     copy.classList.add('message-copy');
     copy.disabled=!window.BridgeSessionLinks?.text(identity);
-    if(provider==='codex'||chat.capabilities?.[chat.archived?'unarchive':'archive']===true)action(chat.archived?'取消归档':'归档聊天',async()=>{
-      const body={archived:!chat.archived,id:uuid()};
+    if(provider==='codex'||chat.capabilities?.[chat.archived?'unarchive':'archive']===true)action(chat.archived?'取消归档':'断开连接并归档',async()=>{
+      if(!chat.archived&&!await confirmSessionArchive(chat))return;
+      const body={archived:!chat.archived,id:uuid(),...(!chat.archived?{disconnect:true}:{})};
       const result=await api(provider==='codex'?sessionUrl(chat.id,'archive',chat.host):'/api/desktop-sessions/'+provider+'/archive',provider==='codex'?body:{...body,sessionId:chat.id});
       if(result.status!=='confirmed')throw Error(t('归档结果待核对，请检查原聊天；不会重复提交'));
       if(provider==='codex')await loadList(true);else await desktopSessions.refresh();

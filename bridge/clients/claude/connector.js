@@ -308,11 +308,26 @@
     const idle=row=>row&&row.isRunning===false&&typeof row.isArchived==='boolean'&&
       !row.turnRunning&&!row.starting&&!row.cliBootPending&&!row.hasBackgroundActivity&&!row.hasBackgroundWork&&!row.hasLiveWorkflows&&
       ['pendingToolPermissions','pendingRefusalFallbackPrompt','pendingAutoModeServerFallbackPrompt','pendingLanyardConsent','pendingViolinBowPrompt','pendingCwdTrustPrompt','heldInput','queuedSideSessionNotes','spawningTaskIds'].every(key=>!nonempty(row[key]));
-    return {session:publicSession(root),archiveSafe:rows.every(idle),archiveFlags:Object.fromEntries(rows.map(row=>[row.sessionId,row.isArchived]))};
+    return {session:publicSession(root),archiveSafe:rows.every(idle),archiveFlags:Object.fromEntries(rows.map(row=>[row.sessionId,row.isArchived])),
+      runtimeKnown:rows.every(row=>typeof row.isRunning==='boolean'&&typeof row.isArchived==='boolean'),
+      runningIds:rows.filter(row=>row.isRunning||row.turnRunning).map(row=>row.sessionId)};
   }
   async function mobileArchive(target,id,options={}){
-    if(typeof options.archived!=='boolean')throw Error('归档设置无效');
-    const state=await mobileArchiveState(target,id);
+    if(typeof options.archived!=='boolean'||(options.disconnect!=null&&typeof options.disconnect!=='boolean')||options.disconnect&&!options.archived)throw Error('归档设置无效');
+    let state=await mobileArchiveState(target,id);
+    if(options.disconnect){
+      if(!state.runtimeKnown||state.runningIds.length&&typeof target.interrupt!=='function')return {archiveNotSent:true,message:'无法确认可停止的原生任务，未停止或归档'};
+      const scope=Object.keys(state.archiveFlags).sort().join(',');
+      for(const child of [...state.runningIds].reverse())await target.interrupt(child);
+      const deadline=Date.now()+15000;
+      do{
+        state=await mobileArchiveState(target,id);
+        if(Object.keys(state.archiveFlags).sort().join(',')!==scope)throw Error('子会话范围已变化，尚未发送归档请求');
+        if(state.archiveSafe)break;
+        if(Date.now()>=deadline)throw Error('停止结果待核对，尚未发送归档请求');
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }while(true);
+    }
     if(!state.archiveSafe)return {archiveNotSent:true,message:'聊天或子会话有运行、排队、审批或未知状态，请先在原客户端处理'};
     if(options.archived)await target.archive(id,{cleanupWorktree:false});else await target.unarchive(id);
     return {status:'accepted'};

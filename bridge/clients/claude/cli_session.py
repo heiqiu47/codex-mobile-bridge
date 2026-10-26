@@ -486,6 +486,32 @@ class _Owned:
             raise BridgeUnavailable('Claude Code 控制请求未确认，请检查原会话')
         return response.get('response') or {}
 
+    def release_for_archive(self, timeout=20):
+        """Finish this owned CLI only; never terminate a foreign or shared process."""
+        deadline = time.monotonic() + timeout
+        with self.condition:
+            if self.error:
+                raise BridgeUnavailable(self.error)
+            active = self.active or bool(self.pending)
+        if self.process.poll() is not None:
+            return
+        if active:
+            self.control({'subtype': 'interrupt'}, timeout=max(.1, deadline-time.monotonic()))
+        with self.condition:
+            while (self.active or self.pending) and not self.finished and time.monotonic() < deadline:
+                self.condition.wait(max(0, deadline-time.monotonic()))
+            if self.error or self.active or self.pending:
+                raise BridgeUnavailable('停止结果待核对，尚未发送归档请求')
+        # EOF lets the original executor flush and exit; no terminate/kill fallback.
+        self.process.stdin.close()
+        try:
+            code = self.process.wait(timeout=max(.1, deadline-time.monotonic()))
+            # Native print mode exits 1 after an acknowledged user interruption.
+            if code != 0 and not (active and code == 1):
+                raise BridgeUnavailable('原会话未正常退出，尚未发送归档请求')
+        except subprocess.TimeoutExpired:
+            raise BridgeUnavailable('原会话连接尚未释放，尚未发送归档请求') from None
+
     def close(self):
         try:
             if self.native_process is not None:
@@ -763,6 +789,10 @@ class ClaudeCli:
                 env['CLAUDE_CONFIG_DIR'] = str(profile['directory'])
                 enabled = file_archive.supported(profile['binary'], env)
                 safe = False
+                if enabled and live and action == 'archive' and body.get('disconnect') is True and body.get('archived') is True:
+                    owned.release_for_archive()
+                    live = False
+                    public = self._public(row)
                 if enabled and not live:
                     assert_session_closed(profile['directory'])
                     file_archive.assert_no_cli(profile['binary'])

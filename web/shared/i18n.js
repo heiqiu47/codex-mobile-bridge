@@ -2,6 +2,22 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"原会话未正常退出，尚未发送归档请求":"The original session did not exit cleanly. No archive request has been sent.",
+"无法确认原生后台任务状态":"The native background task state could not be verified.",
+"原会话身份已变化，尚未发送归档请求":"The original session identity changed. No archive request has been sent.",
+"原运行时连接已变化，尚未发送归档请求":"The original runtime connection changed. No archive request has been sent.",
+"子会话范围已变化，尚未发送归档请求":"The child session scope changed. No archive request has been sent.",
+"原会话连接尚未释放，尚未发送归档请求":"The original session connection has not been released. No archive request has been sent.",
+"原 Claude Code 执行连接身份无法核验":"The original Claude Code execution connection could not be verified.",
+"后台任务尚未停止":"Background tasks have not stopped yet.",
+"断开连接并归档":"Disconnect and archive",
+"确认归档":"Confirm archive",
+"将停止此聊天及其子任务，并在确认停止后归档。聊天记录会保留，未完成任务不会自动续跑。":"Stop this chat and its subtasks, then archive after confirming they have stopped. Chat history is retained; unfinished work will not resume automatically.",
+"无法确认原会话状态，未停止或归档":"The original session state could not be verified. Nothing was stopped or archived.",
+"无法确认可停止的原生任务，未停止或归档":"The native task to stop could not be verified. Nothing was stopped or archived.",
+"聊天有等待确认的请求，未停止或归档":"The chat has a pending request. Nothing was stopped or archived.",
+"原运行时连接已变化，未停止或归档":"The original runtime connection changed. Nothing was stopped or archived.",
+"停止结果待核对，尚未发送归档请求":"The stop result is unconfirmed. No archive request has been sent.",
 "置顶设置待同步":"Pin preference pending sync",
 "已在此设备保存，等待同步":"Saved on this device; waiting to sync",
 "无法保存此设备的置顶设置":"Unable to save pin preferences on this device",

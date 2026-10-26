@@ -21,6 +21,7 @@ class SharedServer:
     METHODS = frozenset({
         'thread/list', 'thread/read', 'thread/loaded/list', 'thread/turns/list',
         'thread/items/list', 'thread/resume', 'thread/start',
+        'thread/backgroundTerminals/list', 'thread/backgroundTerminals/clean',
         'turn/start', 'turn/steer', 'turn/interrupt', 'thread/settings/update',
         'thread/name/set', 'thread/archive', 'thread/unarchive', 'model/list', 'config/read',
         'skills/list', 'configRequirements/read', 'permissionProfile/list',

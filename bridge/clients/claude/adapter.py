@@ -782,7 +782,10 @@ class Claude:
                 return result
             if getattr(self.desktop, 'unconfirmed_mutations', None):
                 raise ArchiveNotSent('Claude 有待核对的原生写入，请先在原客户端处理')
-            reply = await self.desktop.call(kind, 'mobileArchive', native, {'archived': body['archived']})
+            options = {'archived': body['archived']}
+            if body.get('disconnect') is True:
+                options['disconnect'] = True
+            reply = await self.desktop.call(kind, 'mobileArchive', native, options)
             if reply.get('archiveNotSent') is True:
                 raise ArchiveNotSent(reply['message'])
             return {'status': 'accepted'}

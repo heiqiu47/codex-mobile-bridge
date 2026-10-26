@@ -386,12 +386,19 @@ class RemoteClaudeCli:
             if not host or host['alias'] != row['alias']:
                 raise ValueError('原 SSH 主机配置已变化')
             owned = self.owned.get(sid)
-            if owned and owned.process.poll() is None:
-                raise BridgeUnavailable('原 Claude Code 会话仍有网关执行连接，请先在原客户端结束')
+            live = owned is not None and owned.process.poll() is None
+            if live and (owned.origin != row['origin'] or owned.native != row['nativeId'] or owned.error):
+                raise BridgeUnavailable('原 Claude Code 执行连接身份无法核验')
             request = {'operation': action, 'native': row['nativeId'], 'origin': row['origin']}
             if action == 'archive':
-                if set(body) != {'archived'} or type(body['archived']) is not bool:
+                if (set(body) not in ({'archived'}, {'archived', 'disconnect'}) or type(body['archived']) is not bool or
+                        type(body.get('disconnect', False)) is not bool or (body.get('disconnect') and body['archived'] is not True)):
                     raise ValueError('Claude 归档设置无效')
+                if live:
+                    if not body.get('disconnect'):
+                        raise BridgeUnavailable('原 Claude Code 会话仍有网关执行连接，请先在原客户端结束')
+                    owned.release_for_archive()
+                    live = False
                 request['archived'] = body['archived']
             fresh = self._remote(row['alias'], request)
             updated = self._row(row['host'], host, fresh)
@@ -402,7 +409,7 @@ class RemoteClaudeCli:
                 raise ValueError('原 SSH 主机配置已变化')
             self.index[sid] = updated
             self.history = {key: value for key, value in self.history.items() if key[0] != sid}
-            return {**self._public(updated), 'archiveSafe': fresh.get('archiveSafe') is True}
+            return {**self._public(updated), 'archiveSafe': not live and fresh.get('archiveSafe') is True}
 
     def call(self, action, sid, body):
         if action in ('archive-state', 'archive'):

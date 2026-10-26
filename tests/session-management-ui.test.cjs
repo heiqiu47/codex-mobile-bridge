@@ -4,7 +4,7 @@ const source=fs.readFileSync(path.join(__dirname,'../web/shell/app.js'),'utf8');
 const code=source.slice(source.indexOf('function renderList(){'),source.indexOf('async function loadList('));
 function fixture(){
  const nodes=new Map(),timers=new Map(),requests=[],dialogs=[],copies=[];let timer=0;
- const node=(tag='',cls='',textContent='')=>({tag,cls,textContent,dataset:{},classList:{add(){}},children:[],events:{},scrollTop:0,isConnected:true,append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;},addEventListener(name,run){this.events[name]=run;},setAttribute(){},showModal(){this.open=true;},close(){this.open=false;this.events.close?.();},remove(){this.isConnected=false;}});
+ const node=(tag='',cls='',textContent='')=>({tag,cls,textContent,dataset:{},classList:{add(){}},children:[],events:{},scrollTop:0,isConnected:true,append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;},addEventListener(name,run){this.events[name]=run;},setAttribute(){},focus(){this.focused=true;},showModal(){this.open=true;},close(){this.open=false;this.events.close?.();},remove(){this.isConnected=false;}});
  const $=id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);};$('list-mode').value='recent';
  const context=vm.createContext({$,el:node,window:{BridgeSessionLinks:{text:identity=>'codex://threads/'+identity.id}},document:{body:{append:box=>dialogs.push(box)}},
    BridgeClipboard:{copyWithFeedback:async(get,item)=>{if(item.disabled)return;copies.push(get());}},BridgeI18n:{locale:()=> 'en-US'},t:s=>s,localStorage:{getItem(){return null;},setItem(){}},
@@ -26,10 +26,12 @@ test('recent sections sort pinned and unpinned independently; project grouping i
 test('right-click exposes pin, copy and native archive with original host',async()=>{
  const ui=fixture(),chat=ui.row('a',1);chat.host='remote';ui.context.listRows=[chat];ui.context.renderList();
  ui.$('sessions').children[0].events.contextmenu({preventDefault(){}});
- const box=ui.dialogs[0];assert.deepEqual(box.children.slice(1).map(n=>n.textContent),['置顶','复制深度链接','归档聊天']);
+ const box=ui.dialogs[0];assert.deepEqual(box.children.slice(1).map(n=>n.textContent),['置顶','复制深度链接','断开连接并归档']);
  await box.children[1].onclick();assert.equal(ui.requests[0].url,'/remote/a/pin');assert.equal(ui.requests[0].body.pinned,true);
  await box.children[2].onclick();assert.deepEqual(ui.copies,['codex://threads/a']);
- await box.children[3].onclick();assert.equal(ui.requests[1].url,'/remote/a/archive');assert.equal(ui.requests[1].body.archived,true);
+ const archive=box.children[3].onclick();const confirmation=ui.dialogs.at(-1),actions=confirmation.children.at(-1);
+ assert.deepEqual(actions.children.map(item=>item.textContent),['确认归档','取消']);assert.equal(actions.children[1].focused,true);actions.children[0].onclick();await archive;
+ assert.equal(ui.requests[1].body.disconnect,true);assert.equal(ui.requests[1].url,'/remote/a/archive');assert.equal(ui.requests[1].body.archived,true);
 });
 test('long press suppresses navigation and movement cancels; archived menu restores',async()=>{
  const ui=fixture(),chat=ui.row('a',1,true);chat.archived=true;
@@ -44,9 +46,23 @@ test('provider menus preserve opaque IDs and expose archive only for verified ca
  const ui=fixture(),chat=ui.row('opaque/native-id',1);chat.capabilities={archive:true,unarchive:true};
  const button=ui.node('button');ui.context.bindSessionMenu(button,chat,'deepseek');
  button.events.keydown({key:'F10',shiftKey:true,preventDefault(){}});
- let box=ui.dialogs[0];assert.deepEqual(box.children.slice(1).map(n=>n.textContent),['置顶','复制 Session ID','归档聊天']);
+ let box=ui.dialogs[0];assert.deepEqual(box.children.slice(1).map(n=>n.textContent),['置顶','复制 Session ID','断开连接并归档']);
  await box.children[1].onclick();assert.equal(ui.requests[0].body.pinned,true);
- await box.children[3].onclick();assert.equal(ui.requests[1].url,'/api/desktop-sessions/deepseek/archive');assert.equal(ui.requests[1].body.sessionId,chat.id);
+ const archive=box.children[3].onclick();const confirmation=ui.dialogs.at(-1),actions=confirmation.children.at(-1);
+ assert.deepEqual(actions.children.map(item=>item.textContent),['确认归档','取消']);assert.equal(actions.children[1].focused,true);actions.children[0].onclick();await archive;
+ assert.equal(ui.requests[1].body.disconnect,true);assert.equal(ui.requests[1].url,'/api/desktop-sessions/deepseek/archive');assert.equal(ui.requests[1].body.sessionId,chat.id);
  const unsupported=ui.node('button');ui.context.bindSessionMenu(unsupported,{...chat,capabilities:{}},'claude');unsupported.events.contextmenu({preventDefault(){}});
- box=ui.dialogs[1];assert.deepEqual(box.children.slice(1).map(n=>n.textContent),['置顶','复制深度链接']);
+ box=ui.dialogs.at(-1);assert.deepEqual(box.children.slice(1).map(n=>n.textContent),['置顶','复制深度链接']);
+});
+
+test('archive cancellation and dismissal never send a request; restore needs no stop',async()=>{
+ for(const cancel of ['button','dismiss']){
+  const ui=fixture(),button=ui.node('button');ui.context.bindSessionMenu(button,ui.row('a',1));
+  button.events.contextmenu({preventDefault(){}});const pending=ui.dialogs[0].children[3].onclick();
+  const confirmation=ui.dialogs.at(-1);if(cancel==='button')confirmation.children.at(-1).children[1].onclick();else confirmation.close();
+  await pending;assert.equal(ui.requests.length,0);
+ }
+ const ui=fixture(),button=ui.node('button');ui.context.bindSessionMenu(button,{...ui.row('a',1),archived:true});
+ button.events.contextmenu({preventDefault(){}});await ui.dialogs[0].children[3].onclick();
+ assert.equal(ui.dialogs.length,1);assert.equal(ui.requests[0].body.disconnect,undefined);
 });

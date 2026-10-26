@@ -27,7 +27,8 @@ class ArchiveCommands:
                 raise ValueError('相同请求标识不能用于不同操作')
             for entry in entries.values():
                 if entry['id'] == identifier and entry['status'] == 'unknown':
-                    if bool(before.get('archived')) != entry['archived']:
+                    if (bool(before.get('archived')) != entry['archived'] or
+                            (entry['archived'] and any((before.get('_archiveFlags') or {}).get(sid) is not True for sid in entry.get('scope', [])))):
                         raise ValueError('此前归档操作仍待核对；旧记录不会自动清除或重发，请先在原客户端核对')
                     entry['status'] = 'confirmed'
             if old:
@@ -38,7 +39,8 @@ class ArchiveCommands:
                 return result
             # Validation and fresh runtime checks happen before persisting intent.
             call = dispatch(before)
-            entries[request_id] = {**result, 'status': 'unknown'}
+            scope = list(before.get('_archiveFlags') or {}) if archived else []
+            entries[request_id] = {**result, 'status': 'unknown', 'scope': scope}
             self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             private_json(self.path, entries)
             try:
@@ -61,7 +63,7 @@ class ArchiveCommands:
             except Exception as exc:
                 raise ValueError('归档结果待核对，请检查原聊天；不会重复提交') from exc
             after = read()
-            if bool(after.get('archived')) != archived:
+            if bool(after.get('archived')) != archived or any((after.get('_archiveFlags') or {}).get(sid) is not True for sid in scope):
                 raise ValueError('归档结果待核对，请刷新原聊天；不会重复提交')
             entries[request_id] = result
             private_json(self.path, entries)

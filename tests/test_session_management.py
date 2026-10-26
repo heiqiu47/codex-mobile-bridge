@@ -167,6 +167,16 @@ class SessionManagement(unittest.TestCase):
         cli.client.connect.return_value = {'codexHome': '/different/home'}
         with self.assertRaises(Exception): cli.archive_call(self.sid, False, [self.sid])
 
+    def test_confirmed_cli_archive_refuses_connection_change_after_stopping(self):
+        cli = CliSessions(self.home, lambda *_: None, lambda: None)
+        cli.client = Mock(); cli.client.connect.return_value = {'codexHome': str(self.home)}
+        def changed():cli.client.process = object()
+        with patch('bridge.features.sessions.create.stop_archive_runtime') as stop:
+            call = cli.archive_call(self.sid, True, [self.sid], disconnect=True, check_scope=changed)
+            with self.assertRaises(AppServerUnavailable):call()
+            stop.assert_called_once()
+            cli.client.request.assert_not_called()
+
     def test_explicit_cli_archive_starts_only_original_control_daemon_if_stopped(self):
         cli = CliSessions(self.home, lambda *_: None, lambda: None)
         cli.client = Mock()
@@ -222,14 +232,19 @@ class SessionManagement(unittest.TestCase):
         entry = WslEntry.__new__(WslEntry)
         entry.host = 'wsl:fixture'; entry.write_lock = threading.RLock(); entry.closed = threading.Event()
         entry.lock = threading.RLock(); entry.live = {}; entry.receipts = {}
-        native = {'archived': False, 'cwd': '/home/user/project', 'model_provider': 'fixture'}
+        native = {'archived': False, 'cwd': '/home/user/project', 'model_provider': 'fixture', 'status': 'idle'}
         entry.store = SimpleNamespace(lock=threading.RLock(), cache={}, get=lambda sid: dict(native),
                                      lifecycle_threads=lambda **_: [{'id': self.sid}],
                                      archive_flags=lambda sid: {sid: bool(native['archived'])})
         entry.archive_commands = ArchiveCommands(self.home)
         runtime = Mock()
         def request(method, params):
-            if method == 'thread/read': return {'thread': {'id': self.sid, 'status': {'type': 'idle'}}}
+            if method == 'thread/read': return {'thread': {'id': self.sid, 'status': {'type': native['status']}}}
+            if method == 'thread/turns/list':return {'data': [{'id': 'turn-fixture', 'status': 'inProgress'}]}
+            if method == 'thread/backgroundTerminals/list':return {'data': []}
+            if method == 'turn/interrupt':
+                native['status'] = 'idle'
+                return {}
             native['archived'] = method == 'thread/archive'
             return {}
         runtime.request.side_effect = request
@@ -241,6 +256,12 @@ class SessionManagement(unittest.TestCase):
         self.assertEqual(native['model_provider'], 'fixture')
         self.assertTrue({'thread/archive', 'thread/unarchive'} <= SharedServer.METHODS)
         self.assertFalse(any(call.args[0] in ('thread/resume', 'turn/start') for call in runtime.request.call_args_list))
+        native['status'] = 'active'
+        self.assertTrue(entry.archive(self.sid, True, str(uuid.uuid4()), disconnect=True)['archived'])
+        self.assertEqual(native['status'], 'idle')
+        writes = [call.args for call in runtime.request.call_args_list if call.args[0] == 'turn/interrupt']
+        self.assertEqual(writes, [('turn/interrupt', {'threadId': self.sid, 'turnId': 'turn-fixture'})])
+        self.assertFalse(entry.archive(self.sid, False, str(uuid.uuid4()))['archived'])
         entry.receipts = {self.sid + ':send:x': {'result': {'status': 'unknown'}}}
         with self.assertRaisesRegex(ValueError, '待核对'): entry.archive(self.sid, True, str(uuid.uuid4()))
 
@@ -301,6 +322,20 @@ class SessionManagementHttp(unittest.TestCase):
         self.assertTrue(recent[0]['bridgePinned'])
         project = self.request('GET', '/api/sessions?scope=host&host=local&order=project', headers=headers)[2]['sessions']
         self.assertNotIn(self.sid, [row['id'] for row in project])
+
+    def test_disconnect_flag_requires_confirmation_shape_and_reaches_original_route(self):
+        headers = self.login()
+        route = '/api/sessions/' + self.sid + '/archive'
+        rid = str(uuid.uuid4())
+        body = {'archived': True, 'id': rid, 'disconnect': True}
+        with patch.object(self.bridge, 'archive', return_value={'status': 'confirmed'}) as archive:
+            self.assertEqual(self.request('POST', route, body)[0], 401)
+            self.assertEqual(self.request('POST', route, body, {'Cookie': headers['Cookie']})[0], 403)
+            archive.assert_not_called()
+            self.assertEqual(self.request('POST', route, body, headers)[0], 200)
+            archive.assert_called_once_with(self.sid, True, rid, disconnect=True)
+        for invalid in ({**body, 'disconnect': 'yes'}, {**body, 'archived': False}, {**body, 'extra': True}):
+            self.assertEqual(self.request('POST', route, invalid, headers)[0], 400)
 
     def test_pin_metadata_preserves_auth_and_rejects_delayed_older_intent(self):
         headers = self.login()

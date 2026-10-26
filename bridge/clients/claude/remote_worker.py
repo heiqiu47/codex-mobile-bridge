@@ -567,8 +567,14 @@ def command(request):
         row.update(archive_file_state(found['directory'], session_path(found, native), native, verify=True))
         if not row['capabilities']['archive']:
             raise ValueError('原 Claude Code 归档能力或停止状态尚未确认')
-        assert_session_closed(found)
-        archive_assert_no_cli(found['binary'])
+        safe = False
+        try:
+            assert_session_closed(found)
+            archive_assert_no_cli(found['binary'])
+            safe = True
+        except ValueError:
+            if operation == 'archive':
+                raise
         if found != profile():
             raise ValueError('原 Claude Code 配置已变化或不可用')
         if operation == 'archive':
@@ -578,7 +584,7 @@ def command(request):
                 raise ValueError('原 Claude Code 二进制归档能力已变化，请重新核对')
             archive_file_change(found['directory'], session_path(found, native), native, request.get('archived'))
             row = session(found, native)
-        return {**row, 'archiveSafe': True, 'runtimeKnown': True, 'status': 'idle', 'requests': []}
+        return {**row, 'archiveSafe': safe, 'runtimeKnown': True, 'status': 'idle', 'requests': []}
     if operation == 'detail':
         return session(found, request['native'])
     if operation == 'history':

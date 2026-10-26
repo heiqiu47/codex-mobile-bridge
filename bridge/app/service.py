@@ -2511,7 +2511,9 @@ class Bridge:
         return selected
 
     @operation
-    def archive(self, thread_id, archived, request_id):
+    def archive(self, thread_id, archived, request_id, disconnect=False):
+        if type(disconnect) is not bool or (disconnect and archived is not True):
+            raise ValueError('聊天归档设置无效')
         def read():
             if isinstance(self.store, RemoteStore):
                 with self.store.lock:
@@ -2521,15 +2523,20 @@ class Bridge:
             return metadata
         def prepare(metadata):
             identifiers = [row['id'] for row in self.store.lifecycle_threads(root_id=thread_id)]
-            self.assert_desktop_idle(identifiers=identifiers, allow_missing_ipc=metadata.get('origin') == 'cli',
-                                     allow_stopped_app=metadata.get('origin') == 'desktop')
+            if not (disconnect and metadata.get('origin') == 'cli'):
+                self.assert_desktop_idle(identifiers=identifiers, allow_missing_ipc=metadata.get('origin') == 'cli',
+                                         allow_stopped_app=metadata.get('origin') == 'desktop')
             with self.submit_lock:
                 ledgers = (self.submissions, self.goal_commands, self.message_actions)
                 if any((key.split(':')[0] in identifiers or row.get('source') in identifiers or row.get('id') in identifiers) and row.get('status', row.get('state')) in
                        ('queued', 'unknown', 'pending', 'sent') for ledger in ledgers for key, row in ledger.items()):
                     raise ValueError('聊天有排队或待核对操作，请先在原客户端处理')
             if metadata.get('origin') == 'cli':
-                return self.cli_sessions.archive_call(thread_id, archived, identifiers)
+                def check_scope():
+                    if set(identifiers) != {row['id'] for row in self.store.lifecycle_threads(root_id=thread_id)}:
+                        raise ValueError('子会话范围已变化，尚未发送归档请求')
+                return self.cli_sessions.archive_call(thread_id, archived, identifiers,
+                    **({'disconnect': True, 'check_scope': check_scope} if disconnect else {}))
             def call():
                 if isinstance(self.store, RemoteStore):
                     source = source_text('features/sessions/create.py')

@@ -374,6 +374,27 @@ class RemoteAdapterContract(unittest.TestCase):
                     'cwd': '/remote/project', 'model': 'fixture-model', 'permissionMode': 'plan',
                     'permissionKnown': True, 'updatedAt': 1, 'title': 'remote fixture'}
 
+    def test_confirmed_remote_archive_stops_matching_owner_before_remote_writer_checks(self):
+        row = self.cli._row('ssh:test', self.hosts.hosts()['ssh:test'], self.row)
+        sid = row['id']; self.cli.index[sid] = row
+        owned = SimpleNamespace(origin=row['origin'], native=row['nativeId'], error=None,
+            process=Mock(), condition=threading.Condition(), pending={}, active=True, model=None, permission=None)
+        owned.process.poll.return_value = None
+        owned.release_for_archive = Mock(side_effect=lambda: owned.process.poll.configure_mock(return_value=0))
+        self.cli.owned[sid] = owned
+        def remote_call(alias, request):
+            if request['operation'] == 'archive':
+                self.assertEqual(owned.process.poll(), 0)
+            return {**self.row, 'archived': request['operation'] == 'archive', 'archiveSafe': True,
+                    'capabilities': {'archive': True, 'unarchive': True}}
+        with patch.object(self.cli, '_remote', side_effect=remote_call):
+            self.assertFalse(self.cli.call('archive-state', sid, {})['archiveSafe'])
+            owned.release_for_archive.assert_not_called()
+            with self.assertRaises(BridgeUnavailable):self.cli.call('archive', sid, {'archived': True})
+            self.assertTrue(self.cli.call('archive', sid, {'archived': True, 'disconnect': True})['archived'])
+            owned.release_for_archive.assert_called_once_with()
+        self.cli.owned.clear()
+
     def test_ssh_json_uses_utf8_for_unicode_requests(self):
         with patch.object(remote, '_command', return_value=['ssh', 'fixture']), \
              patch.object(remote.subprocess, 'run', return_value=SimpleNamespace(
@@ -540,9 +561,6 @@ class RemoteAdapterContract(unittest.TestCase):
         owned.process.poll.return_value = 1
 
 
-if __name__ == '__main__':
-    unittest.main()
-
     def test_archive_rechecks_host_and_owned_executor_and_propagates_native_state(self):
         row = self.cli._row('ssh:test', self.hosts.hosts()['ssh:test'], self.row)
         sid = row['id'];self.cli.index[sid] = row
@@ -553,7 +571,7 @@ if __name__ == '__main__':
             self.assertEqual(request.call_args.args, ('fixture-loopback', {'operation': 'archive',
                              'native': self.native, 'origin': self.row['origin'], 'archived': True}))
             self.assertEqual(result['id'], sid)
-            self.cli.owned[sid] = SimpleNamespace(process=SimpleNamespace(poll=lambda: None))
+            self.cli.owned[sid] = SimpleNamespace(process=SimpleNamespace(poll=lambda: None), origin='foreign', native=self.native, error=None)
             request.reset_mock()
             with self.assertRaises(BridgeUnavailable): self.cli.call('archive-state', sid, {})
             request.assert_not_called()
@@ -577,3 +595,7 @@ if __name__ == '__main__':
         self.assertFalse(listing['complete'])
         self.assertFalse(listing['sessions'][0]['runtimeKnown'])
         self.assertEqual(listing['sessions'][0]['status'], 'unknown')
+
+
+if __name__ == '__main__':
+    unittest.main()

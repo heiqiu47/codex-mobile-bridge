@@ -1184,9 +1184,9 @@ class Handler(BaseHTTPRequestHandler):
                                      body.get("skills", []), work_mode=body.get("workMode"),
                                      attachments=body.get('attachments'), ui_locale=body.get("uiLocale"))
             elif action == "archive":
-                if set(body) != {'archived', 'id'}:
+                if set(body) not in ({'archived', 'id'}, {'archived', 'id', 'disconnect'}):
                     raise ValueError('聊天归档设置无效')
-                result = bridge.archive(thread_id, body['archived'], body['id'])
+                result = bridge.archive(thread_id, body['archived'], body['id'], **({'disconnect': body['disconnect']} if 'disconnect' in body else {}))
             elif action == "pin":
                 if set(body) not in ({'pinned'}, {'pinned', 'clientId', 'revision'}):
                     raise ValueError('聊天置顶设置无效')

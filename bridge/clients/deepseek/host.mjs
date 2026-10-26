@@ -173,7 +173,21 @@ export async function apply(ctx,config){
     if(action==='archive-state')return {...normalize(row),archived:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(sid),_archiveFlags:{[sid]:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(sid)},archiveSafe:row.running===false&&![...questions.values()].some(q=>q.sid===sid)};
     if(action==='archive'){
       if(typeof body.archived!=='boolean'||!capabilities().archive)throw Error('当前接入尚未确认原生归档和恢复能力');
-      if(row.running!==false||[...questions.values()].some(q=>q.sid===sid))return {archiveNotSent:true,message:'聊天有运行、审批或未知状态，请先在原客户端处理'};
+      if(body.disconnect!=null&&typeof body.disconnect!=='boolean'||body.disconnect&&!body.archived)throw Error('归档设置无效');
+      if(body.disconnect){
+        if(typeof ctx.parallel!=='function'||typeof ctx.waterfall!=='function'||typeof row.running!=='boolean')return {archiveNotSent:true,message:'无法确认可停止的原生任务，未停止或归档'};
+        // Native stop providers cover this session's turn, jobs, schedules and descendants.
+        // Do not use stopActivity: that native option writes the archive flag BEFORE stopping.
+        await ctx.parallel('workspace/session-stop',{sessionId:sid});
+        const deadline=Date.now()+15000;
+        while(true){
+          const activity=await ctx.waterfall('workspace/session-activity',{sessionId:sid},()=>Promise.resolve([]));
+          const fresh=await find(sid);
+          if(Array.isArray(activity)&&!activity.length&&fresh.running===false&&![...questions.values()].some(q=>q.sid===sid))break;
+          if(Date.now()>=deadline)throw Error('停止结果待核对，尚未发送归档请求');
+          await new Promise(resolve=>setTimeout(resolve,100));
+        }
+      }else if(row.running!==false||[...questions.values()].some(q=>q.sid===sid))return {archiveNotSent:true,message:'聊天有运行、审批或未知状态，请先在原客户端处理'};
       try{if(body.archived)await ctx.workspaceRegistry.archiveSession(sid,{});else await ctx.workspaceRegistry.unarchiveSession(sid);}
       catch(error){if(error?.name==='WorkspaceActiveSessionError'&&error.sessionId===sid&&Array.isArray(error.activity))return {archiveNotSent:true,message:'聊天或子智能体有运行中的工作，请先在原客户端处理'};throw error;}
       return {status:'accepted'};
