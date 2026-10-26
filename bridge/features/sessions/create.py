@@ -337,3 +337,33 @@ def rename_thread(executable, codex_home, thread_id, title):
     uuid.UUID(thread_id)
     return _runtime_operation(executable, codex_home, str(codex_home),
                               lambda request: request('thread/name/set', {'threadId': thread_id, 'name': title}))
+
+
+class ArchiveNotSent(CreationError):
+    """Archive validation failed before a native mutation was dispatched."""
+
+
+def check_archive_runtime(request, identifiers):
+    """Read only: never resume a thread to establish archive safety."""
+    for identifier in identifiers:
+        thread = request('thread/read', {'threadId': identifier, 'includeTurns': False})['thread']
+        status = (thread.get('status') or {}).get('type')
+        if (thread.get('id') != identifier or status not in ('idle', 'notLoaded') or
+                thread.get('requests') or any(turn.get('status') == 'inProgress' for turn in thread.get('turns', []))):
+            raise ValueError('聊天或子智能体正在运行、等待确认或状态未知，请先在原客户端处理')
+
+
+def archive_thread(executable, codex_home, thread_id, archived, identifiers):
+    uuid.UUID(thread_id)
+    sent = False
+    def dispatch(request):
+        nonlocal sent
+        check_archive_runtime(request, identifiers)
+        sent = True
+        return request('thread/archive' if archived else 'thread/unarchive', {'threadId': thread_id})
+    try:
+        return _runtime_operation(executable, codex_home, str(codex_home), dispatch)
+    except Exception as exc:
+        if not sent:
+            raise ArchiveNotSent(str(exc)) from exc
+        raise

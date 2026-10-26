@@ -15,7 +15,7 @@ READ = {'', 'catalog', 'poll', 'timeline', 'detail', 'changes', 'notifications',
         'workspace/git-history', 'workspace/git-commit', 'workspace/git-history-diff',
         'workspace/git-branches'}
 WRITE = {'send', 'stop', 'history', 'respond', 'reconnect', 'queue', 'settings',
-         'permissions', 'uploads', 'message-action', 'rename', 'notifications',
+         'permissions', 'uploads', 'message-action', 'rename', 'pin', 'archive', 'notifications',
          'goal/cancel', 'goal/edit', 'goal/status', 'side-chat', 'terminal',
          'workspace/upload', 'workspace/git-action'}
 DESKTOP_READ = {'list', 'detail', 'catalog', 'projects', 'account', 'access', 'terminal', 'notifications'} | {action for action in READ if action.startswith('workspace')}

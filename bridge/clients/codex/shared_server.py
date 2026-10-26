@@ -22,7 +22,7 @@ class SharedServer:
         'thread/list', 'thread/read', 'thread/loaded/list', 'thread/turns/list',
         'thread/items/list', 'thread/resume', 'thread/start',
         'turn/start', 'turn/steer', 'turn/interrupt', 'thread/settings/update',
-        'thread/name/set', 'model/list', 'config/read',
+        'thread/name/set', 'thread/archive', 'thread/unarchive', 'model/list', 'config/read',
         'skills/list', 'configRequirements/read', 'permissionProfile/list',
         'experimentalFeature/list', 'account/read', 'thread/goal/get', 'thread/goal/set', 'thread/goal/clear',
     })

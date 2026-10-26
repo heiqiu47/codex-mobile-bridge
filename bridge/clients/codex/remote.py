@@ -113,8 +113,8 @@ class RemoteStore:
     def notification_changes(self, since=0):
         return self.call('notification_changes', {'since': since})
 
-    def lifecycle_threads(self):
-        return self.call('lifecycle_threads', {})
+    def lifecycle_threads(self, root_id=None):
+        return self.call('lifecycle_threads', {} if root_id is None else {'root_id': root_id})
 
     def get(self, thread_id):
         return self.call('get', {'thread_id': thread_id})

@@ -237,7 +237,7 @@ function saveListSnapshot(filter){
   }catch{try{sessionStorage.setItem(key,snapshot);}catch{}}
 }
 $('list-mode').value=localStorage.getItem('list-mode')||'recent';
-$('list-mode').onchange=()=>{localStorage.setItem('list-mode',$('list-mode').value);renderList();};
+$('list-mode').onchange=()=>{localStorage.setItem('list-mode',$('list-mode').value);loadList(true).catch(e=>toast(e.message));};
 listSource=clientNavigation.initialHost?'wsl':localStorage.getItem('codex-source-filter')||'all';
 if(!['all','desktop','cli','wsl'].includes(listSource))listSource='all';
 $('source-filter').onchange=()=>{listSource=$('source-filter').value;localStorage.setItem('codex-source-filter',listSource);return loadList(true).catch(e=>toast(e.message));};
@@ -263,14 +263,18 @@ function sessionAccess(access){
 function currentAccess(){return sessionAccess(state?.access||listRows.find(row=>row.id===currentId&&row.host===currentHost)?.access);}
 function sourceLabel(access){return access?.runtime==='wsl'?'WSL':access?.source==='cli'?'CLI':access?.source==='ide'?'IDE':access?.source==='unknown'?t('其他来源'):'APP';}
 function renderList(){
-  const stamp=JSON.stringify([$('list-mode').value,currentId,currentHost,listHasMore,BridgeI18n.locale(),availableSources,listRows.length?null:[listComplete,listReadFinished],listRows.map(row=>[row.id,row.host,row.title,row.projectKey,row.projectName,row.hostLabel,row.recency,row.access])]);
+  const stamp=JSON.stringify([$('list-mode').value,currentId,currentHost,listHasMore,BridgeI18n.locale(),availableSources,listRows.length?null:[listComplete,listReadFinished],listRows.map(row=>[row.id,row.host,row.title,row.projectKey,row.projectName,row.hostLabel,row.recency,row.bridgePinned,row.archived,row.access])]);
   if(stamp===listRenderStamp&&$('sessions').children.length){renderActivity();return;}
   listRenderStamp=stamp;
   const scrollTop=$('sessions').scrollTop;
   $('sessions').replaceChildren();
   const grouped=$('list-mode').value==='project', groups=new Map();
-  for(const chat of listRows){
+  let pinSection=null;
+  const ordered=grouped?[...listRows].sort((a,b)=>(b.recency-a.recency)||b.id.localeCompare(a.id)):[...listRows].sort((a,b)=>Number(!!b.bridgePinned)-Number(!!a.bridgePinned)||(b.recency-a.recency)||b.id.localeCompare(a.id));
+  const hasPins=!grouped&&ordered.some(chat=>chat.bridgePinned);
+  for(const chat of ordered){
     let parent=$('sessions');
+    if(hasPins&&pinSection!==!!chat.bridgePinned){pinSection=!!chat.bridgePinned;const label=el('h3','muted',t(pinSection?'置顶聊天':'最近聊天'));$('sessions').append(label);}
     if(grouped){
       if(!groups.has(chat.projectKey)){
         const details=el('details','project-group');
@@ -286,10 +290,35 @@ function renderList(){
     button.append(el('strong','',chat.title));
     button.append(el('span','session-source',sourceLabel(sessionAccess(chat.access))||t('其他来源')));
     const meta=el('small');meta.append(el('span','',chat.projectName+' · '+(chat.host==='local'?t('此电脑'):chat.hostLabel)),el('time','',dateText(chat.recency/1000)));
-    button.append(meta);button.onclick=()=>openChat(chat.id,chat.host).catch(e=>toast(e.message));parent.append(button);
+    button.append(meta);button.onclick=()=>openChat(chat.id,chat.host).catch(e=>toast(e.message));bindSessionMenu(button,chat);parent.append(button);
   }
   if(listHasMore){const more=el('button','plain',t('加载更多聊天'));more.id='sessions-more';more.type='button';more.onclick=()=>loadList().catch(error=>toast(error.message));$('sessions').append(more);}
   if(!listRows.length)$('sessions').append(el('p','muted',t(listComplete?'没有找到聊天。':listReadFinished?'暂不可用':'正在读取…')));renderActivity();$('sessions').scrollTop=scrollTop;
+}
+function bindSessionMenu(button,chat){
+  let timer=null,start=null,suppress=false;
+  const clear=()=>{clearTimeout(timer);timer=null;};
+  const show=()=>{
+    const box=el('dialog','picker'),head=el('div','picker-head'),close=el('button','icon-button','×');
+    close.type='button';close.setAttribute('aria-label',t('关闭'));close.onclick=()=>box.close();head.append(el('h2','',chat.title),close);box.append(head);
+    const action=(label,run)=>{const item=el('button','plain',t(label));item.type='button';item.onclick=async()=>{item.disabled=true;try{await run(item);box.close();}catch(error){toast(error.message);item.disabled=false;}};box.append(item);return item;};
+    action(chat.bridgePinned?'取消置顶':'置顶',async()=>{await api(sessionUrl(chat.id,'pin',chat.host),{pinned:!chat.bridgePinned});await loadList(true);});
+    const identity={provider:'codex',id:chat.id,host:chat.host,runtime:chat.access?.runtime};
+    const copy=action('复制深度链接',item=>BridgeClipboard.copy(()=>window.BridgeSessionLinks?.text(identity),item));
+    copy.disabled=!window.BridgeSessionLinks?.text(identity);
+    action(chat.archived?'取消归档':'归档聊天',async()=>{
+      const result=await api(sessionUrl(chat.id,'archive',chat.host),{archived:!chat.archived,id:uuid()});
+      if(result.status!=='confirmed')throw Error(t('归档结果待核对，请检查原聊天；不会重复提交'));
+      await loadList(true);
+    });
+    box.addEventListener('close',()=>box.remove());document.body.append(box);box.showModal();
+  };
+  button.addEventListener('contextmenu',event=>{event.preventDefault();clear();if(!suppress)show();});
+  button.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.button>0)return;start={x:event.clientX,y:event.clientY};suppress=false;clear();timer=setTimeout(()=>{if(!button.isConnected)return;suppress=true;show();},550);});
+  button.addEventListener('pointermove',event=>{if(start&&Math.hypot(event.clientX-start.x,event.clientY-start.y)>10)clear();});
+  for(const name of ['pointerup','pointercancel','pointerleave'])button.addEventListener(name,clear);
+  button.addEventListener('click',event=>{if(suppress){event.preventDefault();event.stopImmediatePropagation();suppress=false;}},true);
+  button.addEventListener('keydown',event=>{if(event.key==='F10'&&event.shiftKey){event.preventDefault();show();}});
 }
 async function loadList(reset=false){
   if(!reset&&(listLoading||!listHasMore))return;
@@ -306,12 +335,12 @@ async function loadList(reset=false){
   const sources=new Set(availableSources),freshSources=new Map(),errors=[];
   const publish=()=>{
     if(generation!==listGeneration)return [];
-    const merged=[...groups.values()].flat().sort((a,b)=>(b.recency-a.recency)||b.id.localeCompare(a.id)||b.host.localeCompare(a.host));
+    const merged=[...groups.values()].flat().sort((a,b)=>($('list-mode').value==='recent'?Number(!!b.bridgePinned)-Number(!!a.bridgePinned):0)||(b.recency-a.recency)||b.id.localeCompare(a.id)||b.host.localeCompare(a.host));
     listRows=merged.slice(0,targetCount);availableSources=[...sources].sort();renderList();
     return merged;
   };
   const read=async host=>{
-    const url='/api/sessions?scope=host&host='+encodeURIComponent(host)+'&q='+encodeURIComponent(query)+'&offset='+(targetCount-100)+'&archived='+archived+'&source='+source;
+    const url='/api/sessions?scope=host&host='+encodeURIComponent(host)+'&q='+encodeURIComponent(query)+'&offset='+(targetCount-100)+'&archived='+archived+'&source='+source+'&order='+encodeURIComponent($('list-mode').value);
     try{
       const result=await api(url);if(generation!==listGeneration)return null;
       if(host==='local'){

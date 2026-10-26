@@ -208,6 +208,20 @@ class CliSessions:
         self.client.request('thread/name/set', {'threadId': thread_id, 'name': title})
         return self.refresh(thread_id)
 
+    def archive_call(self, thread_id, archived, identifiers):
+        # Explicit archive may start the installed original daemon, never a thread.
+        info = self._connect_explicit()
+        home = Path(info.get('codexHome', ''))
+        expected = self.remote_home if self.alias else self.home
+        if not home.is_absolute() or (expected is not None and home != expected):
+            raise AppServerUnavailable('Codex CLI runtime belongs to another home')
+        from bridge.features.sessions.create import check_archive_runtime
+        check_archive_runtime(lambda method, params: self.client.request(method, params, replay_safe=True), identifiers)
+        with self.lock:
+            if any(identifier in self.requests and self.requests[identifier] for identifier in identifiers):
+                raise ValueError('聊天有等待确认的请求，请先在原客户端处理')
+        return lambda: self.client.request('thread/archive' if archived else 'thread/unarchive', {'threadId': thread_id})
+
     def attach(self, thread_id, explicit=False):
         """Passive inspection never starts or resumes a runtime."""
         if not explicit:
