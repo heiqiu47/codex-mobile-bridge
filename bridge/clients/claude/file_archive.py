@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import shutil
 import uuid
 from pathlib import Path
@@ -17,7 +18,7 @@ def supported(binary, environment):
     try:
         result = subprocess.run([binary, '--version'], env=environment, capture_output=True,
                                 text=True, timeout=5)
-        return result.returncode == 0 and result.stdout.split()[0] in VERIFIED_PICKER_VERSIONS
+        return result.returncode == 0 and (sys.platform, result.stdout.split()[0]) in VERIFIED_PICKER_VERSIONS
     except (OSError, subprocess.SubprocessError, IndexError):
         return False
 
@@ -42,7 +43,10 @@ def _root(directory):
     directory = Path(directory)
     root = directory/'bridge-archives'
     _owned(directory)
-    if root.exists():_owned(root)
+    if root.exists():
+        _owned(root)
+        if root.stat().st_dev != directory.stat().st_dev:
+            raise ValueError('Claude 归档必须位于原配置文件系统')
     if directory.is_symlink() or root.is_symlink():
         raise ValueError('Claude 归档路径不可验证')
     return root
@@ -95,6 +99,8 @@ def _manifest(directory, native):
         raise ValueError('Claude 归档记录不可验证')
     value = json.loads(path.read_text(encoding='utf-8'))
     if (value.get('schema') != 1 or value.get('nativeId') != native
+            or value.get('configDir') != str(Path(directory).resolve())
+            or value.get('uid') != (os.getuid() if hasattr(os, 'getuid') else None)
             or not isinstance(value.get('project'), str)
             or value['project'] in ('', '.', '..')
             or '/' in value['project'] or '\\' in value['project']):
@@ -108,6 +114,8 @@ def _original(directory, project, native):
     if projects.is_symlink() or target.is_symlink() or not target.is_dir():
         raise ValueError('Claude 原项目路径不可验证')
     _owned(projects);_owned(target)
+    if target.stat().st_dev != Path(directory).stat().st_dev:
+        raise ValueError('Claude 会话与归档必须位于同一文件系统')
     return target/(native+'.jsonl')
 
 
@@ -240,6 +248,8 @@ def change(directory, path, native, archived):
             original = _original(directory, Path(path).parent.name, native)
             bundle.mkdir(mode=0o700)
             manifest = {'schema': 1, 'nativeId': native, 'project': original.parent.name,
+                        'configDir': str(directory.resolve()),
+                        'uid': os.getuid() if hasattr(os, 'getuid') else None,
                         'sha256': _digest(original)}
         original = _original(directory, manifest['project'], native)
         stored = bundle/(native+'.jsonl')

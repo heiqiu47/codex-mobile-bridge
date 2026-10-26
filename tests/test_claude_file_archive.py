@@ -48,6 +48,16 @@ class FileArchiveTests(unittest.TestCase):
         self.assertEqual(self.shared.read_bytes(),b'shared')
         self.assertEqual(archive.archive_paths(self.directory),[])
 
+    def test_copied_bundle_cannot_restore_into_another_profile(self):
+        import shutil
+        self.archive()
+        other=Path(self.temp.name)/'other-profile'
+        (other/'projects'/self.project.name).mkdir(parents=True)
+        target=other/'bridge-archives'/self.native
+        shutil.copytree(self.stored().parent,target)
+        with self.assertRaises(ValueError):archive.change(other,target/self.stored().name,self.native,False)
+        self.assertFalse((other/'projects'/self.project.name/self.path.name).exists())
+
     def test_restore_conflicting_original_never_overwrites(self):
         self.archive();self.path.write_bytes(b'new native session')
         with self.assertRaises(ValueError):archive.change(self.directory,self.stored(),self.native,False)
