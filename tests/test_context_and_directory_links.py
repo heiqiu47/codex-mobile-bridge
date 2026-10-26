@@ -55,7 +55,7 @@ class DirectoryReferenceTests(unittest.TestCase):
             self.assertFalse(next(iter(files.values()))['image'])
             self.assertEqual(workspace_references([{'role': 'assistant', 'text': text}], str(root))[0]['path'], target.name)
             work = Workspace(root)
-            self.assertEqual(work.info(target.name), {'name': target.name, 'path': target.name, 'kind': 'directory', 'size': None})
+            self.assertEqual(work.info(target.name), {'name': target.name, 'path': target.name, 'kind': 'directory', 'size': None, 'absolutePath': str(target)})
             with self.assertRaises((OSError, ValueError)):
                 with work.download(target.name): pass
             link = root / 'outside'; link.symlink_to(root.parent, target_is_directory=True)
