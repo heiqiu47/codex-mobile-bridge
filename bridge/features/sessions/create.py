@@ -75,6 +75,8 @@ def _runtime_operation(executable, codex_home, cwd, operation):
                     raise CreationError('创建聊天超时，请先检查桌面聊天列表')
                 continue
             if 'error' in result:
+                if method in ('thread/archive', 'thread/unarchive'):
+                    raise ArchiveRejected(result['error'])
                 raise CreationError(result['error'].get('message', '创建聊天失败'))
             return result['result']
 
@@ -337,6 +339,20 @@ def rename_thread(executable, codex_home, thread_id, title):
     uuid.UUID(thread_id)
     return _runtime_operation(executable, codex_home, str(codex_home),
                               lambda request: request('thread/name/set', {'threadId': thread_id, 'name': title}))
+
+
+class ArchiveRejected(CreationError):
+    """The native archive RPC replied with an explicit error, not a lost reply."""
+    def __init__(self, error):
+        self.rpc_error = error if isinstance(error, dict) else {'message': str(error)}
+        message = str(self.rpc_error.get('message', ''))
+        self.reason = ('active_writer' if 'already has an active writer' in message else
+                       'unsupported' if self.rpc_error.get('code') == -32601 else 'native_rejected')
+        public = ('聊天仍由原 Codex 客户端持有；当前原生连接无法归档，请在持有该聊天的原客户端操作'
+                  if self.reason == 'active_writer' else
+                  '原 Codex 运行时不支持此归档操作，请在原客户端操作' if self.reason == 'unsupported' else
+                  '原生客户端已拒绝此次归档操作，请检查原客户端后重试')
+        super().__init__(public)
 
 
 class ArchiveNotSent(CreationError):

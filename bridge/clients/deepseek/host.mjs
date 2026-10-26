@@ -30,14 +30,14 @@ export async function apply(ctx,config){
   const list=async()=> (await ctx.sessionController.list({},signal())).items;
   const find=async id=>{const row=(await list()).find(r=>r.sessionId===id);if(!row)throw Error('DeepSeek 会话不存在');return row;};
   const values=row=>row.projections?.values||{};
-  const capabilities=()=>({models:typeof ctx.sessionController.selectModel==='function',effort:typeof ctx.sessionController.selectModel==='function',permissions:typeof ctx.permissionPresets?.set==='function',attachments:typeof ctx.sessionController.prompt==='function',skills:typeof ctx.sessionSkillCatalog?.list==='function',queue:typeof ctx.sessionController.prompt==='function',steer:typeof ctx.sessionController.prompt==='function',fork:typeof ctx.sessionController.fork==='function'});
+  const capabilities=()=>({models:typeof ctx.sessionController.selectModel==='function',effort:typeof ctx.sessionController.selectModel==='function',permissions:typeof ctx.permissionPresets?.set==='function',attachments:typeof ctx.sessionController.prompt==='function',skills:typeof ctx.sessionSkillCatalog?.list==='function',queue:typeof ctx.sessionController.prompt==='function',steer:typeof ctx.sessionController.prompt==='function',fork:typeof ctx.sessionController.fork==='function',archive:typeof ctx.workspaceRegistry.archiveSession==='function'&&typeof ctx.workspaceRegistry.unarchiveSession==='function',unarchive:typeof ctx.workspaceRegistry.archiveSession==='function'&&typeof ctx.workspaceRegistry.unarchiveSession==='function'});
   const contextUsage=row=>{
     const pressure=values(row).contextPressure||{},used=pressure.projectedTokens??pressure.pressureTokens,limit=pressure.contextWindow;
     return Number.isFinite(used)&&used>=0&&Number.isFinite(limit)&&limit>0
       ? {usedTokens:used,contextWindow:limit,estimated:Number.isFinite(pressure.projectedTokens)&&pressure.projectedTokens!==pressure.pressureTokens} : null;
   };
   const permissionState=row=>{const catalog=ctx.permissionPresets.catalog(),mode=values(row).permissions?.currentValue||catalog.defaultPreset,option=catalog.options.find(o=>o.value===mode);return {permissionMode:mode,permissionLabel:localized(option?.label||option?.name)||mode};};
-  const normalize=row=>{const v=values(row),m=v.modelSelection?.next||v.modelSelection?.lastUsed||ctx.get?.('agentDefaultModel')?.currentSelection()||{};return {id:row.sessionId,title:v.title||'新会话',cwd:row.cwd||'',backend:'deepseek',mode:'desktop',status:typeof row.running==='boolean'?(row.running?'active':'idle'):'unknown',runtimeKnown:typeof row.running==='boolean',updatedAt:row.updatedAt,model:m.provider&&m.model?m.provider+'/'+m.model:'',effort:m.reasoningEffort||'',...permissionState(row),contextUsage:contextUsage(row),requests:[...questions.values()].filter(q=>q.sid===row.sessionId).map(q=>q.public)};};
+  const normalize=row=>{const v=values(row),m=v.modelSelection?.next||v.modelSelection?.lastUsed||ctx.get?.('agentDefaultModel')?.currentSelection()||{};return {id:row.sessionId,capabilities:capabilities(),title:v.title||'新会话',cwd:row.cwd||'',backend:'deepseek',mode:'desktop',status:typeof row.running==='boolean'?(row.running?'active':'idle'):'unknown',runtimeKnown:typeof row.running==='boolean',updatedAt:row.updatedAt,model:m.provider&&m.model?m.provider+'/'+m.model:'',effort:m.reasoningEffort||'',...permissionState(row),contextUsage:contextUsage(row),requests:[...questions.values()].filter(q=>q.sid===row.sessionId).map(q=>q.public)};};
   const bounded=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('插件目录读取超时，请重试')),6000);})]);}finally{clearTimeout(timer);}};
   const localized=value=>typeof value==='string'?value:value?.['zh-CN']||value?.zh||value?.en||'';
   const catalog=async(sid,section='all')=>{
@@ -107,12 +107,12 @@ export async function apply(ctx,config){
   function lifecycle(){
       // The runtime registry includes child agents omitted from the chat list.
       // This snapshot is requested only before a native quit/restart.
-      if(typeof ctx.agents.list!=='function')return {connected:true,bridgeRevision:5,complete:false,sessions:[]};
+      if(typeof ctx.agents.list!=='function')return {connected:true,bridgeRevision:6,complete:false,sessions:[]};
       const agents=ctx.agents.list();
-      if(!Array.isArray(agents))return {connected:true,bridgeRevision:5,complete:false,sessions:[]};
+      if(!Array.isArray(agents))return {connected:true,bridgeRevision:6,complete:false,sessions:[]};
       const sessions=agents.map(agent=>({id:agent.id,status:agent.status==='running'?'active':agent.status==='idle'?'idle':'unknown',runtimeKnown:['idle','running'].includes(agent.status),requests:[...questions.values()].filter(q=>q.sid===agent.id).map(q=>q.public)}));
       for(const question of questions.values())if(!sessions.some(s=>s.id===question.sid))sessions.push({id:question.sid,status:'waiting',runtimeKnown:true,requests:[question.public]});
-      return {connected:true,bridgeRevision:5,complete:sessions.every(s=>typeof s.id==='string'&&s.id.length>0),sessions};
+      return {connected:true,bridgeRevision:6,complete:sessions.every(s=>typeof s.id==='string'&&s.id.length>0),sessions};
   }
   const idle=runtime=>runtime.complete&&runtime.sessions.every(s=>s.runtimeKnown&&s.status==='idle'&&!s.requests.length);
   const quitFailed=error=>{quitting=false;ctx.logger?.error?.('Harness native quit failed: '+String(error.message||error));};
@@ -135,7 +135,7 @@ export async function apply(ctx,config){
       quitting=true;
       return {status:'accepted',pid:process.pid,generation};
     }
-    if(action==='status')return {connected:true,bridgeRevision:5,projectDirectories:true,nativeQuit:typeof ctx.get?.('appExit')==='function',configured:(await account()).status==='configured'};
+    if(action==='status')return {connected:true,bridgeRevision:6,projectDirectories:true,nativeQuit:typeof ctx.get?.('appExit')==='function',configured:(await account()).status==='configured'};
     if(action==='account')return account(sid);
     if(action==='list')return {connected:true,sessions:(await list()).filter(r=>r.origin!=='subagent').map(r=>({...normalize(r),archived:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(r.sessionId)})).sort((a,b)=>Number(a.archived)-Number(b.archived))};
     if(action==='projects'){const seen=new Map();for(const row of await list())if(row.cwd)seen.set(row.cwd,{key:row.cwd,cwd:row.cwd,name:row.cwd.replaceAll('\\','/').split('/').pop()});for(const w of ctx.workspaceRegistry.list())seen.set(w.path,{key:w.path,cwd:w.path,name:w.title||w.name||w.path,workspaceId:w.id});return {projects:[...seen.values()]};}
@@ -170,7 +170,14 @@ export async function apply(ctx,config){
       return {status:'ready',result:{id:child.sessionId}};
     }
     if(action==='rename'){const title=String(body.title||'').trim();if(!title||title.length>120)throw Error('标题为 1–120 字');await ctx.sessionController.rename({sessionId:sid,title});return {status:'accepted'};}
-    if(action==='archive'){if(body.confirmed!==true)throw Error('请确认归档');await ctx.workspaceRegistry.archiveSession(sid,{stopActivity:true});return {status:'accepted'};}
+    if(action==='archive-state')return {...normalize(row),archived:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(sid),_archiveFlags:{[sid]:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(sid)},archiveSafe:row.running===false&&![...questions.values()].some(q=>q.sid===sid)};
+    if(action==='archive'){
+      if(typeof body.archived!=='boolean'||!capabilities().archive)throw Error('当前接入尚未确认原生归档和恢复能力');
+      if(row.running!==false||[...questions.values()].some(q=>q.sid===sid))return {archiveNotSent:true,message:'聊天有运行、审批或未知状态，请先在原客户端处理'};
+      try{if(body.archived)await ctx.workspaceRegistry.archiveSession(sid,{});else await ctx.workspaceRegistry.unarchiveSession(sid);}
+      catch(error){if(error?.name==='WorkspaceActiveSessionError'&&error.sessionId===sid&&Array.isArray(error.activity))return {archiveNotSent:true,message:'聊天或子智能体有运行中的工作，请先在原客户端处理'};throw error;}
+      return {status:'accepted'};
+    }
     if(action==='open')return {ok:true};
     if(action==='detail'){const page=await readHistoryPage(ctx.sessionController,row,body,signal());return {session:normalize(row),capabilities:capabilities(),records:page.rows.filter(r=>['user/message','assistant/message','tool/call','tool/result','todo/write','turn/start','turn/end'].includes(r.event.type)),history:page.history,steps:values(row).todos||[],connected:true};}
     if(action==='catalog')return catalog(sid,body.section||'all');

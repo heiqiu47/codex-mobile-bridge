@@ -2513,7 +2513,9 @@ class Bridge:
             if isinstance(self.store, RemoteStore):
                 with self.store.lock:
                     self.store.cache.clear()
-            return self.store.get(thread_id)
+            metadata = self.store.get(thread_id)
+            metadata['_archiveFlags'] = self.store.archive_flags(thread_id)
+            return metadata
         def prepare(metadata):
             identifiers = [row['id'] for row in self.store.lifecycle_threads(root_id=thread_id)]
             self.assert_desktop_idle(identifiers=identifiers, allow_missing_ipc=metadata.get('origin') == 'cli',

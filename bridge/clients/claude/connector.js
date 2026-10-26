@@ -95,7 +95,7 @@
   }
   const surfaces = {code: 'LocalSessions', cowork: 'LocalAgentModeSessions'};
   const allowed = new Set(['getAll', 'getSession', 'getTranscript', 'sendMessage',
-    'interrupt', 'stop', 'respondToToolPermission', 'start', 'getPermissionMode', 'archive', 'delete', 'updateSession',
+    'interrupt', 'stop', 'respondToToolPermission', 'start', 'getPermissionMode', 'archive', 'unarchive', 'loadArchivedSessions', 'delete', 'updateSession',
     'setPermissionMode', 'setModel', 'setEffort', 'getDefaultEffort', 'getSupportedCommands', 'setThinkingSummariesWanted', 'getContextUsageSummary', 'getContextUsage',
     'listSessionDirectory', 'readSessionFile', 'readSessionImageAsDataUrl', 'readSessionPanelDocumentAsDataUrl']);
   const capabilities = Object.fromEntries(Object.entries(surfaces).map(([kind, name]) =>
@@ -112,6 +112,7 @@
   for (const [kind, surface] of Object.entries(surfaces)) {
     capabilities[kind].push('mobileCatalog', 'mobileProgress', 'mobileAccount');
     if(kind==='code')capabilities[kind].push('mobileList');
+    if(kind==='code'&&['getAll','getSession','archive','unarchive'].every(method=>typeof api[surface]?.[method]==='function'))capabilities[kind].push('mobileArchiveState','mobileArchive');
     if(typeof api[surface]?.getSession==='function'&&typeof api[surface]?.getTranscript==='function')capabilities[kind].push('mobileDetail');
     if(kind==='code'&&typeof api[surface]?.getTranscriptTail==='function'&&typeof api[surface]?.getTranscriptPage==='function')capabilities[kind].push('mobileHistory');
     if(kind==='code'&&typeof api[surface]?.forkSession==='function'&&typeof api[surface]?.getTranscript==='function')capabilities[kind].push('mobileFork');
@@ -288,12 +289,33 @@
     return target.forkSession(id,'local_'+options.id,options.messageId);
   }
   async function mobileList(){
+    if(typeof api.LocalSessions?.loadArchivedSessions==='function')await api.LocalSessions.loadArchivedSessions();
     const rows=await Promise.all(Object.entries(surfaces).filter(([,name])=>typeof api[name]?.getAll==='function').map(async([kind,name])=>{
       const result=await api[name].getAll();
       if(Array.isArray(result))knownSessions.set(api[name],result);
       return [kind,sanitize('getAll',result)];
     }));
     return Object.fromEntries(rows);
+  }
+  async function mobileArchiveState(target,id){
+    if(target!==api.LocalSessions||!capabilities.code.includes('mobileArchive'))throw Error('当前接入尚未确认原生归档和恢复能力');
+    const [root,all]=await Promise.all([target.getSession(id),target.getAll()]);
+    if(root?.sessionId!==id||!Array.isArray(all))throw Error('归档目标或子会话状态无法确认');
+    const scope=new Set([id]);let expanded=true;
+    while(expanded){expanded=false;for(const row of all){if(scope.has(row.spawnedFrom?.sessionId)&&!scope.has(row.sessionId)){scope.add(row.sessionId);expanded=true;}}}
+    const rows=[root,...all.filter(row=>row.sessionId!==id&&scope.has(row.sessionId))];
+    const nonempty=value=>Array.isArray(value)?value.length>0:value&&typeof value==='object'?true:!!value;
+    const idle=row=>row&&row.isRunning===false&&typeof row.isArchived==='boolean'&&
+      !row.turnRunning&&!row.starting&&!row.cliBootPending&&!row.hasBackgroundActivity&&!row.hasBackgroundWork&&!row.hasLiveWorkflows&&
+      ['pendingToolPermissions','pendingRefusalFallbackPrompt','pendingAutoModeServerFallbackPrompt','pendingLanyardConsent','pendingViolinBowPrompt','pendingCwdTrustPrompt','heldInput','queuedSideSessionNotes','spawningTaskIds'].every(key=>!nonempty(row[key]));
+    return {session:publicSession(root),archiveSafe:rows.every(idle),archiveFlags:Object.fromEntries(rows.map(row=>[row.sessionId,row.isArchived]))};
+  }
+  async function mobileArchive(target,id,options={}){
+    if(typeof options.archived!=='boolean')throw Error('归档设置无效');
+    const state=await mobileArchiveState(target,id);
+    if(!state.archiveSafe)return {archiveNotSent:true,message:'聊天或子会话有运行、排队、审批或未知状态，请先在原客户端处理'};
+    if(options.archived)await target.archive(id,{cleanupWorktree:false});else await target.unarchive(id);
+    return {status:'accepted'};
   }
   async function mobileDetail(target,id,options={}){
     const paged=target===api.LocalSessions&&capabilities.code.includes('mobileHistory');
@@ -343,6 +365,8 @@
           if (!target || !Array.isArray(msg.args)) throw new Error('不支持的桌面操作');
           if (msg.method === 'mobileCatalog') return {result:await mobileCatalog(target,msg.surface,msg.args[0])};
           if (msg.method === 'mobileAccount') return {result:await mobileAccount()};
+          if (msg.method === 'mobileArchiveState' && capabilities[msg.surface].includes('mobileArchiveState')) return {result:await mobileArchiveState(target,msg.args[0])};
+          if (msg.method === 'mobileArchive' && capabilities[msg.surface].includes('mobileArchive')) return {result:await mobileArchive(target,msg.args[0],msg.args[1])};
           if (msg.method === 'mobileList') return {result:await bounded(mobileList(),30000,'读取会话超时')};
           if (msg.method === 'mobileDetail' && capabilities[msg.surface].includes('mobileDetail')) return {result:await bounded(mobileDetail(target,msg.args[0],msg.args[1]),30000,'读取会话超时')};
           if (msg.method === 'mobileFork' && capabilities[msg.surface].includes('mobileFork')) return {result:await mobileFork(target,msg.args[0],msg.args[1])};
@@ -484,6 +508,8 @@
             const target = api[surfaces[msg.surface]];
             if (target && msg.method === 'mobileCatalog') return mobileCatalog(target,msg.surface,msg.args[0]);
             if (target && msg.method === 'mobileAccount') return mobileAccount();
+            if (target && msg.method === 'mobileArchiveState' && capabilities[msg.surface].includes('mobileArchiveState')) return mobileArchiveState(target,msg.args[0]);
+            if (target && msg.method === 'mobileArchive' && capabilities[msg.surface].includes('mobileArchive')) return mobileArchive(target,msg.args[0],msg.args[1]);
             if (target && msg.method === 'mobileList') return mobileList();
             if (target && msg.method === 'mobileDetail' && capabilities[msg.surface].includes('mobileDetail')) return mobileDetail(target,msg.args[0],msg.args[1]);
             if (target && msg.method === 'mobileFork' && capabilities[msg.surface].includes('mobileFork')) return mobileFork(target,msg.args[0],msg.args[1]);

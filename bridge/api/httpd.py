@@ -38,7 +38,7 @@ from bridge.features.sessions.goal import GoalError
 from bridge.clients.codex.catalog import CatalogError
 from bridge.features.sessions.store import StoreUnavailable
 from bridge.clients.codex.remote import RemoteUnavailable
-from bridge.features.sessions.create import CreationError
+from bridge.features.sessions.create import ArchiveRejected, CreationError
 from bridge.features.accounts.account import AccountError
 from bridge.features.terminals.manager import TerminalSessionMissing
 from bridge.api.html_preview import SHELL_PATH, SHELL_FILE, SHELL_CSP
@@ -1243,6 +1243,9 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self.close_connection = True
             self.output(400, {"error": str(exc)})
+        except ArchiveRejected as exc:
+            self.close_connection = True
+            self.output(409, {'error': str(exc), 'code': 'archive_rejected', 'reason': exc.reason})
         except (IPCError, GoalError, CatalogError, RemoteUnavailable, CreationError, StoreUnavailable, AccountError) as exc:
             self.close_connection = True
             self.output(409, {"error": str(exc), "code": "desktop_unavailable"})

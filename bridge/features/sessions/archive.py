@@ -4,7 +4,7 @@ import threading
 import uuid
 from pathlib import Path
 from bridge.app.lifecycle import private_json
-from bridge.features.sessions.create import ArchiveNotSent
+from bridge.features.sessions.create import ArchiveNotSent, ArchiveRejected
 
 
 class ArchiveCommands:
@@ -28,7 +28,7 @@ class ArchiveCommands:
             for entry in entries.values():
                 if entry['id'] == identifier and entry['status'] == 'unknown':
                     if bool(before.get('archived')) != entry['archived']:
-                        raise ValueError('归档结果待核对，请检查原聊天；不会重复提交')
+                        raise ValueError('此前归档操作仍待核对；旧记录不会自动清除或重发，请先在原客户端核对')
                     entry['status'] = 'confirmed'
             if old:
                 private_json(self.path, entries)
@@ -43,6 +43,17 @@ class ArchiveCommands:
             private_json(self.path, entries)
             try:
                 call()
+            except ArchiveRejected as exc:
+                try:
+                    after = read()
+                except Exception:
+                    raise ValueError('归档结果待核对，请检查原聊天；不会重复提交') from exc
+                flags = before.get('_archiveFlags')
+                if isinstance(flags, dict) and flags and flags == after.get('_archiveFlags'):
+                    del entries[request_id]
+                    private_json(self.path, entries)
+                    raise
+                raise ValueError('归档结果待核对，请检查原聊天；不会重复提交') from exc
             except ArchiveNotSent:
                 del entries[request_id]
                 private_json(self.path, entries)

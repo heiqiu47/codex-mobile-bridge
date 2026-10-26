@@ -1245,7 +1245,9 @@ class WslEntry(WslFeatures):
         def read():
             with self.store.lock:
                 self.store.cache.clear()
-            return self.store.get(identifier)
+            metadata = self.store.get(identifier)
+            metadata['_archiveFlags'] = self.store.archive_flags(identifier)
+            return metadata
         def prepare(metadata):
             identifiers = [row['id'] for row in self.store.lifecycle_threads(root_id=identifier)]
             if any(key.split(':')[0] in identifiers and row['result'].get('status') in ('queued', 'unknown')

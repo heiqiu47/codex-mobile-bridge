@@ -8,6 +8,8 @@ Status: implemented
 
 ## Decision
 
+Live writer ownership, definite rejection receipts and reversible provider support are refined in [native archive feedback](../../implemented/bug-fix/2026-10-26-native-session-archive-feedback.md).
+
 `SessionPins` 在 Bridge 私有 `session-pins.json` 按执行环境与线程保存置顶，Web 与手机使用同一 HTTP 写入口。环境键保留 host、配置目录以及 WSL user。它不使用原生 isPinned RPC，也不写 Codex 数据库或 rollout。最近模式在只读索引查询的 LIMIT/OFFSET 前按 Bridge 置顶、最近交互时间排序；网页跨主机合并后仍按同样优先级截取。置顶和非置顶各自按最近交互排列。列表快照键包含 recent/project 模式，异步读取在同一 generation 内捕获该模式，离线或部分主机结果不能复用另一模式的分页集合。项目模式不传置顶优先级，保持现有项目与最近排序；没有置顶时保留原列表结构。
 
 归档和取消归档使用 `thread/archive`、`thread/unarchive`。App 路径复用原 home、原本机/SSH 运行时的短期官方连接；本机 CLI 使用同一原 daemon，WSL 使用已有 distribution/user/home 的共享服务，均不 resume、不创建模型轮次，也不修改 provider、auth、cwd。显式归档可以沿现有显式操作路径启动已安装的原 daemon，WSL 使用同一 ensure_daemon 归属核验；启动控制服务不恢复线程。原生方法不支持、控制面不可用或状态无法确认时拒绝操作。

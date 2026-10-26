@@ -23,13 +23,14 @@ from bridge.clients.codex.catalog import ModelStore, MODEL_REFRESH_SECONDS
 from bridge.features.accounts.draft_identity import draft_identity
 from bridge.app.lifecycle import private_json
 from bridge.platforms.windows import session as windows_session
+from bridge.features.sessions.archive import ArchiveCommands
 from bridge.features.sessions.projects import Projects
 from bridge.features.sessions.create import project_directory, project_directory_listing
 from bridge.clients.codex.remote import ssh_read, payload
 from bridge.resources import source_text
 
 READS = {'list', 'detail', 'catalog', 'projects', 'account', 'access'}
-WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume', 'fork', 'pin'}
+WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume', 'fork', 'pin', 'archive'}
 
 
 class TaskStateUnavailable(ValueError):
@@ -711,6 +712,31 @@ class DesktopSessions:
                 'value': path, 'hidden': hidden, 'name': name, 'identity': identity}) + ')))\n'
             return self._project_read(selected, source)
 
+    def _archive(self, provider, sid, body):
+        if set(body) != {'id', 'archived'} or not isinstance(body.get('archived'), bool) or not isinstance(body.get('id'), str):
+            raise ValueError('归档请求格式无效')
+        uuid.UUID(body['id'])
+        with self._changing(provider, rebind=False):
+            self.require_enabled(provider)
+            adapter = self.adapters[provider]
+            directory = adapter.directory
+            scoped = str(uuid.uuid5(uuid.NAMESPACE_URL, json.dumps([provider, str(directory), str(getattr(adapter, 'home', '')), sid])))
+            commands = ArchiveCommands(directory)
+            def read():
+                return self._adapter_call(provider, 'archive-state', sid, {})
+            def prepare(state):
+                if not state.get('capabilities', {}).get('archive') or not state.get('capabilities', {}).get('unarchive'):
+                    raise ValueError('当前接入尚未确认原生归档和恢复能力')
+                if not state.get('archiveSafe') or state.get('runtimeKnown') is not True or state.get('status') != 'idle' or state.get('requests'):
+                    raise ValueError('聊天有运行、排队、审批或未知状态，请先在原客户端处理')
+                with self.db_lock:
+                    db = self._receipts(adapter)
+                    if any(json.loads(row[0]).get('status') in ('unknown', 'queued') for row in db.execute('SELECT result FROM requests')):
+                        raise ValueError('此接入有排队或待核对操作，请先在原客户端处理')
+                return lambda: self._adapter_call(provider, 'archive', sid, {'archived': body['archived']})
+            result = commands.perform(scoped, body['archived'], body['id'], read, prepare)
+            return {**result, 'id': sid}
+
     def call(self, provider, action, sid=None, body=None):
         if provider not in self.adapters or action not in READS | WRITES:
             raise ValueError('不支持的桌面操作')
@@ -727,6 +753,8 @@ class DesktopSessions:
                 raise ValueError('聊天置顶设置无效')
             return self.session_pins[provider].set(sid, body['pinned'], body.get('clientId'), body.get('revision'))
         adapter = self.adapters[provider]
+        if action == 'archive':
+            return self._archive(provider, sid, body)
         if action == 'account':
             return self._account_models(provider, refresh=body.get('refresh') is True)
         if action == 'catalog' and body.get('section') == 'models':

@@ -111,6 +111,9 @@ class SharedServer:
             self.write({'id': identifier, 'method': method, 'params': params})
             response = future.result(timeout=timeout)
             if 'error' in response:
+                if method in ('thread/archive', 'thread/unarchive'):
+                    from bridge.features.sessions.create import ArchiveRejected
+                    raise ArchiveRejected(response['error'])
                 error = IPCError('WSL Codex 拒绝此操作，请检查原会话状态和版本')
                 error.rpc_error = response['error']
                 raise error

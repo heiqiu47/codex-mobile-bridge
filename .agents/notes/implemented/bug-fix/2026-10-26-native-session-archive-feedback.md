@@ -1,0 +1,44 @@
+# Agent Note: Native archive ownership and reversible provider support
+
+Status: implemented
+
+## Problem
+
+An idle Codex App thread still holds its native writer lock. A second short app-server can read its metadata but cannot archive it. The Bridge masks a definite native rejection as an unknown write. Claude Code Desktop and DSH also have reversible native archive interfaces which are absent from the shared management routes.
+
+## Decision
+
+Codex keeps original-owner boundaries. Archive RPC error responses become `ArchiveRejected`, distinct from disconnect, EOF and timeout. The gateway reads complete authorized root/descendant archive flags before and after an explicit rejection. Only identical, complete metadata removes that new pending intent and returns a definite 409 `archive_rejected` error with an actionable reason. Partial changes, missing proof and transport uncertainty remain durable unknowns. Existing unknown receipts without rejection proof are never cleared or replayed merely because the root is still unarchived; the existing native-flag success reconciliation remains read-only.
+
+Loaded local Codex App threads have no demonstrated external owner-native archive route in the installed follower protocol. Their secondary-runtime writer rejection directs the user to the original owning client; it is not reported as archive success. The Bridge never resumes, takes ownership, forges synchronization broadcasts, closes the App, or edits Codex database/rollout files. A writer-free saved App thread can still use its original home/runtime. Codex CLI and WSL use their existing original daemon/native connection; an independently held writer is still a native refusal.
+
+Claude Code Desktop exposes `mobileArchiveState` and `mobileArchive` only when the native Code surface supplies getAll/getSession/archive/unarchive. Fresh in-App metadata verifies the exact root, attached descendants, idle status, pending approvals/consents, held input, background activity and pending child work. Native archive receives only `{cleanupWorktree:false}`; restore uses native unarchive. No force/discard/stop/resume/delete is substituted. Metadata-only archived-session loading makes restored candidates visible without starting a turn. Cowork and other Claude surfaces do not inherit this Code capability; separate CLI storage research remains pending.
+
+DSH exposes native `workspaceRegistry.archiveSession(sid,{})` and `unarchiveSession(sid)` only when both methods exist. It never requests stopActivity. The registry's serialized activity-provider guard refuses active child/background work before writing. The Bridge additionally checks current running/approval evidence. A verified native active-session refusal is a known preflight non-send; other native failures remain uncertain unless separately proven. Native archive may clear DSH's own pin as a native lifecycle side effect; no native pin operation is introduced.
+
+`POST /api/desktop-sessions/{claude|deepseek}/archive` accepts the existing generic body identity `sessionId` plus `{archived,id}`. Provider/environment/native ID map to a private receipt identity; successful native readback returns confirmed. The manager preserves enabled/account gates and refuses queued/unknown write receipts before dispatch. Shared relay adds only the exact archive POST. Rows/details advertise `capabilities.archive` and `capabilities.unarchive` from actual reversible native support.
+
+Claude connector revision 11 and DSH Bridge revision 6 require updated connector capability evidence. DSH lifecycle compatibility retains revisions 3–5. The exact shipped revision-5 LF/CRLF hashes remain recognized for an explicit, ownership-checked upgrade; existing credentials, source ownership and uncertain request records are preserved. No connector installation or restart is performed by this change's tests.
+
+## Existing-note audit
+
+[Bridge session management](../../implemented/feature/2026-10-26-bridge-session-management.md) remains authoritative for Bridge-only pins, pagination and original-environment guards. This note narrows its App archive support claim with the live-writer constraint and adds native provider support. The earlier isolated archive check closed its source runtime, so it did not cover the idle-but-loaded writer case. No prior receipt is retroactively reclassified from that earlier test.
+
+## Alternatives considered
+
+- Retry through a second Codex runtime or resume the thread: crosses the original owner boundary and does not safely solve its writer lock.
+- Forge thread-archived broadcasts or modify native metadata files: can change display/state without a supported owner operation.
+- Hide rows in Bridge or substitute delete: does not implement native archive/restore semantics.
+- Force-stop activity during provider archive: native methods can stop tasks, but the requested protection requires refusing active work instead.
+
+## Evidence and testing
+
+Exact installed Codex App 26.1021.31345 bundles runtime 0.164.0-alpha.11.1. Two simultaneous isolated runtimes reproduce the user-visible failure: the source reports idle, the secondary returns `already has an active writer`, archived stays zero. A different untouched thread archives after the source closes. An archive through the same source runtime succeeds while it remains open. The corrected production helper returns the precise typed refusal for the concurrent case. These fixtures use empty synthetic threads, no model turns, real accounts or credentials.
+
+Shipped Claude 3.1623.0 source confirms Code archive/unarchive and worktree options. Cowork archive has additional stop/output-cleanup effects and no matching exposed restore in that version, so it is not treated as reversible Code archive. DSH 0.2.1-rc.3 shipped registry source confirms durable archive sets, default active-work refusal and restore preserving recorded membership; no live native session is changed during inspection.
+
+Targeted Python tests cover explicit RPC classification on short/local-daemon/WSL channels, full subtree flags, proven-no-effect retry, partial/transport/old-unknown protection, provider archive/restore and HTTP login/CSRF/relay boundaries. Actual connector/host JavaScript fixtures verify Code descendants, consents/background/input guards, cleanupWorktree:false, DSH default activity refusal and no stopActivity. Relevant existing connector/lifecycle, adapter, migration and resource regressions pass. Real user App/Claude/DSH sessions, account files and unknown receipts remain untouched.
+
+## Consequences
+
+A known native refusal no longer appears as a lost archive write when complete metadata proves no effect. Reversible provider operations use the original native services and retain uncertainty when proof is absent. Loaded App archive is not silently claimed fixed: the installed external follower protocol lacks that owner action. Native APIs still lack an atomic cross-client conditional archive, so a foreign client can change state between separate read and mutation checks; native default refusal and original owner boundaries remain essential.

@@ -116,6 +116,9 @@ class RemoteStore:
     def lifecycle_threads(self, root_id=None):
         return self.call('lifecycle_threads', {} if root_id is None else {'root_id': root_id})
 
+    def archive_flags(self, thread_id):
+        return self.call('archive_flags', {'thread_id': thread_id})
+
     def get(self, thread_id):
         return self.call('get', {'thread_id': thread_id})
 

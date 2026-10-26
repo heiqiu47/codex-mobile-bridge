@@ -345,6 +345,17 @@ class SessionStore:
                     pending.append(child)
         return [{'id': identifier} for identifier in sorted(roots)]
 
+    def archive_flags(self, thread_id):
+        """Complete archive metadata for one authorized root and its descendants."""
+        self.get(thread_id)
+        identifiers = {row['id'] for row in self.lifecycle_threads(root_id=thread_id)}
+        with self._connect() as conn:
+            flags = {row['id']: bool(row['archived']) for row in conn.execute('SELECT id, archived FROM threads')
+                     if row['id'] in identifiers}
+        if flags.keys() != identifiers:
+            raise StoreUnavailable('无法完整核验聊天和子智能体的归档状态')
+        return flags
+
     def recencies(self, identifiers):
         if not identifiers:
             return {}

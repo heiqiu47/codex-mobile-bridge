@@ -21,7 +21,7 @@ from bridge.clients.codex.cli_session import CliSessions
 from bridge.clients.codex.shared_server import SharedServer
 from bridge.features.endpoints.wsl import WslEntry
 from bridge.features.sessions.archive import ArchiveCommands
-from bridge.features.sessions.create import ArchiveNotSent, archive_thread, check_archive_runtime
+from bridge.features.sessions.create import ArchiveNotSent, ArchiveRejected, archive_thread, check_archive_runtime
 from bridge.features.sessions.pins import SessionPins
 from bridge.features.sessions.store import SessionStore
 
@@ -224,7 +224,8 @@ class SessionManagement(unittest.TestCase):
         entry.lock = threading.RLock(); entry.live = {}; entry.receipts = {}
         native = {'archived': False, 'cwd': '/home/user/project', 'model_provider': 'fixture'}
         entry.store = SimpleNamespace(lock=threading.RLock(), cache={}, get=lambda sid: dict(native),
-                                     lifecycle_threads=lambda **_: [{'id': self.sid}])
+                                     lifecycle_threads=lambda **_: [{'id': self.sid}],
+                                     archive_flags=lambda sid: {sid: bool(native['archived'])})
         entry.archive_commands = ArchiveCommands(self.home)
         runtime = Mock()
         def request(method, params):
@@ -315,6 +316,19 @@ class SessionManagementHttp(unittest.TestCase):
         self.assertEqual(stale['revision'], 2)
         for body in ({'pinned': True, 'revision': 3}, {**latest, 'revision': True}, {**latest, 'extra': 1}):
             self.assertEqual(self.request('POST', path, body, headers)[0], 400)
+
+    def test_explicit_native_writer_rejection_is_actionable_and_not_persisted_as_unknown(self):
+        headers = self.login()
+        route = '/api/sessions/' + self.sid + '/archive'
+        rejection = ArchiveRejected({'code': -32600, 'message': 'thread fixture already has an active writer'})
+        with patch.object(self.bridge, 'assert_desktop_idle'), patch('bridge.app.service.archive_thread', side_effect=rejection):
+            status, _, result = self.request('POST', route, {'archived': True, 'id': str(uuid.uuid4())}, headers)
+        self.assertEqual(status, 409)
+        self.assertEqual(result['code'], 'archive_rejected')
+        self.assertEqual(result['reason'], 'active_writer')
+        self.assertNotIn('结果待核对', result['error'])
+        self.assertEqual(json.loads(self.bridge.archive_commands.path.read_text()), {})
+        self.assertFalse(self.bridge.store.get(self.sid)['archived'])
 
     def test_app_archive_and_unarchive_dispatch_native_metadata_only_and_confirm_store(self):
         headers = self.login()

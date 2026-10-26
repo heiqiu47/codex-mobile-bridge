@@ -226,6 +226,9 @@ class CodexAppServer:
                 error = response['error']
                 code = error.get('code') if isinstance(error, dict) else None
                 detail = error.get('message', 'App-server request failed') if isinstance(error, dict) else str(error)
+                if method in ('thread/archive', 'thread/unarchive'):
+                    from bridge.features.sessions.create import ArchiveRejected
+                    raise ArchiveRejected(error)
                 if code == -32601:
                     raise AppServerUnsupported(detail)
                 raise AppServerError(detail)
