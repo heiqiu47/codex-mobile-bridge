@@ -207,7 +207,7 @@ $('logout').onclick=async()=>{await api('/api/logout',{});hideWebhookUrl();docum
 function dateText(value){if(!value)return '';return new Date(value*1000).toLocaleDateString(BridgeI18n.locale(),{month:'numeric',day:'numeric'});}
 function listAuthIdentity(auth){return auth?.authenticated&&/^[0-9a-f]{64}$/.test(auth.listCacheIdentity||'')?auth.listCacheIdentity:'';}
 function listSnapshotKey(filter){return listIdentity?'codex-list-v1:'+listIdentity+':'+filter:'';}
-function currentListFilter(){return JSON.stringify([$('search').value,$('archived').checked,listSource]);}
+function currentListFilter(){return JSON.stringify([$('search').value,$('archived').checked,listSource,$('list-mode').value]);}
 function restoreListSnapshot(filter=currentListFilter()){
   const key=listSnapshotKey(filter);if(!key)return false;
   let saved,legacy=false;
@@ -323,8 +323,8 @@ function bindSessionMenu(button,chat){
 async function loadList(reset=false){
   if(!reset&&(listLoading||!listHasMore))return;
   const generation=++listGeneration,offset=reset?0:listOffset;
-  const query=$('search').value,archived=$('archived').checked,source=listSource;
-  const filter=JSON.stringify([query,archived,source]);
+  const query=$('search').value,archived=$('archived').checked,source=listSource,mode=$('list-mode').value;
+  const filter=JSON.stringify([query,archived,source,mode]);
   if(reset&&filter!==listFilterKey){
     if(!restoreListSnapshot(filter)){listRows=[];availableSources=[];listOffset=0;listHasMore=false;listHostIds=[];listFilterKey=filter;}
     $('sessions').scrollTop=0;
@@ -335,12 +335,12 @@ async function loadList(reset=false){
   const sources=new Set(availableSources),freshSources=new Map(),errors=[];
   const publish=()=>{
     if(generation!==listGeneration)return [];
-    const merged=[...groups.values()].flat().sort((a,b)=>($('list-mode').value==='recent'?Number(!!b.bridgePinned)-Number(!!a.bridgePinned):0)||(b.recency-a.recency)||b.id.localeCompare(a.id)||b.host.localeCompare(a.host));
+    const merged=[...groups.values()].flat().sort((a,b)=>(mode==='recent'?Number(!!b.bridgePinned)-Number(!!a.bridgePinned):0)||(b.recency-a.recency)||b.id.localeCompare(a.id)||b.host.localeCompare(a.host));
     listRows=merged.slice(0,targetCount);availableSources=[...sources].sort();renderList();
     return merged;
   };
   const read=async host=>{
-    const url='/api/sessions?scope=host&host='+encodeURIComponent(host)+'&q='+encodeURIComponent(query)+'&offset='+(targetCount-100)+'&archived='+archived+'&source='+source+'&order='+encodeURIComponent($('list-mode').value);
+    const url='/api/sessions?scope=host&host='+encodeURIComponent(host)+'&q='+encodeURIComponent(query)+'&offset='+(targetCount-100)+'&archived='+archived+'&source='+source+'&order='+encodeURIComponent(mode);
     try{
       const result=await api(url);if(generation!==listGeneration)return null;
       if(host==='local'){
