@@ -654,13 +654,24 @@ class Handler(BaseHTTPRequestHandler):
                 manager.mobile.acknowledge(body['provider'], body['streamId'], body['through'])
                 return self.output(200, manager.mobile_snapshot(manager.mobile.checkpoint()['cursor']))
             if not write and path == '/api/mobile/events':
+                query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
                 manager = self.server.notifications
                 if manager is None:
                     return self.output(503, {'error': '手机通知暂不可用'})
                 value = query.get('after', ['0'])[0]
                 if not value.isdigit() or len(value) > 16:
                     raise ValueError('通知游标格式不正确')
-                return self.output(200, manager.mobile_snapshot(int(value)))
+                wait = query.get('wait', ['0'])[0]
+                stream = query.get('streamId', [None])[0]
+                revision = query.get('revision', [None])[0]
+                if (not wait.isascii() or not wait.isdigit() or len(wait) > 2 or int(wait) > 60
+                        or (stream is not None and (not 1 <= len(stream) <= 128 or any(ord(c) < 32 for c in stream)))
+                        or (revision is not None and not re.fullmatch('[a-f0-9]{32}', revision))):
+                    raise ValueError('通知等待参数无效')
+                result = manager.mobile_snapshot(int(value), wait=int(wait), stream=stream, revision=revision)
+                if self.authorized():
+                    return self.output(200, result)
+                return
             if write and path == "/api/logout":
                 self.read_json()
                 self.server.auth.logout(self.token())

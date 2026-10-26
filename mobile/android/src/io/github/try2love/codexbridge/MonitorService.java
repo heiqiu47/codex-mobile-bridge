@@ -53,7 +53,9 @@ public final class MonitorService extends Service {
   }
 
   private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
-    @Override public void onAvailable(Network value) { refresh(); }
+    @Override public void onAvailable(Network value) {
+      main.post(() -> { if (!destroyed) { configure(); receiver.reconnect(); } });
+    }
   };
 
   @Override public void onCreate() {

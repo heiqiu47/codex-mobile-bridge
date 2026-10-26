@@ -29,7 +29,8 @@ public final class MobileEventTests {
   final ExecutorService workers=Executors.newCachedThreadPool();
   final List<String> targets=new CopyOnWriteArrayList<>();
   final List<Integer> requestBytes=new CopyOnWriteArrayList<>(),responseBytes=new CopyOnWriteArrayList<>();
-  volatile String stream="fixture-stream";volatile int cursor=200,status=200,unread=-1;volatile boolean enabled=true;
+  volatile String stream="fixture-stream";volatile int cursor=200,status=200,unread=-1;volatile boolean enabled=true,longPoll;
+  synchronized void advance(int value){cursor=value;notifyAll();}
   volatile CountDownLatch received,release;final AtomicBoolean slow=new AtomicBoolean();
   Gateway()throws Exception {workers.submit(()->{while(!socket.isClosed())try{Socket client=socket.accept();workers.submit(()->serve(client));}catch(IOException ignored){}});}
   String origin(){return "http://127.0.0.1:"+socket.getLocalPort();}
@@ -39,16 +40,21 @@ public final class MobileEventTests {
    String headers=raw.toString("UTF-8"),target=headers.split(" ")[1];targets.add(target);requestBytes.add(raw.size());
    check(headers.toLowerCase(Locale.ROOT).contains("origin: "+origin()),"Origin header retained");check(headers.contains(EventClient.USER_AGENT),"Native user agent retained");
    if(slow.compareAndSet(true,false)){received.countDown();release.await(5,TimeUnit.SECONDS);}
-   long after=target.contains("?after=")?Long.parseLong(target.split("\\?after=")[1]):0;
+   long after=target.contains("?after=")?Long.parseLong(target.split("\\?after=")[1].split("&")[0]):0;
+   synchronized(this){
+    while(longPoll&&target.contains("&wait=60")&&cursor==after&&target.contains("&streamId="+stream+"&")&&!socket.isClosed())wait(60000);
+   }
    // Keep events and metadata on one cursor while the test thread advances it.
    int responseCursor=cursor;
    JSONArray events=new JSONArray();for(int i=Math.max(1,responseCursor-199);i<=responseCursor;i++)if(i>after)events.put(new JSONObject().put("id","event-"+i).put("sequence",i).put("threadId","thread").put("host","local").put("kind",i%2==0?"request":"completion").put("title","任务提醒").put("body","消息内容".repeat(30)));
    JSONArray summary=new JSONArray().put(new JSONObject().put("provider","claude").put("kind",responseCursor%2==0?"request":"completion").put("sequence",responseCursor));
-   byte[] body=new JSONObject().put("clients",new JSONArray().put(new JSONObject().put("id","claude").put("enabled",true).put("unread",enabled?(unread<0?responseCursor:unread):0))).put("summary",summary).put("streamId",stream).put("cursor",responseCursor).put("events",events).put("enabled",enabled).toString().getBytes(StandardCharsets.UTF_8);
+   JSONObject value=new JSONObject().put("clients",new JSONArray().put(new JSONObject().put("id","claude").put("enabled",true).put("unread",enabled?(unread<0?responseCursor:unread):0))).put("summary",summary).put("streamId",stream).put("cursor",responseCursor).put("events",events).put("enabled",enabled);
+   if(longPoll)value.put("longPoll",60).put("revision",String.format("%032x",responseCursor));
+   byte[] body=value.toString().getBytes(StandardCharsets.UTF_8);
    String head="HTTP/1.1 "+status+" OK\r\nContent-Type: application/json\r\nContent-Length: "+body.length+"\r\nConnection: close\r\n\r\n";
    client.getOutputStream().write(head.getBytes(StandardCharsets.UTF_8));client.getOutputStream().write(body);responseBytes.add(body.length);
   }catch(Exception ignored){}}
-  public void close()throws Exception {socket.close();if(release!=null)release.countDown();workers.shutdownNow();}
+  public synchronized void close()throws Exception {socket.close();notifyAll();if(release!=null)release.countDown();workers.shutdownNow();}
  }
  static void check(boolean v,String message){if(!v)throw new AssertionError(message);}
  static final AtomicInteger statusChanges=new AtomicInteger();
@@ -156,7 +162,33 @@ public final class MobileEventTests {
    check(NotificationCheckpoint.restore(encoded,"binding").cursor==42,"Serialized checkpoint round-trip");
    check(NotificationCheckpoint.restore(encoded,"other").cursor==0,"Persisted checkpoint isolates accounts");
    check(NotificationCheckpoint.restore("malformed","binding").cursor==0,"Corrupt checkpoint safely baselines");
-   System.out.println("PASS inbox baseline, incremental reads, deduplication, clear/mute, reconnect, process recreation, stream reset, login/removal races, parallel computers, pause and reception status transitions");
+   longPolling();
+   System.out.println("PASS inbox baseline, incremental reads, deduplication, clear/mute, reconnect, process recreation, stream reset, login/removal races, parallel computers, pause and reception status transitions; long-poll capability, four concurrent computers, cancellation and network recovery");
   }finally{for(NotificationReceiver receiver:receivers)receiver.close();}
+ }
+ static void longPolling()throws Exception {
+  try(Gateway a=new Gateway();Gateway b=new Gateway();Gateway c=new Gateway();Gateway d=new Gateway();Gateway legacy=new Gateway()){
+   List<Gateway> gateways=List.of(a,b,c,d);
+   App app=new App();Set<String> origins=new HashSet<>();
+   for(Gateway gateway:gateways){gateway.longPoll=true;origins.add(gateway.origin());}
+   origins.add(legacy.origin());app.prefs.values.put("origins",origins);app.prefs.putBoolean("alerts",true);
+   CookieManager.getInstance().value="codex_mobile_session=long-poll-account";
+   NotificationReceiver receiver=receiver(app);receiver.configure(true,true);
+   until(()->gateways.stream().allMatch(g->g.targets.size()>=2)&&legacy.targets.size()==1,"Every computer reaches its own wait");
+   for(Gateway gateway:gateways){check(!gateway.targets.get(0).contains("wait="),"Capability discovery is immediate");check(gateway.targets.get(1).contains("wait=60&streamId=fixture-stream&revision="),"Wait carries cursor, stream and revision");}
+   int before=delivered.size();d.advance(201);
+   until(()->cursor(app,d.origin())==201,"Fourth computer delivers while the others wait");
+   check(delivered.size()==before+1,"Incremental event delivered once");
+   until(()->d.targets.size()>=3,"Success immediately starts the next wait");
+   Thread.sleep(100);check(legacy.targets.size()==1,"Older gateways retain the 15-second interval");
+   int requests=a.targets.size();receiver.reconnect();
+   until(()->a.targets.size()>requests,"Network availability restarts a pending read immediately");
+   receiver.configure(false,true);Thread.sleep(100);
+   int stopped=gateways.stream().mapToInt(g->g.targets.size()).sum();before=delivered.size();
+   for(Gateway gateway:gateways)gateway.advance(202);
+   receiver.refresh();Thread.sleep(100);
+   check(gateways.stream().mapToInt(g->g.targets.size()).sum()==stopped&&delivered.size()==before,"Pause cancels pending waits and ignores late results");
+   receiver.close();
+  }
  }
 }

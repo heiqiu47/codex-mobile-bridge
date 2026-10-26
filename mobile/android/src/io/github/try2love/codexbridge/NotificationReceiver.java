@@ -18,6 +18,8 @@ final class NotificationReceiver implements AutoCloseable {
     EventClient.Read read;
     ScheduledFuture<?> next;
     int failures;
+    String revision;
+    boolean reconnect;
     Status status = Status.RETRYING;
 
     Computer(String origin, String binding, NotificationCheckpoint checkpoint) {
@@ -30,7 +32,7 @@ final class NotificationReceiver implements AutoCloseable {
   private final Context context;
   private final SharedPreferences prefs;
   private final Runnable onChange;
-  private final ScheduledThreadPoolExecutor workers = new ScheduledThreadPoolExecutor(3);
+  private final ScheduledThreadPoolExecutor workers = new ScheduledThreadPoolExecutor(1);
   private final Map<String, Computer> computers = new HashMap<>();
   private boolean closed;
 
@@ -49,6 +51,7 @@ final class NotificationReceiver implements AutoCloseable {
       String binding = binding(origin);
       if (!binding.isEmpty()) bindings.put(origin, binding);
     }
+    workers.setCorePoolSize(Math.max(1, bindings.size()));
     Iterator<Computer> iterator = computers.values().iterator();
     while (iterator.hasNext()) {
       Computer computer = iterator.next();
@@ -95,6 +98,13 @@ final class NotificationReceiver implements AutoCloseable {
     for (Computer computer : computers.values()) if (computer.read == null) schedule(computer, 0);
   }
 
+  synchronized void reconnect() {
+    for (Computer computer : computers.values()) {
+      if (computer.read == null) schedule(computer, 0);
+      else { computer.reconnect = true; computer.read.cancel(); }
+    }
+  }
+
   private void schedule(Computer computer, long seconds) {
     if (computer.next != null) computer.next.cancel(false);
     computer.next = workers.schedule(() -> check(computer), seconds, TimeUnit.SECONDS);
@@ -117,7 +127,8 @@ final class NotificationReceiver implements AutoCloseable {
       computer.read = read;
     }
     try {
-      JSONObject data = EventClient.read(computer.origin, computer.checkpoint.cursor, read);
+      JSONObject data = EventClient.read(computer.origin, computer.checkpoint.cursor, read,
+          computer.checkpoint.stream, computer.revision);
       NotificationCheckpoint checkpoint = NotificationCheckpoint.read(data);
       synchronized (this) {
         // Removal and Cookie renewal share EventClient's binding lock.
@@ -131,12 +142,16 @@ final class NotificationReceiver implements AutoCloseable {
       synchronized (this) {
         if (current(computer)) {
           computer.failures = 0;
+          String revision = data.optString("revision", "");
+          computer.revision = data.optBoolean("enabled") && data.optInt("longPoll", 0) == EventClient.POLL_SECONDS
+              && revision.matches("[a-f0-9]{32}") ? revision : null;
           updateStatus(computer, data.optBoolean("enabled") ? Status.RECEIVING : Status.RETRYING);
         }
       }
     } catch (Exception unavailable) {
       synchronized (this) {
-        if (current(computer)) {
+        if (current(computer) && !computer.reconnect) {
+          computer.revision = null;
           computer.failures = Math.min(4, computer.failures + 1);
           updateStatus(computer, unavailable instanceof EventClient.AuthenticationRequired
               ? Status.SIGN_IN_REQUIRED : Status.RETRYING);
@@ -152,7 +167,12 @@ final class NotificationReceiver implements AutoCloseable {
     } finally {
       synchronized (this) {
         computer.read = null;
-        if (current(computer)) schedule(computer, Math.min(120, 15L << computer.failures));
+        if (current(computer)) {
+          long delay = computer.reconnect || (computer.failures == 0 && computer.revision != null)
+              ? 0 : Math.min(120, 15L << computer.failures);
+          computer.reconnect = false;
+          schedule(computer, delay);
+        }
       }
     }
   }

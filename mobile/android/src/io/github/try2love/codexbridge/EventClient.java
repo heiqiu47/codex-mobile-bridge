@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 
 final class EventClient {
  static final String USER_AGENT="BridgeMobile/0.1-Android";
+ static final int POLL_SECONDS=60;
  static final class AuthenticationRequired extends IOException {
   AuthenticationRequired(){super("登录已失效，请重新连接电脑");}
  }
@@ -45,10 +46,16 @@ final class EventClient {
   return read(origin,null,null);
  }
  static JSONObject read(String origin,Long after,Read pending)throws Exception {
+  return read(origin,after,pending,null,null);
+ }
+ static JSONObject read(String origin,Long after,Read pending,String stream,String revision)throws Exception {
   if(!GatewayURL.origin(origin).equals(origin))throw new IOException("连接地址无效");
   String cookie=CookieManager.getInstance().getCookie(origin+"/"),binding=sessionCookie(cookie,origin);if(binding.isEmpty())throw new AuthenticationRequired();
-  HttpURLConnection c=(HttpURLConnection)new URL(origin+"/api/mobile/events"+(after==null?"":"?after="+Math.max(0,after))).openConnection();
-  c.setInstanceFollowRedirects(false);c.setConnectTimeout(7000);c.setReadTimeout(10000);c.setRequestProperty("Cookie",cookie);c.setRequestProperty("Origin",GatewayURL.httpOrigin(origin));c.setRequestProperty("User-Agent",USER_AGENT);
+  boolean waiting=after!=null&&stream!=null&&revision!=null;
+  String query=after==null?"":"?after="+Math.max(0,after);
+  if(waiting)query+="&wait="+POLL_SECONDS+"&streamId="+URLEncoder.encode(stream,"UTF-8")+"&revision="+URLEncoder.encode(revision,"UTF-8");
+  HttpURLConnection c=(HttpURLConnection)new URL(origin+"/api/mobile/events"+query).openConnection();
+  c.setInstanceFollowRedirects(false);c.setConnectTimeout(7000);c.setReadTimeout(waiting?80000:10000);c.setRequestProperty("Cookie",cookie);c.setRequestProperty("Origin",GatewayURL.httpOrigin(origin));c.setRequestProperty("User-Agent",USER_AGENT);
   try{if(pending!=null)pending.attach(c);int code=c.getResponseCode();if(code==401)throw new AuthenticationRequired();if(code!=200)throw new HttpFailure(code);
    if(pending!=null)pending.check();
    renew(c,origin,cookie);
