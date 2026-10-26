@@ -32,16 +32,16 @@ test('native login card survives an empty saved list without enrollment or switc
 test('web exposes saved account selection without enrollment or credential inputs',async()=>{
  const ui=fixture();await ui.panel.refresh();assert.equal(ui.all().some(n=>n.tag==='input'&&n.type!=='checkbox'),false);assert.match(ui.text(),/API <script>/);assert.equal(ui.all().some(n=>n.tag==='script'),false);
  ui.confirm(false);await ui.panel.choose(ui.value().accounts[0]);assert.equal(ui.requests.length,0);
- ui.confirm(true);await ui.panel.choose(ui.value().accounts[0]);assert.deepEqual(Object.keys(ui.requests[0]).sort(),['action','confirmed','id','requestId','tasksConfirmed']);
+ ui.confirm(true);await ui.panel.choose(ui.value().accounts[0]);assert.deepEqual(Object.keys(ui.requests[0]).sort(),['action','confirmed','id','requestId','syncLocalCli','tasksConfirmed']);
  assert.equal(ui.requests[0].tasksConfirmed,true);assert.match(ui.prompts[0],/未在网页显示/);
 });
-test('Codex switch sends local CLI choice only after checkbox selection',async()=>{
- const ui=fixture();await ui.panel.refresh();const row=ui.value().accounts[0];
- assert.match(ui.text(),/共用账号配置；切换后 CLI 也会使用新接入/);
- const box=ui.all().find(n=>n.tag==='input'&&n.type==='checkbox'&&n.parent?.children.some(child=>child.textContent==='同时应用到本机 CLI'));
- assert.ok(box);box.checked=true;box.onchange();await ui.panel.choose(row);
- assert.equal(ui.requests[0].syncLocalCli,true);
+test('Codex switch always requests CLI verification without an opt-in checkbox',async()=>{
+ const ui=fixture();await ui.panel.refresh();
+ assert.match(ui.text(),/Desktop 与 CLI 共用接入/);
+ assert.equal(ui.all().some(n=>n.textContent==='同时应用到本机 CLI'),false);
+ await ui.panel.choose(ui.value().accounts[0]);assert.equal(ui.requests[0].syncLocalCli,true);
 });
+
 
 for(const desktop of [false,true])test(`${desktop?'desktop':'web'} merges imported login and keeps other official accounts and API cards separate`,async()=>{
  const ui=fixture(desktop),usage={status:'ready',checkedAt:ui.now()/1000,limits:[{name:'Codex',windows:[{remainingPercent:75,windowDurationMins:300}]}],resetCredits:{availableCount:2}};
@@ -400,4 +400,13 @@ test('Codex model scroller survives status reads and model timestamp changes',as
  let finish;ui.setRequest(()=>new Promise(resolve=>finish=resolve));ui.focus(box.refresh);const pending=box.refresh.onclick();ui.blur();finish(ui.value());await pending;assert.equal(ui.active(),box.refresh);
  ui.setValue({...ui.value(),accounts:[{...row,accountKey:'new-profile'}],switch:{phase:'idle'}});await ui.panel.refresh();
  assert.notEqual(ui.all().find(node=>node.className==='accounts-models'),box);
+});
+
+test('one inventory delegates API edit and probes to the editor before reminders',async()=>{
+ const ui=fixture(),details=ui.panel.node('details'),calls=[];
+ ui.panel.attachApiAccess({edit:(...args)=>calls.push(args),probe:(...args)=>calls.push(args)},details);
+ await ui.panel.refresh();assert.ok(ui.panel.management.children.indexOf(details)<ui.panel.management.children.indexOf(ui.panel.tools));
+ ui.all().find(node=>node.textContent==='修改').onclick();assert.equal(calls[0][0],'codex');
+ ui.all().find(node=>node.textContent==='测试模型接口').onclick();assert.equal(details.open,true);assert.equal(calls[1][1],'test');
+ assert.equal(ui.all().filter(node=>node.className==='account-bucket').length,1);
 });

@@ -1,8 +1,8 @@
 'use strict';
 class CliAccessPanel {
-  constructor({root,provider,read,request}){
+  constructor({root,provider,read,request,formOnly=false,onChanged=()=>{}}){
     if(!['codex','claude'].includes(provider))throw Error('Invalid CLI provider');
-    Object.assign(this,{root,provider,read,request});this.value=null;this.busy=false;this.generation=0;this.apiResults=new Map();
+    Object.assign(this,{root,provider,read,request,formOnly,onChanged});this.value=null;this.busy=false;this.generation=0;this.apiResults=new Map();
     this.build();
   }
   t(key){return BridgeI18n.t(key);}
@@ -31,7 +31,7 @@ class CliAccessPanel {
     const modelHint=this.node('p','模型接口不可用时仍可手动填写模型 ID。','account-muted');modelHint.classList.add('cli-access-model-hint');
     this.form.append(this.name.label,this.baseUrl.label,this.model.label,modelHint,this.key.label,this.schemeRow,this.save,this.cancel);
     this.native=this.button('保存当前原生接入',()=>this.perform({provider:this.provider,action:'importCurrent',name:this.t('本机原生接入')}));
-    this.root.append(heading,refresh,this.status,this.error,this.rows,this.form,this.native);
+    this.root.append(...(this.formOnly?[this.status,this.error,this.form]:[heading,refresh,this.status,this.error,this.rows,this.form,this.native]));
     this.onLanguage=()=>this.render();document.addEventListener('bridge-language',this.onLanguage);
   }
   setBusy(busy){
@@ -63,7 +63,7 @@ class CliAccessPanel {
     if(this.busy)return;
     const generation=++this.generation;
     this.setBusy(true);this.error.textContent='';this.status.textContent=this.t('正在保存…');
-    try{const result=await this.request(value);if(generation===this.generation){this.value=result;this.apiResults.clear();this.resetForm();}}
+    try{const result=await this.request(value);if(generation===this.generation){this.value=result;this.apiResults.clear();this.resetForm();this.onChanged();}}
     catch(error){if(generation===this.generation){this.error.textContent=this.t(error.message);this.status.textContent='';}}
     finally{if(value.apiKey)value.apiKey='';if(generation===this.generation)this.setBusy(false);}
   }
@@ -93,6 +93,14 @@ class CliAccessPanel {
     if(provider==='claude'&&data.verification?.status==='configured')this.status.textContent+=' '+this.t((data.accounts||[]).find(row=>row.id===data.activeId)?.kind==='api'?'API 配置已核对；未验证 Key 的远端有效性。':'原生配置已核对。');
     if(data.cliSwitch?.phase==='pending')this.rows.append(this.node('p','正在切换接入…','account-muted'));
     if(data.cliSwitch?.phase==='failed'){const error=this.node('p',null,'error');error.textContent=this.t(data.cliSwitch.error);this.rows.append(error);}
+    if(this.formOnly){
+      const results=[...this.apiResults.entries()].map(([id,result])=>{
+        const name=data.accounts?.find(row=>row.id===id)?.name||id;
+        return name+': '+(result.error||result.message||(result.models||[]).join(' · '));
+      });
+      if(results.length)this.status.textContent=results.join('\n');
+      return;
+    }
     for(const row of data.accounts||[]){
       const card=this.node('section',null,'cli-access-row'),title=this.node('strong');title.textContent=row.name;
       const detail=this.node('small');detail.textContent=[row.kind==='api'?this.t('API 接入'):this.t('原生登录'),row.baseUrl,row.model].filter(Boolean).join(' · ');
@@ -119,6 +127,7 @@ class CliAccessPanel {
     this.editId=row.id;this.editKind=rename?'rename':'api';this.name.input.value=row.name;
     this.baseUrl.input.value=row.baseUrl||'';this.model.input.value=row.model||'';
     this.scheme.value=row.authScheme||'x-api-key';this.key.input.value='';this.cancel.hidden=false;this.render();
+    if(this.root.parentNode?.tagName==='DETAILS')this.root.parentNode.open=true;
     this.name.input.focus();
   }
   switchTo(provider,id,data){

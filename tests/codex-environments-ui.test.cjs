@@ -24,7 +24,7 @@ function fixture({native=true,listSource='all',host='local'}={}){
  const entries=[{id:'desktop',kind:'desktop',enabled:native},{id:ubuntu,kind:'wsl-cli',enabled:true,name:'Ubuntu'},{id:debian,kind:'wsl-cli',enabled:true,name:'Debian'},{id:disabled,kind:'wsl-cli',enabled:false,name:'Stopped'}];
  let handler=async(url,body)=>url.startsWith('/api/projects')?{projects:[]}:{id:'created',host:new URL(url,'https://fixture').searchParams.get('entry')||'local'};
  const api=async(url,body)=>{calls.push({url,body:body===undefined?undefined:JSON.parse(JSON.stringify(body))});return handler(url,body);};
- class AccountsPanel{constructor(options){Object.assign(this,options);this.clears=0;this.refreshButton=node('button');}clear(){this.clears++;}refresh(){return this.read();}}
+ class AccountsPanel{constructor(options){Object.assign(this,options);this.clears=0;this.refreshButton=node('button');}attachApiAccess(panel,details){this.apiPanel=panel;this.apiDetails=details;}clear(){this.clears++;}refresh(){return this.read();}}
  class CliAccessPanel{constructor(options){Object.assign(this,options);this.clears=0;this.refreshes=0;}clear(){this.clears++;}refresh(){this.refreshes++;return this.read();}}
  class WslAccountsPanel{constructor(options){Object.assign(this,options);}clear(){}select(entry){this.entry=entry;return this.read(entry);}}
  const close=node('button'),context=vm.createContext({$,api,Option,AccountsPanel,CliAccessPanel,WslAccountsPanel,URL,Event:class{constructor(type){this.type=type;}},window:{},BridgeI18n:{t:value=>value},document:{getElementById:$,createElement:node,querySelector:()=>close},

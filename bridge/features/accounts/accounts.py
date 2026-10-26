@@ -859,20 +859,36 @@ class Accounts:
             raise ValueError('切换请求标识无效')
         with self.gate, self.lock:
             row = dict(self.row(value.get('id')))
-            sync_cli = value.get('syncLocalCli') is True
+            sync_cli = True
             ledger = read_json(self.root/'requests.json', {})
             if request_id in ledger:
                 if ledger[request_id] != row['id']:
                     raise ValueError('同一请求不能切换到不同账号')
                 return self.public()
-            # Desktop and local CLI use the same auth/config files even when
-            # the optional CLI effectiveness check is not selected.
+            # One local account home always verifies CLI effectiveness.
             from bridge.features.accounts.cli_sync import LocalCliSync
-            LocalCliSync(self.bridge).preflight('codex')
+            sync = LocalCliSync(self.bridge)
+            preflight = sync.preflight('codex')
             self.assert_editable()
             if self.info.current().get('id') == row['id']:
                 return self.public()
             self.idle()
+            if not preflight['desktopRunning']:
+                with self.bridge.account.lock:
+                    before = sync.snapshot('codex')
+                    applied = None
+                    try:
+                        applied = sync.apply('codex', row)
+                        sync.verify('codex', row)
+                    except Exception:
+                        if applied and applied.get('mutated') is True:
+                            sync.restore('codex', before)
+                        raise
+                ledger[request_id] = row['id']
+                private_json(self.root/'requests.json', ledger)
+                self.state = {'phase': 'complete', 'requestId': request_id, 'targetId': row['id'],
+                              'error': None, 'cliSync': {'status': 'verified'}}
+                return self.public()
             executable = self.index.get('desktopExecutable') or DesktopApp.discover(self.runtime)
             if not executable:
                 raise ValueError('请先在桌面端指定 Codex 桌面程序路径')

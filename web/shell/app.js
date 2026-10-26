@@ -1425,8 +1425,8 @@ $('pushplus-form').onsubmit=event=>{event.preventDefault();return notificationCh
 $('pushplus-test').onclick=()=>notificationChannelAction(true);
 
 const codexCliRoot=el('div');
-const codexCliDetails=el('details','account-compact'),codexCliSummary=el('summary','',t('Codex CLI 接入'));codexCliSummary.dataset.i18n='Codex CLI 接入';codexCliDetails.append(codexCliSummary,codexCliRoot);$('accounts-dialog').append(codexCliDetails);
-const codexCliAccessPanel=typeof CliAccessPanel==='undefined'?null:new CliAccessPanel({root:codexCliRoot,provider:'codex',read:()=>api('/api/cli-access'),request:value=>api('/api/cli-access',value)});
+const codexCliDetails=el('details','account-compact'),codexCliSummary=el('summary','',t('新建 Codex API 接入'));codexCliSummary.dataset.i18n='新建 Codex API 接入';codexCliDetails.append(codexCliSummary,codexCliRoot);$('accounts-dialog').append(codexCliDetails);
+const codexCliAccessPanel=typeof CliAccessPanel==='undefined'?null:new CliAccessPanel({root:codexCliRoot,provider:'codex',formOnly:true,onChanged:()=>accountsPanel?.refresh(),read:()=>api('/api/cli-access'),request:value=>api('/api/cli-access',value)});
 const codexWslRoot=el('div');$('accounts-dialog').append(codexWslRoot);
 const codexWslAccounts=typeof WslAccountsPanel==='undefined'?null:new WslAccountsPanel({root:codexWslRoot,provider:'codex',read:entry=>api('/api/wsl-accounts?provider=codex&entry='+encodeURIComponent(entry)),request:value=>api('/api/wsl-accounts',value)});
 function refreshSelectedAccounts(){if(codexAccountEntry==='desktop'){codexWslAccounts?.clear();accountsPanel?.refresh();codexCliAccessPanel?.refresh();}else codexWslAccounts?.select(codexAccountEntry);}
@@ -1443,6 +1443,7 @@ function renderAccountEntries(){
 accountEntrySelect.onchange=()=>{codexAccountEntry=accountEntrySelect.value;accountsPanel?.clear();renderAccountEntries();refreshSelectedAccounts();};
 
 const accountsPanel=window.BridgeSharedRelay||typeof AccountsPanel==='undefined'?null:new AccountsPanel({root:$('accounts-content'),toolbar:$('accounts-heading'),read:()=>api(accountUrl('/api/accounts')),request:({action,...value})=>action==='ignoreSubmission'?ignoreSubmission(value):api(accountUrl(action==='account'?'/api/accounts/account':action==='details'?'/api/accounts/details':action==='reminders'?'/api/accounts/reminders':action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?'/api/accounts/desktop-update':'/api/accounts/switch'),action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?{action,...value}:value),onChanged:value=>{if(codexActiveAccountId!==undefined&&codexActiveAccountId!==value.activeId){browserNavigation.invalidate();if(typeof ChatTimeline!=='undefined')ChatTimeline.clearCache?.();clearCodexProvisionalDrafts();clearQuoteComposer();codexDraftScope=null;codexDraftTouched=false;}resetModelCatalog();},onUpdate:value=>{codexActiveAccountId=value.activeId;const label='账号管理';$('accounts-button').setAttribute('data-i18n',label);$('accounts-button').textContent=t(label);}});
+accountsPanel?.attachApiAccess(codexCliAccessPanel,codexCliDetails);
 function openCurrentAccounts(){
   const activeProvider=clientNavigation.provider,provider=activeProvider?.startsWith('wsl-claude:')?'claude':activeProvider;
   if(!provider)return false;

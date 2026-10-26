@@ -501,10 +501,12 @@ $('refresh-devices').onclick=loadDevices;
 $('device-policy').oninput=$('device-policy').onchange=()=>{devicesDirty=true;$('device-feedback').textContent=t('IP 规则有未保存的修改。');};
 $('device-policy').onsubmit=event=>{event.preventDefault();return changeDevices({action:'save',policy:devicePolicy()});};
 
-const codexCliAccessPanel=typeof CliAccessPanel==='undefined'?null:new CliAccessPanel({root:$('cli-access-content'),provider:'codex',read:()=>api.cliAccess({action:'list'}),request:value=>api.cliAccess(value)});
+const codexCliAccessPanel=typeof CliAccessPanel==='undefined'?null:new CliAccessPanel({root:$('cli-access-content'),provider:'codex',formOnly:true,onChanged:()=>accountsPanel?.refresh(),read:()=>api.cliAccess({action:'list'}),request:value=>api.cliAccess(value)});
 const claudeCliAccessPanel=typeof CliAccessPanel==='undefined'?null:new CliAccessPanel({root:$('cli-access-claude-content'),provider:'claude',read:()=>api.cliAccess({action:'list'}),request:value=>api.cliAccess(value)});
 document.addEventListener('bridge-client-config',event=>{codexCliAccessPanel?.clear();claudeCliAccessPanel?.clear();if(event.detail==='codex'&&!$('cli-access-content').hidden)codexCliAccessPanel?.refresh();else if(event.detail==='claude'&&!$('cli-access-claude-content').hidden)claudeCliAccessPanel?.refresh();});
 const accountsPanel=typeof AccountsPanel==='undefined'?null:new AccountsPanel({root:$('accounts-content'),desktop:true,read:()=>api.accounts({action:'list'}),request:value=>api.accounts(value),onUpdate:value=>desktopConnections?.renderAccount(value)});
+
+const codexApiDetails=document.createElement('details'),codexApiSummary=document.createElement('summary');codexApiSummary.dataset.i18n='新建 Codex API 接入';codexApiSummary.textContent=t('新建 Codex API 接入');codexApiDetails.append(codexApiSummary,$('cli-access-article'));accountsPanel?.attachApiAccess(codexCliAccessPanel,codexApiDetails);
 
 // WSL access has its own scope; local panels keep their existing data and callbacks.
 const wslAccountScopes=[];

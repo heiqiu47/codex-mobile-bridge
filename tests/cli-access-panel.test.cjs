@@ -63,3 +63,10 @@ test('rendered CLI model refresh shows retained rows, timestamp, and backend mod
   instance.request=async()=>result({models:['model-a'],cache:{...cache,state:'stale'},modelError:'模型目录刷新失败，已保留上次结果'});await instance.probe(row,'models',true);
   assert.match(instance.rows.textContent,/model-a/);assert.match(instance.rows.textContent,/模型目录刷新失败，已保留上次结果/);assert.match(instance.rows.textContent,/更新于：/);
 });
+
+test('unified Codex editor suppresses duplicate inventory while retaining model probe feedback',async()=>{
+ const {instance,row,result}=renderedPanel();instance.provider='codex';instance.formOnly=true;
+ instance.value={codex:{accounts:[row]}};instance.render();assert.equal(instance.rows.children.length,0);
+ instance.request=async()=>({...result({models:['model-a']}),codex:{accounts:[row]},probe:{provider:'codex',id:row.id,status:'reachable',scope:'models',models:['model-a'],cache:{identity:row.modelCatalogIdentity,updatedAt:1000}}});
+ await instance.probe(row,'models');assert.equal(instance.rows.children.length,0);assert.match(instance.status.textContent,/model-a/);
+});
