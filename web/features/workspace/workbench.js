@@ -150,7 +150,7 @@ class Workbench {
     if (this.previewFullscreen && (!provider || this.previewFullscreen.session.provider === provider)) this.closePreviewFullscreen();
     const visible=!provider||this.current?.provider===provider;
     if(visible){this.stopThumbnails();this.uploadController?.abort();}
-    for(const [key,session] of this.sessions)if(!provider||session.provider===provider){for(const tab of session.files){tab.controller?.abort();tab.pdf?.dispose();tab.html?.dispose();tab.git?.dispose();tab.terminal?.dispose();tab.agents?.dispose();tab.sideChat?.dispose();}this.sessions.delete(key);}
+    for(const [key,session] of this.sessions)if(!provider||session.provider===provider){for(const tab of session.files){tab.controller?.abort();tab.pdf?.dispose();tab.html?.dispose();tab.markdown?.dispose();tab.git?.dispose();tab.terminal?.dispose();tab.agents?.dispose();tab.sideChat?.dispose();}this.sessions.delete(key);}
     if(visible){this.current=null;this.chat.classList.remove('workbench-active','wb-split');this.endDrag();this.panel.replaceChildren();this.panel.hidden=true;this.tabs.replaceChildren();}
   }
   get isFileVisible() { return !!this.current && !this.splitMode && this.current.active !== 'chat'; }
@@ -218,7 +218,7 @@ class Workbench {
     if (this.previewFullscreen?.tab === session.files[index]) this.closePreviewFullscreen();
     if (session.files[index].sideChat && !await session.files[index].sideChat.end()) return;
     if (!session.files[index] || session.files[index].id !== id) return;
-    session.files[index].controller?.abort(); session.files[index].pdf?.dispose(); session.files[index].html?.dispose(); session.files[index].git?.dispose(); session.files[index].terminal?.dispose(); session.files[index].agents?.dispose(); session.files[index].sideChat?.dispose(); session.files.splice(index, 1);
+    session.files[index].controller?.abort(); session.files[index].pdf?.dispose(); session.files[index].html?.dispose(); session.files[index].markdown?.dispose(); session.files[index].git?.dispose(); session.files[index].terminal?.dispose(); session.files[index].agents?.dispose(); session.files[index].sideChat?.dispose(); session.files.splice(index, 1);
     if(session.splitTab===id)session.splitTab=(session.files[index]||session.files[index-1])?.id||null;
     const wasActive=session.active===id;
     if(wasActive)session.active=session.splitTab||(session.files.some(t=>t.id==='files')?'files':'chat');
@@ -439,6 +439,37 @@ class Workbench {
     button.dataset.i18nAriaLabel = description; button.dataset.i18nTitle = description;
     button.setAttribute('aria-label', BridgeI18n.t(description)); button.title = BridgeI18n.t(description);
   }
+  markdownPreview(session, tab, content, result) {
+    const modes=this.node('div','wb-preview-modes');
+    const reading=this.button('阅读',()=>show('reading',true));
+    const source=this.button('源代码',()=>show('source',true));
+    const copy=this.button('复制',()=>window.BridgeClipboard.copy(()=>result.text,copy),'复制代码');
+    reading.className=source.className='wb-preview-mode';copy.className='wb-source-copy';modes.append(reading,source);
+    const positions={reading:{top:0,left:0},source:{top:0,left:0}};
+    let mode=null,scope=null;
+    const dispose=()=>{window.BridgeMermaidCards?.clearScope(scope);scope=null;};
+    const show=(next,remember=false)=>{
+      if(mode===next)return;
+      if(mode)positions[mode]={top:content.scrollTop,left:content.scrollLeft};
+      dispose();mode=next;
+      if(remember)try{localStorage.setItem('bridge-file-markdown-mode',mode);}catch{}
+      reading.setAttribute('aria-pressed',String(mode==='reading'));source.setAttribute('aria-pressed',String(mode==='source'));
+      if(mode==='reading'){
+        scope=window.BridgeMermaidCards?.createScope();content.__mermaidScope=scope;content.__mermaidIdentity=session.key+'|'+tab.id;
+        content.replaceChildren();renderMarkdown(content,result.text);
+      }else{
+        delete content.__mermaidScope;delete content.__mermaidIdentity;
+        content.replaceChildren(BridgeSourceView.create({name:result.name,text:result.text,location:tab.sourceLocation}));
+      }
+      content.scrollTop=positions[mode].top;content.scrollLeft=positions[mode].left;
+      this.scrollPositions.set(content,content.scrollTop);
+    };
+    tab.markdown={dispose};
+    tab.showSourceLocation=()=>{show('source');BridgeSourceView.locate(content.firstChild,tab.sourceLocation.start,tab.sourceLocation.end);};
+    let initial='reading';try{if(localStorage.getItem('bridge-file-markdown-mode')==='source')initial='source';}catch{}
+    show(tab.sourceLocation?'source':initial);
+    return {modes,copy};
+  }
   async openSourceLocation(session, path, start, end = start) {
     if (session !== this.current || !path || !Number.isInteger(start) || start < 1 || start > 1000000 || !Number.isInteger(end) || end < start || end > 1000000) return;
     await this.preview(session, {path, name:path.split('/').pop(), sourceLocation:{start,end}});
@@ -472,7 +503,7 @@ class Workbench {
         content.classList.add('wb-pdf-content'); content.append(tab.pdf.element);
       } else if (result.kind === 'image') { const image = this.node('img'); image.src = 'data:' + result.mime + ';base64,' + result.data; image.alt = result.name; window.BridgeImageViewer?.registerWorkspaceImage(image, result, imageContext, imageComposerScope); content.append(image); }
       else if (result.kind === 'text') {
-        if (/\.md$/i.test(result.name) && !tab.sourceLocation) {if(!this.mermaidScope)this.mermaidScope=window.BridgeMermaidCards?.createScope();content.__mermaidScope=this.mermaidScope;content.__mermaidIdentity=session.key+'|'+id;renderMarkdown(content, result.text);}
+        if (/\.md$/i.test(result.name)) { const markdown=this.markdownPreview(session,tab,content,result);modes=markdown.modes;copyAction=markdown.copy; }
         else if (/\.html?$/i.test(result.name)) {
           modes = this.node('div', 'wb-preview-modes');
           const preview = this.button('预览', () => show('preview'));

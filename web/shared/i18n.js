@@ -1925,6 +1925,7 @@ const en={
   "HTML 预览": "HTML preview",
   "HTML 预览无法加载，请查看源代码或下载文件": "HTML preview could not load. View the source or download the file.",
   "预览": "Preview",
+  "阅读": "Reading",
   "源代码": "Source code",
   "上一页": "Previous page",
   "下一页": "Next page",
