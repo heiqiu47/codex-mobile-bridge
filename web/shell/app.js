@@ -304,8 +304,8 @@ function bindSessionMenu(button,chat){
     const action=(label,run,disable=true)=>{const item=el('button','plain',t(label));item.type='button';item.onclick=async()=>{if(disable)item.disabled=true;try{await run(item);box.close();}catch(error){toast(error.message);item.disabled=false;}};box.append(item);return item;};
     action(chat.bridgePinned?'取消置顶':'置顶',async()=>{await api(sessionUrl(chat.id,'pin',chat.host),{pinned:!chat.bridgePinned});await loadList(true);});
     const identity={provider:'codex',id:chat.id,host:chat.host,runtime:chat.access?.runtime};
-    const copy=action('复制深度链接',item=>BridgeClipboard.copy(()=>window.BridgeSessionLinks?.text(identity),item),false);
-    copy.disabled=!window.BridgeSessionLinks?.text(identity);
+    const copy=action('复制深度链接',item=>BridgeClipboard.copyWithFeedback(()=>window.BridgeSessionLinks?.text(identity),item,toast),false);
+    copy.classList.add('message-copy');copy.disabled=!window.BridgeSessionLinks?.text(identity);
     action(chat.archived?'取消归档':'归档聊天',async()=>{
       const result=await api(sessionUrl(chat.id,'archive',chat.host),{archived:!chat.archived,id:uuid()});
       if(result.status!=='confirmed')throw Error(t('归档结果待核对，请检查原聊天；不会重复提交'));
@@ -428,7 +428,7 @@ $('open-session-diagnostics').onclick=()=>{
   loadSessionDiagnostics();
 };
 $('session-diagnostics-refresh').onclick=loadSessionDiagnostics;
-$('session-diagnostics-copy').onclick=()=>window.BridgeClipboard.copy(()=>sessionDiagnosticsText,$('session-diagnostics-copy'));
+$('session-diagnostics-copy').onclick=()=>window.BridgeClipboard.copyWithFeedback(()=>sessionDiagnosticsText,$('session-diagnostics-copy'),toast);
 $('session-diagnostics-export').onclick=event=>{if(BridgeHost.isNativeApp()&&window.BridgeMobileCapabilities?.diagnosticsExport!==true){event.preventDefault();return;}event.currentTarget.href=window.BridgeRelayURL?.(diagnosticsPath)||diagnosticsPath;};
 $('archived').onchange=()=>loadList(true).catch(e=>toast(e.message));
 const listSync=window.BridgeListSync=new ListSync({root:$('sessions'),status:$('list-sync'),refresh:()=>loadList(true),visible:()=>!$('app').hidden&&$('sidebar').getBoundingClientRect().width>0,ready:()=>!listLoading&&document.activeElement!==$('search')});
@@ -1560,5 +1560,5 @@ if(fileTransferSettings)$('appearance-dialog').querySelector('.settings-action-r
 $('copy-session-link').onclick=()=>{
   const text=window.BridgeSessionLinks.text({provider:'codex',id:currentId,host:currentHost});
   if(text===null){toast(t('此接入暂无可用的桌面会话链接'));return;}
-  return window.BridgeClipboard.copy(()=>text,$('copy-session-link'));
+  return window.BridgeClipboard.copyWithFeedback(()=>text,$('copy-session-link'),toast);
 };

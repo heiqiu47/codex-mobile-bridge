@@ -471,8 +471,8 @@ class Workbench {
     const modes=this.node('div','wb-preview-modes');
     const reading=this.button('阅读',()=>show('reading',true));
     const source=this.button('源代码',()=>show('source',true));
-    const copy=this.button('复制',()=>window.BridgeClipboard.copy(()=>result.text,copy),'复制代码');
-    reading.className=source.className='wb-preview-mode';copy.className='wb-source-copy';modes.append(reading,source);
+    const copy=this.button('复制',()=>window.BridgeClipboard.copyWithFeedback(()=>result.text,copy,this.notify),'复制代码');
+    reading.className=source.className='wb-preview-mode';copy.className='wb-source-copy message-copy';modes.append(reading,source);
     const positions={reading:{top:0,left:0},source:{top:0,left:0}};
     let mode=null,scope=null,sourceView=null,sourcePosition={top:0,left:0};
     const dispose=()=>{window.BridgeMermaidCards?.clearScope(scope);scope=null;};
@@ -540,8 +540,8 @@ class Workbench {
           modes = this.node('div', 'wb-preview-modes');
           const preview = this.button('预览', () => show('preview'));
           const source = this.button('源代码', () => show('source'));
-          const copy = this.button('复制', () => window.BridgeClipboard.copy(() => result.text, copy), '复制代码');
-          preview.className = source.className = 'wb-preview-mode'; copy.className = 'wb-source-copy';
+          const copy = this.button('复制', () => window.BridgeClipboard.copyWithFeedback(() => result.text, copy, this.notify), '复制代码');
+          preview.className = source.className = 'wb-preview-mode'; copy.className = 'wb-source-copy message-copy';
           modes.append(preview, source); copyAction = copy;
           const show = mode => {
             tab.html?.dispose(); tab.html = null;
@@ -556,8 +556,8 @@ class Workbench {
           show(tab.sourceLocation ? 'source' : 'preview');
         }
         else {
-          const copy = this.button('复制', () => window.BridgeClipboard.copy(() => result.text, copy), '复制代码');
-          copy.className = 'wb-source-copy'; copyAction = copy;
+          const copy = this.button('复制', () => window.BridgeClipboard.copyWithFeedback(() => result.text, copy, this.notify), '复制代码');
+          copy.className = 'wb-source-copy message-copy'; copyAction = copy;
           content.append(BridgeSourceView.create({name:result.name, text:result.text, location:tab.sourceLocation}));
         }
       } else content.append(this.node('p', 'wb-empty', BridgeI18n.t(result.size > 512 * 1024 ? '文件超过 512 KB，无法在线预览。可下载后打开。' : '此文件不是 UTF-8 文本或可预览图片，可下载后打开。')));

@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),vm=require(
 function fixture(){
   const body={children:[],append(node){this.children.push(node);}};
   const document={body,addEventListener(){},createElement(tag){return {tag,children:[],dataset:{},append(...nodes){this.children.push(...nodes);},setAttribute(){},addEventListener(){},showModal(){this.open=true;},close(){this.open=false;}};}};
-  const context={window:{},document,BridgeI18n:{t:x=>x},setTimeout,BridgeClipboard:{async copy(read){context.copied=await read();}}};
+  const context={window:{},document,BridgeI18n:{t:x=>x},setTimeout,BridgeClipboard:{async copyWithFeedback(read){context.copied=await read();}}};
   vm.runInNewContext(fs.readFileSync('web/features/workspace/file-actions.js','utf8'),context);
   return context;
 }

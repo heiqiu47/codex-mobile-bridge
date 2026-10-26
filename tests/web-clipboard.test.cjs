@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../web/features/chat/message-actions.js'),'utf8');
 function fixture({clipboard,legacy=false,items=true}={}){
- const copied=[],errors=[],timers=[];let document,selection=[];
+ const copied=[],errors=[],timers=[],events={};let document,selection=[];
  class Node{
   constructor(tag){this.tagName=tag;this.children=[];this.style={};this.value='';this.textContent='';this.disabled=false;this.isConnected=false;this.selectionStart=2;this.selectionEnd=4;this.selectionDirection='backward';}
   append(...nodes){for(const n of nodes){n.parent=this;n.isConnected=true;this.children.push(n);}}
@@ -12,12 +12,12 @@ function fixture({clipboard,legacy=false,items=true}={}){
   setSelectionRange(a,b,d){this.selectionStart=a;this.selectionEnd=b;this.selectionDirection=d;}
   setAttribute(){}showModal(){this.open=true;}close(){this.open=false;this.onclose?.();}
  }
- document={body:new Node('body'),createElement:t=>new Node(t),dispatchEvent:e=>errors.push(e.detail),getSelection:()=>({rangeCount:selection.length,getRangeAt:i=>selection[i],removeAllRanges(){selection=[];},addRange:r=>selection.push(r)}),execCommand:command=>{assert.equal(command,'copy');if(legacy)copied.push({text:document.activeElement.value,parent:document.activeElement.parent});return legacy;}};
+ document={addEventListener(name,fn){(events[name]||=[]).push(fn);},removeEventListener(name,fn){events[name]=(events[name]||[]).filter(value=>value!==fn);},body:new Node('body'),createElement:t=>new Node(t),dispatchEvent:e=>errors.push(e.detail),getSelection:()=>({rangeCount:selection.length,getRangeAt:i=>selection[i],removeAllRanges(){selection=[];},addRange:r=>selection.push(r)}),execCommand:command=>{assert.equal(command,'copy');if(legacy)copied.push({text:document.activeElement.value,parent:document.activeElement.parent});return legacy;}};
  const draft=new Node('textarea');draft.value='keep my draft';document.body.append(draft);document.activeElement=draft;
  const button=new Node('button');button.textContent='Copy';document.body.append(button);
  const context=vm.createContext({window:{},document,navigator:{clipboard},ClipboardItem:items?class{constructor(data){this.data=data;}}:undefined,Blob,setTimeout:fn=>timers.push(fn),CustomEvent:class{constructor(type,init){this.type=type;this.detail=init.detail;}}});
  vm.runInContext(source,context);
- return {copy:getText=>context.window.BridgeClipboard.copy(getText,button),document,button,draft,copied,errors,timers,dialog:()=>document.body.children.find(n=>n.tagName==='dialog')};
+ return {copyWithFeedback:(getText,notify)=>context.window.BridgeClipboard.copyWithFeedback(getText,button,notify),copy:getText=>context.window.BridgeClipboard.copy(getText,button),document,button,draft,copied,errors,timers,dialog:()=>document.body.children.find(n=>n.tagName==='dialog')};
 }
 test('ready text reaches Clipboard API within the click, without waiting for a microtask',async()=>{
  const writes=[],ui=fixture({clipboard:{writeText:text=>{writes.push(text);return Promise.resolve();}}});
@@ -56,4 +56,15 @@ test('HTTP retry uses the fresh click synchronously if the first copy was blocke
 test('older browsers can copy resolved text without ClipboardItem and ignore duplicate clicks',async()=>{
  let resolve,reads=0;const writes=[],ui=fixture({items:false,clipboard:{writeText:text=>{writes.push(text);return Promise.resolve();}}});
  const pending=ui.copy(()=>{reads++;return new Promise(r=>resolve=r);});await ui.copy(()=>{reads++;return 'wrong';});resolve('complete');await pending;assert.deepEqual(writes,['complete']);assert.equal(reads,1);
+});
+
+test('acknowledged browser copying sends one success notification',async()=>{
+ const ui=fixture({clipboard:{writeText:()=>Promise.resolve()}}),notices=[];
+ await ui.copyWithFeedback(()=> 'ready',message=>notices.push(message));assert.deepEqual(notices,['已复制']);
+});
+test('manual browser fallback does not notify until its fresh-click retry succeeds',async()=>{
+ const clipboard={writeText:()=>Promise.reject(Error('denied'))},ui=fixture({clipboard}),notices=[];
+ await ui.copyWithFeedback(()=> 'ready',message=>notices.push(message));assert.deepEqual(notices,[]);
+ clipboard.writeText=()=>Promise.resolve();const retry=ui.dialog().children.find(node=>node.className==='copy-dialog-actions').children[0];
+ await retry.onclick();assert.deepEqual(notices,['已复制']);
 });

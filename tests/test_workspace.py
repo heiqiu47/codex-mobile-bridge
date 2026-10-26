@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from bridge.features.workspace.workspace import Workspace, operate, MAX_TRANSFER, MAX_PREVIEW
+from bridge.features.workspace.workspace import Workspace, operate, MAX_TRANSFER, MAX_PREVIEW, display_absolute_path
 from bridge.app.service import Bridge
 from bridge.clients.codex.remote import RemoteStore
 import test_bridge as support
@@ -25,6 +25,21 @@ class WorkspaceTests(unittest.TestCase):
         (self.root / '.hidden').write_text('hidden')
 
     def tearDown(self): self.temp.cleanup()
+
+    def test_display_absolute_path_only_normalizes_windows_drive_and_unc_prefixes(self):
+        pairs = [
+            (r'\\?\D:\sample_project', r'D:\sample_project'),
+            (r'\\?\D:\sample_project\file.txt', r'D:\sample_project\file.txt'),
+            (r'\\?\UNC\server\share\file.txt', r'\\server\share\file.txt'),
+            (r'\\?\unc\server\share', r'\\server\share'),
+            (r'\\server\share\file.txt', r'\\server\share\file.txt'),
+            (r'\\?\GLOBALROOT\Device\HarddiskVolume1', r'\\?\GLOBALROOT\Device\HarddiskVolume1'),
+            (r'\\?\Volume{test}\file', r'\\?\Volume{test}\file'),
+            ('/workspace/sample', '/workspace/sample'),
+        ]
+        for original, expected in pairs:
+            with self.subTest(path=original):
+                self.assertEqual(display_absolute_path(original), expected)
 
     def test_info_absolute_path_uses_authorized_target_root(self):
         for path in ('hello.txt', 'folder'):

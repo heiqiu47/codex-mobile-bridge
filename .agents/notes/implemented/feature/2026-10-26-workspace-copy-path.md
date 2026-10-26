@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-现有 info 操作在目标执行 Workspace 边界检查后返回 absolutePath；文件和目录沿用同一无链接访问规则。菜单点击复用 BridgeClipboard 的异步用户手势、HTTP 选择复制和手动复制退化。下载链接及其行为保持原有实现。
+现有 info 操作在目标执行 Workspace 边界检查后返回 absolutePath；文件和目录沿用同一无链接访问规则。菜单点击复用 BridgeClipboard 的异步用户手势、HTTP 选择复制和手动复制退化。下载链接及其行为保持原有实现。返回的绝对路径仅在展示层去除标准 Windows 扩展前缀：`\\?\D:\...` 显示为 `D:\...`，`\\?\UNC\server\share` 显示为普通 UNC；普通 UNC 和设备路径保持原样。底层验证、打开和链接检查继续使用原生规范路径，不把展示字符串回传给文件访问。已发布移动 App 通过已知复制按钮的旧 `message-copy` 标记复用现有可信点击桥，实际确认后显示成功提示。
 
 ## Existing-note audit
 

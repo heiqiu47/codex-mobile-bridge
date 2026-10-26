@@ -16,7 +16,7 @@ const read=file=>fs.readFileSync(require('node:path').join(__dirname,'../web',fi
 test('Codex title details and copy handlers use current identity and disable unsupported WSL links',()=>{
  const nodes=new Map(),copies=[],notices=[];
  const get=key=>{if(!nodes.has(key))nodes.set(key,{textContent:key,showModal(){this.open=true;}});return nodes.get(key);};
- const ui=vm.createContext({window:{BridgeSessionLinks:context.window.BridgeSessionLinks,BridgeClipboard:{copy:(getter,button)=>copies.push(getter())}},get,$:get,t:value=>value,toast:value=>notices.push(value)});
+ const ui=vm.createContext({window:{BridgeSessionLinks:context.window.BridgeSessionLinks,BridgeClipboard:{copyWithFeedback:(getter,button)=>copies.push(getter())}},get,$:get,t:value=>value,toast:value=>notices.push(value)});
  vm.runInContext(`let currentId=${JSON.stringify(id)},currentHost='local';`,ui);
  vm.runInContext(read('features/settings/presentation.js').split('\n').find(line=>line.includes("get('chat-details-button').onclick=")),ui);
  const app=read('shell/app.js');vm.runInContext(app.slice(app.indexOf("$('copy-session-link').onclick=")),ui);
@@ -27,11 +27,18 @@ test('Codex title details and copy handlers use current identity and disable uns
 });
 test('Harness title details copy the original native Session ID; unsupported providers omit action',()=>{
  const copies=[],dialogs=[];
- const ui=vm.createContext({window:{BridgeSessionLinks:context.window.BridgeSessionLinks,BridgeClipboard:{copy:getter=>copies.push(getter())}}});
+ const ui=vm.createContext({window:{BridgeSessionLinks:context.window.BridgeSessionLinks,BridgeClipboard:{copyWithFeedback:getter=>copies.push(getter())}}});
  const source=read('features/clients/desktop-sessions.js'),method=source.slice(source.indexOf('  chatDetails(){'),source.indexOf('  async notifications(){'));
  const invoke=vm.runInContext('({'+method+'}).chatDetails',ui);
- const view={provider:'deepseek',sid:'session-original',state:{title:'Example'},dialog(){const dialog={children:[],append(...nodes){this.children.push(...nodes);},showModal(){this.open=true;}};dialogs.push(dialog);return dialog;},button(textContent,onclick){return {textContent,onclick};},node(){return {};}};
+ const view={provider:'deepseek',sid:'session-original',state:{title:'Example'},dialog(){const dialog={children:[],append(...nodes){this.children.push(...nodes);},showModal(){this.open=true;}};dialogs.push(dialog);return dialog;},button(textContent,onclick){return {textContent,onclick,classList:{add(){}}};},node(){return {};}};
  invoke.call(view);assert.equal(dialogs[0].open,true);const copy=dialogs[0].children.find(node=>node.textContent==='复制 Session ID');assert.ok(copy);copy.onclick();assert.deepEqual(copies,['session-original']);
  view.sid='session-next';invoke.call(view);dialogs[1].children.find(node=>node.textContent==='复制 Session ID').onclick();assert.deepEqual(copies,['session-original','session-next']);
  view.provider='claude';invoke.call(view);assert.equal(dialogs[2].children.some(node=>node.textContent==='复制 Session ID'||node.textContent==='复制深度链接'),false);
+});
+
+test('Codex title copy sits next to execution host outside the message/rename group',()=>{
+ const html=read('index.html'),dialog=html.slice(html.indexOf('<dialog id="chat-details-dialog"'),html.indexOf('</dialog>',html.indexOf('<dialog id="chat-details-dialog"')));
+ assert.match(dialog,/<div class="chat-detail-execution"><span id="execution-host"><\/span><button id="copy-session-link" class="plain message-copy"/);
+ assert.equal((dialog.match(/id="copy-session-link"/g)||[]).length,1);
+ assert.ok(dialog.indexOf('id="rename-chat"')<dialog.indexOf('class="chat-detail-meta"'));
 });

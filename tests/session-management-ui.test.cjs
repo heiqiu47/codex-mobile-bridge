@@ -4,10 +4,10 @@ const source=fs.readFileSync(path.join(__dirname,'../web/shell/app.js'),'utf8');
 const code=source.slice(source.indexOf('function renderList(){'),source.indexOf('async function loadList('));
 function fixture(){
  const nodes=new Map(),timers=new Map(),requests=[],dialogs=[],copies=[];let timer=0;
- const node=(tag='',cls='',textContent='')=>({tag,cls,textContent,dataset:{},children:[],events:{},scrollTop:0,isConnected:true,append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;},addEventListener(name,run){this.events[name]=run;},setAttribute(){},showModal(){this.open=true;},close(){this.open=false;this.events.close?.();},remove(){this.isConnected=false;}});
+ const node=(tag='',cls='',textContent='')=>({tag,cls,textContent,dataset:{},children:[],events:{},classList:{add(){}},scrollTop:0,isConnected:true,append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;},addEventListener(name,run){this.events[name]=run;},setAttribute(){},showModal(){this.open=true;},close(){this.open=false;this.events.close?.();},remove(){this.isConnected=false;}});
  const $=id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);};$('list-mode').value='recent';
  const context=vm.createContext({$,el:node,window:{BridgeSessionLinks:{text:identity=>'codex://threads/'+identity.id}},document:{body:{append:box=>dialogs.push(box)}},
-   BridgeClipboard:{copy:async(get,item)=>{if(item.disabled)return;copies.push(get());}},BridgeI18n:{locale:()=> 'en-US'},t:s=>s,localStorage:{getItem(){return null;},setItem(){}},
+   BridgeClipboard:{copyWithFeedback:async(get,item)=>{if(item.disabled)return;copies.push(get());}},BridgeI18n:{locale:()=> 'en-US'},t:s=>s,localStorage:{getItem(){return null;},setItem(){}},
    listRows:[],currentId:null,currentHost:'local',listHasMore:false,listRenderStamp:'',listComplete:true,listReadFinished:true,availableSources:[],
    renderActivity(){},sessionAccess:v=>v||{},sourceLabel:()=> 'APP',dateText:()=>'',toast:assert.fail,openChat:async()=>{},
    setTimeout:fn=>{timers.set(++timer,fn);return timer;},clearTimeout:id=>timers.delete(id),uuid:()=> 'request-id',
