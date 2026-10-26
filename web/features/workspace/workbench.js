@@ -473,11 +473,12 @@ class Workbench {
     const copy=this.button('复制',()=>window.BridgeClipboard.copy(()=>result.text,copy),'复制代码');
     reading.className=source.className='wb-preview-mode';copy.className='wb-source-copy';modes.append(reading,source);
     const positions={reading:{top:0,left:0},source:{top:0,left:0}};
-    let mode=null,scope=null;
+    let mode=null,scope=null,sourceView=null,sourcePosition={top:0,left:0};
     const dispose=()=>{window.BridgeMermaidCards?.clearScope(scope);scope=null;};
     const show=(next,remember=false)=>{
       if(mode===next)return;
       if(mode)positions[mode]={top:content.scrollTop,left:content.scrollLeft};
+      if(mode==='source'){const body=sourceView.querySelector('.wb-source-body');sourcePosition={top:body.scrollTop,left:body.scrollLeft};}
       dispose();mode=next;
       if(remember)try{localStorage.setItem('bridge-file-markdown-mode',mode);}catch{}
       reading.setAttribute('aria-pressed',String(mode==='reading'));source.setAttribute('aria-pressed',String(mode==='source'));
@@ -486,7 +487,9 @@ class Workbench {
         content.replaceChildren();renderMarkdown(content,result.text);
       }else{
         delete content.__mermaidScope;delete content.__mermaidIdentity;
-        content.replaceChildren(BridgeSourceView.create({name:result.name,text:result.text,location:tab.sourceLocation}));
+        sourceView ||= BridgeSourceView.create({name:result.name,text:result.text,location:tab.sourceLocation});
+        content.replaceChildren(sourceView);
+        const body=sourceView.querySelector('.wb-source-body');body.scrollTop=sourcePosition.top;body.scrollLeft=sourcePosition.left;
       }
       content.scrollTop=positions[mode].top;content.scrollLeft=positions[mode].left;
       this.scrollPositions.set(content,content.scrollTop);
