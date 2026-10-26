@@ -1214,7 +1214,11 @@ class DesktopSessions:
         needs_update = bool(installed.get('updateRequired') or previous.get('requiredBridgeRevision') and
                             status.get('bridgeRevision') != BRIDGE_REVISION or status.get('updateRequired'))
         needs_reload = needs_update or previous.get('setupStatus') == 'restart-required' and not status.get('connected')
-        if state['running'] and (restart or needs_reload):
+        if state['running'] and needs_reload and not restart:
+            self._deepseek_connection('idle', UPDATE_REASON, setupStatus='restart-required',
+                                      reason=UPDATE_REASON, requiredBridgeRevision=BRIDGE_REVISION)
+            return
+        if state['running'] and restart:
             self._stop_client('deepseek', row, state)
         if needs_update or getattr(adapter, 'reused', False) and (restart or not state['running']):
             adapter.update_existing()

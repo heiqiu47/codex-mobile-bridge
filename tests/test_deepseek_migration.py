@@ -526,6 +526,24 @@ class DeepSeekMigrationTests(unittest.TestCase):
             launch.assert_not_called()
         self.assertEqual((self.old.directory/'mobile-host.mjs').read_bytes(), before)
 
+    def test_reconnect_keeps_running_legacy_host_and_source_until_explicit_restart(self):
+        self.legacy()
+        manager = self.migration_manager()
+        before = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+                  for p in (*self.old.directory.iterdir(), self.profile)}
+        with patch.object(DeepSeek, 'call', return_value={'connected': True, 'configured': True,
+                                                        'updateRequired': True, 'bridgeRevision': 6}), \
+                patch.object(manager, '_stop_client') as stop, \
+                patch('bridge.clients.lifecycle.launch_deepseek') as launch:
+            manager.scan()
+            manager.connect_deepseek()
+            stop.assert_not_called()
+            launch.assert_not_called()
+            self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before})
+            row = next(row for row in manager.clients(refresh=True)['clients'] if row['id'] == 'deepseek')
+            self.assertEqual(row['setupStatus'], 'restart-required')
+            self.assertFalse(row['configured'])
+
     def test_confirmed_restart_updates_source_and_waits_for_new_loaded_revision(self):
         self.legacy()
         manager = self.migration_manager()
