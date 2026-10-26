@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from bridge.clients.claude import file_archive as archive
 from bridge.clients.claude.cli_session import ClaudeCli, ResumePreflightBlocked
+from bridge.clients.errors import BridgeUnavailable
 
 
 class FileArchiveTests(unittest.TestCase):
@@ -175,6 +176,15 @@ class FileArchiveTests(unittest.TestCase):
         self.assertFalse(self.stored().exists())
 
 
+    def test_local_binary_update_before_mutation_refused(self):
+        profile={'directory':self.directory,'origin':'synthetic','binary':'/synthetic/claude'}
+        cli=ClaudeCli(Path(self.temp.name)/'uploads',profile_resolver=lambda:profile)
+        sid=cli.listing()['sessions'][0]['id']
+        with patch.object(archive,'supported',side_effect=[True,False]),patch.object(archive,'assert_no_cli'),patch('bridge.clients.claude.cli_session.assert_session_closed'):
+            with self.assertRaisesRegex(BridgeUnavailable,'原生程序'):cli.call('archive',sid,{'archived':True})
+        self.assertEqual(self.path.read_bytes(),self.raw)
+        self.assertFalse(self.stored().exists())
+
     def test_local_cli_archive_routes_identity_and_refuses_resume(self):
         profile={'directory':self.directory,'origin':'synthetic','binary':'/synthetic/claude'}
         cli=ClaudeCli(Path(self.temp.name)/'uploads',profile_resolver=lambda:profile)
@@ -202,6 +212,15 @@ class ProcessCensusTests(unittest.TestCase):
     def test_native_cli_refused(self):
         with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000),self.census('/installed/claude'):
             with self.assertRaises(ValueError):archive.assert_no_cli('/selected/claude')
+
+    def test_other_native_version_path_refused(self):
+        for executable in ('/Users/synthetic/.local/share/claude/versions/2.1.307', '/opt/homebrew/Caskroom/claude-code/2.1.291/claude'):
+            with self.subTest(executable=executable),patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000),self.census(executable):
+                with self.assertRaises(ValueError):archive.assert_no_cli('/selected/claude')
+
+    def test_unrelated_version_directory_allowed(self):
+        with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000),self.census('/Users/synthetic/.local/share/other-tool/versions/2.1.307'):
+            archive.assert_no_cli('/selected/claude')
 
     def test_other_user_native_cli_not_owned(self):
         with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000),self.census('/installed/claude',uid=1001):
@@ -232,6 +251,13 @@ class RuntimeProofTests(unittest.TestCase):
                 run.assert_called_once()
                 binary.write_bytes(b'changed unverified distribution')
                 run.reset_mock()
+                self.assertFalse(archive.supported(str(binary),{}))
+                run.assert_not_called()
+
+    def test_binary_update_during_hash_disables_capability(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            binary=Path(temporary)/'synthetic-native';binary.write_bytes(b'synthetic program')
+            with patch.object(archive.sys,'platform','darwin'),patch.object(archive,'VERIFIED_PICKER_VERSIONS',{('darwin','fixture-version'):'synthetic'}),patch.object(archive,'_binary_hash',side_effect=ValueError('program changed')),patch.object(archive.subprocess,'run') as run:
                 self.assertFalse(archive.supported(str(binary),{}))
                 run.assert_not_called()
 

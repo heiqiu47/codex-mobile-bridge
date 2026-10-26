@@ -29,7 +29,7 @@ def supported(binary, environment):
                                 text=True, timeout=5)
         expected = VERIFIED_PICKER_VERSIONS.get((sys.platform, result.stdout.split()[0]))
         return result.returncode == 0 and digest == expected
-    except (OSError, subprocess.SubprocessError, IndexError):
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
         return False
 
 
@@ -62,6 +62,7 @@ def assert_no_cli(binary):
         name = Path(executable).name
         if (name in ('claude', 'claude.exe', 'claude-code')
                 or '@anthropic-ai/claude-code/' in executable
+                or re.search(r'/(?:\.local/share/claude/versions/[^/]+|Caskroom/claude-code/[^/]+(?:/[^/]+)?)$', executable)
                 or str(Path(executable).resolve()) == str(Path(binary).resolve())):
             raise ValueError('仍有 Claude CLI 进程运行，请先在原终端结束')
         if name not in ('node', 'nodejs', 'bun'):continue

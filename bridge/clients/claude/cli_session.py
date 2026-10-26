@@ -778,6 +778,8 @@ class ClaudeCli:
                     raise BridgeUnavailable('原 Claude Code 配置已变化')
                 assert_session_closed(profile['directory'])
                 file_archive.assert_no_cli(profile['binary'])
+                if not file_archive.supported(profile['binary'], env):
+                    raise BridgeUnavailable('Claude 原生程序在归档前变化或无法核验')
                 value = file_archive.change(profile['directory'], row['path'], native, body.get('archived'))
                 self.index.pop(sid, None)
                 return value
