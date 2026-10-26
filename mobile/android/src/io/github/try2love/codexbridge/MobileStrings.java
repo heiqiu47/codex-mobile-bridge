@@ -3,6 +3,20 @@ import android.content.Context;
 final class MobileStrings {
  private static final java.util.Map<String,String> values=new java.util.HashMap<>();
  static {
+  values.put("后台通知","Background notifications");
+  values.put("后台通知运行中","Background notifications active");
+  values.put("正在接收任务提醒","Receiving task alerts");
+  values.put("正在重试","Retrying");
+  values.put("请重新登录","Please sign in again");
+  values.put("暂停后台通知","Pause background notifications");
+  values.put("开启后台通知","Enable background notifications");
+  values.put("关闭后台通知","Disable background notifications");
+  values.put("任务完成和审批提醒沿用电脑端的通知设置。","Completion and approval alerts follow the notification settings on each computer.");
+  values.put("开启后显示常驻通知，切换应用或锁屏后继续接收已登录电脑的提醒。可从常驻通知暂停。","Keeps an ongoing notification to receive alerts from signed-in computers while using other apps or locking the screen. Pause from that notification.");
+  values.put("长时间锁屏时，系统省电可能延后提醒；恢复网络后自动补收近期消息。","Battery saving may delay alerts during extended screen lock. Recent messages are received when the network returns.");
+  values.put("电池优化设置","Battery optimization settings");
+  values.put("请在系统设置中查看此应用的电池使用权限。","Check battery usage permissions for this app in system settings.");
+  values.put("后台通知启动失败，请重新打开 App 后再试。","Could not start background notifications. Reopen the app and retry.");
   values.put("未读通知","Unread notifications");
   values.put("刷新状态","Refresh status");
   values.put("最近通知","Recent notifications");

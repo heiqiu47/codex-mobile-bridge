@@ -53,3 +53,5 @@ npm run test:updater
 `mobile/tests/` 中 Java/Swift 用例由相应 `scripts/test-mobile-*`、`scripts/test-ios-*` 驱动，可能编译测试程序；只在本次任务允许且环境具备时执行。Web 资源验证不代替 Android WebView 或 iOS WKWebView 的原生交互验证。
 
 `scripts/gateway-resources.json` 与源路径测试保证清单一致，但冻结导入、签名、安装和更新必须在获准打包后、目标系统上另外验证。不要根据 macOS 单机测试宣称 Windows/Linux 已实机通过。
+
+Android 后台通知定向验证：`python scripts/test-mobile-events.py` 通过真实 JSON 和回环 HTTP 覆盖增量读取、服务重建续收、事件去重、流重置、登录/删除竞态、多电脑隔离与暂停；首次运行下载并校验固定版本的 JVM JSON 测试依赖。`python scripts/test-mobile-notification-permissions.py --android-only` 验证 Android 通知权限、手动后台开关与启动失败回退。两者读取 `JAVA_HOME`。系统服务、锁屏通知、点击跳转与电池行为在 Android 设备或模拟器上另行验收。

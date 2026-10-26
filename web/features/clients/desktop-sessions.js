@@ -286,6 +286,7 @@ class DesktopSessionsView {
     this.freshDetail=!cached&&value.connected!==false;if(!cached)this.bindDraftScope(value);this.state={...value.session,modelCatalogIdentity:value.modelCatalogIdentity||value.session.modelCatalogIdentity||'',capabilities:value.capabilities||value.session.capabilities||{},maxRequestBytes:value.maxRequestBytes||value.session.maxRequestBytes||0};this.title.textContent=this.state.title;this.status.textContent=BridgeI18n.t(cached?'正在连接…':!this.canMutate()?(this.state.backend==='cli'?'历史记录':'尚未连接'):this.state.requests?.length?'等待回应':this.state.status==='active'?'运行中':'已连接');this.updateComposer();this.applyHistory(value,cached);
     const requests=this.canMutate()?this.state.requests||[]:[],stamp=JSON.stringify([requests,BridgeI18n.language()]);if(stamp!==this.requestStamp){this.renderRequests(requests);this.requestStamp=stamp;}
     this.detailNotice=value.notice||'';this.renderNotice();if(!cached)this.updateActivity([this.state]);this.renderIndicators();
+    if(!cached)this.onDetailReady?.();
   }
   renderNotice(){const resumable=this.canResume();this.notice.textContent=BridgeI18n.t(this.detailNotice||(resumable?'可先阅读聊天历史；继续时将恢复原 Claude Code 会话。':''));this.notice.hidden=!this.detailNotice&&!resumable;if(resumable)this.notice.append(this.resumeButton);}
   updateComposer(){

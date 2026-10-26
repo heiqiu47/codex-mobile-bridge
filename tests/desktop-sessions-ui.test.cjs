@@ -1,5 +1,13 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path'),{webcrypto}=require('node:crypto');
+test('loaded desktop chat content reports readiness after rendering, including saved history',async()=>{
+ const ui=await opened();let ready=0;
+ ui.view.onDetailReady=()=>{assert.match(ui.view.messages.textContent,/Latest reply/);ready++;};
+ const detail={session:{id:'a',title:'A'},messages:[{id:'reply',role:'assistant',text:'Latest reply'}]};
+ ui.view.applyDetail(detail,true);assert.equal(ready,0);
+ ui.view.applyDetail(detail);assert.equal(ready,1);
+ ui.view.applyDetail({...detail,connected:false});assert.equal(ready,2);
+});
 function fixture({storage=new Map(),sessionStore=new Map()}={}){
  const listeners={};let document;
  class Node {

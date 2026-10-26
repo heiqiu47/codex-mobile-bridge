@@ -26,8 +26,8 @@ function timelineFilePath(path,cwd){
 // History and live changes share stable keys, but never share a request queue.
 class ChatTimeline {
   static clearCache(){recentTimelinePages.clear();}
-  constructor({url, request, renderMeta, renderText, status, onAction, onFile, canEdit = () => true, elements = {}, active = () => true, cacheKey = ''}) {
-    Object.assign(this,{url,request,renderMeta,renderText,status,onAction,onFile,active,cacheKey});
+  constructor({url, request, renderMeta, renderText, status, onAction, onFile, onReady, canEdit = () => true, elements = {}, active = () => true, cacheKey = ''}) {
+    Object.assign(this,{url,request,renderMeta,renderText,status,onAction,onFile,onReady,active,cacheKey});
     this.canEdit=()=>!this.cached&&canEdit();
     this.viewport=elements.viewport||document.getElementById('timeline');
     this.container=elements.container||document.getElementById('messages');
@@ -179,6 +179,7 @@ class ChatTimeline {
         before:this.epoch+'.'+rows[0].key,hasMore:this.hasMore||ordered.length>20,meta:{requests:[]},files:page.files||[]})));
       while(recentTimelinePages.size>8)recentTimelinePages.delete(recentTimelinePages.keys().next().value);
     }
+    if(!cached&&!history&&!this.abort.signal.aborted&&!page.meta.loadingHistory)this.onReady?.();
   }
   renderRow(row,open){
     const activity=row.role==='activity'||row.role==='fileChanges',toolImages=activity&&row.attachments?.some(item=>item.type==='toolImage');

@@ -52,6 +52,24 @@ class MobileEventTests(unittest.TestCase):
         self.assertNotIn(THREAD, json.dumps(value['summary']))
         self.assertEqual(MobileEvents(self.path).read(999)['summary'], value['summary'])
 
+    def test_inbox_body_uses_only_the_opted_in_chat_title(self):
+        manager = Notifications(None, self.path, lambda: ['https://gateway.example'])
+        manager.defaults({'requests': True, 'completion': True})
+        row = {'id': THREAD, 'host': 'local'}
+        title = '聊天标题' * 40
+        for completed in (False, True):
+            for include_title in (False, True):
+                with self.subTest(completed=completed, include_title=include_title):
+                    config = save_settings(self.path, {'mobileEnabled': True, 'includeTitle': include_title})
+                    target = manager._targets(config)['mobile']
+                    key = manager._delivery_key(row, f'{completed}:{include_title}', target=target)
+                    self.assertTrue(manager._send_keys(config, row, title, 'mobile', target, [key], completed))
+                    event = manager.mobile.read()['events'][-1]
+                    generic = ('有 1 次运行已完成，请打开聊天查看。' if completed
+                               else '有 1 项请求等待处理，请打开聊天查看。')
+                    self.assertEqual(event['body'], title[:120] if include_title else generic)
+                    self.assertEqual(event['title'], 'Codex 运行已完成' if completed else 'Codex 需要你的确认')
+
     def test_inbox_delivery_preserves_global_policy_and_hides_private_title(self):
         manager = Notifications(None, self.path, lambda: ['https://gateway.example'])
         config = save_settings(self.path, {'mobileEnabled': True})

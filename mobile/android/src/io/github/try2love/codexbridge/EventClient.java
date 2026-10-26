@@ -7,6 +7,13 @@ import java.nio.charset.StandardCharsets;
 
 final class EventClient {
  static final String USER_AGENT="BridgeMobile/0.1-Android";
+ static final class AuthenticationRequired extends IOException {
+  AuthenticationRequired(){super("登录已失效，请重新连接电脑");}
+ }
+ static final class HttpFailure extends IOException {
+  final int status;
+  HttpFailure(int status){super("Gateway returned HTTP "+status);this.status=status;}
+ }
  private static final java.util.Map<String,String> names=new java.util.concurrent.ConcurrentHashMap<>();
  static void setName(String origin,String name){if(name!=null&&name.matches("codex_mobile_session_[a-f0-9]{24}|codex_mobile_session"))names.put(origin,name);}
  static String cookieName(String origin){return names.getOrDefault(origin,"codex_mobile_session");}
@@ -39,10 +46,10 @@ final class EventClient {
  }
  static JSONObject read(String origin,Long after,Read pending)throws Exception {
   if(!GatewayURL.origin(origin).equals(origin))throw new IOException("连接地址无效");
-  String cookie=CookieManager.getInstance().getCookie(origin+"/"),binding=sessionCookie(cookie,origin);if(binding.isEmpty())throw new IOException("请先登录电脑网关");
+  String cookie=CookieManager.getInstance().getCookie(origin+"/"),binding=sessionCookie(cookie,origin);if(binding.isEmpty())throw new AuthenticationRequired();
   HttpURLConnection c=(HttpURLConnection)new URL(origin+"/api/mobile/events"+(after==null?"":"?after="+Math.max(0,after))).openConnection();
   c.setInstanceFollowRedirects(false);c.setConnectTimeout(7000);c.setReadTimeout(10000);c.setRequestProperty("Cookie",cookie);c.setRequestProperty("Origin",GatewayURL.httpOrigin(origin));c.setRequestProperty("User-Agent",USER_AGENT);
-  try{if(pending!=null)pending.attach(c);int code=c.getResponseCode();if(code==401||code==403)throw new IOException("登录已失效，请重新连接电脑");if(code==404)throw new IOException("请使用配套的电脑端 Preview 网关");if(code!=200)throw new IOException("暂时无法读取提醒，请检查连接");
+  try{if(pending!=null)pending.attach(c);int code=c.getResponseCode();if(code==401)throw new AuthenticationRequired();if(code!=200)throw new HttpFailure(code);
    if(pending!=null)pending.check();
    renew(c,origin,cookie);
    ByteArrayOutputStream out=new ByteArrayOutputStream();try(InputStream in=c.getInputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1){if(pending!=null)pending.check();if(out.size()+n>512000)throw new IOException("通知数据过大");out.write(b,0,n);}}

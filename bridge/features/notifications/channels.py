@@ -882,7 +882,7 @@ class Notifications:
         heading = client + (' 运行已完成' if completed else ' 需要你的确认')
         body = f'有 {len(pending)} 次运行已完成，请打开聊天查看。' if completed else f'有 {len(pending)} 项请求等待处理，请打开聊天查看。'
         if config['includeTitle']:
-            body = title[:120] + '\n' + body
+            body = title[:120] if channel == 'mobile' else title[:120] + '\n' + body
         try:
             if channel == 'mobile':
                 self.mobile.append(pending, row, heading, body, completed)
