@@ -71,6 +71,8 @@ GOAL_STATUS_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/goal/status$")
 class GatewayServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    # HTTP/2 proxies fan a cold page out into many simultaneous HTTP/1.1 connects.
+    request_queue_size = 128
 
     def __init__(self, address, bridge, config, web_dir, data_dir=None, shared=None):
         self.transfer_directory = data_dir if shared is None else shared.transfer_directory
@@ -313,6 +315,11 @@ class Handler(BaseHTTPRequestHandler):
         return value
 
     def do_GET(self):
+        # cloudflared may forward empty chunked GETs. Unread framing must not be
+        # parsed as the next request on a pooled proxy connection.
+        if ('Transfer-Encoding' in self.headers or
+                any(size.strip() != '0' for size in self.headers.get_all('Content-Length', []))):
+            self.close_connection = True
         self.handle_method(False)
 
     def do_POST(self):
