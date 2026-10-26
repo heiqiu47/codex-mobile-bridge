@@ -33,3 +33,5 @@ Node 回归覆盖并发读取合并、等待完成、失败与断开连接重试
 ## Consequences
 
 三个客户端共享手势及结果反馈，手动确认不增加写操作或重复轮询。代价是共享组件需要维护可重置的请求修订号，列表读取与轮询编排分开。浏览器验证不代替 Android/iOS 真机 WebView 的回弹体验验收。
+
+Follow-up: [Shared list pin token integration fix](../bug-fix/2026-10-26-desktop-list-pin-read-token.md) preserves these contracts while repairing successful list processing with pin preferences enabled.

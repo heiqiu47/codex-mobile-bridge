@@ -27,3 +27,5 @@ Status: implemented
 弱网下置顶立即生效，设备保留尚未同步的最终选择；代价是持久设备版本元数据与一个后台偏好队列。同步完成后的新列表可反映其他设备更晚的选择。
 
 本决定取代 [Bridge 会话管理](2026-10-26-bridge-session-management.md) 原先先等待网关写入再重绘的交互。旧笔记的原生归档、执行归属、任务与未知回执约束全部保留；安全的期望偏好同步不授权归档或消息未知写入重放。既有列表首屏、剪贴板与 WSL 身份笔记保留各自边界；检索未发现可合并的既有本地优先置顶提案。
+
+Follow-up: [Shared list pin token integration fix](../bug-fix/2026-10-26-desktop-list-pin-read-token.md) preserves these contracts while repairing successful list processing with pin preferences enabled.

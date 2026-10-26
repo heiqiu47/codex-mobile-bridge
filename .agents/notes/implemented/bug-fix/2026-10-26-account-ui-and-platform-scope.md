@@ -31,3 +31,7 @@ Targeted tests verify draft discovery without mutations, stale/manual edits, nat
 An upstream catalog does not establish Responses compatibility. Missing quota remains explicitly unavailable rather than inferred. Lazy WSL loading must retain Windows behavior and report load failures without disturbing local accounts.
 
 Repository-wide note validators still report pre-existing optimization folders and old note format failures; none of the changed notes is reported. Frontend regression: 1200 passed, one skipped. Account/platform/HTTP regression: 206 passed before additional platform lifecycle checks.
+
+## User follow-up
+
+The approved follow-up removes the outer compact disclosure style so the phone API entry uses the adjacent reminder disclosure typography. Group containers have no border; each field keeps a visible input boundary, persistent label and translated placeholder. Existing App theme tokens remain unchanged. The complete AccountsPanel nesting, rather than an isolated editor wrapper, is checked at 320/390px in light/dark themes.

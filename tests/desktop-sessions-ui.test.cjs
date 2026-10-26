@@ -1033,3 +1033,13 @@ test('Claude and DSH recent pins paint pending local state while project order s
   ui.view.listMode.value='project';ui.view.renderList();assert.deepEqual(ui.view.rowsRoot.querySelectorAll('.session').map(n=>n.dataset.id),['new','old']);
  }
 });
+
+for(const provider of ['claude','deepseek'])for(const prefetched of [false,true])test(`${provider} successful list with local pin sync keeps its read token (prefetched=${prefetched})`,async()=>{
+ const ui=fixture();await ui.view.choose(provider);const token={scope:'gateway',generation:1,epoch:7},observed=[];
+ ui.view.pinPreferences={capture:()=>token,observe:(...args)=>observed.push(args),value:(_identity,value)=>!!value,pending:()=>false};
+ ui.setHandler(async()=>({connected:true,complete:true,sessions:[{id:'pinned-chat',title:'Pinned chat',bridgePinned:true}]}));
+ if(prefetched){ui.view.sharedRead(provider,'list');ui.view.pinPreferences.capture=()=>({...token,epoch:8});}
+ assert.equal(await ui.view.refreshList(),true);
+ assert.equal(observed.length,1);assert.equal(observed[0][2],token);assert.equal(observed[0][0].provider,provider);assert.equal(observed[0][0].id,'pinned-chat');assert.equal(observed[0][1],true);
+ assert.match(ui.view.rowsRoot.textContent,/Pinned chat/);assert.equal(ui.view.listSync.automaticFailures,0);
+});

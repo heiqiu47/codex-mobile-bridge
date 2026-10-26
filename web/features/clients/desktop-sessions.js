@@ -75,7 +75,7 @@ class DesktopSessionsView {
   sharedRead(provider,action,sid=null){
     const epoch=this.readEpoch,version=this.providerReadEpochs.get(provider)||0,key=JSON.stringify([provider,action,sid,epoch,version]);
     if(this.readTasks.has(key))return this.readTasks.get(key);
-    const task={current:()=>epoch===this.readEpoch&&version===(this.providerReadEpochs.get(provider)||0)};
+    const task={current:()=>epoch===this.readEpoch&&version===(this.providerReadEpochs.get(provider)||0),pinRead:action==='list'?this.pinPreferences?.capture():null};
     task.promise=(async()=>{const value=await this.request(this.path(action,sid,provider));if(task.current()){
       if(action==='list'){
         const complete=value.connected!==false&&value.complete!==false&&!value.unavailableHosts?.length;
@@ -226,7 +226,7 @@ class DesktopSessionsView {
   }
   clear(){this.quotes?.reset();this.resetMermaidScope();this.modelDialog?.close();this.listSync.reset();this.readEpoch++;this.readTasks.clear();this.providerReadEpochs.clear();this.listPrefetchAt.clear();this.detailCacheSizes.clear();this.detailCacheBytes=0;this.clientStates=[];this.workbench.reset();clearTimeout(this.timer);this.generation++;this.detailRevision++;this.provider='codex';this.previewOnly=false;this.select.value='codex';this.select.hidden=true;this.container.hidden=true;this.root.classList.remove('desktop-mode');this.sid=null;this.state=null;this.showSelection(false);this.drafts.clear();this.provisionalDrafts.clear();for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(key?.startsWith('desktop-draft:'))sessionStorage.removeItem(key);}this.accountDrafts.clear();this.skillSelections.clear();this.providerViews.clear();this.listCacheIdentity='';this.listCacheHost='';this.draftGateway='';this.draftScope=null;this.detailCache.clear();this.historyMessages=[];this.historyPage=null;this.historyRetry=false;this.historyBusy=false;this.activity.clear();this.freshDetail=false;this.rows=[];this.listStamp='';this.rowsRoot.replaceChildren();this.lastMessages=[];this.requestStamp='';this.pending.clear();this.attachments.reset();this.messages.replaceChildren();this.requests.replaceChildren();this.messageNodes.clear();}
   async refresh(){
-    clearTimeout(this.timer);const generation=this.generation,provider=this.provider,pinRead=this.pinPreferences?.capture();if(this.previewOnly||provider==='codex'||document.hidden||this.root.hidden)return;
+    clearTimeout(this.timer);const generation=this.generation,provider=this.provider;if(this.previewOnly||provider==='codex'||document.hidden||this.root.hidden)return;
     if(this.renderConnectionStatus()){this.updateActivity(this.rows,false);this.renderIndicators();this.freshDetail=false;this.updateComposer();return;}
     if(this.loading?.generation===generation)return this.loading.promise;const loading={generation};this.loading=loading;
     if(this.sid)this.detail(generation).catch(error=>{if(generation===this.generation){this.error.textContent=BridgeI18n.t(error.message);this.status.textContent=BridgeI18n.t('连接失败');}});
@@ -238,7 +238,7 @@ class DesktopSessionsView {
     const task=this.sharedRead(provider,'list');if(this.listRead?.task===task&&this.listRead.generation===generation)return this.listRead.promise;
     const reading={task,generation};this.listRead=reading;
     reading.promise=(async()=>{
-      try{const value=await task.promise;if(!task.current()||generation!==this.generation)return false;this.rows=value.sessions||[];for(const row of this.rows)this.pinPreferences?.observe({provider,host:row.host||'local',id:row.id},row.bridgePinned,pinRead);this.updateActivity(this.rows,value.connected!==false);this.listStatus.textContent=value.connected===false?BridgeI18n.t('尚未连接'):this.rows.length?'':BridgeI18n.t('电脑上还没有聊天');this.renderConnectionStatus();this.renderList();this.rememberView();this.onListReady?.(provider,value);if(value.connected===false)throw Error(BridgeI18n.t('尚未连接'));this.listSync.acknowledgeSuccess();return true;}
+      try{const value=await task.promise;if(!task.current()||generation!==this.generation)return false;this.rows=value.sessions||[];for(const row of this.rows)this.pinPreferences?.observe({provider,host:row.host||'local',id:row.id},row.bridgePinned,task.pinRead);this.updateActivity(this.rows,value.connected!==false);this.listStatus.textContent=value.connected===false?BridgeI18n.t('尚未连接'):this.rows.length?'':BridgeI18n.t('电脑上还没有聊天');this.renderConnectionStatus();this.renderList();this.rememberView();this.onListReady?.(provider,value);if(value.connected===false)throw Error(BridgeI18n.t('尚未连接'));this.listSync.acknowledgeSuccess();return true;}
       catch(error){if(!task.current()||generation!==this.generation)return false;this.updateActivity(this.rows,false);this.renderIndicators();if(!this.renderConnectionStatus()){this.listStatus.textContent=this.rows.length?'':BridgeI18n.t(error.message);if(!this.listSync.busy)this.listSync.reportFailure(error);}if(this.sid&&!this.state)this.error.textContent=BridgeI18n.t(error.message);throw error;}
       finally{if(this.listRead===reading)this.listRead=null;}
     })();return reading.promise;

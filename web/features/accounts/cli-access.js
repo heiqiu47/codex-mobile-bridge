@@ -34,6 +34,8 @@ class CliAccessPanel {
     const actions=this.node('div',null,'cli-access-form-actions');actions.append(this.cancel,this.save);
     if(this.formOnly&&this.provider==='codex'){
       this.root.classList.add('codex-api-editor');
+      this.name.input.placeholder=this.t('例如：我的 API');
+      this.key.input.placeholder=this.t('请输入 API Key');
       const connection=this.node('div',null,'codex-api-connection'),models=this.node('div',null,'codex-api-models');
       this.model.label.firstElementChild.remove();
       this.model.input.placeholder=this.t('获取后自动填入，或手动输入');
@@ -147,6 +149,7 @@ class CliAccessPanel {
   }
   render(){
     const provider=this.provider,data=this.value?.[provider];
+    if(this.modelSelect){this.name.input.placeholder=this.t('例如：我的 API');this.key.input.placeholder=this.t(this.editId?'留空以保留现有 Key':'请输入 API Key');this.model.input.placeholder=this.t('获取后自动填入，或手动输入');}
     this.schemeRow.hidden=provider!=='claude'||this.editKind==='rename';for(const field of [this.baseUrl,this.model,this.key])field.label.hidden=this.editKind==='rename';this.save.textContent=this.t(this.editKind==='rename'?'保存名称':'保存 API 接入');this.rows.replaceChildren();
     if(!data){this.status.textContent='';return;}
     this.status.textContent=provider==='codex'?(this.formOnly?'':this.t('Codex CLI 与 Desktop 共用本机接入配置。')):this.t('Claude Code CLI 使用所选配置目录。');
