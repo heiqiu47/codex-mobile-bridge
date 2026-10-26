@@ -169,4 +169,4 @@
 .wb-preview-content .markdown-body{font-size:var(--wb-file-font-size,14px)}
 .wb-preview-content .wb-source,.wb-preview-content>pre,.wb-preview-content .code-block pre{font-size:var(--wb-file-font-size,14px)}
 @media(max-width:520px){.wb-preview-head{flex-wrap:wrap}.wb-preview-actions{margin-left:auto;max-width:100%;flex-wrap:wrap}}
-.wb-preview-content .html-preview-frame iframe{zoom:var(--wb-file-preview-zoom,1);width:calc(100% / var(--wb-file-preview-zoom,1));height:calc(100% / var(--wb-file-preview-zoom,1));min-height:calc(300px / var(--wb-file-preview-zoom,1))}
+.wb-preview-content .html-preview-frame iframe{zoom:var(--wb-file-preview-zoom,1)}
