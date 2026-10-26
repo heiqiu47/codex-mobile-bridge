@@ -105,6 +105,25 @@ class FileArchiveTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.archive()
         self.assertTrue(self.path.exists())
 
+    def test_planted_manifest_temp_symlink_never_changes_target(self):
+        self.archive()
+        bundle=self.stored().parent
+        target=Path(self.temp.name)/'unrelated-user-file';target.write_bytes(b'unchanged')
+        planted=bundle/'manifest.tmp'
+        try:planted.symlink_to(target)
+        except OSError as exc:self.skipTest('Native symlink creation unavailable: '+str(exc))
+        archive.change(self.directory,self.stored(),self.native,False)
+        self.assertEqual(target.read_bytes(),b'unchanged')
+        self.assertTrue(planted.is_symlink())
+        self.assertEqual(self.path.read_bytes(),self.raw)
+        self.assertEqual(list(bundle.glob('.manifest-*.tmp')),[])
+
+    def test_manifest_failed_replace_cleans_private_temp(self):
+        bundle=Path(self.temp.name)/'synthetic-bundle';bundle.mkdir()
+        with patch.object(archive.os,'replace',side_effect=OSError('synthetic replace failure')):
+            with self.assertRaises(OSError):archive._write(bundle/'manifest.json',{'synthetic':True})
+        self.assertEqual(list(bundle.iterdir()),[])
+
     def test_tampered_backup_refused(self):
         self.archive()
         backup=self.stored().parent/'sidecars'/'0'/'tool-results'/'result.txt'

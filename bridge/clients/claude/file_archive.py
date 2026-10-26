@@ -9,6 +9,7 @@ import re
 import shlex
 from functools import lru_cache
 import uuid
+import tempfile
 from pathlib import Path
 
 # Populated only after native picker hide/restore acceptance for an exact version.
@@ -153,13 +154,17 @@ def _sync_directory(path):
 
 
 def _write(path, value):
-    temporary = path.with_suffix('.tmp')
-    with temporary.open('w', encoding='utf-8') as target:
-        json.dump(value, target, ensure_ascii=False)
-        target.flush()
-        os.fsync(target.fileno())
-    os.replace(temporary, path)
-    _sync_directory(path.parent)
+    descriptor, temporary = tempfile.mkstemp(prefix='.manifest-', suffix='.tmp', dir=path.parent)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as target:
+            json.dump(value, target, ensure_ascii=False)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, path)
+        _sync_directory(path.parent)
+    finally:
+        try:os.unlink(temporary)
+        except FileNotFoundError:pass
 
 
 def _manifest(directory, native):
