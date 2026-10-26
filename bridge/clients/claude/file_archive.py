@@ -91,10 +91,9 @@ def assert_no_cli(binary):
 def _domain():
     if sys.platform == 'linux':
         machine = Path('/etc/machine-id').read_text().strip()
-        namespace = os.readlink('/proc/self/ns/pid')
-        if not machine or not re.fullmatch(r'pid:\[\d+\]', namespace):
+        if not re.fullmatch(r'[0-9a-fA-F]{32}', machine):
             raise ValueError('Claude 归档主机身份不可验证')
-        return 'linux:'+machine+':'+namespace
+        return 'linux:'+machine
     if sys.platform == 'darwin':
         result = subprocess.run(['/usr/sbin/ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
                                 capture_output=True, text=True, timeout=5)

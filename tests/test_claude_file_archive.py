@@ -239,3 +239,42 @@ class RuntimeProofTests(unittest.TestCase):
         with patch.object(archive.sys,'platform','linux'),patch.object(archive,'VERIFIED_PICKER_VERSIONS',{('darwin','2.1.292'):'synthetic'}),patch.object(archive.subprocess,'run') as run:
             self.assertFalse(archive.supported('/not-launched',{}))
             run.assert_not_called()
+
+
+class DurableLinuxIdentityTests(unittest.TestCase):
+    def run_roundtrip(self, other_machine=False):
+        import hashlib
+        native=str(uuid.uuid4())
+        with tempfile.TemporaryDirectory() as temporary:
+            directory=Path(temporary)/'config';project=directory/'projects'/'synthetic'
+            project.mkdir(parents=True);original=project/(native+'.jsonl');original.write_bytes(b'synthetic bytes\r\n')
+            before=hashlib.sha256(original.read_bytes()).hexdigest()
+            machine=['a'*32];namespace=['pid:[111]']
+            real_read=Path.read_text;real_link=os.readlink
+            def read(path,*args,**kwargs):
+                if str(path)=='/etc/machine-id':return machine[0]
+                return real_read(path,*args,**kwargs)
+            def link(path,*args,**kwargs):
+                if str(path)=='/proc/self/ns/pid':return namespace[0]
+                return real_link(path,*args,**kwargs)
+            archive._domain.cache_clear()
+            try:
+                with patch.object(archive.sys,'platform','linux'),patch.object(Path,'read_text',read),patch.object(archive.os,'readlink',link):
+                    archive.change(directory,original,native,True)
+                    stored=directory/'bridge-archives'/native/(native+'.jsonl')
+                    namespace[0]='pid:[222]'  # Normal distro restart, not a new host.
+                    if other_machine:machine[0]='b'*32
+                    archive._domain.cache_clear()  # New worker after restart.
+                    if other_machine:
+                        with self.assertRaises(ValueError):archive.change(directory,stored,native,False)
+                        self.assertFalse(original.exists())
+                    else:
+                        archive.change(directory,stored,native,False)
+                        self.assertEqual(hashlib.sha256(original.read_bytes()).hexdigest(),before)
+            finally:archive._domain.cache_clear()
+
+    def test_namespace_restart_does_not_invalidate_durable_archive(self):
+        self.run_roundtrip()
+
+    def test_other_machine_cannot_restore_archive(self):
+        self.run_roundtrip(other_machine=True)
