@@ -335,6 +335,16 @@ def remote_model_catalog(alias, home, cwd, provider, config, account=None, nativ
     return RemoteCliModels(alias).read_models(home, cwd, provider, config, account, native_models)
 
 
+def _windows_path(path):
+    return bool(re.match(r'^[a-z]:[\\/]|^\\\\|^//[?.]/', path, re.I))
+
+
+def project_path_name(path):
+    """Use the path's own separators, including for Windows SSH targets."""
+    value = path.replace('\\', '/') if _windows_path(path) else path
+    return value.rstrip('/').rsplit('/', 1)[-1]
+
+
 class AppHosts:
     def __init__(self, home):
         self.home = Path(home)
@@ -373,7 +383,7 @@ class AppHosts:
             if host in hosts and project.get('remotePath'):
                 rows.append({'key': host + '|' + project['id'], 'host': host,
                              'hostLabel': hosts[host].get('displayName') or hosts[host]['alias'],
-                             'name': project.get('label') or project['remotePath'].rsplit('/', 1)[-1],
+                             'name': project.get('label') or project_path_name(project['remotePath']),
                              'cwd': project['remotePath']})
         return rows
 
@@ -383,13 +393,11 @@ class AppHosts:
             projects = [{'id': p['id'], 'name': p['name'], 'roots': p.get('rootPaths', [])}
                         for p in state.get('local-projects', {}).values()]
         else:
-            projects = [{'id': p['id'], 'name': p.get('label') or p['remotePath'].rsplit('/', 1)[-1], 'roots': [p['remotePath']]}
+            projects = [{'id': p['id'], 'name': p.get('label') or project_path_name(p['remotePath']), 'roots': [p['remotePath']]}
                         for p in state.get('remote-projects', []) if p['hostId'] == host]
         assignments = state.get('thread-project-assignments', {})
-        def windows_path(path):
-            return bool(re.match(r'^[a-z]:[\\/]|^\\\\|^//[?.]/', path, re.I))
         def normalized(path, windows=False):
-            if windows or windows_path(path):
+            if windows or _windows_path(path):
                 value = path.replace('\\', '/')
                 if value[:8].casefold() in ('//?/unc/', '//./unc/'):
                     value = '//' + value[8:]
@@ -411,14 +419,14 @@ class AppHosts:
                 for candidate in projects:
                     for root in candidate['roots']:
                         # Infer the target path syntax, never the gateway's OS.
-                        windows = (windows_host and (root.startswith('//') or raw_cwd.startswith('//'))) or windows_path(root) or windows_path(raw_cwd)
+                        windows = (windows_host and (root.startswith('//') or raw_cwd.startswith('//'))) or _windows_path(root) or _windows_path(raw_cwd)
                         prefix, target = normalized(root, windows), normalized(raw_cwd, windows)
                         if target == prefix or target.startswith(prefix + '/'):
                             matches.append((len(prefix), candidate))
                 project = max(matches, key=lambda v: v[0])[1] if matches else None
             row.update(host=host, hostLabel=label,
                        projectKey=host + '|' + (project['id'] if project else cwd or 'unassigned'),
-                       projectName=project['name'] if project else (raw_cwd.replace('\\', '/') if host == 'local' and os.name == 'nt' else raw_cwd).rstrip('/').rsplit('/', 1)[-1] or '未归类',
+                       projectName=project['name'] if project else project_path_name(raw_cwd) or '未归类',
                        recency=row.get('recency_at_ms') or (row.get('recency_at') or 0) * 1000 or row.get('updated_at_ms') or (row.get('updated_at') or 0) * 1000)
         return rows
 
