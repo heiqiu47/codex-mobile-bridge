@@ -13,7 +13,7 @@ test('file font synchronizes mounted and detached controls without terminal sett
   assert.equal(a.value.textContent,'18px');a.increase.onclick();assert.equal(b.value.textContent,'19px');
   assert.equal(f.properties['--wb-file-font-size'],'19px');assert.equal(f.storage['bridge-file-font-size'],'19');assert.equal(f.storage['bridge-terminal-font-size'],'11');
   b.dispose();a.decrease.onclick();assert.equal(b.value.textContent,'19px');assert.equal(a.value.textContent,'18px');
-  const c=f.font.control(f.wb);assert.equal(c.value.textContent,'18px');
+  const c=f.font.control(f.wb);assert.equal(c.value.textContent,'18px');c.setZoom(true);assert.equal(c.value.textContent,'129%');assert.equal(f.properties['--wb-file-preview-zoom'],String(18/14));c.setZoom(false);
   f.listeners.storage({key:'bridge-file-font-size',newValue:'22'});assert.equal(c.value.textContent,'22px');
 });
 test('file font enforces bounds, reset and invalid persisted values',()=>{

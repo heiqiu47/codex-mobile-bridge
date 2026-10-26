@@ -2944,6 +2944,7 @@ const en={
   "输入命令或回复，换行键可换行": "Enter a command or reply. Return inserts a new line.",
   "终端输入": "Terminal input",
   "发送到终端": "Send to terminal",
+  "HTML 预览缩放": "HTML preview zoom",
   "所有文件字号": "Text size for all files",
   "减小所有文件字号": "Decrease text size for all files",
   "增大所有文件字号": "Increase text size for all files",

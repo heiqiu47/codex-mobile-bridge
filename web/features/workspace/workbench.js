@@ -4,10 +4,11 @@ const FileFont=(()=>{
   const key='bridge-file-font-size',controls=new Set();
   const allowed=value=>Number.isInteger(Number(value))&&Number(value)>=6&&Number(value)<=24;
   let size=14;try{const saved=localStorage.getItem(key);if(allowed(saved))size=Number(saved);}catch{}
-  function paint(control){control.value.textContent=size+'px';control.decrease.disabled=size<=6;control.increase.disabled=size>=24;}
+  function paint(control){control.value.textContent=control.zoom?Math.round(size/14*100)+'%':size+'px';control.decrease.disabled=size<=6;control.increase.disabled=size>=24;}
   function update(value){
     if(!allowed(value))return;
     size=Number(value);document.documentElement?.style?.setProperty('--wb-file-font-size',size+'px');
+    document.documentElement?.style?.setProperty('--wb-file-preview-zoom',String(size/14));
     for(const control of controls)paint(control);
   }
   globalThis.addEventListener?.('storage',event=>{if(event.key===key)update(event.newValue===null?14:event.newValue);});
@@ -22,7 +23,7 @@ const FileFont=(()=>{
       const increase=workbench.button('+',()=>FileFont.set(size+1),'增大所有文件字号');
       element.append(decrease,value,increase);
       const control={element,decrease,value,increase};controls.add(control);update(size);
-      return {...control,dispose:()=>controls.delete(control)};
+      return {...control,setZoom(zoom){control.zoom=zoom;const label=zoom?'HTML 预览缩放':'所有文件字号';element.dataset.i18nAriaLabel=label;element.setAttribute('aria-label',BridgeI18n.t(label));paint(control);},dispose:()=>controls.delete(control)};
     }
   };
 })();
@@ -547,7 +548,7 @@ class Workbench {
             preview.setAttribute('aria-pressed', String(mode === 'preview'));
             source.setAttribute('aria-pressed', String(mode === 'source'));
             copy.hidden = mode !== 'source';
-            tab.fileFont.element.hidden = mode !== 'source';
+            tab.fileFont.setZoom(mode === 'preview');
             if (mode === 'preview') { tab.html = BridgeHtmlPreview.create({text:result.text, onEscape:() => { if (this.previewFullscreen?.tab === tab) this.closePreviewFullscreen(); }}); content.replaceChildren(tab.html.element); }
             else content.replaceChildren(BridgeSourceView.create({name:result.name, text:result.text, location:tab.sourceLocation}));
           };
