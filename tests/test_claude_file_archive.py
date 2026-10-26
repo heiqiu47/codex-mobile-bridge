@@ -12,6 +12,7 @@ from bridge.clients.claude.cli_session import ClaudeCli, ResumePreflightBlocked
 from bridge.clients.errors import BridgeUnavailable
 
 
+@unittest.skipUnless(os.name == 'posix', 'Claude file archive requires verified POSIX ownership and fsync semantics')
 class FileArchiveTests(unittest.TestCase):
     def setUp(self):
         domain = patch.object(archive, '_domain', return_value='synthetic-domain')
@@ -229,28 +230,28 @@ class ProcessCensusTests(unittest.TestCase):
         return patch.object(archive.subprocess,'run',side_effect=values)
 
     def test_native_cli_refused(self):
-        with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000),self.census('/installed/claude'):
+        with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000,create=True),self.census('/installed/claude'):
             with self.assertRaises(ValueError):archive.assert_no_cli('/selected/claude')
 
     def test_other_native_version_path_refused(self):
         for executable in ('/Users/synthetic/.local/share/claude/versions/2.1.307', '/opt/homebrew/Caskroom/claude-code/2.1.291/claude'):
-            with self.subTest(executable=executable),patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000),self.census(executable):
+            with self.subTest(executable=executable),patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000,create=True),self.census(executable):
                 with self.assertRaises(ValueError):archive.assert_no_cli('/selected/claude')
 
     def test_unrelated_version_directory_allowed(self):
-        with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000),self.census('/Users/synthetic/.local/share/other-tool/versions/2.1.307'):
+        with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000,create=True),self.census('/Users/synthetic/.local/share/other-tool/versions/2.1.307'):
             archive.assert_no_cli('/selected/claude')
 
     def test_other_user_native_cli_not_owned(self):
-        with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000),self.census('/installed/claude',uid=1001):
+        with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000,create=True),self.census('/installed/claude',uid=1001):
             archive.assert_no_cli('/selected/claude')
 
     def test_unrelated_node_entry_script_allowed(self):
-        with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000),self.census('/usr/bin/node','node /fixture/dev-server.js synthetic-private-operand'):
+        with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000,create=True),self.census('/usr/bin/node','node /fixture/dev-server.js synthetic-private-operand'):
             archive.assert_no_cli('/selected/claude')
 
     def test_known_node_claude_entry_script_refused(self):
-        with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000),self.census('/usr/bin/node','node /fixture/@anthropic-ai/claude-code/cli.js --resume synthetic'):
+        with patch.object(archive.sys,'platform','darwin'),patch.object(archive.os,'getuid',return_value=1000,create=True),self.census('/usr/bin/node','node /fixture/@anthropic-ai/claude-code/cli.js --resume synthetic'):
             with self.assertRaises(ValueError):archive.assert_no_cli('/selected/claude')
 
     def test_inaccessible_census_refused(self):
@@ -259,6 +260,18 @@ class ProcessCensusTests(unittest.TestCase):
 
 
 class RuntimeProofTests(unittest.TestCase):
+    def test_windows_native_archive_remains_disabled(self):
+        with patch.object(archive.sys, 'platform', 'win32'), \
+             patch.object(archive.subprocess, 'run') as run:
+            self.assertFalse(archive.supported('/not-launched', {}))
+            run.assert_not_called()
+        archive._domain.cache_clear()
+        try:
+            with patch.object(archive.sys, 'platform', 'win32'), self.assertRaises(ValueError):
+                archive._domain()
+        finally:
+            archive._domain.cache_clear()
+
     def test_exact_native_digest_and_version_both_required(self):
         import hashlib
         with tempfile.TemporaryDirectory() as temporary:
@@ -286,6 +299,7 @@ class RuntimeProofTests(unittest.TestCase):
             run.assert_not_called()
 
 
+@unittest.skipUnless(os.name == 'posix', 'Durable Linux archive fixture uses a POSIX filesystem')
 class DurableLinuxIdentityTests(unittest.TestCase):
     def run_roundtrip(self, other_machine=False):
         import hashlib
@@ -331,12 +345,12 @@ class LinuxExecutableCensus(unittest.TestCase):
 
     def metadata(self, executable='/home/synthetic/.local/share/claude/versions/2.1.308', namespace='pid:[100]'):
         def link(path):
-            return executable if str(path).endswith('/exe') else namespace
+            return executable if Path(path).name == 'exe' else namespace
         return patch.object(archive.os, 'readlink', side_effect=link)
 
     def test_full_executable_path_replaces_truncated_comm(self):
         result=SimpleNamespace(returncode=0,stdout='1000 4321 2.1.308\n')
-        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000), \
+        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000,create=True), \
              patch.object(archive.os,'readlink',return_value='pid:[100]'), \
              patch.object(archive,'_linux_executable',return_value='/home/synthetic/.local/share/claude/versions/2.1.308') as read, \
              patch.object(archive.subprocess,'run',return_value=result):
@@ -345,7 +359,7 @@ class LinuxExecutableCensus(unittest.TestCase):
 
     def test_noncandidate_unreadable_process_does_not_expand_guard_scope(self):
         result=SimpleNamespace(returncode=0,stdout='1000 4321 session-helper\n')
-        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000), \
+        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000,create=True), \
              patch.object(archive.os,'readlink',return_value='pid:[100]'), \
              patch.object(archive,'_linux_executable',side_effect=PermissionError()) as read, \
              patch.object(archive.subprocess,'run',return_value=result) as commands:
@@ -354,7 +368,7 @@ class LinuxExecutableCensus(unittest.TestCase):
 
     def test_native_candidate_unreadable_is_refused_without_argument_reads(self):
         result=SimpleNamespace(returncode=0,stdout='1000 4321 2.1.308\n')
-        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000), \
+        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000,create=True), \
              patch.object(archive.os,'readlink',return_value='pid:[100]'), \
              patch.object(archive,'_linux_executable',side_effect=ValueError('unknown executable')), \
              patch.object(archive.subprocess,'run',return_value=result) as commands:
@@ -363,7 +377,7 @@ class LinuxExecutableCensus(unittest.TestCase):
 
     def test_other_native_version_candidate_is_refused(self):
         result=SimpleNamespace(returncode=0,stdout='1000 4321 2.1.307\n')
-        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000), \
+        with patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000,create=True), \
              patch.object(archive.os,'readlink',return_value='pid:[100]'), \
              patch.object(archive,'_linux_executable',return_value='/home/synthetic/.local/share/claude/versions/2.1.307'), \
              patch.object(archive.subprocess,'run',return_value=result) as commands:
@@ -374,7 +388,7 @@ class LinuxExecutableCensus(unittest.TestCase):
         binary='/selected/native-selected-binary-long'
         comm=Path(binary).name[:15];result=SimpleNamespace(returncode=0,stdout='1000 4321 '+comm+'\n')
         with patch.object(Path,'resolve',lambda path,**options:path), \
-             patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000), \
+             patch.object(archive.sys,'platform','linux'),patch.object(archive.os,'getuid',return_value=1000,create=True), \
              patch.object(archive.os,'readlink',return_value='pid:[100]'), \
              patch.object(archive,'_linux_executable',return_value=binary) as read, \
              patch.object(archive.subprocess,'run',return_value=result):
@@ -407,5 +421,5 @@ class LinuxExecutableCensus(unittest.TestCase):
             with self.subTest(error=type(error).__name__), \
                  patch.object(Path,'stat',return_value=SimpleNamespace(st_uid=1000)), \
                  patch.object(Path,'read_text',return_value=self.stat_text()), \
-                 patch.object(archive.os,'readlink',side_effect=lambda path: (_ for _ in ()).throw(error) if str(path).endswith('/exe') else 'pid:[100]'):
+                 patch.object(archive.os,'readlink',side_effect=lambda path: (_ for _ in ()).throw(error) if Path(path).name == 'exe' else 'pid:[100]'):
                 with self.assertRaises(ValueError):archive._linux_executable(4321,1000,'pid:[100]')

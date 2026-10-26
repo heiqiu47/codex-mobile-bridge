@@ -48,7 +48,10 @@ class RemoteWorkerContract(unittest.TestCase):
         self.binary = binary
 
     def run_worker(self, request):
-        process = subprocess.run([sys.executable, '-u', '-c', remote.worker_source()],
+        # Run the exact standalone payload without Windows' command-line size limit.
+        worker = self.root/'standalone-worker.py'
+        worker.write_text(remote.worker_source(), encoding='utf-8')
+        process = subprocess.run([sys.executable, '-u', str(worker)],
                                  input=json.dumps(request)+'\n', text=True, encoding='utf-8', capture_output=True,
                                  env={**self.env, 'PYTHONPATH': ''}, cwd=self.root, timeout=5)
         self.assertEqual(process.returncode, 0, process.stderr)
@@ -259,6 +262,7 @@ class RemoteWorkerContract(unittest.TestCase):
                 self.assertEqual(self.path.read_bytes(), before)
 
 
+    @unittest.skipUnless(os.name == 'posix', 'Remote archive storage runs on verified POSIX targets')
     def test_archive_roundtrip_keeps_native_identity_and_archived_history_discoverable(self):
         found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
         before = self.path.read_bytes()
@@ -335,6 +339,7 @@ class RemoteWorkerContract(unittest.TestCase):
             change.assert_not_called()
         self.assertEqual(self.path.read_bytes(), before)
 
+    @unittest.skipUnless(os.name == 'posix', 'Remote archive storage runs on verified POSIX targets')
     def test_explicit_remote_archive_state_verifies_archived_content(self):
         found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
         request = {'operation': 'archive', 'native': self.native, 'origin': found['origin'], 'archived': True}
