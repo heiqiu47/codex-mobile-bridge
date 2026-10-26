@@ -574,19 +574,30 @@ class ClaudeCli:
                     row = self._saved_cached(path, profile['origin'])
                     if row:
                         rows[row['id']] = row
-        for path in file_archive.archive_paths(profile['directory']):
+        archive_errors = []
+        for path in file_archive.archive_paths(profile['directory'], archive_errors):
             row = self._saved_cached(path, profile['origin'])
             if row:
                 rows[row['id']] = row
+        for error in archive_errors:
+            native = error['nativeId']
+            sid = model.gateway_id('cli:' + profile['origin'], native)
+            rows[sid] = {'id': sid, 'nativeId': native, 'backend': 'cli', 'mode': 'cli',
+                         'host': 'local', 'title': error['notice'], 'cwd': '', 'model': '',
+                         'permissionMode': 'default', 'permissionKnown': False, 'updatedAt': 0,
+                         'archived': True, 'archiveIncomplete': True, 'origin': profile['origin'],
+                         'path': profile['directory']/'bridge-archives'/native/(native+'.jsonl'),
+                         'stamp': None, 'events': [], 'contextEvents': []}
         env = managed_api_env() if profile.get('managedApi') else os.environ.copy()
         env['CLAUDE_CONFIG_DIR'] = str(profile['directory'])
         enabled = file_archive.supported(profile['binary'], env)
         for row in rows.values():
-            row['capabilities'] = {'archive': enabled, 'unarchive': enabled}
+            allowed = enabled and not row.get('archiveIncomplete')
+            row['capabilities'] = {'archive': allowed, 'unarchive': allowed}
         with self.lock:
             self.index = rows
             public = [self._public(row) for row in rows.values()]
-        return {'connected': True, 'sessions': public}
+        return {'connected': True, 'sessions': public, 'complete': not archive_errors}
 
     def _public(self, row):
         value = {key: item for key, item in row.items() if key not in ('events', 'contextEvents', 'stamp', 'path', 'origin', 'permissionKnown')}
@@ -609,6 +620,8 @@ class ClaudeCli:
         if live:
             value['model'] = owned.model or value['model']
             value['permissionMode'] = owned.permission or value['permissionMode']
+        if row.get('archiveIncomplete'):
+            value.update(status='unknown', runtimeKnown=False, connectionState='unavailable')
         return value
 
     def _get(self, sid):
@@ -750,8 +763,9 @@ class ClaudeCli:
                 env['CLAUDE_CONFIG_DIR'] = str(profile['directory'])
                 enabled = file_archive.supported(profile['binary'], env)
                 safe = False
-                if enabled and not live and file_archive.recorded_writer(profile['directory'], native):
-                    assert_session_closed(profile['directory'], native)
+                if enabled and not live:
+                    assert_session_closed(profile['directory'])
+                    file_archive.assert_no_cli(profile['binary'])
                     safe = True
                 result = {**public, **file_archive.state(profile['directory'], row['path'], native),
                           'archiveSafe': safe, 'runtimeKnown': True,
@@ -762,7 +776,8 @@ class ClaudeCli:
                     raise BridgeUnavailable('无法确认原 Claude Code 会话已停止或原生归档能力未验证')
                 if self.profile_resolver() != profile:
                     raise BridgeUnavailable('原 Claude Code 配置已变化')
-                assert_session_closed(profile['directory'], native)
+                assert_session_closed(profile['directory'])
+                file_archive.assert_no_cli(profile['binary'])
                 value = file_archive.change(profile['directory'], row['path'], native, body.get('archived'))
                 self.index.pop(sid, None)
                 return value

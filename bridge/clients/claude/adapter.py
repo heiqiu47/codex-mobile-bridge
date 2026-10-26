@@ -704,10 +704,10 @@ class Claude:
                 desktop = await self.listing()
                 return {'connected': True, 'sessions': desktop['sessions'] + cli['sessions'] + remote['sessions'],
                         'coverage': {**desktop['coverage'], 'cli': cli['connected']},
-                        'complete': desktop['complete'] and remote['complete']}
+                        'complete': desktop['complete'] and cli.get('complete', True) and remote['complete']}
             return {'connected': cli['connected'] or remote['connected'], 'sessions': cli['sessions'] + remote['sessions'],
                     'coverage': {'code': False, 'cowork': False, 'cli': cli['connected']},
-                    'complete': (cli['connected'] or remote['connected']) and remote['complete']}
+                    'complete': (cli['connected'] or remote['connected']) and cli.get('complete', True) and remote['complete']}
         if action == 'resume':
             if await asyncio.to_thread(self.remote_cli.contains, sid):
                 return await asyncio.to_thread(self.remote_cli.call, action, sid, body)
@@ -945,7 +945,7 @@ class Claude:
                 return {'connected': cli['connected'] or remote['connected'],
                         'sessions': cli['sessions'] + remote['sessions'],
                         'coverage': {'code': False, 'cowork': False, 'cli': cli['connected']},
-                        'complete': (cli['connected'] or remote['connected']) and remote['complete']}
+                        'complete': (cli['connected'] or remote['connected']) and cli.get('complete', True) and remote['complete']}
             if action == 'resume':
                 if self.remote_cli.contains(sid):
                     return self.remote_cli.call(action, sid, body or {})

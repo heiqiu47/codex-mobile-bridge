@@ -5,38 +5,111 @@ import os
 import subprocess
 import sys
 import shutil
+import re
+import shlex
+from functools import lru_cache
 import uuid
 from pathlib import Path
 
 # Populated only after native picker hide/restore acceptance for an exact version.
-VERIFIED_PICKER_VERSIONS = frozenset()
+VERIFIED_PICKER_VERSIONS = {('darwin', '2.1.292'): '97a01e5bc74a199e67189435d0331ea3a24eac2e07db4b76d9148c5b0386138f'}
 
 
 def supported(binary, environment):
-    if not VERIFIED_PICKER_VERSIONS:
+    if not any(platform == sys.platform for platform, version in VERIFIED_PICKER_VERSIONS):
         return False
     try:
+        path = Path(binary).resolve(strict=True)
+        stamp = path.stat()
+        digest = _binary_hash(str(path), stamp.st_dev, stamp.st_ino, stamp.st_size, stamp.st_mtime_ns)
+        if not any(platform == sys.platform and expected == digest
+                   for (platform, version), expected in VERIFIED_PICKER_VERSIONS.items()):
+            return False
         result = subprocess.run([binary, '--version'], env=environment, capture_output=True,
                                 text=True, timeout=5)
-        return result.returncode == 0 and (sys.platform, result.stdout.split()[0]) in VERIFIED_PICKER_VERSIONS
+        expected = VERIFIED_PICKER_VERSIONS.get((sys.platform, result.stdout.split()[0]))
+        return result.returncode == 0 and digest == expected
     except (OSError, subprocess.SubprocessError, IndexError):
         return False
 
 
-def recorded_writer(directory, native):
-    """Absence of a registry entry is unknown, not proof of a stopped writer."""
-    registry = Path(directory)/'sessions'
-    if not registry.is_dir() or registry.is_symlink():
-        return False
-    _owned(registry)
-    for path in registry.glob('*.json'):
-        _owned(path)
-        if path.is_symlink() or path.stat().st_size > 65536:
-            raise ValueError('Claude 会话进程登记不可验证')
-        value = json.loads(path.read_text(encoding='utf-8'))
-        if isinstance(value, dict) and value.get('sessionId') == native:
-            return True
-    return False
+@lru_cache(maxsize=8)
+def _binary_hash(path, device, inode, size, modified):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as source:
+        for block in iter(lambda: source.read(1024*1024), b''):
+            digest.update(block)
+    stamp = Path(path).stat()
+    if (stamp.st_dev, stamp.st_ino, stamp.st_size, stamp.st_mtime_ns) != (device, inode, size, modified):
+        raise ValueError('Claude 原生程序在核验期间变化')
+    return digest.hexdigest()
+
+
+def assert_no_cli(binary):
+    """Fresh process identity census; no environment or conversation reads."""
+    if sys.platform not in ('darwin', 'linux'):
+        raise ValueError('当前系统的 Claude 原生进程清单未验证')
+    result = subprocess.run(['ps', '-axo', 'uid=,pid=,comm='], capture_output=True,
+                            text=True, timeout=5)
+    if result.returncode:
+        raise ValueError('无法核验 Claude 原生进程清单')
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit():
+            raise ValueError('Claude 原生进程清单不完整')
+        if int(parts[0]) != os.getuid():continue
+        pid, executable = int(parts[1]), parts[2]
+        name = Path(executable).name
+        if (name in ('claude', 'claude.exe', 'claude-code')
+                or '@anthropic-ai/claude-code/' in executable
+                or str(Path(executable).resolve()) == str(Path(binary).resolve())):
+            raise ValueError('仍有 Claude CLI 进程运行，请先在原终端结束')
+        if name not in ('node', 'nodejs', 'bun'):continue
+        # Inspect the entry-script operand only; never log the argument vector,
+        # parse a prompt operand, or inspect process environments.
+        command = subprocess.run(['ps', '-p', str(pid), '-o', 'args='],
+                                 capture_output=True, text=True, timeout=3)
+        if command.returncode or not command.stdout.strip():
+            raise ValueError('无法核验 Claude 脚本进程身份')
+        lexer = shlex.shlex(command.stdout, posix=True)
+        lexer.whitespace_split = True;lexer.commenters = ''
+        next(lexer, None)
+        for token in lexer:
+            if token in ('-e', '--eval', '-p', '--print'):break
+            if token in ('-r', '--require', '--import', '--loader'):
+                next(lexer, None);continue
+            if token.startswith('-'):continue
+            normalized = token.replace('\\', '/')
+            if ('@anthropic-ai/claude-code/' in normalized
+                    or '/claude-code/' in normalized
+                    or Path(normalized).name in ('claude', 'claude.js', 'claude.cjs', 'claude.mjs')):
+                raise ValueError('仍有 Claude CLI 脚本进程运行，请先在原终端结束')
+            break
+
+
+@lru_cache(maxsize=1)
+def _domain():
+    if sys.platform == 'linux':
+        machine = Path('/etc/machine-id').read_text().strip()
+        namespace = os.readlink('/proc/self/ns/pid')
+        if not machine or not re.fullmatch(r'pid:\[\d+\]', namespace):
+            raise ValueError('Claude 归档主机身份不可验证')
+        return 'linux:'+machine+':'+namespace
+    if sys.platform == 'darwin':
+        result = subprocess.run(['/usr/sbin/ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
+                                capture_output=True, text=True, timeout=5)
+        match = re.search(r'"IOPlatformUUID"\s*=\s*"([0-9A-Fa-f-]+)"', result.stdout)
+        if result.returncode or not match:
+            raise ValueError('Claude 归档主机身份不可验证')
+        return 'darwin:'+hashlib.sha256(match[1].encode()).hexdigest()
+    raise ValueError('当前系统的 Claude 文件归档未验证')
+
+
+def _identity(directory):
+    directory = Path(directory)
+    stat = directory.stat()
+    return {'configDir': str(directory.resolve()), 'uid': os.getuid() if hasattr(os, 'getuid') else None,
+            'device': stat.st_dev, 'inode': stat.st_ino, 'domain': _domain()}
 
 
 def _root(directory):
@@ -99,8 +172,7 @@ def _manifest(directory, native):
         raise ValueError('Claude 归档记录不可验证')
     value = json.loads(path.read_text(encoding='utf-8'))
     if (value.get('schema') != 1 or value.get('nativeId') != native
-            or value.get('configDir') != str(Path(directory).resolve())
-            or value.get('uid') != (os.getuid() if hasattr(os, 'getuid') else None)
+            or value.get('identity') != _identity(directory)
             or not isinstance(value.get('project'), str)
             or value['project'] in ('', '.', '..')
             or '/' in value['project'] or '\\' in value['project']):
@@ -119,7 +191,7 @@ def _original(directory, project, native):
     return target/(native+'.jsonl')
 
 
-def archive_paths(directory):
+def archive_paths(directory, errors=None):
     if not Path(directory).exists() and not Path(directory).is_symlink():
         return []
     root = _root(directory)
@@ -133,10 +205,14 @@ def archive_paths(directory):
             native = str(uuid.UUID(bundle.name))
         except ValueError:
             continue
-        bundle, manifest = _manifest(directory, native)
-        if manifest and manifest.get('phase') != 'restored':
-            state(directory, bundle/(native+'.jsonl'), native)
-            result.append(bundle/(native+'.jsonl'))
+        try:
+            bundle, manifest = _manifest(directory, native)
+            if manifest and manifest.get('phase') != 'restored':
+                state(directory, bundle/(native+'.jsonl'), native)
+                result.append(bundle/(native+'.jsonl'))
+        except (OSError, ValueError, TypeError, KeyError):
+            if errors is None:raise
+            errors.append({'nativeId': native, 'notice': 'Claude Code 归档待核对'})
     return result
 
 
@@ -248,8 +324,7 @@ def change(directory, path, native, archived):
             original = _original(directory, Path(path).parent.name, native)
             bundle.mkdir(mode=0o700)
             manifest = {'schema': 1, 'nativeId': native, 'project': original.parent.name,
-                        'configDir': str(directory.resolve()),
-                        'uid': os.getuid() if hasattr(os, 'getuid') else None,
+                        'identity': _identity(directory),
                         'sha256': _digest(original)}
         original = _original(directory, manifest['project'], native)
         stored = bundle/(native+'.jsonl')
