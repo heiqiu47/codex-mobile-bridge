@@ -25,11 +25,14 @@ class CliAccessPanel {
     this.name=this.field('名称');this.baseUrl=this.field('API 地址','url');this.model=this.field('模型 ID');this.key=this.field('API Key','password');this.key.input.autocomplete='new-password';
     this.scheme=this.node('select');for(const [id,name] of [['x-api-key','x-api-key'],['bearer','Bearer']]){const option=this.node('option');option.value=id;option.textContent=name;this.scheme.append(option);}
     this.schemeRow=this.node('label');this.schemeRow.append(this.node('span','认证方式'),this.scheme);
-    this.form=this.node('form');this.form.onsubmit=event=>{event.preventDefault();const provider=this.provider;this.perform(this.editKind==='rename'?{provider,action:'rename',id:this.editId,name:this.name.input.value}:{provider,action:'saveApi',id:this.editId||undefined,name:this.name.input.value,baseUrl:this.baseUrl.input.value,model:this.model.input.value,apiKey:this.key.input.value,authScheme:provider==='claude'?this.scheme.value:undefined});};
+    this.form=this.node('form',null,'cli-access-form');this.form.onsubmit=event=>{event.preventDefault();const provider=this.provider;this.perform(this.editKind==='rename'?{provider,action:'rename',id:this.editId,name:this.name.input.value}:{provider,action:'saveApi',id:this.editId||undefined,name:this.name.input.value,baseUrl:this.baseUrl.input.value,model:this.model.input.value,apiKey:this.key.input.value,authScheme:provider==='claude'?this.scheme.value:undefined});};
     this.save=this.node('button','保存 API 接入');this.save.type='submit';
     this.cancel=this.button('取消编辑',()=>this.resetForm());this.cancel.hidden=true;
     const modelHint=this.node('p','模型接口不可用时仍可手动填写模型 ID。','account-muted');modelHint.classList.add('cli-access-model-hint');
-    this.form.append(this.name.label,this.baseUrl.label,this.model.label,modelHint,this.key.label,this.schemeRow,this.save,this.cancel);
+    for(const field of [this.baseUrl.label,this.key.label,this.schemeRow])field.classList.add('cli-access-full-row');
+    this.save.classList.add('primary');
+    const actions=this.node('div',null,'cli-access-form-actions');actions.append(this.cancel,this.save);
+    this.form.append(this.name.label,this.model.label,modelHint,this.baseUrl.label,this.key.label,this.schemeRow,actions);
     this.native=this.button('保存当前原生接入',()=>this.perform({provider:this.provider,action:'importCurrent',name:this.t('本机原生接入')}));
     this.root.append(...(this.formOnly?[this.status,this.error,this.form]:[heading,refresh,this.status,this.error,this.rows,this.form,this.native]));
     this.onLanguage=()=>this.render();document.addEventListener('bridge-language',this.onLanguage);

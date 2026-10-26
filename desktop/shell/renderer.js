@@ -506,7 +506,7 @@ const claudeCliAccessPanel=typeof CliAccessPanel==='undefined'?null:new CliAcces
 document.addEventListener('bridge-client-config',event=>{codexCliAccessPanel?.clear();claudeCliAccessPanel?.clear();if(event.detail==='codex'&&!$('cli-access-content').hidden)codexCliAccessPanel?.refresh();else if(event.detail==='claude'&&!$('cli-access-claude-content').hidden)claudeCliAccessPanel?.refresh();});
 const accountsPanel=typeof AccountsPanel==='undefined'?null:new AccountsPanel({root:$('accounts-content'),desktop:true,read:()=>api.accounts({action:'list'}),request:value=>api.accounts(value),onUpdate:value=>desktopConnections?.renderAccount(value)});
 
-const codexApiDetails=document.createElement('details'),codexApiSummary=document.createElement('summary');codexApiSummary.dataset.i18n='新建 Codex API 接入';codexApiSummary.textContent=t('新建 Codex API 接入');codexApiDetails.append(codexApiSummary,$('cli-access-article'));accountsPanel?.attachApiAccess(codexCliAccessPanel,codexApiDetails);
+const codexApiDetails=document.createElement('details'),codexApiSummary=document.createElement('summary');codexApiDetails.className='account-compact';codexApiSummary.dataset.i18n='新建 Codex API 接入';codexApiSummary.textContent=t('新建 Codex API 接入');codexApiDetails.append(codexApiSummary,$('cli-access-article'));accountsPanel?.attachApiAccess(codexCliAccessPanel,codexApiDetails);
 
 // WSL access has its own scope; local panels keep their existing data and callbacks.
 const wslAccountScopes=[];

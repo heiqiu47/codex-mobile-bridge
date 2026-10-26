@@ -95,6 +95,18 @@
 .picker .cli-access-panel>h2,.account-compact .cli-access-panel>h2{display:none}
 .cli-access-model-hint{grid-column:1/-1;margin:0}.cli-access-probe{font-size:12px;max-height:220px;overflow:auto;overflow-wrap:anywhere}
 
+.cli-access-panel .cli-access-form{gap:14px 16px;margin:18px 0 0;padding-top:16px;border-top:1px solid var(--line,#dfe3eb)}
+.cli-access-panel .cli-access-form>label{margin:0;gap:7px;font-weight:500}
+.cli-access-panel .cli-access-form input,.cli-access-panel .cli-access-form select{margin:0;min-height:44px;padding:10px 12px;font-weight:400;border-radius:9px}
+.cli-access-form .cli-access-full-row,.cli-access-form-actions{grid-column:1/-1}
+.cli-access-panel .cli-access-model-hint{margin:-7px 0 0;font-size:12px;line-height:1.5}
+.cli-access-form-actions{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:6px}
+.cli-access-panel .cli-access-form-actions>button{margin:0;min-height:42px;padding:10px 16px}
+.cli-access-panel .cli-access-form-actions>.primary{background:var(--accent,#4664ed);border-color:var(--accent,#4664ed);color:var(--accent-ink,#fff);font-weight:600}
+.account-compact>.cli-access-panel>.account-muted{margin-top:12px}
+.account-compact>#cli-access-article{padding:0;border:0;background:transparent;margin:12px 0 0}
+@media(max-width:480px){.cli-access-form-actions{flex-wrap:wrap}.cli-access-form-actions>button{flex:1}}
+
 .accounts-model-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.accounts-model-controls>small{flex:1;min-width:0}.accounts-model-controls>button{flex:none}
 
 /* WSL account controls keep long Linux paths and translated actions within the panel. */
