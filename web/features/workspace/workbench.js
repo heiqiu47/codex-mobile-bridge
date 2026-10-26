@@ -1,5 +1,32 @@
 'use strict';
 
+const FileFont=(()=>{
+  const key='bridge-file-font-size',controls=new Set();
+  const allowed=value=>Number.isInteger(Number(value))&&Number(value)>=6&&Number(value)<=24;
+  let size=14;try{const saved=localStorage.getItem(key);if(allowed(saved))size=Number(saved);}catch{}
+  function paint(control){control.value.textContent=size+'px';control.decrease.disabled=size<=6;control.increase.disabled=size>=24;}
+  function update(value){
+    if(!allowed(value))return;
+    size=Number(value);document.documentElement?.style?.setProperty('--wb-file-font-size',size+'px');
+    for(const control of controls)paint(control);
+  }
+  globalThis.addEventListener?.('storage',event=>{if(event.key===key)update(event.newValue===null?14:event.newValue);});
+  return {
+    size:()=>size,
+    set(value){if(!allowed(value))return;update(value);try{localStorage.setItem(key,String(size));}catch{}},
+    control(workbench){
+      const element=workbench.node('div','wb-file-font');element.setAttribute('role','group');
+      element.dataset.i18nAriaLabel='所有文件字号';element.setAttribute('aria-label',BridgeI18n.t('所有文件字号'));
+      const decrease=workbench.button('−',()=>FileFont.set(size-1),'减小所有文件字号');
+      const value=workbench.node('output','wb-file-font-value');
+      const increase=workbench.button('+',()=>FileFont.set(size+1),'增大所有文件字号');
+      element.append(decrease,value,increase);
+      const control={element,decrease,value,increase};controls.add(control);update(size);
+      return {...control,dispose:()=>controls.delete(control)};
+    }
+  };
+})();
+
 class Workbench {
   constructor({chat, request, csrf, notify, onUnauthorized, openChat}) {
     Object.assign(this, {chat, request, csrf, notify, onUnauthorized, openChat});
@@ -150,7 +177,7 @@ class Workbench {
     if (this.previewFullscreen && (!provider || this.previewFullscreen.session.provider === provider)) this.closePreviewFullscreen();
     const visible=!provider||this.current?.provider===provider;
     if(visible){this.stopThumbnails();this.uploadController?.abort();}
-    for(const [key,session] of this.sessions)if(!provider||session.provider===provider){for(const tab of session.files){tab.controller?.abort();tab.pdf?.dispose();tab.html?.dispose();tab.markdown?.dispose();tab.git?.dispose();tab.terminal?.dispose();tab.agents?.dispose();tab.sideChat?.dispose();}this.sessions.delete(key);}
+    for(const [key,session] of this.sessions)if(!provider||session.provider===provider){for(const tab of session.files){tab.controller?.abort();tab.pdf?.dispose();tab.html?.dispose();tab.markdown?.dispose();tab.fileFont?.dispose();tab.git?.dispose();tab.terminal?.dispose();tab.agents?.dispose();tab.sideChat?.dispose();}this.sessions.delete(key);}
     if(visible){this.current=null;this.chat.classList.remove('workbench-active','wb-split');this.endDrag();this.panel.replaceChildren();this.panel.hidden=true;this.tabs.replaceChildren();}
   }
   get isFileVisible() { return !!this.current && !this.splitMode && this.current.active !== 'chat'; }
@@ -218,7 +245,7 @@ class Workbench {
     if (this.previewFullscreen?.tab === session.files[index]) this.closePreviewFullscreen();
     if (session.files[index].sideChat && !await session.files[index].sideChat.end()) return;
     if (!session.files[index] || session.files[index].id !== id) return;
-    session.files[index].controller?.abort(); session.files[index].pdf?.dispose(); session.files[index].html?.dispose(); session.files[index].markdown?.dispose(); session.files[index].git?.dispose(); session.files[index].terminal?.dispose(); session.files[index].agents?.dispose(); session.files[index].sideChat?.dispose(); session.files.splice(index, 1);
+    session.files[index].controller?.abort(); session.files[index].pdf?.dispose(); session.files[index].html?.dispose(); session.files[index].markdown?.dispose(); session.files[index].fileFont?.dispose(); session.files[index].git?.dispose(); session.files[index].terminal?.dispose(); session.files[index].agents?.dispose(); session.files[index].sideChat?.dispose(); session.files.splice(index, 1);
     if(session.splitTab===id)session.splitTab=(session.files[index]||session.files[index-1])?.id||null;
     const wasActive=session.active===id;
     if(wasActive)session.active=session.splitTab||(session.files.some(t=>t.id==='files')?'files':'chat');
@@ -503,6 +530,7 @@ class Workbench {
         content.classList.add('wb-pdf-content'); content.append(tab.pdf.element);
       } else if (result.kind === 'image') { const image = this.node('img'); image.src = 'data:' + result.mime + ';base64,' + result.data; image.alt = result.name; window.BridgeImageViewer?.registerWorkspaceImage(image, result, imageContext, imageComposerScope); content.append(image); }
       else if (result.kind === 'text') {
+        tab.fileFont=FileFont.control(this);actions.append(tab.fileFont.element);
         if (/\.md$/i.test(result.name)) { const markdown=this.markdownPreview(session,tab,content,result);modes=markdown.modes;copyAction=markdown.copy; }
         else if (/\.html?$/i.test(result.name)) {
           modes = this.node('div', 'wb-preview-modes');
@@ -516,6 +544,7 @@ class Workbench {
             preview.setAttribute('aria-pressed', String(mode === 'preview'));
             source.setAttribute('aria-pressed', String(mode === 'source'));
             copy.hidden = mode !== 'source';
+            tab.fileFont.element.hidden = mode !== 'source';
             if (mode === 'preview') { tab.html = BridgeHtmlPreview.create({text:result.text, onEscape:() => { if (this.previewFullscreen?.tab === tab) this.closePreviewFullscreen(); }}); content.replaceChildren(tab.html.element); }
             else content.replaceChildren(BridgeSourceView.create({name:result.name, text:result.text, location:tab.sourceLocation}));
           };
