@@ -564,6 +564,7 @@ def command(request):
     if operation in ('archive-state', 'archive'):
         native = str(uuid.UUID(request['native']))
         row = session(found, native)
+        row.update(archive_file_state(found['directory'], session_path(found, native), native, verify=True))
         if not row['capabilities']['archive']:
             raise ValueError('原 Claude Code 归档能力或停止状态尚未确认')
         assert_session_closed(found)

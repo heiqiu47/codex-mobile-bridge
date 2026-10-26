@@ -320,6 +320,22 @@ class RemoteWorkerContract(unittest.TestCase):
             self.assertEqual(remote_worker.session(found, self.native)['nativeId'], self.native)
             with self.assertRaises(ValueError): remote_worker.session(found, bad)
 
+    def test_explicit_remote_archive_state_verifies_archived_content(self):
+        found = {'binary': str(self.binary), 'directory': str(self.config), 'origin': 'synthetic-origin'}
+        request = {'operation': 'archive', 'native': self.native, 'origin': found['origin'], 'archived': True}
+        with patch.object(remote_worker, 'profile', return_value=found), \
+             patch.object(remote_worker, 'archive_supported', return_value=True), \
+             patch.object(remote_worker, 'archive_assert_no_cli'), \
+             patch.object(remote_worker, 'assert_session_closed'):
+            remote_worker.command(request)
+            stored = remote_worker.session_path(found, self.native)
+            stored.write_bytes(stored.read_bytes()+b'\n')
+            # Passive discovery remains metadata-only; an explicit mutation state
+            # must verify bytes before reporting a safe archived result.
+            self.assertTrue(remote_worker.sessions(found)[0]['archived'])
+            with self.assertRaises(ValueError):
+                remote_worker.command({**request, 'operation': 'archive-state'})
+
     def test_full_profile_guard_rejects_another_live_native_session(self):
         other = str(uuid.uuid4());pid = 4321
         (self.config/'sessions'/(str(pid)+'.json')).write_text(json.dumps({
