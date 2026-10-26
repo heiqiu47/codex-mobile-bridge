@@ -32,6 +32,7 @@ public final class MainActivity extends Activity {
  private String choosingUpdateFile;private Bundle pendingSaveResult;
  private GatewayUpdate preparingUpdate;
  private ServiceConnection monitor;private ValueCallback<Uri[]> files;private WebView fileView;private int fileGeneration;private int generation;private boolean authLossAttempted;
+ private SettingsPage settingsPage;
  String L(String value){return MobileStrings.text(this,value);}
  int dp(int n){return (int)(getResources().getDisplayMetrics().density*n);}
  TextView text(String value,int size){TextView t=new TextView(this);t.setText(value);t.setTextSize(size);t.setTextColor(0xff202124);t.setPadding(0,dp(5),0,dp(5));return t;}
@@ -117,6 +118,7 @@ public final class MainActivity extends Activity {
   downloadCard=new DownloadCard(this,screen,this::downloadAction,this::openDownload,this::cancelDownload);
   status=text("",12);status.setTextColor(0xff6b7075);status.setGravity(Gravity.CENTER);root.addView(status);
   if(!openIntent(getIntent())){String active=prefs.getString("active","");if(saved().contains(active))connect(active+"/");else home();}monitor();root.post(this::requestStartupNotifications);restoreUpdate();
+  if(state!=null&&state.getBoolean("settingsOpen",false)){int offset=state.getInt("settingsScroll",0);root.post(()->{settingsPage=new SettingsPage(this,offset,false);settingsPage.show();});}
  }
  void cancelConnectionDeadline(){if(connectionDeadline!=null){homeHandler.removeCallbacks(connectionDeadline);connectionDeadline=null;}}
  void watchConnection(String url,WebView current,int ticket){
@@ -335,18 +337,11 @@ public final class MainActivity extends Activity {
    }
   });}catch(Exception e){runOnUiThread(()->{if(ticket==generation){status.setVisibility(View.GONE);message(e.getMessage());}});}});
  }
- void settings(){
-  LinearLayout content=column();Dialog dialog=panel(L("设置"),content);add(text(L("通知"),19),content,12);
-  LinearLayout notifications=card();Button toggle=button(prefs.getBoolean("alerts",false)?L("关闭任务通知"):L("开启任务通知"),()->{dialog.dismiss();toggleNotifications();});add(toggle,notifications,8);add(text(L("App 打开时提醒已连接电脑的新任务消息。离开 App 或锁屏后不保证通知；可在电脑端配置 Bark 或 ntfy。"),14),notifications,12);
-  add(button(L("测试本机通知"),()->{dialog.dismiss();testNotification();}),notifications,4);add(text(L("10 秒后显示，用于检查手机的通知权限。"),13),notifications,0);add(notifications,content,22);
-  add(text(L("当前电脑"),19),content,12);LinearLayout computer=card();if(origin.isEmpty()){add(text(L("尚未选择电脑"),17),computer,8);add(text(L("返回首页扫码或输入网关地址。"),14),computer,0);}else{add(text(computerName(origin),17),computer,8);add(text(origin,13),computer,12);Button remove=button(L("移除这台电脑"),()->{dialog.dismiss();confirmRemove();});remove.setTextColor(0xffb44235);add(remove,computer,0);}add(computer,content,24);
-  LinearLayout updates=card();add(text(L("应用更新"),19),updates,8);add(text("Codex Mobile Bridge · "+appVersion(),14),updates,8);add(text(L("手动检查更新，确认后下载并安装"),13),updates,8);
-  TextView updateStatus=text("",13);Button check=button(L("检查更新"),()->{});check.setOnClickListener(v->checkUpdate(dialog,check,updateStatus));add(check,updates,6);add(updateStatus,updates,0);add(updates,content,20);
-  TextView version=text("Codex Mobile Bridge",13);version.setTextColor(0xff777b80);version.setGravity(Gravity.CENTER);add(version,content,0);
- }
+ void settings(){if(settingsPage==null||!settingsPage.isShowing()){settingsPage=new SettingsPage(this,0);settingsPage.show();}}
+ void reopenSettings(SettingsPage previous){if(previous!=settingsPage||!previous.isShowing()||previous.isClosing())return;SettingsPage replacement=previous.replacement();previous.dismiss();settingsPage=replacement;settingsPage.show();}
  String appVersion(){try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(Exception e){return "2.0.0";}}
  void openUpdateUrl(String url){try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(ActivityNotFoundException e){message(L("没有可用的浏览器，请在电脑上打开 GitHub Release。"));}}
- void checkUpdate(Dialog dialog,Button check,TextView updateStatus){
+ void checkUpdate(Dialog dialog,View check,TextView updateStatus){
   check.setEnabled(false);updateStatus.setText(L("正在检查更新…"));final String current=appVersion(),gateway=selectedUpdateGateway();final int ticket=generation;
   worker.execute(()->{
    MobileRelease candidate=null;String problem=null;
@@ -371,9 +366,9 @@ public final class MainActivity extends Activity {
    runOnUiThread(()->{if(isFinishing()||isDestroyed()||!dialog.isShowing())return;check.setEnabled(true);if(ticket!=generation){updateStatus.setText(L("电脑连接已变化，请重新检查更新"));return;}
     if(error!=null){updateStatus.setText(error);new AlertDialog.Builder(this).setMessage(error).setNegativeButton(L("关闭"),null).setPositiveButton(L("打开 GitHub 版本页"),(d,w)->openUpdateUrl(MobileRelease.REPO+"/releases")).show();return;}
     if(result==null){updateStatus.setText(L("当前已是此通道最新版本。"));return;}
-    final String skipKey="skip-mobile-update:"+MobileRelease.channel(current),title=L(result.version.equals(prefs.getString(skipKey,""))?"已跳过此版本，仍可手动更新":"发现新版本")+" · "+result.version;
+    final String skipKey="skip-mobile-update:"+MobileRelease.channel(current),title=L(result.version.equals(prefs.getString(skipKey,""))?"已跳过此版本，仍可手动更新":"发现新版本")+" "+result.version;
     updateStatus.setText(title);
-    new AlertDialog.Builder(this).setTitle(title).setMessage(L("App 会在本机下载并打开系统安装器，已保存的电脑与登录状态会保留。")+"\n\n"+result.notes).setNegativeButton(L("跳过此版本"),(d,w)->{prefs.edit().putString(skipKey,result.version).apply();updateStatus.setText(L("已跳过此版本，仍可手动更新")+" · "+result.version);}).setNeutralButton(L("打开 GitHub 版本页"),(d,w)->openUpdateUrl(result.page())).setPositiveButton(L("下载并安装"),(d,w)->chooseUpdateDownload(result,dialog)).show();
+    new AlertDialog.Builder(this).setTitle(title).setMessage(L("App 会在本机下载并打开系统安装器，已保存的电脑与登录状态会保留。")+"\n\n"+result.notes).setNegativeButton(L("跳过此版本"),(d,w)->{prefs.edit().putString(skipKey,result.version).apply();updateStatus.setText(L("已跳过此版本，仍可手动更新")+" "+result.version);}).setNeutralButton(L("打开 GitHub 版本页"),(d,w)->openUpdateUrl(result.page())).setPositiveButton(L("下载并安装"),(d,w)->chooseUpdateDownload(result,dialog)).show();
    });
   });
  }
@@ -503,13 +498,13 @@ public final class MainActivity extends Activity {
   });
  }
  @Override protected void onActivityResult(int code,int result,Intent data){super.onActivityResult(code,result,data);if(code==32){saveDownload(result,data);return;}if(code==20&&result==RESULT_OK&&data!=null)choose(data.getStringExtra("code"));if(code==31)selectedFiles(result,data);}
- @Override protected void onSaveInstanceState(Bundle state){state.putString("choosingUpdateFile",choosingUpdateFile);if(pendingSaveResult!=null)state.putBundle("pendingSaveResult",pendingSaveResult);super.onSaveInstanceState(state);}
- @Override protected void onResume(){super.onResume();resumed=true;ComputerNotifications.onChange=()->runOnUiThread(this::renderComputerNotifications);checkComputers();MonitorService.setVisible(true);if(!MonitorService.startBackground(this))message(L("后台通知启动失败，请重新打开 App 后再试。"));if(web!=null)web.onResume();registerPushToken();resumeUpdateInstall();}
+ @Override protected void onSaveInstanceState(Bundle state){state.putString("choosingUpdateFile",choosingUpdateFile);if(pendingSaveResult!=null)state.putBundle("pendingSaveResult",pendingSaveResult);if(settingsPage!=null&&settingsPage.isShowing()&&!settingsPage.isClosing()){state.putBoolean("settingsOpen",true);state.putInt("settingsScroll",settingsPage.scrollPosition());}super.onSaveInstanceState(state);}
+ @Override protected void onResume(){super.onResume();resumed=true;ComputerNotifications.onChange=()->runOnUiThread(this::renderComputerNotifications);checkComputers();MonitorService.setVisible(true);if(!MonitorService.startBackground(this))message(L("后台通知启动失败，请重新打开 App 后再试。"));if(web!=null)web.onResume();registerPushToken();resumeUpdateInstall();if(settingsPage!=null&&settingsPage.isShowing())settingsPage.refresh();}
  // Keep the live WebView and its drafts/tabs when rotating or resizing the window.
- @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);screen.requestApplyInsets();downloadCard.post(downloadCard::place);if(web!=null){web.requestLayout();web.invalidate();}}
+ @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);screen.requestApplyInsets();downloadCard.post(downloadCard::place);if(web!=null){web.requestLayout();web.invalidate();}if(settingsPage!=null&&"system".equals(SettingsUi.theme(this)))reopenSettings(settingsPage);}
  @Override protected void onPause(){if(routeDiscovery!=null){routeDiscovery.cancel();routeDiscovery=null;}routeAttempted=false;ComputerNotifications.onChange=null;resumed=false;stopComputerChecks();resetExitGesture();MonitorService.setVisible(false);if(web!=null)web.onPause();CookieManager.getInstance().flush();super.onPause();}
  void resetExitGesture(){homeBackAt=0;if(exitToast!=null){exitToast.cancel();exitToast=null;}}
  @Override public void onBackPressed(){handleBack();}
  void handleBack(){if(web==null){long now=SystemClock.elapsedRealtime();if(homeBackAt!=0&&now-homeBackAt<=2000){resetExitGesture();finishAndRemoveTask();}else{homeBackAt=now;if(exitToast!=null)exitToast.cancel();exitToast=Toast.makeText(this,L("再按一次返回退出 App"),Toast.LENGTH_SHORT);exitToast.show();}return;}resetExitGesture();if(!GatewayURL.sameOrigin(web.getUrl(),origin)){home();return;}final int ticket=generation;web.evaluateJavascript("(()=>{const dialog=document.querySelector('dialog[open]');if(dialog){dialog.close();return true;}if(typeof window.BridgeNavigation?.back==='function')return window.BridgeNavigation.back();if(window.BridgeWorkbench?.back())return true;if(document.getElementById('app')?.classList.contains('chat-open')){document.getElementById('back')?.click();return true;}return false;})()",result->{if(ticket==generation&&!"true".equals(result))home();});}
- @Override public void onDestroy(){if(downloadTask!=null&&(updateSession==null||downloadTask.state!=ArtifactDownload.State.COMPLETE))downloadTask.cancel();downloads.shutdownNow();clear();probes.shutdownNow();worker.shutdownNow();if(monitor!=null)getApplicationContext().unbindService(monitor);super.onDestroy();}
+ @Override public void onDestroy(){if(settingsPage!=null)settingsPage.dismiss();if(downloadTask!=null&&(updateSession==null||downloadTask.state!=ArtifactDownload.State.COMPLETE))downloadTask.cancel();downloads.shutdownNow();clear();probes.shutdownNow();worker.shutdownNow();if(monitor!=null)getApplicationContext().unbindService(monitor);super.onDestroy();}
 }

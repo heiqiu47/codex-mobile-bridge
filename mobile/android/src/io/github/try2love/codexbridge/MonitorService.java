@@ -20,6 +20,11 @@ public final class MonitorService extends Service {
 
   static boolean backgroundRunning() { MonitorService current = service; return current != null && current.foreground; }
 
+  static java.util.Map<String,NotificationReceiver.Status> connectionStates() {
+    MonitorService current=service;
+    return current==null||current.receiver==null?java.util.Collections.emptyMap():current.receiver.connectionStates();
+  }
+
   static void setVisible(boolean value) {
     visible = value;
     ComputerNotifications.stale();

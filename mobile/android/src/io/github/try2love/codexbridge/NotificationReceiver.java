@@ -78,6 +78,12 @@ final class NotificationReceiver implements AutoCloseable {
     return retrying ? Status.RETRYING : Status.SIGN_IN_REQUIRED;
   }
 
+  synchronized Map<String,Status> connectionStates() {
+    Map<String,Status> result=new TreeMap<>();
+    for(Computer computer:computers.values())result.put(computer.origin,computer.status);
+    return result;
+  }
+
   private void updateStatus(Computer computer, Status status) {
     if (computer.status == status) return;
     computer.status = status;

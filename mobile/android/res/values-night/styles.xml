@@ -1,0 +1,11 @@
+<resources>
+ <style name="SettingsTheme" parent="android:style/Theme.Material.NoActionBar">
+  <item name="android:fontFamily">sans</item>
+  <item name="android:colorAccent">@color/settings_accent</item>
+  <item name="android:windowBackground">@color/settings_page</item>
+  <item name="android:colorBackground">@color/settings_surface</item>
+  <item name="android:textColorPrimary">@color/settings_text</item>
+  <item name="android:textColorSecondary">@color/settings_muted</item>
+  <item name="android:windowActionModeOverlay">true</item>
+ </style>
+</resources>

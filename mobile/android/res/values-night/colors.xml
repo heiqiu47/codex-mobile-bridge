@@ -1,0 +1,11 @@
+<resources>
+ <color name="settings_page">#18191B</color>
+ <color name="settings_surface">#111113</color>
+ <color name="settings_pressed">#212225</color>
+ <color name="settings_line">#363A3F</color>
+ <color name="settings_muted">#B0B4BA</color>
+ <color name="settings_text">#EDEEF0</color>
+ <color name="settings_accent">#0090FF</color>
+ <color name="settings_danger">#FF9592</color>
+ <color name="settings_track">#5A6169</color>
+</resources>
