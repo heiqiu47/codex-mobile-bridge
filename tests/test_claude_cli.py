@@ -54,6 +54,7 @@ class ClaudeCliContract(unittest.TestCase):
         self.addCleanup(self.prompt_patch.stop)
         self.cli = ClaudeCli(self.root/'uploads')
 
+    @unittest.skipUnless(os.name == 'posix', 'Real Claude file archive requires POSIX ownership and fsync semantics')
     def test_confirmed_archive_releases_owned_executor_before_file_and_writer_checks(self):
         from bridge.clients.claude import file_archive
         owned = SimpleNamespace(origin=self.profile['origin'], native=self.native, error=None,
