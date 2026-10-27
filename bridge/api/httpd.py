@@ -722,10 +722,18 @@ class Handler(BaseHTTPRequestHandler):
                     if not entry.startswith('wsl:'):
                         raise ValueError('未知 Codex 入口')
                     return self.output(200, self.server.bridge.for_host(entry).access_summary())
+                if query.get('resetForecast') in (['1'], ['refresh']) and self.server.bridge.accounts.reset_dynamic_enabled:
+                    self.server.bridge.accounts.reset_forecast.request(refresh=query['resetForecast'] == ['refresh'])
                 result = self.server.bridge.accounts.public()
                 result['canSwitch'] = result.get('canSwitch', True) and self.server.auth.config.get('mode') != 'none'
                 result['canManageDesktop'] = self.server.auth.config.get('mode') != 'none'
                 return self.output(200, result)
+            if write and path == '/api/accounts/reset-dynamic':
+                body = self.read_json()
+                if set(body) != {'enabled'}:
+                    raise ValueError('重置动态设置无效')
+                self.server.bridge.accounts.set_reset_dynamic(body['enabled'])
+                return self.output(200, self.server.bridge.accounts.public())
             if write and path == '/api/accounts/reminders':
                 body = self.read_json()
                 if set(body) != {'preferences'}:

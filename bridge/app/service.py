@@ -3207,6 +3207,7 @@ class Bridge:
             self.entries.close()
         if self.host == "local" and self.accounts:
             self.accounts.login_cancel.set()
+            self.accounts.reset_forecast.close()
             with self.accounts.lock:
                 for timer in self.accounts.api_model_timers.values():
                     timer.cancel()

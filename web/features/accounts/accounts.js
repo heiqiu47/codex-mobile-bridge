@@ -1,4 +1,11 @@
 /* Shared account selector; enrollment controls exist only in the desktop host. */
+function resetCardState(value, now){
+  const stale=!!value.stale||value.state==='error';
+  const resetToday=!!value.lastResetAt&&new Date(value.lastResetAt*1000).toDateString()===now.toDateString();
+  const status=stale?'delayed':['idle','loading'].includes(value.state)?'loading':value.officialSignal?'signal':'quiet';
+  return {stale,resetToday,status,showAnnouncement:!stale&&!!value.officialSignal,
+    showForecast:!stale&&value.state==='ready'&&!resetToday&&!value.officialSignal};
+}
 class AccountsPanel {
   constructor({root,read,request,desktop=false,toolbar=null,onChanged=()=>{},onUpdate=()=>{}}){
     Object.assign(this,{root,read,request,desktop,toolbar,onChanged,onUpdate});this.value=null;this.busy=false;this.timer=null;this.generation=0;this.visit=0;this.readFailed=false;this.resumePending=false;this.operationError=false;this.expandedModels=new Set();this.modelBoxes=new Map();this.expandedSubscriptions=new Set();
@@ -29,9 +36,10 @@ class AccountsPanel {
       this.managementMode.onchange=()=>this.perform({action:'management',mode:this.managementMode.value});label.append(this.managementMode);this.root.append(label);
     }
     this.error=this.node('p',undefined,'error');this.error.setAttribute('role','alert');
+    this.globalReset=this.node('section',undefined,'accounts-global-reset');this.globalReset.hidden=true;
     this.rows=this.node('div',undefined,'accounts-list');
     this.currentReset=this.button('查看并使用重置卡',()=>this.onReset?.());this.currentReset.hidden=true;
-    this.current=this.node('p',undefined,'accounts-current');this.blocked=this.node('div',undefined,'account-muted');this.root.append(this.current,this.status,this.error,this.currentReset,this.blocked,this.rows);
+    this.current=this.node('p',undefined,'accounts-current');this.blocked=this.node('div',undefined,'account-muted');this.root.append(this.current,this.status,this.error,this.currentReset,this.blocked,this.globalReset,this.rows);
     this.management=this.node('div',undefined,'accounts-management');this.root.append(this.management);
     this.tools=this.node('details');this.tools.append(this.node('summary','提醒与 Codex Desktop 更新'));
     this.reminders=this.node('div');this.updates=this.node('section');this.tools.append(this.reminders,this.updates);this.management.append(this.tools);
@@ -97,25 +105,25 @@ class AccountsPanel {
     catch(error){if(generation===this.generation){this.operationError=true;this.error.textContent=this.text(String(error.message).replace(/^Error invoking remote method '[^']+': (?:Error: )?/,''));}return false;}
     finally{if(generation===this.generation){this.busy=false;this.render();if(this.resumePending&&this.visible()){this.resumePending=false;this.refresh();}else this.schedule();if(focused?.refresh.isConnected&&(document.activeElement===document.body||document.activeElement===focused.refresh)&&!focused.touching)focused.refresh.focus({preventScroll:true});}}
   }
-  async refresh(){
+  async refresh(forceReset=false){
     if(this.visible()!==this.lastVisible)return this.resume();
     clearTimeout(this.timer);if(this.loading||this.busy)return;this.loading=true;const generation=this.generation,visit=this.visit;
-    try{const value=await this.read();if(generation===this.generation&&visit===this.visit){this.readFailed=false;if(!this.operationError)this.error.textContent='';this.accept(value);await this.loadUsage(generation);}}
-    catch(error){if(generation===this.generation&&visit===this.visit){this.readFailed=true;this.error.textContent=this.text(String(error.message).replace(/^Error invoking remote method '[^']+': (?:Error: )?/,''));}}
+    try{const value=await this.read(forceReset);if(generation===this.generation&&visit===this.visit){this.readFailed=false;if(forceReset)this.finishGlobalResetRefresh(value.globalReset,true);if(!this.operationError)this.error.textContent='';this.accept(value);await this.loadUsage(generation);}}
+    catch(error){if(generation===this.generation&&visit===this.visit){this.readFailed=true;if(this.globalResetRefreshIntent){this.globalResetRefreshIntent=null;this.notify(this.text('连接失败，请稍后重试'));}this.error.textContent=this.text(String(error.message).replace(/^Error invoking remote method '[^']+': (?:Error: )?/,''));}}
     finally{if(generation===this.generation){this.loading=false;this.render();if(this.resumePending&&this.visible()){this.resumePending=false;this.refresh();}else this.schedule();}}
   }
   schedule(){
     clearTimeout(this.timer);this.timer=null;if(!this.visible())return;
     const value=this.value;if(!value&&!this.readFailed)return;
     const phase=value?.switch?.phase||'idle',enrollment=value?.enrollment?.phase,update=value?.desktopUpdate?.state;
-    const pending=!['idle','complete','restored','failed','interrupted'].includes(phase)||['starting','waiting'].includes(enrollment)||['checking','requesting','needsDesktop'].includes(update)||value?.current?.status==='checking'||this.accountRows().some(row=>row.details?.usage?.status==='loading'||row.details?.models?.status==='loading');
+    const pending=!['idle','complete','restored','failed','interrupted'].includes(phase)||['starting','waiting'].includes(enrollment)||['checking','requesting','needsDesktop'].includes(update)||value?.current?.status==='checking'||['idle','loading'].includes(value?.globalReset?.state)||value?.globalReset?.refresh?.checking||this.globalResetRefreshIntent||this.accountRows().some(row=>row.details?.usage?.status==='loading'||row.details?.models?.status==='loading');
     this.timer=setTimeout(()=>{if(this.visible())return this.refresh();},this.readFailed?10000:pending?2000:300000);
   }
   visible(){const dialog=this.root.closest('dialog');return !this.root.closest('[hidden],.client-config-hidden')&&!document.hidden&&(!dialog||dialog.open);}
   resume(){
     const visible=this.visible();if(visible===this.lastVisible)return;
     this.lastVisible=visible;this.visit++;clearTimeout(this.timer);this.timer=null;
-    if(!visible)this.resumePending=false;
+    if(!visible){this.resumePending=false;this.globalResetRefreshIntent=null;clearTimeout(this.resetMidnightTimer);this.resetMidnightTimer=null;}
     if(visible){if(this.loading||this.busy)this.resumePending=true;else return this.refresh();}
   }
   accountRows(){const login=this.value?.loginAccount,rows=this.value?.accounts||[];return login?[login,...rows.filter(row=>row.id!==login.id)]:rows;}
@@ -228,8 +236,8 @@ class AccountsPanel {
     if(usage?.updatedAt){const updated=this.node('small',this.text('{time} 更新').replace('{time}',this.shortTime(usage.updatedAt,true))+(usage.status==='loading'?' · '+this.text('查询中…'):''),'account-updated account-muted');updated.title=new Date(usage.updatedAt*1000).toLocaleString(BridgeI18n.locale());controls.append(updated);}
     controls.append(refresh);return controls;
   }
-  accept(value){const old=this.value;if(!this.desktop&&old?.canSwitch===false&&value.canSwitch===undefined)value={...value,canSwitch:false};this.value=value;if(old&&(old.activeId!==value.activeId||old.current?.kind!==value.current?.kind||old.current?.name!==value.current?.name||old.switch?.phase!==value.switch?.phase))this.onChanged(value);this.onUpdate(value);this.render();}
-  clear(){this.resetDialog?.close();clearTimeout(this.timer);this.generation++;this.value=null;this.loading=false;this.busy=false;this.readFailed=false;this.resumePending=false;this.operationError=false;this.modelBoxes.clear();this.error.textContent='';this.rows.replaceChildren();}
+  accept(value){const old=this.value;if(!this.desktop&&old?.canSwitch===false&&value.canSwitch===undefined)value={...value,canSwitch:false};this.value=value;if(!value.resetDynamicEnabled)this.globalResetRefreshIntent=null;this.finishGlobalResetRefresh(value.globalReset);if(old&&(old.activeId!==value.activeId||old.current?.kind!==value.current?.kind||old.current?.name!==value.current?.name||old.switch?.phase!==value.switch?.phase))this.onChanged(value);this.onUpdate(value);this.render();}
+  clear(){clearTimeout(this.resetMidnightTimer);this.resetMidnightTimer=null;this.globalResetRefreshIntent=null;this.globalResetMessage='';this.globalResetKey=null;this.globalReset.hidden=true;this.resetDialog?.close();clearTimeout(this.timer);this.generation++;this.value=null;this.loading=false;this.busy=false;this.readFailed=false;this.resumePending=false;this.operationError=false;this.modelBoxes.clear();this.error.textContent='';this.rows.replaceChildren();}
   requestId(){
     if(typeof crypto.randomUUID==='function')return crypto.randomUUID();
     const bytes=crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
@@ -245,7 +253,7 @@ class AccountsPanel {
     const value=this.value;if(!value)return;
     this.reminders.replaceChildren();
     this.reminders.append(this.node('p','提醒通过电脑端已配置的 Bark、ntfy 或 PushPlus 发送，电脑与网关需要保持运行。','account-muted'));
-    const labels={lowQuota:'额度不足 10% 时提醒',quotaReset:'确认额度恢复后提醒',resetExpiry:'重置卡到期前 24 小时提醒',subscriptionExpiry:'订阅周期截止前 7／3／1 天提醒',desktopUpdate:'Codex Desktop 新版本提醒'};
+    const labels={globalReset:'重置动态提醒',lowQuota:'额度不足 10% 时提醒',quotaReset:'确认额度恢复后提醒',resetExpiry:'重置卡到期前 24 小时提醒',subscriptionExpiry:'订阅周期截止前 7／3／1 天提醒',desktopUpdate:'Codex Desktop 新版本提醒'};
     for(const [key,label] of Object.entries(labels)){
       const wrap=this.node('label',undefined,'account-reminder'),input=document.createElement('input');input.type='checkbox';input.checked=!!value.reminders?.[key];input.disabled=this.busy;
       input.onchange=()=>this.perform({action:'reminders',preferences:{[key]:input.checked}});wrap.append(input,this.node('span',label));this.reminders.append(wrap);
@@ -280,8 +288,122 @@ class AccountsPanel {
     const identities=new Map(this.accountRows().map(row=>[row.id,row.accountKey||JSON.stringify([row.kind,row.baseUrl,row.model,row.email])]));
     for(const [id,box] of this.modelBoxes)if(identities.get(id)!==box.identity)this.modelBoxes.delete(id);
   }
+  refreshIcon(){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66L20 8M20 3v5h-5"/></svg>';}
+  notify(message){this.globalResetMessage=message;this.globalResetKey=null;this.renderGlobalReset();}
+  refreshGlobalReset(){
+    if(this.busy||this.loading||this.globalResetRefreshIntent||this.value?.globalReset?.refresh?.checking)return;
+    this.globalResetMessage='';this.globalResetRefreshIntent={baseline:this.value?.globalReset?.refresh?.id||0,id:null,instanceId:this.value?.globalReset?.refresh?.instanceId};
+    this.globalResetKey=null;this.renderGlobalReset();return this.refresh(true);
+  }
+  finishGlobalResetRefresh(value,acknowledged=false){
+    const intent=this.globalResetRefreshIntent;if(!intent||(!acknowledged&&intent.id===null))return;
+    const refresh=value?.refresh,now=Date.now()/1000;
+    if(refresh?.instanceId&&intent.instanceId&&refresh.instanceId!==intent.instanceId){
+      this.globalResetRefreshIntent=null;if(this.visible())this.notify(this.text('网关已重连，请重新刷新'));return;
+    }
+    if(acknowledged&&refresh?.instanceId)intent.instanceId=refresh.instanceId;
+    if(!acknowledged&&(!refresh||refresh.id<intent.id))return;
+    if(refresh?.checking){if(acknowledged)intent.id=refresh.id;return;}
+    let message;
+    if(refresh&&(refresh.id>intent.baseline||(intent.id!==null&&refresh.id>=intent.id))&&value.state==='ready'){
+      message=this.text(refresh.changed?'已更新':'已检查，暂无新动态');
+    }else if(refresh?.retryAt>now){
+      message=this.text('暂时无法更新，{minutes} 分钟后可重试').replace('{minutes}',Math.ceil((refresh.retryAt-now)/60));
+    }else if(refresh?.cooldownUntil>now){
+      message=this.text('刚刚检查过，{seconds} 秒后可刷新').replace('{seconds}',Math.ceil(refresh.cooldownUntil-now));
+    }else message=this.text(refresh?'查询失败，请稍后重试':'已读取缓存');
+    this.globalResetRefreshIntent=null;if(this.visible())this.notify(message);
+  }
+
+
+  renderGlobalReset(){
+    const value=this.value?.globalReset;
+    this.globalReset.hidden=!this.value?.resetDynamicEnabled;if(this.globalReset.hidden||!value){clearTimeout(this.resetMidnightTimer);this.resetMidnightTimer=null;return;}
+    const key=JSON.stringify([value,this.value.reminders,this.busy,this.loading,!!this.refreshingGlobalReset||!!this.globalResetRefreshIntent,BridgeI18n.language(),Math.floor(Date.now()/60000)]);
+    if(key===this.globalResetKey)return;this.globalResetKey=key;
+    this.globalReset.replaceChildren();
+    const header=this.node('div',undefined,'accounts-global-heading');
+    const reminderEnabled=!!(this.value.reminders?.globalReset||this.value.reminders?.globalResetSignal);
+    const reminder=this.button('',()=>this.perform({action:'reminders',preferences:{globalReset:!reminderEnabled,globalResetSignal:!reminderEnabled}}));
+    reminder.className='accounts-global-reminder';reminder.disabled=this.busy;reminder.title=this.text(reminderEnabled?'关闭重置动态提醒':'开启重置动态提醒');reminder.setAttribute('aria-label',reminder.title);reminder.setAttribute('aria-pressed',String(reminderEnabled));reminder.setAttribute('data-enabled',String(reminderEnabled));
+    reminder.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="accounts-global-bell" d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z"/><path d="M10 21h4"/></svg>';
+    header.append(this.node('h3','Tibo 重置动态'),reminder);this.globalReset.append(header);
+    const today=new Date(Date.now()),now=today.getTime()/1000;
+    const {stale,resetToday,status,showAnnouncement,showForecast}=resetCardState(value,today);
+    clearTimeout(this.resetMidnightTimer);this.resetMidnightTimer=null;
+    if(resetToday&&this.visible()){
+      const midnight=new Date(today);midnight.setHours(24,0,0,0);
+      this.resetMidnightTimer=setTimeout(()=>{this.resetMidnightTimer=null;this.globalResetKey=null;this.renderGlobalReset();},midnight.getTime()-today.getTime());
+    }
+    if(value.lastResetAt){
+      const label=resetToday?'今日已全局重置':'上次全局重置';
+      const time=resetToday?this.shortTime(value.lastResetAt,true):this.globalTime(value.lastResetAt);
+      const last=this.node('p',this.text(label)+' · '+time,'accounts-global-state');
+      last.setAttribute('data-state',resetToday&&!stale?'confirmed':'quiet');this.globalReset.append(last);
+    }
+    let text='',tone='quiet';
+    if(status==='delayed'){text=value.updatedAt?'数据延迟 · 等待更新':'重置动态暂时加载失败';tone='delayed';}
+    else if(status==='loading')text='正在读取重置动态…';
+    else if(status==='signal'){
+      const end=value.officialSignal.endsAt;
+      text=this.text('官方已预告')+' · '+(end>now?this.globalTime(end)+this.text('前重置'):this.text(end?'等待重置完成':'即将重置'));tone='signal';
+    }
+    if(text){const state=this.node('p',text,'accounts-global-state');state.setAttribute('data-state',tone);state.setAttribute('role','status');this.globalReset.append(state);}
+    if(showAnnouncement)this.renderGlobalAnnouncement(value.officialSignal);
+    if(showForecast){
+      const odds=value.probabilities||{},row=this.node('div',undefined,'accounts-global-odds');
+      for(const [key,label] of [['h24','24 小时内'],['h48','48 小时内']])if(Number.isFinite(odds[key])){
+        const item=this.node('span');item.append(this.node('span',label),this.node('strong',odds[key]+'%'));row.append(item);
+      }
+      if(row.children.length){this.globalReset.append(row);const confidence={low:'低置信度',medium:'中置信度',high:'高置信度'}[value.confidence];this.globalReset.append(this.node('p',this.text('预测重置概率')+(confidence?' · '+this.text(confidence):''),'accounts-global-confidence'));}
+    }
+    if(this.globalResetMessage){const feedback=this.node('p',this.globalResetMessage,'accounts-global-feedback');feedback.setAttribute('role','status');this.globalReset.append(feedback);}
+    const footer=this.node('div',undefined,'accounts-global-source'),source=this.node('a','来源 codex-reset.com ↗');source.href='https://codex-reset.com/zh/';source.target='_blank';source.rel='noopener noreferrer';
+    const actions=this.node('div',undefined,'accounts-global-footer-actions');
+    if(value.updatedAt){const updated=this.node('span',this.text('更新于 ')+this.shortTime(value.updatedAt,true));if(value.checkedAt)updated.title=this.text('本次检查于 ')+this.shortTime(value.checkedAt);actions.append(updated);}
+    const refresh=this.button('',()=>this.refreshGlobalReset());refresh.className='accounts-global-refresh';refresh.title=this.text('刷新重置动态');refresh.setAttribute('aria-label',refresh.title);
+    const refreshing=!!this.refreshingGlobalReset||!!this.globalResetRefreshIntent||!!value.refresh?.checking||value.state==='loading';refresh.disabled=this.busy||this.loading||refreshing;refresh.setAttribute('aria-busy',String(refreshing));
+    refresh.innerHTML=this.refreshIcon();
+    actions.append(refresh);footer.append(source,actions);this.globalReset.append(footer);
+  }
+  renderGlobalAnnouncement(signal){
+    const original=signal.text||signal.summary,translation=signal.text&&signal.translation?.locale==='zh'&&typeof signal.translation.text==='string'?signal.translation.text:null;
+    const language=BridgeI18n.language(),key=JSON.stringify([signal.at,signal.url,original,translation,language]);
+    if(this.globalAnnouncementKey!==key){this.globalAnnouncementKey=key;this.globalAnnouncementExpanded=false;this.globalAnnouncementOriginal=language!=='zh';}
+    const translated=!!translation&&!this.globalAnnouncementOriginal,content=translated?translation:original;
+    if(!content&&!signal.url)return;
+    const section=this.node('div',undefined,'accounts-global-announcement');
+    if(content){
+      const meta=this.node('div',undefined,'accounts-global-announcement-meta');meta.append(this.node('span',translated?'机器翻译':signal.text?'公告原文':'来源摘要'));
+      if(signal.at)meta.append(this.node('span',this.text('发布于 ')+this.globalTime(signal.at)));section.append(meta);
+      const body=this.node('p',undefined,'accounts-global-announcement-text');body.textContent=content;body.setAttribute('data-expanded',String(!!this.globalAnnouncementExpanded));section.append(body);
+      const toggle=this.button(this.globalAnnouncementExpanded?'收起全文':'展开全文',()=>{
+        this.globalAnnouncementExpanded=!this.globalAnnouncementExpanded;body.setAttribute('data-expanded',String(this.globalAnnouncementExpanded));
+        toggle.textContent=this.text(this.globalAnnouncementExpanded?'收起全文':'展开全文');toggle.setAttribute('aria-expanded',String(this.globalAnnouncementExpanded));
+      });toggle.className='accounts-global-expand';toggle.setAttribute('aria-expanded',String(!!this.globalAnnouncementExpanded));
+      toggle.hidden=content.length<=120&&!content.includes('\n');section.append(toggle);
+      window.requestAnimationFrame?.(()=>{if(body.isConnected&&!this.globalAnnouncementExpanded)toggle.hidden=body.scrollHeight<=body.clientHeight+1;});
+    }
+    if(translation){
+      const languageToggle=this.button(translated?'查看原文':'查看译文',()=>{
+        this.globalAnnouncementOriginal=!this.globalAnnouncementOriginal;this.globalAnnouncementExpanded=false;this.globalResetKey=null;this.renderGlobalReset();
+      });languageToggle.className='accounts-global-language';section.append(languageToggle);
+    }
+    if(signal.url){
+      try{const url=new URL(signal.url);if(url.protocol==='https:'&&['x.com','twitter.com'].includes(url.hostname)){
+        const link=this.node('a','查看原帖 ↗');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';section.append(link);
+      }}catch{}
+    }
+    this.globalReset.append(section);
+  }
+  globalTime(stamp){
+    const date=new Date(stamp*1000),today=new Date(Date.now()),yesterday=new Date(Date.now());yesterday.setDate(today.getDate()-1);
+    const prefix=date.toDateString()===today.toDateString()?this.text('今天 '):date.toDateString()===yesterday.toDateString()?this.text('昨天 '):'';
+    return prefix+(prefix?date.toLocaleString(BridgeI18n.locale(),{hour:'2-digit',minute:'2-digit'}):this.shortTime(stamp));
+  }
   render(){
     const value=this.value;if(!value)return;
+    this.renderGlobalReset();
     const external=value.management?.external===true;
     this.switchHint.hidden=external;
     this.tools.hidden=value.scope==='wsl';
@@ -307,7 +429,7 @@ class AccountsPanel {
     for(const row of [...this.accountRows()].sort((a,b)=>Number(b.id===value.loginAccount?.id)-Number(a.id===value.loginAccount?.id)||Number(b.id===value.activeId)-Number(a.id===value.activeId))){
       const card=this.node('section',undefined,'account-bucket'),active=value.activeId===row.id;card.accountRowId=row.id;
       if(active)card.classList.add('is-current');
-      const actions=this.node('div',undefined,'accounts-actions');
+      const actions=this.node('div',undefined,'accounts-card-footer');
       const identity=this.node('div',undefined,'accounts-identity'),name=this.node('div',undefined,'accounts-name');
       const heading=this.node('h3');heading.textContent=row.name;const title=this.node('div',undefined,'accounts-name-heading');title.append(heading);
       if(row.id===value.loginAccount?.id)title.append(this.node('span','已登录','accounts-plan'));
@@ -332,7 +454,7 @@ class AccountsPanel {
         const remove=this.button('删除',()=>{if(window.confirm(this.text('删除此账号档案？')+'\n'+row.name))this.perform({action:'delete',id:row.id});});remove.hidden=active;remove.disabled=this.busy||switching||active;
         actions.append(edit,rename,remove);
       }
-      card.append(actions);const footer=this.node('div',undefined,'accounts-card-footer');card.append(footer);this.accountActions(card,row,footer);if(row.kind==='chatgpt')footer.append(this.accountUsageControls(row));cards.push(card);
+      card.append(actions);this.accountActions(card,row,actions);if(row.kind==='chatgpt')actions.append(this.accountUsageControls(row));cards.push(card);
     }
     if(!this.desktop&&value.canSwitch===false&&!external)cards.push(this.node('p','免密访问不能切换账号，请在桌面端操作'));
     this.reconcileRows(cards);

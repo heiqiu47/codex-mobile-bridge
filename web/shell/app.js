@@ -768,9 +768,21 @@ $('notify-form').onsubmit=async event=>{
   }catch(e){if(request===notificationRequest&&id===currentId&&host===currentHost)$('notify-error').textContent=t(e.message);}
   finally{if(request===notificationRequest&&id===currentId&&host===currentHost){$('notify-button').disabled=false;$('notify-save').disabled=false;}}
 };
+async function loadResetDynamicSetting(){
+  const input=$('appearance-reset-dynamic');input.disabled=true;
+  try{const value=await api('/api/accounts');input.checked=!!value.resetDynamicEnabled;input.disabled=false;}
+  catch(error){$('reset-dynamic-error').textContent=t(error.message);}
+}
+$('appearance-reset-dynamic').onchange=async event=>{
+  const input=event.target;input.disabled=true;$('reset-dynamic-error').textContent='';
+  try{const value=await api('/api/accounts/reset-dynamic',{enabled:input.checked});input.checked=value.resetDynamicEnabled;accountsPanel?.accept(value);if(value.resetDynamicEnabled&&accountsPanel?.visible())accountsPanel.refresh();}
+  catch(error){$('reset-dynamic-error').textContent=t(error.message);await loadResetDynamicSetting();}
+  finally{input.disabled=false;}
+};
 let notificationDefaultsRequest=0;
 window.loadNotificationDefaults=async()=>{
-  if(window.BridgeSharedRelay)return;
+  if(window.BridgeSharedRelay){$('appearance-reset-dynamic').closest('fieldset').hidden=true;return;}
+  loadResetDynamicSetting();
   const request=++notificationDefaultsRequest;
   for(const id of ['notification-requests','notification-completions'])$(id).disabled=true;
   $('notification-settings-error').textContent='';
@@ -1516,7 +1528,7 @@ function renderAccountEntries(){
   if(codexCliDetails.hidden)codexCliAccessPanel?.clear();
 }
 
-const accountsPanel=window.BridgeSharedRelay||typeof AccountsPanel==='undefined'?null:new AccountsPanel({root:$('accounts-content'),toolbar:$('accounts-heading'),read:()=>api(accountUrl('/api/accounts')),request:({action,...value})=>action==='ignoreSubmission'?ignoreSubmission(value):api(accountUrl(action==='account'?'/api/accounts/account':action==='details'?'/api/accounts/details':action==='reminders'?'/api/accounts/reminders':action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?'/api/accounts/desktop-update':'/api/accounts/switch'),action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?{action,...value}:value),onChanged:value=>{if(codexActiveAccountId!==undefined&&codexActiveAccountId!==value.activeId){browserNavigation.invalidate();if(typeof ChatTimeline!=='undefined')ChatTimeline.clearCache?.();clearCodexProvisionalDrafts();clearQuoteComposer();codexDraftScope=null;codexDraftTouched=false;}resetModelCatalog();},onUpdate:value=>{codexActiveAccountId=value.activeId;const label='账号管理';$('accounts-button').setAttribute('data-i18n',label);$('accounts-button').textContent=t(label);}});
+const accountsPanel=window.BridgeSharedRelay||typeof AccountsPanel==='undefined'?null:new AccountsPanel({root:$('accounts-content'),toolbar:$('accounts-heading'),read:force=>api(accountUrl('/api/accounts'+(accountsPanel?.visible()&&accountsPanel?.value?.resetDynamicEnabled?'?resetForecast='+(force?'refresh':'1'):''))),request:({action,...value})=>action==='ignoreSubmission'?ignoreSubmission(value):api(accountUrl(action==='account'?'/api/accounts/account':action==='details'?'/api/accounts/details':action==='reminders'?'/api/accounts/reminders':action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?'/api/accounts/desktop-update':'/api/accounts/switch'),action==='checkDesktopUpdate'||action==='requestDesktopUpdate'?{action,...value}:value),onChanged:value=>{if(codexActiveAccountId!==undefined&&codexActiveAccountId!==value.activeId){browserNavigation.invalidate();if(typeof ChatTimeline!=='undefined')ChatTimeline.clearCache?.();clearCodexProvisionalDrafts();clearQuoteComposer();codexDraftScope=null;codexDraftTouched=false;}resetModelCatalog();},onUpdate:value=>{codexActiveAccountId=value.activeId;const label='账号管理';$('accounts-button').setAttribute('data-i18n',label);$('accounts-button').textContent=t(label);}});
 accountsPanel?.attachApiAccess(codexCliAccessPanel,codexCliDetails);
 function openCurrentAccounts(){
   const activeProvider=clientNavigation.provider,provider=activeProvider?.startsWith('wsl-claude:')?'claude':activeProvider;
