@@ -2,11 +2,11 @@
 
 Status: implemented
 
-## Problem
+## 问题
 
 Claude 与 DSH 只有自动轮询，用户无法像 Codex 一样通过下拉确认列表已更新。原刷新入口吞掉读取错误，不能直接作为手动刷新成功的判据。
 
-## Decision
+## 决策
 
 Claude 与 DSH 将共享 `ListSync` 接到实际 `.sessions` 滚动容器，复用顶部下拉阈值、横向取消及加载、成功、失败重试提示。提示位于独立列表区域，拉动内容不改变滚动区域高度，短列表和空列表也保留触摸区域。
 
@@ -18,20 +18,20 @@ Claude 与 DSH 将共享 `ListSync` 接到实际 `.sessions` 滚动容器，复�
 
 历史决策检索未发现活跃笔记中已有同一 ListSync/手动下拉刷新契约。本记录落实本地 v2 优化评审第 4 项，不引入连接管理或写操作的重试策略。
 
-## Alternatives considered
+## 备选方案
 
 - 各客户端独立实现手势：能单独调整体验，但会重复阈值、取消与提示逻辑，现有共享组件已覆盖这些行为。
 - 直接调用原轮询入口：能复用现有读取流程，但还会读取已选会话详情且吞掉错误，无法准确反馈手动列表刷新结果。
 - 整页重新加载：容易实现，但会丢失阅读状态并触发无关初始化，不采用。
 
-## Testing
+## 测试
 
 Node 回归覆盖并发读取合并、等待完成、失败与断开连接重试、筛选和草稿保留、客户端与账号失效、旧请求不得解锁新请求。隔离浏览器检查 390/844/1440px 下两个客户端的长列表、短列表、空列表、顶部手势、中部滚动、横向取消及失败重试；使用合成数据，不操作真实账号或任务。
 
 另有 ListSync 回归覆盖短暂自动失败不打断旧列表、连续失败提示、其他入口成功清除错误、认证失败与过期结果保护。
 
-## Consequences
+## 影响
 
 三个客户端共享手势及结果反馈，手动确认不增加写操作或重复轮询。代价是共享组件需要维护可重置的请求修订号，列表读取与轮询编排分开。浏览器验证不代替 Android/iOS 真机 WebView 的回弹体验验收。
 
-Follow-up: [Shared list pin token integration fix](../bug-fix/2026-10-26-desktop-list-pin-read-token.md) preserves these contracts while repairing successful list processing with pin preferences enabled.
+后续：[共享列表置顶令牌集成修复](../bug-fix/2026-10-26-desktop-list-pin-read-token.md)保留这些契约，修复启用置顶偏好时成功列表响应的处理。

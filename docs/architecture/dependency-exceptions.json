@@ -1,0 +1,134 @@
+[
+  {
+    "file": "bridge/clients/claude/adapter.py",
+    "dependency": "bridge.app.lifecycle.private_json",
+    "rule": "implementation-upward",
+    "reason": "Existing private-file writer is located in app.lifecycle; moving persistence utilities is outside this test-only change."
+  },
+  {
+    "file": "bridge/clients/claude/remote.py",
+    "dependency": "bridge.clients.codex.remote.ssh_command",
+    "rule": "provider-peer",
+    "reason": "Claude remote currently reuses the Codex SSH command constructor; transport extraction needs its own regression-tested change."
+  },
+  {
+    "file": "bridge/clients/claude/wsl.py",
+    "dependency": "bridge.app.lifecycle.private_json",
+    "rule": "implementation-upward",
+    "reason": "Existing private-file writer is located in app.lifecycle; moving persistence utilities is outside this test-only change."
+  },
+  {
+    "file": "bridge/clients/deepseek/adapter.py",
+    "dependency": "bridge.app.lifecycle.private_json",
+    "rule": "implementation-upward",
+    "reason": "Existing private-file writer is located in app.lifecycle; moving persistence utilities is outside this test-only change."
+  },
+  {
+    "file": "bridge/clients/manager.py",
+    "dependency": "bridge.app.lifecycle.private_json",
+    "rule": "implementation-upward",
+    "reason": "Existing private-file writer is located in app.lifecycle; moving persistence utilities is outside this test-only change."
+  },
+  {
+    "file": "bridge/clients/manager.py",
+    "dependency": "bridge.app.desktop.Desktop",
+    "rule": "implementation-upward",
+    "reason": "Existing connection recovery and updater coordinate the desktop lifecycle through Desktop."
+  },
+  {
+    "file": "bridge/clients/manager.py",
+    "dependency": "bridge.app.service.Bridge",
+    "rule": "implementation-upward",
+    "reason": "Existing CLI access verification creates the common Bridge coordinator lazily."
+  },
+  {
+    "file": "bridge/features/accounts/wsl_codex_restart.py",
+    "dependency": "bridge.app.lifecycle.private_json",
+    "rule": "implementation-upward",
+    "reason": "Existing private-file writer is located in app.lifecycle; moving persistence utilities is outside this test-only change."
+  },
+  {
+    "file": "bridge/features/endpoints/registry.py",
+    "dependency": "bridge.app.lifecycle.private_json",
+    "rule": "implementation-upward",
+    "reason": "Existing private-file writer is located in app.lifecycle; moving persistence utilities is outside this test-only change."
+  },
+  {
+    "file": "bridge/features/endpoints/wsl.py",
+    "dependency": "bridge.app.lifecycle.private_json",
+    "rule": "implementation-upward",
+    "reason": "Existing private-file writer is located in app.lifecycle; moving persistence utilities is outside this test-only change."
+  },
+  {
+    "file": "bridge/features/endpoints/wsl.py",
+    "dependency": "bridge.app.service.validate_form",
+    "rule": "implementation-upward",
+    "reason": "Existing session creation shares app.service form validation; preserve its current validation semantics."
+  },
+  {
+    "file": "bridge/features/endpoints/wsl_features.py",
+    "dependency": "bridge.app.lifecycle.private_json",
+    "rule": "implementation-upward",
+    "reason": "Existing private-file writer is located in app.lifecycle; moving persistence utilities is outside this test-only change."
+  },
+  {
+    "file": "bridge/features/network/access.py",
+    "dependency": "bridge.api.validation.FieldError",
+    "rule": "implementation-upward",
+    "reason": "Existing callers share HTTP field-error formatting; extracting neutral validation types requires a separate behavior-preserving change."
+  },
+  {
+    "file": "bridge/features/network/access.py",
+    "dependency": "bridge.api.validation.at_field",
+    "rule": "implementation-upward",
+    "reason": "Existing callers share HTTP field-error formatting; extracting neutral validation types requires a separate behavior-preserving change."
+  },
+  {
+    "file": "bridge/features/network/shared_relay.py",
+    "dependency": "bridge.api.httpd.GatewayServer",
+    "rule": "implementation-upward",
+    "reason": "The shared relay currently creates its authenticated gateway listener lazily."
+  },
+  {
+    "file": "bridge/features/notifications/channels.py",
+    "dependency": "bridge.api.validation.FieldError",
+    "rule": "implementation-upward",
+    "reason": "Existing callers share HTTP field-error formatting; extracting neutral validation types requires a separate behavior-preserving change."
+  },
+  {
+    "file": "bridge/features/notifications/channels.py",
+    "dependency": "bridge.api.validation.at_field",
+    "rule": "implementation-upward",
+    "reason": "Existing callers share HTTP field-error formatting; extracting neutral validation types requires a separate behavior-preserving change."
+  },
+  {
+    "file": "bridge/features/sessions/archive.py",
+    "dependency": "bridge.app.lifecycle.private_json",
+    "rule": "implementation-upward",
+    "reason": "Existing private-file writer is located in app.lifecycle; moving persistence utilities is outside this test-only change."
+  },
+  {
+    "file": "bridge/features/sessions/pins.py",
+    "dependency": "bridge.app.lifecycle.private_json",
+    "rule": "implementation-upward",
+    "reason": "Existing private-file writer is located in app.lifecycle; moving persistence utilities is outside this test-only change."
+  },
+  {
+    "file": "bridge/features/sessions/projects.py",
+    "dependency": "bridge.app.lifecycle.private_json",
+    "rule": "implementation-upward",
+    "reason": "Existing private-file writer is located in app.lifecycle; moving persistence utilities is outside this test-only change."
+  },
+  {
+    "file": "bridge/features/sessions/side_chat.py",
+    "dependency": "bridge.app.service.validate_form",
+    "rule": "implementation-upward",
+    "reason": "Existing session creation shares app.service form validation; preserve its current validation semantics."
+  },
+  {
+    "file": "bridge/features/updates/gateway.py",
+    "dependency": "bridge.app.desktop.Desktop",
+    "rule": "implementation-upward",
+    "reason": "Existing connection recovery and updater coordinate the desktop lifecycle through Desktop."
+  }
+]

@@ -1,13 +1,25 @@
-# Agent Note: Claude Code CLI native permission modes
+# Agent Note: Claude Code CLI 原生权限模式
 
 Status: implemented
 
-## Decision
+## 问题
 
-An explicitly resumed CLI session offers the native default, acceptEdits, plan, dontAsk, auto and bypassPermissions choices. The launch permits bypassPermissions to be selected later but retains the saved mode at startup. Full Access requires an explicit option selection and a server-checked confirmation field; no startup path selects it automatically. The adapter reports a change only after the native control response names the requested mode and the owned process reports the effective mode in a status event. A mismatch or missing report leaves the action unconfirmed.
+恢复的 Claude CLI 会话需要提供原生权限选择，同时区分用户请求的模式与原生进程实际生效的模式。完全访问必须由用户显式确认，不能因启动或恢复会话而自动开启。
 
-Closed history still has no permission choices, and unknown saved permissions still block resume. The original profile, cwd and settings sources are preserved.
+## 决策
 
-## Verification
+显式恢复的 CLI 会话提供原生 default、acceptEdits、plan、dontAsk、auto 和 bypassPermissions 选项。启动时允许稍后选择 bypassPermissions，但仍保留已保存模式。完全访问需要显式选择选项，并提供由服务端检查的确认字段；没有任何启动路径自动选择它。只有原生控制响应明确返回请求的模式，且 Bridge 持有进程通过状态事件报告生效模式后，适配器才报告修改成功。不匹配或缺少报告时，操作保持未确认。
 
-Fixture tests cover mode choices, Full Access confirmation and native control routing. `python -B -m unittest tests.test_claude_cli` and `node --test tests/desktop-sessions-ui.test.cjs` pass. Root acceptance with installed Claude 2.1.287 and an isolated mock API confirmed the control response and effective native status for all six modes. Organization-specific restrictions are still reported as unconfirmed if the native process refuses a change. No paid API was used.
+已关闭的历史仍不提供权限选项，未知的保存权限仍会阻止恢复。原配置、cwd 和设置来源保留。
+
+## 备选方案
+
+原记录明确保留原生权限控制、完全访问确认和有效状态回报，但未记载其他权限管理方案的比较过程。没有证据说明曾评估过自建权限层或其他替代实现，因此不补写此类历史。
+
+## 影响
+
+权限选择只作用于显式恢复且由 Bridge 持有的 CLI 进程；关闭历史仍不开放控制。原生控制响应与生效状态必须一致，因此组织策略拒绝、状态缺失或不匹配时，操作只能保持未确认。原配置、cwd 和设置来源不因开放选项而改变。
+
+## 验证
+
+夹具测试覆盖模式选项、完全访问确认和原生控制路由。`python -B -m unittest tests.test_claude_cli` 与 `node --test tests/desktop-sessions-ui.test.cjs` 通过。主智能体使用已安装 Claude 2.1.287 和隔离模拟 API 验收，确认了全部六种模式的控制响应和有效原生状态。如果原生进程因组织级限制拒绝修改，仍报告未确认。未使用付费 API。

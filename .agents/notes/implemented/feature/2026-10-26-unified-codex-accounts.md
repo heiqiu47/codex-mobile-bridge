@@ -1,23 +1,23 @@
-# Agent Note: Unified local Codex accounts
+# Agent Note: 统一本地 Codex 账号
 
 Status: implemented
 
-## Problem
+## 问题
 
-Desktop and CLI already share saved Codex accounts, but two lists and an optional verification checkbox suggest independent identities.
+Desktop 与 CLI 已共享保存的 Codex 账号，但两份列表和可选验证复选框让人误以为身份独立。
 
-## Decision
+## 决策
 
-The UI shows one saved inventory and a separate API editor before reminders. It always verifies CLI configuration after a Desktop switch. With Desktop stopped, use the existing guarded CLI transaction without launching Desktop. Official login stays computer-only; Claude and remote environments keep their current scopes.
+UI 显示一份保存清单，并在提醒前放置独立 API 编辑器。Desktop 切换后始终验证 CLI 配置。Desktop 停止时使用既有受保护 CLI 事务，不启动 Desktop。官方登录仍仅在电脑完成；Claude 和远程环境保持当前范围。
 
-## Alternatives considered
+## 备选方案
 
-Keeping both lists preserves existing controls but misrepresents one shared account home. Hiding the CLI list without retaining its API editor and model probes removes useful capability.
+保留两份列表可以保留既有控件，却错误呈现共享账号主目录。隐藏 CLI 列表而不保留其 API 编辑器和模型探测，会丢失有用能力。
 
-## Consequences
+## 影响
 
-Desktop and CLI may report different success outcomes; retain partial-success reporting. The [previous optional-sync decision](../../implemented/feature/2026-10-14-local-cli-account-sync.md) partially overlaps and remains as historical rationale. Active account-sync and WSL notes remain applicable outside this narrow local Codex decision.
+Desktop 和 CLI 可能报告不同成功结果，需保留部分成功反馈。[此前可选同步决定](../../implemented/feature/2026-10-14-local-cli-account-sync.md)部分重叠，作为历史理由保留。活跃账号同步和 WSL 笔记在本项狭窄的本地 Codex 决定之外仍适用。
 
-Targeted account UI, CLI editor, WSL scoping and backend account/sync/access fixtures verify this behavior. No personal account switch or model request is performed.
+定向账号 UI、CLI 编辑器、WSL 作用域及后端账号/同步/接入夹具验证该行为，不进行个人账号切换或模型请求。
 
-The [account presentation and platform scope correction](../bug-fix/2026-10-26-account-ui-and-platform-scope.md) supersedes the desktop editor placement and skips WSL initialization on unsupported gateways; the account inventory and endpoint identity contracts remain.
+[账号展示与平台范围修正](../bug-fix/2026-10-26-account-ui-and-platform-scope.md)替代桌面编辑器放置方式，并在不支持的网关跳过 WSL 初始化；账号清单和端点身份契约保留。

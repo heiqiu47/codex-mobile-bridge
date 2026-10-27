@@ -1,23 +1,23 @@
-# Agent Note: Follow CLI rollout updates during passive viewing
+# Agent Note: 被动查看时跟随 CLI 保存记录更新
 
 Status: implemented
 
-## Problem
+## 问题
 
-The first passive read stores a CLI rollout snapshot in the live session. Later terminal turns append to the same rollout, but subsequent timeline polls skipped the saved-history read once the session had state. The phone therefore remained on the initial exchange until an explicit continuation changed the runtime path.
+首次被动读取会将 CLI 保存记录快照写入实时会话。终端后续轮次追加到同一记录，但会话已有状态后，后续时间线轮询会跳过保存历史读取。因此，手机停留在最初的对话，直到显式继续操作改变运行时路径。
 
-## Decision
+## 决策
 
-While a CLI-origin session is disconnected, periodic background reads refresh its saved rollout. Local saved history has a two-second read cadence independent of the 15-second owner retry; SSH keeps the existing owner retry cadence to avoid extra remote reads. An unchanged normalized snapshot does not advance the timeline sequence. This only reads saved data; it does not resume a thread, start a daemon, or claim its writer. A connected runtime remains responsible for its own events.
+源自 CLI 的会话未连接时，定期后台读取刷新其保存记录。本地保存历史采用两秒读取间隔，独立于 15 秒的执行归属重试；SSH 维持原有归属重试间隔，以避免增加远程读取。规范化快照未变化时不推进时间线序号。此操作只读取保存数据，不恢复线程、不启动守护进程、不取得写入者。已连接运行时仍负责自己的事件。
 
-## Verification
+## 验证
 
-An integration fixture appends a second terminal turn after the first passive read and checks that timeline changes contain the new reply without advancing the owner retry, native attach or call. An unchanged repeat read yields no new rows. The test failed before the change and passes after it.
+集成夹具在首次被动读取后追加第二个终端轮次，确认时间线变化包含新回复，同时不提前触发执行归属重试、原生附加或调用。内容未变的重复读取不产生新行。该测试在修改前失败，修改后通过。
 
-## Alternatives considered
+## 备选方案
 
-Requiring Continue provides fresh live events but claims a writer just to read history. Refreshing on every poll increases filesystem and SSH work; a bounded local history cadence fixes visibility while keeping passive access read-only.
+要求用户点击继续可取得新的实时事件，但仅为读取历史就会取得写入者。每次轮询都刷新会增加文件系统和 SSH 工作；有界的本地历史读取间隔在保持被动访问只读的同时解决可见性问题。
 
-## Consequences
+## 影响
 
-Real isolated native-writer acceptance displayed a subsequent reply through GET-only gateway polling in 2.354 seconds with the correct model and connected=false. SSH keeps its existing cadence; no two-second SSH guarantee is made.
+真实隔离原生写入者验收中，仅通过 GET 网关轮询，在 2.354 秒内显示后续回复，模型正确且 connected=false。SSH 保持原有间隔，不承诺两秒内更新。

@@ -5,6 +5,7 @@ Open /?case=success|fast|shell-once|shell-twice|shell-fatal|css-once|js-twice|js
 auth-hang|slow|bootstrap-missing|pair-unknown|external-script. Each navigation resets counters.
 Load bootstrap.browser.js and invoke runBootstrapBrowserChecks() in that page.
 """
+import argparse
 import json
 import re
 import sys
@@ -21,6 +22,9 @@ from bridge.api.assets import STATIC, served_asset_bytes  # noqa: E402
 WEB = ROOT / 'web'
 PAYLOADS = {path: served_asset_bytes(WEB, path) for path in STATIC}
 state = {'case': 'success', 'requests': Counter(), 'writes': []}
+BROWSER_CHECKS = {f'/__browser/{name}': ROOT / 'tests/browser' / name for name in (
+    'desktop-history.browser.js', 'persistent-drafts.browser.js',
+    'project-creation.browser.js', 'api-form.browser.js', 'composer-quotes.browser.js')}
 PROBE = b"""window.__startupTest={scenario:new URLSearchParams(location.search).get('case'),executed:[],errors:[],blockedScripts:[],visibilitySamples:[],titles:[],shellLoads:0,started:performance.now(),loadClipboard:null};
 addEventListener('error',e=>{if(e.target===window)__startupTest.errors.push(e.error?.name||'Error');});
 addEventListener('securitypolicyviolation',e=>{if(e.effectiveDirective.startsWith('script-src'))__startupTest.blockedScripts.push(e.blockedURI);});
@@ -50,6 +54,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path == '/__fixture_health':
+            self.output('{"fixture":"cmb-browser-regression"}', 'application/json')
+            return
+        if path in BROWSER_CHECKS:
+            self.output(BROWSER_CHECKS[path].read_bytes())
+            return
         if path == '/__state':
             self.output(json.dumps(state), 'application/json')
             return
@@ -111,6 +121,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--port', type=int, default=0)
+    options = parser.parse_args()
+    server = ThreadingHTTPServer(('127.0.0.1', options.port), Handler)
     print(f'http://127.0.0.1:{server.server_port}', flush=True)
     server.serve_forever()

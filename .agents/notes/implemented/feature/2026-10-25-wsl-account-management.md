@@ -1,75 +1,75 @@
-# Agent Note: Environment-scoped WSL account management
+# Agent Note: 按环境隔离的 WSL 账号管理
 
 Status: implemented
 
-## Problem
+## 问题
 
-The gateway controls WSL Codex and Claude Code sessions but account management remains external-only for Codex and Desktop-scoped for Claude. Identical credentials copied from Windows do not establish shared configuration or continuous synchronization. Reusing the native Desktop switch would target the wrong environment and could disturb existing tasks and drafts.
+网关可控制 WSL Codex 和 Claude Code 会话，但 Codex 账号管理仍仅允许外部操作，Claude 仍限定于 Desktop。从 Windows 复制相同凭据，不代表共享配置或持续同步。复用原生 Desktop 切换会指向错误环境，并可能干扰已有任务及草稿。
 
-## Decision
+## 决策
 
-Use environment-scoped account management for registered WSL distribution/user/config-directory identities. Reuse the current account UI pattern and model-cache policy, with separate request routing and private target-side credential transactions. Preserve all existing native Desktop, local CLI and SSH paths. Reading an account must not start a distribution, daemon, thread or model request. Explicit desktop or authenticated Web/mobile management may write only the selected environment. Passwordless requests cannot save, import, edit, delete, switch or recover a runtime. Ordinary local Desktop/CLI account routes remain unchanged.
+为已注册的 WSL 发行版/用户/配置目录身份提供按环境隔离的账号管理。复用现有账号 UI 和模型缓存策略，以独立请求路由及目标端私有凭据事务实现。保留全部既有原生 Desktop、本地 CLI 和 SSH 路径。读取账号不得启动发行版、守护进程、线程或模型请求。显式桌面管理及已认证 Web/手机管理只能写入选定环境。免密码请求不能保存、导入、编辑、删除、切换或恢复运行时。普通本地 Desktop/CLI 账号路由不变。
 
-Switch preflight checks current identity and actual runtime state, queued messages and unknown receipts. Unknown state blocks rather than clearing records or replaying messages. The explicitly approved Codex handoff may normally stop an identity-verified shared service only after fresh idle checks; it never uses a forced-kill fallback. Atomic file updates preserve unrelated settings and history, recheck the expected identity and restore exact preimages only if no external writer changed them. Saved native credentials provide a return path; OS keyring or other unsupported credential sources are represented honestly rather than silently copied. Magpie and managed/overlapping profiles remain protected.
+切换预检检查当前身份、实际运行时状态、排队消息和未知回执。状态未知时阻止，不清记录或重放消息。经明确批准的 Codex 交接，只有即时检查空闲后，才可正常停止已核验身份的共享服务；不使用强制终止回退。原子文件更新保留无关设置与历史，复核预期身份，且仅在外部写入者未改变文件时精确恢复原内容。保存的原生凭据提供返回路径；系统钥匙串等不支持来源如实呈现，不静默复制。Magpie 及受管/重叠配置保持受保护。
 
-Model results and drafts remain bound to gateway/provider/environment/account identity. Cache reuse cannot authorize mutation. Secret-bearing requests use private stdin and owner-private files, and secrets never return in public snapshots or errors.
+模型结果与草稿仍绑定网关/provider/环境/账号身份。缓存复用不能授权修改。含密请求通过私有 stdin 和仅所有者可读文件传递，秘密不出现在公开快照或错误中。
 
-## Existing-note audit
+## 既有笔记审计
 
-- [Unified WSL endpoints](../architecture/2026-10-24-codex-wsl-unified.md): partially overlaps. Its environment identity, passive-read and lifecycle contracts remain. This decision supersedes only external-only account management for supported unmanaged WSL profiles; external tool protection remains.
-- [Local CLI account synchronization](2026-10-14-local-cli-account-sync.md): partially overlaps, remains authoritative for native Windows/macOS/Linux and Desktop synchronization. WSL never inherits its native-local target by default.
-- [SSH CLI model catalogs](2026-10-18-ssh-cli-model-catalog.md): partially overlaps on cache/identity and private transport; SSH configuration writes remain outside this change.
-- Other matched CLI ownership, startup, history, model attribution and native session notes remain unchanged; they constrain runtime ownership but do not define WSL account writes. No note is fully absorbed or archived.
+- [统一 WSL 端点](../architecture/2026-10-24-codex-wsl-unified.md)：部分重叠。环境身份、被动读取和生命周期契约保留。本决定仅替代受支持非受管 WSL 配置的“仅外部账号管理”；外部工具保护保留。
+- [本地 CLI 账号同步](2026-10-14-local-cli-account-sync.md)：部分重叠，仍约定原生 Windows/macOS/Linux 与 Desktop 同步。WSL 不默认继承其原生本地目标。
+- [SSH CLI 模型目录](2026-10-18-ssh-cli-model-catalog.md)：缓存/身份及私有传输部分重叠；SSH 配置写入不在本次范围。
+- 其他匹配的 CLI 归属、启动、历史、模型标注和原生会话笔记不变；它们约束运行时归属，但不定义 WSL 账号写入。没有笔记被完全吸收或归档。
 
-## Alternatives considered
+## 备选方案
 
-- Reuse Desktop switching: reuses mature rollback/UI but writes Windows credentials and may restart Desktop for a Linux target. Keep separate routing.
-- Automatically mirror Windows credentials: reduces repeated setup but makes account changes cross environments without explicit intent. Offer explicit import of a selected supported API profile instead.
-- Keep all WSL accounts external-only: maximizes isolation but leaves a primary CLI management need unresolved. Retain external-only mode only when the profile cannot safely be managed.
+- 复用 Desktop 切换：可复用成熟回滚/UI，却会为 Linux 目标写 Windows 凭据并可能重启 Desktop，因此保留独立路由。
+- 自动镜像 Windows 凭据：减少重复配置，但会在无明确意图时跨环境改变账号。改为提供显式导入选定受支持 API 配置。
+- 保持所有 WSL 账号仅外部管理：隔离最强，但留下主要 CLI 管理需求未解决。仅对无法安全管理的配置保留外部模式。
 
-## Consequences
+## 影响
 
-The native Windows account panels, local CLI synchronization and SSH routing keep their existing transports. The WSL panel accepts write-only credentials for the exact registered target. Saved credentials are never returned in account snapshots. This adds a target-side store and a small private worker; supporting further native auth schemes requires separate evidence rather than automatic fallback.
+原生 Windows 账号面板、本地 CLI 同步和 SSH 路由保留既有传输。WSL 面板为精确注册目标接受只写凭据。账号快照不返回保存凭据。实现新增目标端存储和小型私有工作程序；进一步支持其他原生认证方案需独立证据，不能自动回退。
 
-First-switch snapshots include the baseline identity in the same durable store write. If a failed write restores exact original files, another explicit user switch is possible. If rollback is incomplete or an external writer changes a file, the identity guard continues to block. No automatic retry is introduced.
+首次切换快照在同一次持久存储写入中包含基线身份。若失败写入精确恢复原文件，用户可再次显式切换。若回滚不完整或外部写入者改变文件，身份保护继续阻止，不自动重试。
 
-Claude adds an optional `request_scopes` side table in the existing receipt transaction, only when a request is known to target WSL. Request IDs, fingerprints, statuses, confirmation and retry behavior remain unchanged. Historical unscoped receipts cannot be attributed from irreversible hashes; they stay intact and do not block every unrelated environment. Active or unattributed live processes still block. Future receipt changes must preserve this distinction.
+Claude 仅在已知请求指向 WSL 时，在既有回执事务中添加可选 `request_scopes` 辅助表。请求 ID、指纹、状态、确认和重试行为不变。历史无作用域回执不能从不可逆哈希推断归属；它们保持完整，不阻止所有无关环境。活跃或归属不明的存活进程仍阻止。未来回执改动必须保留此区别。
 
-API model discovery reuses the existing parser and TLS policy on the selected target. Cached results return before upstream I/O, with identity checks, singleflight and a 12-hour timer; stopped or disabled environments are not started. Failed refreshes retain only same-identity successful results. Network fetching does not hold registry or control locks. Closing the manager cancels timers and prevents both cached and inflight responses from being published.
+API 模型发现在选定目标复用既有解析器及 TLS 策略。缓存结果先于上游 I/O 返回，配合身份检查、singleflight 和 12 小时定时器；不启动已停止或禁用环境。刷新失败只保留同身份成功结果。网络抓取不持有注册表或控制锁。关闭管理器取消定时器，并阻止缓存和进行中响应发布。
 
-Python 3.9/3.10 targets use vendored, unmodified MIT Tomli 2.0.1 source only when no TOML parser exists. Source is sent through stdin and loaded in memory, with no target package installation. License and source hashes are in `bridge/vendor/wsl_tomli/` and included in frozen resources.
+Python 3.9/3.10 目标仅在缺少 TOML 解析器时使用随项目携带、未修改且为 MIT 许可的 Tomli 2.0.1 源码。源码经 stdin 传输并在内存加载，不在目标安装包。许可和源码哈希位于 `bridge/vendor/wsl_tomli/`，纳入冻结资源。
 
-Official login enrollment, keyring-backed credentials, managed profiles and unsupported custom provider routing remain in the original CLI. A configuration switch reports `activeVerified: false`: saving a file is not proof of upstream login validity. Existing chats, drafts and queues are not automatically migrated to a new account. The explicit Claude WSL continuation below is the bounded exception for known original threads and unsent drafts; queued or uncertain submissions never transfer.
+官方登录注册、钥匙串凭据、受管配置和不支持的自定义 provider 路由仍由原 CLI 管理。配置切换报告 `activeVerified: false`：保存文件不能证明上游登录有效。已有聊天、草稿和队列不自动迁移到新账号。下述显式 Claude WSL 继续是针对已知原线程和未发送草稿的有界例外；排队或不确定提交绝不迁移。
 
-## Claude WSL explicit continuation
+## Claude WSL 显式继续
 
-Only an explicit switch can close stdin on a gateway-owned idle stream-json executor. The manager, registration, remote and receipt gates precede release; native ID, origin, cwd and ready preflight must match the selected environment. Fresh account identity and selected-profile checks precede EOF. The gateway waits for natural exit, never signals or force-kills this executor, and does not write account files on timeout. Target-side process checks still reject remaining external native clients. Read-only eligibility returns an attempt capability only for the known running-process blocker, retaining the blocker itself; it is not a declaration that external clients have exited.
+只有显式切换能关闭网关持有的空闲 stream-json 执行器 stdin。释放前先通过管理器、注册、远程和回执检查；原生 ID、来源、cwd 及就绪预检须匹配所选环境。EOF 前检查即时账号身份和选定配置。网关等待自然退出，不发信号或强制终止执行器，超时不写账号文件。目标端进程检查仍拒绝剩余外部原生客户端。只读资格检查仅针对已知“进程运行中”阻止原因返回尝试能力，并保留该阻止原因；这不代表外部客户端已退出。
 
-Claude's native profile origin includes configuration and authentication fingerprints, so retaining the native history file alone does not retain the gateway session ID. The explicit transaction records known original IDs, then validates fresh before/after profiles, the exact configuration identity, native IDs, cwd, model, permission mode, project configuration and history file device/inode. It atomically persists an exact new-origin-to-original-ID alias in the gateway's private data directory. Ordinary external account changes do not match this authorization and remain isolated. Refreshing listings or restarting the gateway preserves only these exact authorized aliases.
+Claude 原生配置来源包含配置和认证指纹，因此仅保留原生历史文件不能保留网关会话 ID。显式事务记录已知原 ID，再校验新的操作前后配置、精确配置身份、原生 ID、cwd、模型、权限模式、项目配置及历史文件设备号/inode。在网关私有数据目录原子保存精确的“新来源→原 ID”别名。普通外部账号变化不匹配该授权，仍隔离。列表刷新或网关重启仅保留这些精确授权别名。
 
-The alias carries up to 32 prior draft-account hashes, not credentials. Fresh detail responses expose this lineage only when the current native session and draft owner match the alias. The manager and public switch response apply the same WSL/provider/environment draft namespace used by the composer. This allows a disconnected mobile client to retain its unsent draft across an explicitly authorized desktop switch. Pending request IDs, receipts and queued messages are excluded.
+别名最多携带 32 个先前草稿账号哈希，不携带凭据。新的详情响应仅在当前原生会话及草稿所有者匹配别名时暴露这条历史关联。管理器和公开切换响应使用与输入框相同的 WSL/provider/环境草稿命名空间，使断连手机客户端可在明确授权的桌面切换后保留未发送草稿。待处理请求 ID、回执和排队消息不在内。
 
-If account files switch successfully but native continuation verification fails, the response reports `continuationPending`; it does not repeat the account write. A private pending record stores the exact applied configuration identity. A later refresh may complete only that already-authorized transaction when the identity and original history evidence still match. Preparations that never reached an applied identity cannot create aliases during a read.
+账号文件切换成功但原生继续验证失败时，响应报告 `continuationPending`，不重复账号写入。私有待处理记录保存已应用的精确配置身份。之后刷新只有在身份与原历史证据仍匹配时，才能完成该已授权事务。尚未到达已应用身份的准备操作，不能在读取期间创建别名。
 
-Closing the byte relay alone is rejected as an authentication reload mechanism. Killing a process by name or using a daemon stop command with a force fallback is also rejected. These shortcuts do not establish ownership, preserve active work or prove which account an existing native thread will use.
+拒绝把仅关闭字节中继当作认证重载机制，也拒绝按名称杀进程或使用带强制回退的守护进程停止命令。这些捷径不能建立归属证据、保护活跃工作或证明已有原生线程将使用哪个账号。
 
-## Earlier baseline verification
+## 较早基线验证
 
-- Independent boundary tests cover same-target busy/unknown receipts, unrelated environment isolation, field/identity validation, import source races, exact rollback and external edits. Python 3.9 and 3.12 each pass the 46 worker, cache, source and boundary cases.
-- Real HTTP tests cover authentication, CSRF, strict body fields, passwordless restrictions and the earlier desktop-only browser boundary. This last restriction is superseded by authenticated Web/mobile management in the current revision; original local account routes retain their contract.
-- Native Windows-to-WSL execution uses Python 3.10.12 and tmpfs-only fake credentials. Codex and Claude file save/switch/exact restore pass; native Codex app-server reads the selected API route and auth type. Native Claude `auth status` recognizes the synthetic selected API and reports logged out for a separate empty profile, with outbound proxies disabled. Original credential/config file hashes are unchanged. No model or message is sent. These checks do not establish real upstream authentication.
-- Browser fixtures exercise registered environment selection, stale response disposal, return to local panels, both languages and narrow/wide widths. Full frontend/backend suite results and frozen-package checks are recorded with the local candidate, not treated as installed-platform acceptance.
+- 独立边界测试覆盖同目标忙碌/未知回执、无关环境隔离、字段/身份校验、导入来源竞争、精确回滚和外部编辑。Python 3.9、3.12 各通过 46 个工作程序、缓存、源码和边界用例。
+- 真实 HTTP 测试覆盖认证、CSRF、严格请求体字段、免密码限制及较早的浏览器仅桌面边界。最后一项限制已由当前修订的已认证 Web/手机管理替代；原本地账号路由保留契约。
+- 原生 Windows 到 WSL 执行使用 Python 3.10.12 和仅在 tmpfs 的假凭据。Codex/Claude 文件保存、切换、精确恢复通过；原生 Codex app-server 读出选定 API 路由和认证类型。禁用出站代理时，原生 Claude `auth status` 识别合成选定 API，并对独立空配置报告未登录。原凭据/配置文件哈希未变。未发送模型请求或消息，不证明真实上游认证。
+- 浏览器夹具覆盖注册环境选择、过期响应丢弃、返回本地面板、双语和窄/宽视口。完整前后端测试结果及冻结包检查随本地候选记录，不视为已安装平台验收。
 
-## Windows management-flow revision
+## Windows 管理流程修订
 
-Real Codex 0.164.0 fake-endpoint tests reject hot switching as a reliable path. Global login/config reload can combine an old loaded endpoint with the new API key. Per-thread static overrides avoid that combination, but an existing subscriber can make resume silently ignore the overrides; both cases return the same idle/loaded shape with no effective credential or endpoint proof. A successful resume response therefore cannot authorize continued sending through a newly selected account.
+真实 Codex 0.164.0 假端点测试证明热切换不能作为可靠路径。全局登录/配置重载可能将旧已加载端点与新 API 密钥组合。逐线程静态覆盖可避免该组合，但已有订阅者可能使恢复静默忽略覆盖；两种情况都返回相同空闲/已加载形状，无有效凭据或端点证据。因此恢复响应成功不能授权通过新账号继续发送。
 
-The user approved an explicit idle-only normal restart of the selected Codex shared service. The handoff must verify its process birth identity, executable, configuration directory and control socket, inspect all loaded tasks/approvals and unresolved gateway operations, and wait for normal exit before updating account files. Failed/unknown checks do not authorize a stop; exit timeout has no forced fallback. Recovery after an applied configuration is a separate, identity-bound operation rather than replaying the account switch. Original terminal connections may need to reconnect.
+用户批准显式、仅空闲时正常重启选定 Codex 共享服务。交接必须验证进程出生身份、可执行文件、配置目录和控制套接字，检查全部已加载任务/批准及网关未决操作，等待正常退出后才更新账号文件。检查失败/未知不授权停止；退出超时没有强制回退。已应用配置后的恢复是单独的身份绑定操作，不重放账号切换。原终端连接可能需要重新连接。
 
-Current verification distinguishes browser component fixtures, authenticated HTTP checks, native fake-API protocol experiments, production-worker transactions, and the final installed Windows Test. Fake-API messages never reach real model providers. The current per-candidate evidence is kept under `.tmp/v215-wsl-management-flow/`; no build or real-account acceptance is inferred from the earlier baseline.
+当前验证区分浏览器组件夹具、已认证 HTTP 检查、原生假 API 协议实验、生产工作程序事务和最终安装的 Windows Test。假 API 消息绝不到真实模型 provider。每候选版本证据保留于 `.tmp/v215-wsl-management-flow/`，不从较早基线推断构建或真实账号验收。
 
-The native Codex updater is not an inference client, but it can restart the daemon. Its exemption requires the exact internal role, same HOME/UID/executable and a matching native PID birth record. The handoff holds the existing native operation lock across normal exit and account-file commit, so the updater cannot restart between the paired credential writes. Native Codex 0.164.0 was observed draining an in-flight fake request after the first SIGTERM. A second SIGTERM can force exit, so the gateway persists the first termination intent before signaling and never repeats it for the same process generation; timeout leaves credentials unchanged and recovery only observes whether normal exit has completed.
+原生 Codex 更新器不是推理客户端，但能重启守护进程。其豁免要求精确内部角色、相同 HOME/UID/可执行文件及匹配原生 PID 出生记录。交接跨正常退出和账号文件提交持有现有原生操作锁，避免更新器在成对凭据写入之间重启。观察到原生 Codex 0.164.0 在首个 SIGTERM 后继续排空进行中的假请求。第二个 SIGTERM 可强制退出，因此网关在发信号前持久保存首次终止意图，同一进程代次不重复；超时保持凭据不变，恢复只观察正常退出是否完成。
 
-Codex draft continuation snapshots catalog identities rather than full conversation contents, including inactive and archived chats. Only an explicit successful account transaction authorizes the new identity lineage. A missing old identity allows first-time account setup without inventing draft ownership. Repeating completion for the exact applied identity is idempotent and retains prior authorized lineage; destination drafts and unconfirmed sends remain untouched.
+Codex 草稿继续记录目录身份快照，而非完整聊天内容，覆盖不活跃和已归档聊天。只有显式成功的账号事务授权新身份历史关联。旧身份缺失时允许首次账号设置，不捏造草稿归属。针对精确已应用身份重复完成具有幂等性，并保留此前授权关联；目标草稿与未确认发送不变。
 
-The [account presentation and platform scope correction](../bug-fix/2026-10-26-account-ui-and-platform-scope.md) supersedes the desktop editor placement and skips WSL initialization on unsupported gateways; the account inventory and endpoint identity contracts remain.
+[账号展示与平台范围修正](../bug-fix/2026-10-26-account-ui-and-platform-scope.md)替代桌面编辑器放置方式，在不支持的网关跳过 WSL 初始化；账号清单和端点身份契约保留。

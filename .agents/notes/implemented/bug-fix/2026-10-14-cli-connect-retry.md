@@ -1,23 +1,23 @@
-# Agent Note: Reuse in-flight owner discovery during explicit continuation
+# Agent Note: 显式继续会话时复用尚未完成的执行归属查询
 
 Status: implemented
 
-## Problem
+## 问题
 
-An explicit continuation on a CLI-origin chat first requests a background owner lookup, then synchronously runs the same lookup again. If the background lookup has already reached a slow `IPC.owner`, the second call adds a second wait before native continuation or a Desktop-owner error. Separately, a failed native proxy connection repeated the same attempt before starting the daemon.
+对源自 CLI 的聊天执行显式继续操作时，会先发起后台执行归属查询，再同步重复同一次查询。如果后台查询已进入缓慢的 `IPC.owner` 调用，第二次调用会在原生继续操作或 Desktop 执行归属错误之前再增加一次等待。另外，原生代理连接失败后，启动守护进程前也会重复同一次连接尝试。
 
-## Decision
+## 决策
 
-Explicit continuation waits for the current background owner lookup to finish and consumes that result once. If no lookup is in flight, it still performs a fresh one. A later independent explicit action also probes again. Background saved-history reading proceeds independently. The native adapter additionally remembers the daemon-start generation before its first connect; after taking the lock, it retries the proxy only if another adapter call started the daemon meanwhile. Existing timeouts, identity checks, and no-write-replay rules remain intact.
+显式继续操作等待当前后台执行归属查询完成，并且只消费一次结果。若当前没有查询，则仍发起新的查询。后续独立的显式操作也会重新探测。后台保存历史读取独立进行。原生适配器还会在第一次连接前记录守护进程的启动代次；取得锁后，仅当其他适配器调用在此期间启动了守护进程，才重试代理连接。现有超时、身份检查和禁止重放写入的规则保持不变。
 
-## Verification and limit
+## 验证与限制
 
-The real `Bridge.activate` chain with a delayed fake `IPC.owner` called owner discovery twice before the change, both when no owner existed and when an owner had no snapshot yet. After the change it calls once; a later separate activation probes again. A controlled unavailable-proxy fixture required two attempts instead of three. Isolated native 0.162.1 cold attach remained about 0.25 seconds before and after because that fixture has no stalled proxy. The measured fixture demonstrates the duplicate wait, while the reported production delay has not been timed at its actual IPC boundary.
+在真实 `Bridge.activate` 调用链中注入延迟的模拟 `IPC.owner`，修改前在不存在执行归属进程、以及已有归属进程但尚无快照这两种情况下都会查询两次。修改后只查询一次；后续独立激活仍会重新探测。受控的代理不可用夹具所需尝试从三次降至两次。隔离的原生 0.162.1 冷连接在修改前后都约为 0.25 秒，因为该夹具不存在代理停滞。夹具测量证明了重复等待，但用户报告的生产延迟尚未在实际 IPC 边界计时。
 
-## Alternatives considered
+## 备选方案
 
-Always probing again guarantees freshness but duplicates the same in-flight observation. Reusing only the current lookup removes that delay while a later user action still asks for fresh owner evidence.
+每次重新探测可以保证信息新鲜，但会重复同一项尚未完成的观察。仅复用当前查询可以消除这次延迟，同时后续用户操作仍会获取新的执行归属证据。
 
-## Consequences
+## 影响
 
-Continuation still waits for an actual owner lookup; the change does not weaken owner identity checks or introduce a timeout-based takeover.
+继续操作仍需等待真实的执行归属查询；本次修改不放宽归属身份检查，也不引入基于超时的接管。

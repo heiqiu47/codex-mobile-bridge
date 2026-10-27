@@ -125,6 +125,8 @@ flowchart TD
 
 ## 本轮保留的边界
 
+依赖方向由 `scripts/check-boundaries.py` 和 `tests/test_module_boundaries.py` 自动检查。平台禁止反向依赖；功能和客户端层不得新增应用/HTTP 依赖，provider 不得新增相互引用。既有 22 条边保存在 `dependency-exceptions.json`，每条带文件、符号和原因；新增违规或遗留无效例外都会失败。此门禁控制依赖增长，不代表既有耦合已消失。开发流程见 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
+
 这次整理已经拆出可独立维护的系统实现，重排了功能与客户端模块。`app/service.py`、`api/httpd.py` 和部分页面组织文件仍较大，保留既有业务入口有助于控制回归。后续应沿真实功能需求逐块抽取，避免单纯按行数切文件。
 
 一次性命令执行的 `CommandJob` 仍在终端功能模块内保留系统分支，以保持 SSH 源码自包含；桌面 Electron 主进程内也保留窗口/系统菜单的现有分支。目录划分并不意味着所有 `sys.platform`/`process.platform` 判断已消失。移动端已合并共同注入脚本并分离原生资源加载职责；原生控制器仍保留既有导航和安全回调，避免为了目录分类扩大行为改动。

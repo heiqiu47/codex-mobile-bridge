@@ -1,13 +1,31 @@
-# SSH CLI upstream model catalogs
+# Agent Note: SSH CLI 上游模型目录
 
-The native CLI path previously rejected every SSH API catalog and asked for a manual model ID. It now reads the effective configuration from the joined daemon and performs catalog discovery on that same SSH host. Local gateway authentication is never substituted.
+Status: implemented
 
-The target worker reads only the named provider environment variables from a verified same-user daemon. PID generation, executable and CODEX_HOME are checked by the target platform reader. The worker returns normalized public model metadata and an opaque identity digest; launch credentials and auth-file contents are not returned. Existing config/read snapshots are sent back to their original host through SSH stdin, not command arguments or temporary files.
+## 问题
 
-Host, remote home, cwd, provider, config, account, auth-file digest and selected environment form the cache identity. Upstream model IDs remain authoritative, and native metadata fills missing effort information only for exact IDs. Identity is checked again around a fetch. Same-identity failures preserve the last successful result and timestamp; changed identities cannot reuse that result. The existing manual and 12-hour refresh policy is retained.
+原生 CLI 路径此前拒绝所有 SSH API 目录，要求手动填写模型 ID，无法使用选定远程运行时的上游目录。
 
-The source bundle includes both POSIX platform readers and their dependencies so a frozen Windows or Mac gateway can query a Linux target. Windows-over-SSH is outside the existing POSIX SSH execution contract; local Windows CLI uses its native reader.
+## 决策
 
-Validation: focused model/session/cache/resource tests; isolated standalone-source execution; a real Codex CLI 0.160.0 daemon on the authorized Linux SSH host using only a loopback mock upstream. Cold/warm reads, manual refresh, failed-refresh retention, credential rotation and cleanup passed with zero model messages. This does not claim public-upstream connectivity on a host without the required network access.
+从已加入守护进程读取生效配置，并在同一 SSH 主机执行目录发现，绝不以本地网关认证替代。
 
-[WSL account management](2026-10-25-wsl-account-management.md) reuses the model normalization and identity principles with separate target routing. SSH account writes and this SSH catalog transport remain unchanged.
+目标工作程序只从经过验证的同用户守护进程读取指定 provider 环境变量。目标平台读取器检查 PID 代次、可执行文件及 CODEX_HOME。工作程序返回规范化的公开模型元数据和不透明身份摘要，不返回启动凭据或认证文件内容。既有 config/read 快照通过 SSH stdin 发回原主机，不经命令参数或临时文件传输。
+
+主机、远程主目录、cwd、provider、配置、账号、认证文件摘要和选定环境共同构成缓存身份。以上游模型 ID 为准；原生元数据只为精确匹配 ID 补齐推理强度。抓取前后重新检查身份。同身份失败保留最近成功结果及时间戳；身份变化不能复用该结果。现有手动及 12 小时刷新策略保留。
+
+源码包包含两个 POSIX 平台读取器及依赖，使冻结打包的 Windows/Mac 网关可查询 Linux 目标。经 SSH 访问 Windows 不属于既有 POSIX SSH 执行契约；本地 Windows CLI 使用其原生读取器。
+
+## 备选方案
+
+原记录保留了此前“所有 SSH API 均要求手填模型 ID”的路径，并以远程原身份目录发现替代。它同时明确排除本地认证替代和把秘密放入命令参数或临时文件的传输方式。相关环境身份取舍见[本地 CLI 守护进程模型环境](2026-10-18-local-cli-daemon-model-environment.md)；本记录未记载其他候选的独立比较，不将本地方案的试验结果当作 SSH 验收。
+
+## 影响
+
+支持的 SSH 目标可返回上游模型元数据，不把凭据带回网关公开响应。缓存受完整身份约束，身份变化后不能复用旧结果；失败刷新只保留同身份成功记录。能力仍受目标网络和 POSIX SSH 执行契约限制，不因此支持经 SSH 管理 Windows。
+
+## 验证
+
+验证包括定向模型/会话/缓存/资源测试、隔离的独立源码执行，以及在已授权 Linux SSH 主机上运行真实 Codex CLI 0.160.0 守护进程，仅使用回环模拟上游。冷/热读取、手动刷新、失败刷新保留、凭据轮换及清理均通过，模型消息为零。这不代表缺少必要网络访问的主机能连接公开上游。
+
+[WSL 账号管理](2026-10-25-wsl-account-management.md)以独立目标路由复用模型规范化和身份原则。SSH 账号写入及本 SSH 目录传输保持不变。

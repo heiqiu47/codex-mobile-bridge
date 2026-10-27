@@ -2,11 +2,11 @@
 
 Status: implemented
 
-## Problem
+## 问题
 
 同一台电脑上的 WSL Codex 与原生 Codex 使用相同的聊天操作，但独立应用入口迫使用户切换页面才能比较、搜索和新建会话。它们又有不同的认证、配置目录、文件系统和执行归属，不能用页面合并来合并运行身份。旧 WSL 文件操作还会保留在 HTTP 读请求体之前解析出的对象，使停用后的迟到上传继续写入。
 
-## Decision
+## 决策
 
 顶层保留一个 Codex，WSL 是 Codex 的子接入。会话列表的公开分类为 `all / cli / desktop / wsl`，显示全部 / CLI / APP / WSL。WSL 仍使用 `access.source=cli / runtime=wsl`，不改变原始线程来源和能力判断。每条会话、草稿、附件、项目与写入回执继续绑定原 `host + threadId`；WSL host 是发行版、用户和 `CODEX_HOME` 的原稳定摘要。
 
@@ -20,11 +20,11 @@ WSL 写操作和 `close()` 共用重入门锁。停用等待已接受的文件�
 
 目录 UI 共用 `web/shared/project-picker.js`；各调用方提供绑定所选环境的请求函数和失效检查。创建弹窗采用单屏表单，保留环境名称、短路径与展开完整路径；目录创建默认收起。浏览或选目录不发消息；Claude 的必要首条消息通过“创建并发送”显式提交。旧 DSH 连接器未广告新目录能力时只保留已有项目创建；更新源码后才开放新目录。
 
-## Existing-note audit
+## 既有笔记审计
 
 [Codex 聊天列表按主机渐进显示](../bug-fix/2026-10-16-codex-list-first-paint.md)与本次部分重叠；本次沿用其分页和失败主机规则，并增加 WSL host。[网关在所有客户端停用时保持可管理](../bug-fix/2026-10-16-gateway-with-no-clients.md)与聚合状态部分重叠；本次保持全部停用时的管理入口，不把任何 WSL 的启用状态当作原生操作许可。两篇原决定继续成立，不归档或删除。
 
-## Alternatives considered
+## 备选方案
 
 - 独立 WSL 应用可以直接复用现有应用生命周期，但重复同类入口并隔开统一搜索，不符合单 Codex 的交互目标。
 - 把 WSL 改为第三种原始 `source` 能减少展示转换，却会破坏现有 CLI 能力判断和历史来源兼容；仅展示分类使用 WSL。
@@ -33,7 +33,7 @@ WSL 写操作和 `close()` 共用重入门锁。停用等待已接受的文件�
 - 让每种接入分别实现目录弹窗容易产生环境失效和路径处理差异；只共享展示与浏览流程，创建、回执和原生协议仍由原接入负责。
 - 多步向导可以隐藏部分字段，但对已存在项目增加点击；采用一屏主表单与按需目录弹窗。
 
-## Testing
+## 测试
 
 定向 Node 测试覆盖统一导航、旧 WSL 链接、跨环境深链接竞态、四类筛选、新建项目响应隔离和账号作用域。Python 测试用真实 HTTP Handler 等待上传体，在停用后再到达文件字节，旧实现能复现落盘，修复后拒绝写入；另覆盖关闭先行和写入先行的顺序、原生/WSL 独立启用与分页分类。完整源码及合成浏览器回归的最终结果记录在隔离分支 `.tmp/wsl-unified/`。本机验证不代表 Windows/WSL 真机、移动 WebView、冻结包或升级验收。
 
@@ -47,10 +47,10 @@ Claude WSL 复用 RemoteClaudeCli 的历史、控制和配置协议，传输使�
 
 只补前端能力标志不能提供有效的控制路由；启动另一套未经核验的执行器则会改变原会话归属。因此采用现有原生控制、只读索引和独立传输组合，桌面专用的侧边聊天等能力仍不开放给 CLI。
 
-## Consequences
+## 影响
 
 同类会话可以统一查看，同时保留配置和执行边界；无原生 App 时 WSL 不再被原生就绪条件阻断。代价是展示聚合状态与实际操作子项必须分开，所有写入门仍以具体 endpoint 为准。停用会等待已接受的写操作返回；操作结果不确定时继续保留待核对状态，关闭接入不会退出原 CLI 或迁移任务。
 
-Supported unmanaged WSL profiles now have [environment-scoped account management](../feature/2026-10-25-wsl-account-management.md). This supersedes only the earlier external-only account UI; target identity, passive reads and original runtime ownership remain unchanged.
+受支持的非受管 WSL 配置现已具备[按环境隔离的账号管理](../feature/2026-10-25-wsl-account-management.md)。它仅替代此前的仅外部账号管理 UI；目标身份、被动读取和原运行时归属保持不变。
 
-The [account presentation and platform scope correction](../bug-fix/2026-10-26-account-ui-and-platform-scope.md) supersedes the desktop editor placement and skips WSL initialization on unsupported gateways; the account inventory and endpoint identity contracts remain.
+[账号展示与平台范围修正](../bug-fix/2026-10-26-account-ui-and-platform-scope.md)替代桌面编辑器放置方式，在不支持的网关跳过 WSL 初始化；账号清单和端点身份契约保留。

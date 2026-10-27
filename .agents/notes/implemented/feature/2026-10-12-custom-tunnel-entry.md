@@ -2,11 +2,11 @@
 
 Status: implemented
 
-## Problem
+## 问题
 
 用户已配置穿透后只需要登记公开地址。既有 NAS 模式强制开启局域网并填写非回环上游，服务器模式包含 SSH 配置，都不适合同机转发到回环服务。
 
-## Decision
+## 决策
 
 `accessMode=external` 表示用户管理的 HTTPS 入口，只要求 `publicUrl`。桌面主表单显示当前网关端口对应的 HTTP 回环目标；高级位置选项切换到既有 `nas` 模式时，仍要求局域网和同端口的非回环上游。旧 NAS 配置不迁移成回环配置，也不自动开放网卡。连接方式区域默认展开，已有连接保留折叠状态。
 
@@ -18,16 +18,16 @@ Status: implemented
 
 原生绑定仍按保存地址恢复，只校验已有有效 Cookie，禁止重定向；跨地址发现沿用基于旧绑定 Cookie 的 HMAC 证明，不能凭公开进程身份迁移凭据。停用入口不等同于撤销设备，撤销设备仍由共享会话表执行。
 
-## Existing-note audit
+## 既有笔记审计
 
 本地评审中的同名提案由本记录接续。[绑定恢复](2026-10-13-native-binding-recovery.md)与 [Cookie 隔离](../bug-fix/2026-10-13-gateway-cookie-namespace.md)部分重叠，分别保留原生安全存储和持久命名的决定。未发现其他同机自建穿透配置决定。交互参考 [DSH Remote Web UI](https://github.com/DamonKoy/dsh-web-ui/tree/main/packages/dsh-remote-web-ui) 的 `publicBaseUrl`，不复用其认证规则或源码。
 
-## Alternatives considered
+## 备选方案
 
 - 复用 NAS 表单可以少一种存储模式，但强制 LAN 与非回环上游会错误表达同机穿透，因此保留 NAS 的跨设备语义，并用统一界面呈现。
 - 自动安装和管理 frpc 可以进一步减少步骤，但扩大进程、账号和更新职责，超出用户自行配置穿透的范围。
 - 放宽 HTTP、证书或 Origin 能减少配置报错，却会扩大长期凭据暴露面，因此维持现有边界并改进错误提示。
 
-## Consequences
+## 影响
 
 只监听回环也能经用户配置的可信 HTTPS 入口访问；可达性取决于外部穿透和证书。源码测试与隔离 TLS 代理验证分别记录于 [VERIFICATION.md](../../../../VERIFICATION.md)，不能替代真实第三方节点、手机蜂窝网络及各操作系统的验收。前台聊天流、文件和终端需要代理保留长连接和数据传输，不以首页 200 代表全部能力可用。

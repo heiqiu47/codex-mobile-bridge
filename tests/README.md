@@ -36,6 +36,8 @@ Windows 打包时会校验并携带微软 ConPTY 与配套 OpenConsole，以支�
 ```sh
 npm run test:desktop
 npm run test:updater
+npm run test:boundaries
+npm run test:browser
 ```
 
 `test:desktop` 通过 `scripts/test-frontend.cjs` 自动递归发现 `tests/` 和 `mobile/tests/` 中 `*.test.js`、`*.test.cjs`、`*.test.mjs`。新增 Node 用例不需编辑长命令清单；资源路径检查包含在该入口。
@@ -43,6 +45,14 @@ npm run test:updater
 宿主与宽窄布局变更可先运行 `node --test tests/host-environment.test.cjs tests/layouts.test.cjs tests/frontend-assets.test.cjs mobile/tests/resources.test.cjs`。这些检查覆盖宿主识别与晚注入、容器分屏边界、样式顺序和原生资源清单，不启动或编译手机 App。布局的真实渲染和窗口变化后状态保留仍需浏览器夹具验证。
 
 [浏览器夹具](browser/README.md) 位于 `tests/browser/*.browser.js`，依赖真实 DOM 或隔离服务，应由相应驱动调用。其中有些文件只定义测试函数，单独加载不会执行断言。本轮将它们与 Node 分开，避免虚增通过计数。
+
+`test:browser` 自动调用启动恢复、聊天历史、草稿隔离、API 表单、输入引用及 Claude/DSH 项目弹窗检查，包含 Chromium/WebKit、1280 px/390 px 四种组合。首次安装开发依赖后运行 `PLAYWRIGHT_BROWSERS_PATH=.local/tools/playwright npx playwright install chromium webkit`；Linux CI 加 `--with-deps`。Windows 可用 PowerShell 设置同名环境变量；配置默认也使用项目内的该目录。Chromium 官方下载暂不可用时，可用本机已有 Chrome：`CMB_CHROMIUM_CHANNEL=chrome npm run test:browser`，报告中注明浏览器来源；CI 默认使用锁定版本运行时。
+
+服务固定绑定隔离 loopback 端口 18279，拒绝复用已占用端口；浏览器请求不访问外部 origin。输出位于 `.tmp/browser-results/`，失败时包含截图和 trace。合成页面检查不替代真实登录后端、客户端协议或手机 WebView 验收。
+
+v2.1.6 的 WebKit 在同一脚本 URL 首次失败后可能缓存失败，使连续失败恢复用例提前终止（相关 [PR #88](https://github.com/try2love/codex-mobile-bridge/pull/88) 未纳入本次测试改动）。仅当诊断精确匹配 `/i18n.js` 资源失败、服务端仅收到一次请求、没有运行时异常或应用脚本执行时，标记 `known-baseline` 预期失败；其他失败仍阻止检查通过。报告须单列此项，不能称其恢复功能已通过。修复后正常执行完整恢复断言。
+
+`test_module_boundaries.py` 自动运行 AST 依赖检查，也可用 `python3 -B scripts/check-boundaries.py` 单独运行（Windows 可用 `python`）。[历史例外](../docs/architecture/dependency-exceptions.json) 精确到文件和符号，禁止通配放行；移除旧依赖必须删除对应例外。检查不执行应用，无法推断变量拼接的动态 import；原有平台选择、资源路径及共享脚本测试继续保留。
 
 `scripts/smoke-*` 中部分入口启动真实应用或依赖打包产物；运行前先看其头部与 fixture，不把它们作为无副作用的常规单元测试。
 
@@ -53,3 +63,5 @@ npm run test:updater
 `mobile/tests/` 中 Java/Swift 用例由相应 `scripts/test-mobile-*`、`scripts/test-ios-*` 驱动，可能编译测试程序；只在本次任务允许且环境具备时执行。Web 资源验证不代替 Android WebView 或 iOS WKWebView 的原生交互验证。
 
 `scripts/gateway-resources.json` 与源路径测试保证清单一致，但冻结导入、签名、安装和更新必须在获准打包后、目标系统上另外验证。不要根据 macOS 单机测试宣称 Windows/Linux 已实机通过。
+
+常规 CI 的 `mobile-scope` 检查源码、共享资源、构建脚本和相关工作流变化；匹配时执行 Android APK 编译及既有 iOS 无签名构建。已有必需检查 `desktop-tests` 显式汇总这些结果，再执行 Node 与浏览器回归。Android 可选 FCM 配置及通知真机行为仍单独验收。

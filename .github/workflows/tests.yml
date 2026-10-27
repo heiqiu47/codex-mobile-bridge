@@ -8,6 +8,36 @@ permissions:
   contents: read
 
 jobs:
+  mobile-scope:
+    runs-on: ubuntu-24.04
+    outputs:
+      changed: ${{ steps.scope.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: python3 scripts/ci-mobile-scope.py
+  android-compile:
+    needs: mobile-scope
+    if: needs.mobile-scope.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: bash scripts/ci-android-build.sh
+  ios-compile:
+    needs: mobile-scope
+    if: needs.mobile-scope.outputs.changed == 'true'
+    uses: ./.github/workflows/mobile.yml
+    with:
+      source_ref: ${{ github.sha }}
   mobile-update-tests:
     runs-on: macos-15
     steps:
@@ -47,8 +77,30 @@ jobs:
       - run: python -B -m unittest discover -s tests -v
 
   desktop-tests:
-    runs-on: ubuntu-latest
+    needs: [mobile-scope, android-compile, ios-compile, mobile-update-tests]
+    if: always()
+    runs-on: ubuntu-24.04
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: .local/tools/playwright
     steps:
+      - name: Require selected mobile builds to succeed
+        env:
+          SCOPE_RESULT: ${{ needs.mobile-scope.result }}
+          MOBILE_CHANGED: ${{ needs.mobile-scope.outputs.changed }}
+          ANDROID_RESULT: ${{ needs.android-compile.result }}
+          IOS_RESULT: ${{ needs.ios-compile.result }}
+          MOBILE_UPDATE_RESULT: ${{ needs.mobile-update-tests.result }}
+        run: |
+          test "$SCOPE_RESULT" = success
+          test "$MOBILE_UPDATE_RESULT" = success
+          if [ "$MOBILE_CHANGED" = true ]; then
+            test "$ANDROID_RESULT" = success
+            test "$IOS_RESULT" = success
+          else
+            test "$MOBILE_CHANGED" = false
+            test "$ANDROID_RESULT" = skipped
+            test "$IOS_RESULT" = skipped
+          fi
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -57,3 +109,13 @@ jobs:
       - run: npm ci
       - run: npm run test:desktop
       - run: npm run test:updater
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm run test:browser
+      - name: Save browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure-evidence
+          path: .tmp/browser-results/
+          if-no-files-found: ignore
+          include-hidden-files: true

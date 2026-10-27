@@ -1,23 +1,23 @@
-# Agent Note: Modal dialog backdrop dismissal
+# Agent Note: 点击模态对话框背景关闭
 
 Status: implemented
 
-## Problem
+## 问题
 
-Web and desktop gateway modal dialogs require their explicit close control even when the user taps the surrounding backdrop. This is inconsistent on narrow screens, where the backdrop occupies most of the view.
+即使用户点击周围背景，Web 和桌面网关模态对话框仍要求使用显式关闭控件。在背景占据大部分视图的窄屏上，这种行为不一致。
 
-## Decision
+## 决策
 
-A shared listener closes a modal dialog only after a primary pointer gesture starts and ends on its backdrop without moving or scrolling. It waits for the resulting click before invoking that dialog's existing close or cancel control. The control's disabled state and close handler remain authoritative; dialogs without a close control receive a cancelable close request. Native system dialogs are outside this behavior.
+共享监听器仅在主指针手势始于并终于对话框背景、且没有移动或滚动时关闭模态对话框。它等待后续 click，再调用该对话框既有关闭或取消控件。控件禁用状态和关闭处理器仍为权威依据；没有关闭控件的对话框接收可取消的关闭请求。原生系统对话框不在此行为范围内。
 
-The listener is delegated at the document level, so dialogs inserted after startup use the same rule. Web serves the script before `app.js` through the existing `/app.js` resource, and the desktop renderer loads the same file directly.
+监听器委托于文档层，启动后插入的对话框也使用同一规则。Web 通过既有 `/app.js` 资源，在 `app.js` 之前提供该脚本；桌面渲染器直接加载同一文件。
 
-## Alternatives considered
+## 备选方案
 
-Adding a click handler to each dialog would make the known dialogs explicit, but newly created dialogs and the two renderer entry points would drift. Closing directly on `pointerup` would also remove the modal before its click is dispatched, risking a click on the page underneath and bypassing button-specific disabled states.
+给每个对话框添加 click 处理器可以明确覆盖已知对话框，但新对话框及两个渲染入口容易分化。在 `pointerup` 直接关闭，会在 click 派发前移除模态层，可能点击到下方页面，并绕过按钮专属禁用状态。
 
-## Consequences
+## 影响
 
-Backdrop taps follow the existing close lifecycle, while internal blank space, drags, scrolling, and an inside-to-outside release leave the dialog open. The added listener and one shared script increase the renderer surface slightly. Automated event-flow tests cover the gesture and disabled cases; browser and native WebView delivery still need separate visual checks.
+背景点击遵循既有关闭生命周期；内部空白、拖动、滚动和从内部按下到外部释放均保持对话框打开。新增监听器及一个共享脚本略微增加渲染层范围。自动事件流测试覆盖手势与禁用情况；浏览器和原生 WebView 中的实际呈现仍需单独视觉检查。
 
-On mobile, [native menu modal visibility](../bug-fix/2026-10-22-mobile-native-menu-modal-visibility.md) separately follows the resulting `dialog[open]` state to hide the host overlay until every dialog closes.
+手机端[原生菜单模态可见性](../bug-fix/2026-10-22-mobile-native-menu-modal-visibility.md)独立跟随最终 `dialog[open]` 状态，隐藏宿主覆盖层，直到全部对话框关闭。

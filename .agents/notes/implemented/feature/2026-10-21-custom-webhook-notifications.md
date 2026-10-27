@@ -2,11 +2,11 @@
 
 Status: implemented
 
-## Problem
+## 问题
 
 现有 Bark、ntfy 和 PushPlus 适配无法覆盖用户自建通知服务与自动化平台。Issue #60 请求通用 HTTP 通知出口，同时保留既有通知策略、去重与失败重试。
 
-## Decision
+## 决策
 
 首版新增默认关闭的单个 Webhook 通道，固定 POST JSON，允许配置完整 URL、自定义请求头及 JSON 请求体模板。请求体先解析为 JSON，再仅在字符串值中替换白名单字段；不执行表达式，不替换对象键。字段涵盖事件类型及标识、标题、正文、会话名称、跳转地址、客户端、主机和合并事件数量。会话名称服从现有 `includeTitle` 开关；不发送聊天正文、凭据或完整配置。
 
@@ -16,7 +16,7 @@ Status: implemented
 
 HTTPS 为正常发送方式，本机 loopback HTTP 沿用现有测试边界。Webhook 单独支持 URL 查询参数，不放宽旧通知通道校验；拒绝重定向，限定请求与响应大小及等待时间，错误不包含接收端回显或密钥。
 
-## Related decisions
+## 相关决定
 
 [多个 Webhook 接收目标与旧配置兼容](2026-10-22-multiple-webhook-destinations.md) 扩展首版单目标结构，保留旧目标身份和投递记录，同时为额外目标建立独立配置、去重与重试。
 
@@ -24,11 +24,11 @@ HTTPS 为正常发送方式，本机 loopback HTTP 沿用现有测试边界。We
 
 [第三方通知设置](../../implemented/feature/2026-10-13-third-party-notification-settings.md) 部分重叠：新增通道沿用其共享配置、密钥回读和显式测试约束，不取代原决定。对活跃笔记的通知关键词检查，其余命中涉及通知游标、客户端加载、配对或网络入口，均不改变本功能的发送契约。
 
-## Alternatives considered
+## 备选方案
 
 逐个平台内置适配能够处理签名和业务响应，但会持续增加平台维护成本。首版提供通用通道，不承诺动态签名平台全部兼容。允许脚本模板可以支持更多转换，却会引入执行权限和跨平台依赖；选择有限字段替换。另建独立 Webhook 任务队列可以单独优化投递，但会重复既有通知策略与去重边界；本轮直接复用现有流程。
 
-## Verification
+## 验证
 
 1. 已有设置无需迁移即可加载；三个原通道的保存、测试与通知行为保持通过。
 2. 合成中文、引号、换行及缺失可选字段通过真实 loopback POST 验收；非法 JSON、字段、URL 和请求头被拒绝。
@@ -37,16 +37,16 @@ HTTPS 为正常发送方式，本机 loopback HTTP 沿用现有测试边界。We
 5. 桌面与 Web/手机界面在中英文、宽窄屏下可保存和测试，未保存输入不会被后台刷新覆盖。
 6. 独立 Test 构建与平台检查分别记录，正式版、配置和手机绑定保留，不推送 GitHub。
 
-## Risks
+## 风险
 
 平台返回 HTTP 2xx 后仍可能在业务层拒绝消息；首版不执行平台自定义响应判断或动态签名。Webhook URL 与 Headers 包含用户授权的接入秘密，必须沿用本地私有配置和脱敏处理。真实第三方送达需要用户选定接收端后另行确认；隔离验收只向本机测试接收器发送合成数据。
 
-## Implementation and verification
+## 实现与验证
 
-The existing notification module owns settings, bounded JSON substitution, POST transport and destination-aware delivery. Account reminders reuse the same channel. Desktop and shared Web/mobile controls clear secret inputs only after successful saves. Gateway event IDs persist across retry and differ for each startup/address change.
+既有通知模块负责设置、有界 JSON 替换、POST 传输及按目标投递。账号提醒复用同一通道。桌面和共享 Web/手机控件仅在保存成功后清除秘密输入。网关事件 ID 在重试间保持不变，每次启动/地址变化使用不同 ID。
 
-Integrated backend: 232 tests, 2 conditional skips. Desktop/notification UI: 112 passing tests. Full frontend: 818 passing and 1 skip initially; the two loopback groups blocked by the sandbox both passed with loopback permission. Real Chromium at 390px passed nine checks covering layout, English labels, malformed headers, redacted saved state, saved-only tests and failed-save draft retention. Platform build/install evidence is tracked separately in `.tmp/issue60-webhook-20261021/`.
+集成后端：232 项测试，2 项按条件跳过。桌面/通知 UI：112 项通过。完整前端最初为 818 通过、1 跳过；被沙箱阻止的两个回环组在允许回环后均通过。真实 Chromium 在 390px 下通过九项检查，覆盖布局、英文标签、格式错误请求头、脱敏保存状态、仅测试已保存配置及保存失败保留草稿。平台构建/安装证据单独记录于 `.tmp/issue60-webhook-20261021/`。
 
-## Consequences
+## 影响
 
-Receivers should deduplicate ambiguous timeout retries by event_id. The initial scope excluded service-specific signatures and response codes; the linked provider correction supersedes that exclusion for the supported presets. Application versions and binding formats are unchanged; Webhook defaults to disabled for existing settings.
+接收方应依据 event_id 对结果不明确的超时重试去重。初始范围不含服务专属签名和响应码；互链的 provider 修正对受支持预设替代了该排除项。应用版本和绑定格式不变；既有设置中的 Webhook 默认禁用。

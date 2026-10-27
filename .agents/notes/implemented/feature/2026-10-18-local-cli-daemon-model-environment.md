@@ -1,21 +1,21 @@
-# Agent Note: Local CLI model catalogs use the native daemon environment
+# Agent Note: 本地 CLI 模型目录使用原生守护进程环境
 
 Status: implemented
 
-## Problem
+## 问题
 
-A mobile gateway can join a Codex CLI daemon that was started in another terminal with different environment variables. Reading the gateway environment for an API model catalog can select the wrong endpoint or credentials. Treating that environment as unavailable also makes an ordinary environment-backed CLI account appear to require manual model IDs.
+手机网关可能加入由另一终端启动、环境变量不同的 Codex CLI 守护进程。读取网关环境来查询 API 模型目录，可能选择错误端点或凭据。把该环境视为不可用，又会让普通基于环境变量的 CLI 账号看起来必须手动填写模型 ID。
 
-## Decision
+## 决策
 
-The local catalog resolves only the variable names that the effective native provider configuration uses. A platform reader validates the same-user PID record, process generation, executable and native home, then reads selected launch variables from that process. The raw values are used only for the catalog request. The durable model identity includes a digest of those values and process generation, alongside the existing config and account identity; it never stores or returns raw credentials. A failed identity check gives an actionable catalog error and cannot reuse a catalog from a previously verified environment.
+本地模型目录仅解析有效原生 provider 配置使用的变量名。平台读取器校验同用户 PID 记录、进程代次、可执行文件和原生主目录，再从该进程读取选定启动变量。原始值仅用于模型目录请求。持久模型身份除现有配置与账号身份外，还包含这些值及进程代次的摘要；绝不保存或返回原始凭据。身份校验失败给出可采取行动的目录错误，不能复用先前已验证环境的目录。
 
-The upstream API model list determines availability. Native `model/list` is an optional, two-second metadata lookup after a successful upstream list and fills reasoning efforts only for matching model IDs. A configured native catalog continues to use the daemon's model list.
+模型可用性由上游 API 模型列表决定。原生 `model/list` 是成功取得上游列表后进行的可选、两秒元数据查询，只为模型 ID 匹配的项补充推理强度。已配置的原生目录继续使用守护进程模型列表。
 
-## Alternatives considered
+## 备选方案
 
-Launching a new CLI command with the gateway environment is simpler but does not reveal the already-running daemon's environment. `command/exec` may filter environment variables and would perform a shell action for a passive model read. A gateway-managed environment snapshot excludes ordinary terminal-started daemons. Returning the full process environment would expose unrelated values, so the reader selects only requested names.
+用网关环境启动新 CLI 命令更简单，却无法了解已运行守护进程的环境。`command/exec` 可能过滤环境变量，还会为被动模型读取执行 shell 操作。网关管理的环境快照无法覆盖普通终端启动的守护进程。返回完整进程环境会暴露无关值，因此读取器只选择请求的变量名。
 
-## Consequences
+## 影响
 
-macOS uses a bounded `KERN_PROCARGS2` read, Linux uses bounded `/proc/PID/environ`, and Windows x64 reads a bounded UTF-16 block through the process API. Their generation checks use native PID metadata. If the operating system denies the read, the UI reports that the daemon launch environment cannot be verified. Existing saved-auth and configured-catalog paths do not require unused environment variables. Synthetic same-user child tests exercise value isolation and stale identity rejection; Windows x64 was checked on an isolated Windows 10 child.
+macOS 使用有界 `KERN_PROCARGS2` 读取，Linux 使用有界 `/proc/PID/environ` 读取，Windows x64 通过进程 API 读取有界 UTF-16 块。代次检查使用原生 PID 元数据。操作系统拒绝读取时，UI 报告无法核验守护进程启动环境。既有保存认证和已配置目录路径不要求无用环境变量。合成同用户子进程测试覆盖值隔离和过期身份拒绝；Windows x64 已在隔离 Windows 10 子进程上检查。

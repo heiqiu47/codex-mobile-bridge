@@ -1,23 +1,23 @@
-# Agent Note: Native CLI Goal on SSH hosts
+# Agent Note: SSH 主机上的原生 CLI Goal
 
 Status: implemented
 
-## Problem
+## 问题
 
-The joined CLI adapter already sends Goal RPCs through its existing app-server proxy, but Bridge and Web rejected Goal on every SSH host. This hid a compatible runtime capability and prevented Goal lifecycle controls even when the remote CLI was the verified writer.
+已加入的 CLI 适配器已通过现有 app-server 代理发送 Goal RPC，但 Bridge 和 Web 对全部 SSH 主机拒绝 Goal。这隐藏了兼容运行时的能力，即使远程 CLI 是已验证写入者，也无法操作 Goal 生命周期。
 
-## Decision
+## 决策
 
-Offer Goal on an SSH chat only when its verified execution runtime is a connected native CLI and that same daemon confirms Goal support. Passive reads do not join the runtime. Goal reads, writes and activation turns use the joined CLI path; the host-specific Bridge data directory retains the operation ledger. An SSH chat owned by the desktop App remains without Goal controls because its follower IPC has no Goal write method. A remote Goal read never falls back to the gateway's local Goal database or a sidecar writer. The Web requires explicit remote capability fields while preserving local legacy-view behavior.
+只有 SSH 聊天的已验证执行运行时为已连接原生 CLI，且同一守护进程确认支持 Goal 时，才提供 Goal。被动读取不加入运行时。Goal 读取、写入和激活轮次使用已加入 CLI 路径；主机专属 Bridge 数据目录保留操作台账。桌面 App 持有的 SSH 聊天仍无 Goal 控制，因为跟随 IPC 没有 Goal 写入方法。远程 Goal 读取绝不回退到网关本地 Goal 数据库或辅助写入者。Web 要求明确远程能力字段，同时保留本地旧视图行为。
 
-The common Goal command flow still checks expected state, records intent before writes, confirms native state, and leaves uncertain delivery unknown without replay. Create and resume activation use the existing send path and retain the thread's provider, authentication, working directory and permission settings.
+通用 Goal 命令流程仍检查预期状态、写入前记录意图、确认原生状态，并在投递不确定时保留未知且不重放。创建和恢复激活使用现有发送路径，保留线程的 provider、认证、工作目录和权限设置。
 
-## Alternatives considered
+## 备选方案
 
-Keeping the blanket SSH restriction avoids remote version differences but blocks the already joined native daemon's supported Goal API. Reusing the gateway's local Goal sidecar for SSH would target the wrong home and risk a second writer. Exposing Goal for SSH desktop owners would promise a follower write operation that does not exist.
+保留统一 SSH 禁令可避开远程版本差异，却阻止了已加入原生守护进程支持的 Goal API。为 SSH 复用网关本地 Goal 辅助进程会指向错误主目录，并可能产生第二写入者。对 SSH Desktop 归属进程开放 Goal，会承诺并不存在的跟随写入操作。
 
-## Consequences
+## 影响
 
-Compatible SSH native CLI sessions can create, pause, edit, resume and clear Goals. Unsupported or disconnected native runtimes and App-owned SSH sessions stay unavailable. Fixture tests cover the lifecycle, explicit capability, passive reads, unsupported runtime, ownership boundary and durable unknown-result handling. These fixtures do not establish behavior on every SSH host or Codex version; native acceptance and build results belong in [verification](../../../../VERIFICATION.md).
+兼容的 SSH 原生 CLI 会话可创建、暂停、编辑、恢复及清除 Goal。不支持、已断开的原生运行时及 App 持有 SSH 会话仍不可用。夹具覆盖生命周期、显式能力、被动读取、不支持运行时、归属边界和持久未知结果处理。不代表每个 SSH 主机或 Codex 版本均已验证；原生验收及构建结果见[验证记录](../../../../VERIFICATION.md)。
 
-This extends [CLI session controls](2026-10-14-cli-session-controls.md) only for SSH native Goal. Its rules for local App owners, other controls and no-replay behavior remain in effect.
+本决定仅扩展 [CLI 会话控制](2026-10-14-cli-session-controls.md)中的 SSH 原生 Goal。本地 App 归属、其他控制和禁止重放规则仍有效。

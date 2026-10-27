@@ -19,9 +19,12 @@
     "test:linux-app": "node scripts/smoke-linux.cjs",
     "test:pairing": "electron scripts/smoke-pairing.cjs",
     "test:updater": "node --test tests/updater.test.cjs tests/update-handoff.test.cjs tests/update-controller.test.cjs",
-    "test:update-controller": "node scripts/smoke-update-controller.cjs"
+    "test:update-controller": "node scripts/smoke-update-controller.cjs",
+    "test:boundaries": "python3 -B scripts/check-boundaries.py",
+    "test:browser": "playwright test -c tests/browser/playwright.config.cjs"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "electron": "44.5.1",
     "electron-builder": "26.15.3",
     "jsqr": "1.4.0",

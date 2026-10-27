@@ -1,31 +1,31 @@
-# Agent Note: Model, Skills, plan and Goal on CLI-origin chats
+# Agent Note: 源自 CLI 的聊天中的模型、Skills、计划和 Goal
 
 Status: implemented
 
-The permission restriction below is superseded by [CLI permission switching](2026-10-14-cli-permission-switching.md). Model, Skill, plan, Goal and owner boundaries remain.
+下述权限限制由 [CLI 权限切换](2026-10-14-cli-permission-switching.md)替代。模型、Skill、计划、Goal 和归属边界仍有效。
 
-## Problem
+## 问题
 
-The previous owner-routing fix makes CLI-origin chats writable but leaves all configuration behind an origin-based desktop-only guard. App-adopted chats lose controls already supported by their owner; native CLI exposes only basic conversation operations. A connected label is not sufficient acceptance for the requested CLI workflow.
+此前执行归属路由修复使源自 CLI 的聊天可写，却仍将所有配置置于按来源判断的仅 Desktop 门槛之后。App 接管的聊天失去了其归属进程已支持的控制；原生 CLI 只提供基础聊天操作。仅显示已连接，不足以验收所要求的 CLI 工作流程。
 
-## Decision
+## 决策
 
-Separate model and Skill access from broader Desktop configuration privileges. CLI-origin chats with a verified Desktop owner reuse existing model, Skill, plan and local Goal operations. Joined native CLI chats use the same daemon for model/Skill catalogs, selected settings, collaboration mode, Skill input and supported Goal RPC. Origin remains display metadata, while runtime and verified capability determine controls. Do not open unrelated permissions, rename, editing/forking or side-chat features by enabling a broad flag.
+将模型和 Skill 接入与更广泛的 Desktop 配置权限分开。具有已验证 Desktop 归属进程的 CLI 来源聊天，复用既有模型、Skill、计划和本地 Goal 操作。已加入原生 CLI 的聊天使用同一守护进程获取模型/Skill 目录、选定设置、协作模式、Skill 输入和受支持的 Goal RPC。来源只作为展示元数据，控制项由运行时和已验证能力决定。不能通过启用宽泛标记，开放无关权限、重命名、编辑/分叉或旁支聊天功能。
 
-The native path retains provider, authentication and cwd. Only the requested per-thread settings change. Passive catalog inspection does not activate a session. Goal operations retain the existing persistent intent ledger, expected-state checks and unknown-result behavior; model turns run only on explicit user operations or their explicitly created/resumed goal workflow. Goal create/resume activation explicitly uses default collaboration mode so a preceding plan does not prevent execution. Optional Goal policy errors do not prevent baseline CLI attachment. No writes are replayed after uncertainty. UI switches from unavailable to ready when the actual connection/capability arrives and preserves pending selections across transient disconnects.
+原生路径保留 provider、认证和 cwd，只修改请求的逐线程设置。被动目录检查不激活会话。Goal 操作保留现有持久意图台账、预期状态检查和未知结果行为；模型轮次仅由显式用户操作，或用户明确创建/恢复的目标流程运行。Goal 创建/恢复激活明确使用默认协作模式，防止先前计划模式阻止执行。可选 Goal 策略错误不阻止基础 CLI 附加。写入不确定后不重放。实际连接/能力到达时，UI 从不可用切换为就绪，短暂断开期间保留待处理选择。
 
-## Alternatives considered
+## 备选方案
 
-Leaving all CLI controls disabled limits adapter work but does not meet the user's workflow. Flipping canConfigure for every CLI-origin chat would also enable unrelated operations with no adapter implementation. Reading native catalogs through a separate desktop/default account could offer mismatched models and skills; the joined CLI runtime is authoritative for its own capabilities.
+禁用全部 CLI 控制可减少适配器工作，但不满足用户流程。对全部 CLI 来源聊天打开 canConfigure，还会启用没有适配器实现的无关操作。经另一 Desktop/默认账号读取原生目录，可能提供不匹配的模型和 Skill；应以已加入 CLI 运行时自身能力为准。
 
-## Existing-note audit
+## 既有笔记审计
 
-[CLI access](2026-10-14-codex-cli-access.md), [cold resume](2026-10-14-codex-cli-resume.md) and [existing owner](../bug-fix/2026-10-14-cli-existing-owner.md) are partially superseded on the controls restriction only. Their ownership, source discovery, lifecycle and no-replay rules remain applicable. File-reading and notification decisions are unrelated.
+[CLI 接入](2026-10-14-codex-cli-access.md)、[冷恢复](2026-10-14-codex-cli-resume.md)和[现有执行归属](../bug-fix/2026-10-14-cli-existing-owner.md)仅有控制限制部分被替代。其归属、来源发现、生命周期和禁止重放规则仍适用。文件读取及通知决定与本决定无关。
 
-## Verification
+## 验证
 
-Service tests cover App-owned CLI capability propagation and same-owner operations, native routing, passive non-activation, unrelated-control rejection and unknown-write handling. Real isolated CLI 0.162.1 and a local Responses fixture verify model/effort, Skill input, plan/default turns and Goal state changes. Browser actions verify model changes, Skill selection, plan send and Goal create/pause/edit/resume/clear; a 390 px English viewport has no horizontal overflow. Native checks confirm Goal activation switches out of plan mode and edited goals reach execution with provider/cwd/model/effort retained. Goal resume can already be executing natively while a supplementary activation is queued; verification checks actual state rather than requiring an active goal to become idle. Full source and packaged acceptance are recorded in [VERIFICATION.md](../../../../VERIFICATION.md).
+服务测试覆盖 App 持有 CLI 的能力传播及同归属操作、原生路由、被动不激活、无关控制拒绝和未知写入处理。真实隔离 CLI 0.162.1 配合本地 Responses 夹具验证模型/effort、Skill 输入、计划/默认轮次和 Goal 状态变化。浏览器操作验证模型修改、Skill 选择、计划发送，以及 Goal 创建/暂停/编辑/恢复/清除；390 px 英文视口无横向溢出。原生检查确认 Goal 激活退出计划模式，编辑后目标进入执行且保留 provider/cwd/model/effort。补充激活仍在排队时，Goal 恢复可能已在原生端执行；验收检查实际状态，不要求活跃目标变为空闲。完整源码和安装包验收记录于 [VERIFICATION.md](../../../../VERIFICATION.md)。
 
-## Consequences
+## 影响
 
-Native methods and feature availability differ by runtime version and policy. Unsupported capability must remain unavailable with a useful explanation rather than bypassing checks. Local mock inference verifies transport and native state, not external-model quality; each platform and arbitrary SSH environment needs separate native acceptance. [SSH native CLI Goal](2026-10-14-ssh-native-cli-goal.md) extends Goal controls to verified joined SSH runtimes without opening them for remote App owners.
+原生方法与功能可用性受运行时版本和策略影响。不支持的能力必须保持不可用并给出有效说明，不能绕过检查。本地模拟推理验证传输与原生状态，不证明外部模型质量；各平台及任意 SSH 环境需单独原生验收。[SSH 原生 CLI Goal](2026-10-14-ssh-native-cli-goal.md)将 Goal 控制扩展至已验证、已加入的 SSH 运行时，不对远程 App 归属进程开放。

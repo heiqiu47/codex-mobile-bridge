@@ -1,21 +1,21 @@
-# Agent Note: Claude launch progress before process discovery
+# Agent Note: Claude 进程被发现前的启动进度
 
 Status: implemented
 
-## Problem
+## 问题
 
-Explicit initialization starts its native worker asynchronously. The first client status snapshot can observe `connecting` while Claude's process has not appeared yet. The manager converted that snapshot to `error`, so the UI showed a failed connection during normal launch. That false error also selected the 15-second status cache instead of the one-second pending cache, delaying a later signed connection.
+显式初始化会异步启动原生工作线程。首次客户端状态快照可能已观察到 `connecting`，而 Claude 进程尚未出现。管理器将这种快照转换为 `error`，导致 UI 在正常启动期间显示连接失败。该错误还会选用 15 秒状态缓存，而非一秒待完成缓存，延迟后续已签名连接的展示。
 
-## Decision
+## 决策
 
-Keep this interval pending as `starting`; the worker remains responsible for reporting launch failure, cancellation or required user action. A stopped process after `needs-initialization` still reports unavailable. While a new enable request is pending, the shared UI does not apply error styling inherited from the previous attempt.
+将该阶段保留为待完成状态 `starting`；启动失败、取消或需要用户操作仍由工作线程报告。`needs-initialization` 之后进程已停止时，仍报告不可用。新的启用请求等待期间，共享 UI 不沿用上次尝试的错误样式。
 
-## Alternatives considered
+## 备选方案
 
-Waiting synchronously for the process would block status reads. Treating process existence as connection success would skip the signed bridge receipt. Both are unnecessary: the existing pending state and short cache already provide the required behavior.
+同步等待进程会阻塞状态读取。把进程存在当成连接成功会跳过已签名的 Bridge 回执。这两种方案均无必要：现有待完成状态和短缓存已能提供所需行为。
 
-## Consequences
+## 影响
 
-Regression tests reproduce the false failure on both platform branches and verify that a signed connection replaces it after two seconds rather than remaining behind the idle cache. Native launch failures and stopped, uninitialized clients still report errors. These source tests do not measure full native startup duration.
+回归测试在两个平台分支上复现误报，并验证已签名连接在两秒后替代该状态，而不会被空闲缓存阻挡。原生启动失败、已停止且未初始化的客户端仍报告错误。这些源码测试不测量完整原生启动耗时。
 
-Installed Test acceptance on macOS and Windows observed `starting` → `connecting` → `connected` through normal quit and cold initialization, with no false failure in between. Single runs completed in 10.243 and 30.437 seconds respectively; these are full cold-start observations, not a controlled speed comparison. The original Test settings were retained and the macOS formal gateway and active Codex host remained unchanged.
+macOS 和 Windows 已安装 Test 的验收中，正常退出后冷初始化均观察到 `starting` → `connecting` → `connected`，期间没有误报失败。单次运行分别于 10.243 和 30.437 秒完成；这是完整冷启动观察，不是受控速度对比。原 Test 设置保留，macOS 正式网关和活跃 Codex 宿主未变。

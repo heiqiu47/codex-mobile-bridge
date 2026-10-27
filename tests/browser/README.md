@@ -6,6 +6,8 @@
 
 这些脚本不会由 `npm run test:desktop` 执行。该命令只发现 `tests/` 和 `mobile/tests/` 下的 `*.test.js`、`*.test.cjs`、`*.test.mjs`；浏览器检查应单独记录实际执行与未执行情况。
 
+`npm run test:browser` 自动启动隔离服务，在 Chromium/WebKit 的 1280 px 与 390 px 视口执行 `critical.spec.cjs` 指定的检查。它调用并等待实际检查函数，不把页面加载计作通过。准备方式及失败证据见 [验证入口](../README.md#node-与浏览器)。其他专项夹具仍按下面各节单独执行；这套通过不代表所有浏览器功能均已覆盖。
+
 ## 启动恢复检查
 
 运行 `python3 -B tests/browser/bootstrap-fixture.py`，在一个测试标签页访问它打印的 loopback 地址。用 `?case=success` 等参数选择场景，完整清单见夹具文件头。夹具提供生产 Web 资源与合成认证，不连接真实网关；每次导航重置故障计数，不能多页同时操作。
