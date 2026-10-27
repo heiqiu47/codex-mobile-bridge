@@ -93,6 +93,7 @@ class LiveSession:
         self.viewers = 0
         self.watched = False
         self.notification_probe_until = 0
+        self.notification_connecting = False
         self.activity_only = False
         self.touched = time.monotonic()
         self.condition = threading.Condition(threading.RLock())
@@ -244,6 +245,7 @@ class Bridge:
         self.notification_dirty = set()
         self.notification_boundary = set()
         self.notification_event = threading.Event()
+        self.notification_slots = threading.BoundedSemaphore(4)
         self.store = RemoteStore(alias) if alias else SessionStore(codex_home)
         self.catalog_reader = RemoteCatalog(alias) if alias else Catalog(codex_home, codex_bin)
         self.terminals = TerminalManager()
@@ -1429,9 +1431,30 @@ class Bridge:
         if not session.watched:
             session.notification_probe_until = time.monotonic() + 10
         session.watched = True
-        if not session.connected and time.monotonic() >= session.retry_at:
-            session.retry_at = time.monotonic() + 15
-            self._attach(session, timeout=0)
+        with session.condition:
+            if not session.connected and not session.notification_connecting and not self.closed.is_set() and time.monotonic() >= session.retry_at:
+                if not self.notification_slots.acquire(blocking=False):
+                    # Wait for a probe slot, not for an owner RPC on the scanner.
+                    session.notification_probe_until = time.monotonic() + 10
+                    return session
+                session.notification_connecting = True
+                session.retry_at = time.monotonic() + 15
+                session.notification_probe_until = time.monotonic() + 10
+                def follow():
+                    started = time.monotonic()
+                    try:
+                        self._attach(session, timeout=0)
+                    except (OSError, ValueError, KeyError, IPCError, RemoteUnavailable, StoreUnavailable):
+                        pass  # An unavailable passive probe must never activate a chat.
+                    finally:
+                        with session.condition:
+                            session.notification_connecting = False
+                            session.condition.notify_all()
+                        self.notification_slots.release()
+                        self.notification_event.set()
+                        logging.info('notification stage=probe source=%s work_ms=%.1f',
+                                     'local' if self.host == 'local' else 'remote', (time.monotonic() - started) * 1000)
+                threading.Thread(target=follow, daemon=True).start()
         return session
 
     def upload(self, thread_id, identifier, name, data):

@@ -2,6 +2,7 @@ import json
 from contextlib import closing
 import sqlite3
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -186,3 +187,55 @@ class DiscoveryTests(unittest.TestCase):
         self.bridge.release_notification_session(session)
         self.assertFalse(session.connected)
         self.assertFalse(session.watched)
+
+    def test_slow_cli_owner_discovery_does_not_hold_the_notification_scanner(self):
+        entered, release, returned = threading.Event(), threading.Event(), threading.Event()
+        def origin(session):
+            session.origin = 'cli'
+            session.origin_verified = True
+        def owner(*args, **kwargs):
+            entered.set()
+            release.wait(3)
+            raise support.IPCError('no-client-found')
+        def read():
+            self.bridge.notification_session(support.THREAD)
+            returned.set()
+        with patch.object(self.bridge, '_load_session_origin', side_effect=origin), patch.object(self.bridge.ipc, 'owner', side_effect=owner):
+            worker = threading.Thread(target=read)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                self.assertTrue(returned.wait(.2), 'a passive owner RPC blocked the notification scan')
+            finally:
+                release.set()
+                worker.join(2)
+                with self.bridge.live[support.THREAD].condition:
+                    self.bridge.live[support.THREAD].condition.wait_for(
+                        lambda: not getattr(self.bridge.live[support.THREAD], 'notification_connecting', False), timeout=2)
+
+    def test_notification_owner_probes_are_bounded_and_not_duplicated(self):
+        release = threading.Event()
+        condition = threading.Condition()
+        started = []
+        def blocked(session, timeout=0):
+            with condition:
+                started.append(session.id)
+                condition.notify_all()
+            release.wait(3)
+        with patch.object(self.bridge, '_attach', side_effect=blocked):
+            try:
+                sessions = [self.bridge.notification_session('probe-' + str(i)) for i in range(12)]
+                with condition:
+                    self.assertTrue(condition.wait_for(lambda: len(started) == 4, timeout=1))
+                for session in sessions:
+                    self.bridge.notification_session(session.id)
+                self.assertEqual(len(started), 4)
+                self.assertEqual(len(set(started)), 4)
+                self.bridge.closed.set()
+                self.bridge.notification_session('closed-probe')
+                self.assertEqual(len(started), 4)
+            finally:
+                release.set()
+                for session in sessions:
+                    with session.condition:
+                        self.assertTrue(session.condition.wait_for(lambda: not session.notification_connecting, timeout=2))

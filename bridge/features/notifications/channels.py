@@ -1025,7 +1025,11 @@ class Notifications:
         if targets and time.monotonic() >= self.discovery_at and hasattr(self.bridge, 'notification_candidates'):
             self.discovery_at = time.monotonic() + 30
             # Explicit watches also need to discover a new run after going idle.
-            for row in self.bridge.notification_candidates():
+            discovery_started = time.monotonic()
+            candidates = self.bridge.notification_candidates()
+            logging.info('notification stage=discovery work_ms=%.1f count=%d',
+                         (time.monotonic() - discovery_started) * 1000, len(candidates))
+            for row in candidates:
                 key = (row['host'], row['id'])
                 self.candidates[key] = row
                 self.dormant.discard(key)
@@ -1124,7 +1128,9 @@ class Notifications:
         with self.lock:
             self.delivery_queue = {key: job for key, job in self.delivery_queue.items()
                                    if key[-1] or not self.desktop_provider(key[0])}
+        listed = time.monotonic()
         rows = manager.notification_rows()
+        logging.info('notification stage=desktop-list work_ms=%.1f count=%d', (time.monotonic() - listed) * 1000, len(rows))
         if not rows:
             return False
         # Rotate bounded history reads so one large client's history cannot block
@@ -1158,7 +1164,10 @@ class Notifications:
                     continue
                 reads += 1
                 try:
+                    read_started = time.monotonic()
                     detail = manager.call(row['provider'], 'detail', row['id'])
+                    logging.info('notification stage=desktop-detail provider=%s work_ms=%.1f',
+                                 row['provider'], (time.monotonic() - read_started) * 1000)
                     if detail.get('connected') is False or not isinstance(detail.get('turns'), list):
                         continue
                     cached = (signature, detail['turns'])
