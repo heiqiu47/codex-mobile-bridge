@@ -2,7 +2,8 @@
 
 Run: python3 -B tests/browser/bootstrap-fixture.py
 Open /?case=success|fast|shell-once|shell-twice|shell-fatal|css-once|js-twice|js-fatal|runtime|eager-once|auth-once|
-auth-hang|slow|bootstrap-missing|pair-unknown|external-script. Each navigation resets counters.
+auth-hang|slow|bootstrap-missing|pair-unknown|external-script|opaque-error|external-runtime|
+external-rejection|app-cached-failure. Each navigation resets counters.
 Load bootstrap.browser.js and invoke runBootstrapBrowserChecks() in that page.
 """
 import json
@@ -21,8 +22,9 @@ from bridge.api.assets import STATIC, served_asset_bytes  # noqa: E402
 WEB = ROOT / 'web'
 PAYLOADS = {path: served_asset_bytes(WEB, path) for path in STATIC}
 state = {'case': 'success', 'requests': Counter(), 'writes': []}
-PROBE = b"""window.__startupTest={scenario:new URLSearchParams(location.search).get('case'),executed:[],errors:[],blockedScripts:[],visibilitySamples:[],titles:[],shellLoads:0,started:performance.now(),loadClipboard:null};
+PROBE = b"""window.__startupTest={scenario:new URLSearchParams(location.search).get('case'),executed:[],errors:[],rejections:[],blockedScripts:[],visibilitySamples:[],titles:[],shellLoads:0,started:performance.now(),loadClipboard:null};
 addEventListener('error',e=>{if(e.target===window)__startupTest.errors.push(e.error?.name||'Error');});
+addEventListener('unhandledrejection',e=>{__startupTest.rejections.push(e.reason?.name||'Error');});
 addEventListener('securitypolicyviolation',e=>{if(e.effectiveDirective.startsWith('script-src'))__startupTest.blockedScripts.push(e.blockedURI);});
 addEventListener('load',()=>{__startupTest.loadClipboard=!!window.BridgeClipboard;});
 new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes)if(node.tagName==='LINK'&&node.href&&new URL(node.href).pathname==='/style.css')__startupTest.shellLoads++;const title=document.getElementById('bootstrap-title');if(title&&!__startupTest.titles.includes(title.textContent))__startupTest.titles.push(title.textContent);if(document.getElementById('bootstrap-status')?.hidden)__startupTest.readyAt??=performance.now()-__startupTest.started;}).observe(document,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['hidden']});
@@ -33,13 +35,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
-    def output(self, body, mime='text/javascript; charset=utf-8', status=200):
+    def output(self, body, mime='text/javascript; charset=utf-8', status=200, cache_control='no-store'):
         if isinstance(body, str):
             body = body.encode()
         self.send_response(status)
         self.send_header('Content-Type', mime)
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Cache-Control', cache_control)
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:")
         self.end_headers()
@@ -62,6 +64,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/__ready.js':
             self.output("window.__startupTest.executed.push('/__ready.js');document.getElementById('login').hidden=false;BridgeBootstrap.ready();")
             return
+        if path == '/__external-error.js':
+            self.output({
+                'opaque-error': 'dispatchEvent(new ErrorEvent("error",{message:"Script error."}));',
+                'external-runtime': 'throw new Error("synthetic injected error");',
+                'external-rejection': 'Promise.reject(new Error("synthetic injected rejection"));',
+            }.get(state['case'], ''))
+            return
         if path == '/':
             state.update(case=parse_qs(urlsplit(self.path).query).get('case', ['success'])[0], requests=Counter(), writes=[])
         state['requests'][path] += 1
@@ -78,6 +87,9 @@ class Handler(BaseHTTPRequestHandler):
         if fail:
             self.output('Temporary fixture failure', 'text/html', 503)
             return
+        if case == 'app-cached-failure' and path == '/app.js' and not parse_qs(urlsplit(self.path).query).get('bridge_retry'):
+            self.output('Cached non-script response', 'text/plain', cache_control='public, max-age=300, immutable')
+            return
         if path == '/api/auth':
             if case == 'auth-hang' and attempt == 1:
                 time.sleep(10)
@@ -93,6 +105,8 @@ class Handler(BaseHTTPRequestHandler):
             body = body.replace(b'<head>', b'<head><script src="/__probe.js"></script>', 1)
             if case == 'external-script':
                 body = body.replace(b'</body>', b'<script defer src="https://static.cloudflareinsights.com/beacon.min.js"></script></body>')
+            if case in ('opaque-error', 'external-runtime', 'external-rejection'):
+                body = body.replace(b'</body>', b'<script defer src="/__external-error.js"></script></body>')
             if case == 'fast':
                 body = re.sub(rb'<link[^>]+data-bridge-href[^>]*>|<script[^>]+data-bridge-src[^>]*></script>', b'', body)
                 body = body.replace(b'</body>', b'<script data-bridge-src="/__ready.js"></script></body>')

@@ -25,6 +25,12 @@
 
 `tests/browser/*.browser.js` 是依赖真实页面和隔离网关夹具的浏览器检查，不属于 Node 测试；需要通过对应浏览器驱动单独执行，不能将仅加载脚本视作检查通过。
 
+## 启动错误归属
+
+`shared/bootstrap.js` 只把可归属到同源必需启动脚本的运行时错误或 Promise 拒绝作为即时失败。Safari 等浏览器中没有来源的全局错误，以及扩展、注入脚本或按需组件的错误，不直接取消启动；必需资源的有限重试、启动超时和配对写入不重放规则不变。无法归属的错误仅在最终失败详情中保留错误类型与事件类型，不展示异常正文、完整 URL 或堆栈。真实脚本错误仍中止后续依赖执行，不能用此规则掩盖页面自身的失败。
+
+首次资源加载保留内容版本 URL 与预加载缓存。只有 script/link 明确触发加载失败，后续尝试才在同源、相同路径及版本上添加每页独立的 `bridge_retry` 缓存标识，避免三次插入都复用同一个失败响应；总尝试次数仍最多三次。挂起或仅超时的脚本不重复插入，JavaScript 语法／运行时错误不进入资源重试；不使用 fetch 后 eval、内联脚本或替代域名绕过 CSP。
+
 ## Web 复制
 
 `features/chat/message-actions.js` 定义共享 `BridgeClipboard.copy(getText, button)`：已就绪的文本同步调用 Clipboard API；异步完整正文优先在点击内创建带 Promise 的 `ClipboardItem`，保留 WebKit 的用户手势。局域网 HTTP 或现代 API 拒绝时尝试临时只读文本框的兼容复制，并恢复原焦点和选择；弹窗内复制使用同一顶层 dialog。全部失败才展示可重试、可选中文本的兜底窗口，不读取系统剪贴板、不修改草稿。原生 App 继续由 `mobile/shared/web/mobile-clipboard.js` 接管，保留可信点击与桥接令牌检查。

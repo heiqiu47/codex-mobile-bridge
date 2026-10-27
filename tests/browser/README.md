@@ -18,7 +18,13 @@
 
 `external-script` 场景模拟 Cloudflare 注入的外部统计脚本，断言 CSP 确实阻止它且工作台仍成功加载。资源下载与执行分开后仍须验证脚本顺序、运行时错误和依赖失败屏障。
 
-夹具资源响应使用 `no-store`，这些故障测试不证明生产缓存命中或真实 BFCache 冻结恢复。需要分别记录浏览器模拟弱网、手机 WebView 实机和生产缓存的验证范围。
+`opaque-error` 在 DOMContentLoaded 前注入没有来源的全局错误，覆盖 Safari 截图中 `loading / 0s` 的误中止路径；`external-runtime` 与 `external-rejection` 分别覆盖非启动依赖脚本的异常和未处理 Promise 拒绝。三者都应继续显示登录，不提前进入失败页。它们是合成故障，不证明真实手机上的错误由扩展引起；`runtime` 与 `js-fatal` 仍须中止依赖链，Node 用例还验证来源不明的错误不会延长启动超时，也不会在诊断中暴露异常正文或 URL 参数。
+
+`app-cached-failure` 为原始 `/app.js` 版本 URL 返回可缓存、被 nosniff 拒绝的非脚本响应，模拟失败预加载被后续 script 复用。恢复必须产生带新缓存标识的同路径请求，且真正的 `/app.js` 只能执行一次；仅重复插入相同 URL 时仍失败。此场景验证缓存恢复机制，不代表已经定位或验证真实 Safari 的内容拦截、隐私设置或网络请求。
+
+除 `app-cached-failure` 的故障响应外，夹具资源响应使用 `no-store`；这些故障测试不证明生产缓存命中或真实 BFCache 冻结恢复。需要分别记录浏览器模拟弱网、手机 WebView 实机和生产缓存的验证范围。
+
+2026-10-27 验证：1213 项 Node 测试、8 项 Web 资源测试及 17 个 Chromium 启动场景通过；修复同步至正在运行的 Windows 网关后，用户确认 iPhone Safari 已恢复。此实机反馈确认访问恢复，不据此断言最初故障来自某个扩展或缓存来源。
 
 <a id="mermaid-checks"></a>
 

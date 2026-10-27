@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const root=path.resolve(__dirname,'..');
+function retried(url,attempt){const value=new URL(url,'https://gateway.test');value.searchParams.set('bridge_retry','0-'+attempt);return value.href;}
 
 function fixture({styles=[],scripts=[],deferred=false,shellSheet,preloadSupported=true,features=[],appearance=null,systemDark=false,connection}={}){
   let now=0,id=0,reloads=0;const timers=new Map(),events=new Map(),nodes=new Map(),requests=[],preloads=[],optionalRequests=[];
@@ -16,13 +17,13 @@ function fixture({styles=[],scripts=[],deferred=false,shellSheet,preloadSupporte
   const css=placeholders(styles,'link'),js=placeholders(scripts,'script');
   const optional=features.map(({url,group})=>Object.assign(node(url.endsWith('.css')?'link':'script'),{dataset:{bridgeFeature:group},getAttribute:()=>url}));
   let domReady;
-  const document={documentElement:{dataset:{}},querySelector(){return null;},readyState:deferred?'loading':'complete',getElementById:id=>nodes.get(id),createElement:node,
+  const document={currentScript:{src:'/bootstrap.js'},documentElement:{dataset:{}},querySelector(){return null;},readyState:deferred?'loading':'complete',getElementById:id=>nodes.get(id),createElement:node,
     addEventListener(name,fn){if(name==='DOMContentLoaded'||name==='readystatechange')domReady=fn;},
     head:{appendChild(n){(n.bridgeOptionalResource?optionalRequests:preloads).push(n);}},querySelectorAll:selector=>selector==='[data-bridge-feature]'?optional:selector.startsWith('link')?[...css,...optional.filter(n=>n.tagName==='LINK')]:[...js,...optional.filter(n=>n.tagName==='SCRIPT')]};
   const window={matchMedia:()=>({matches:systemDark}),addEventListener(name,fn){if(!events.has(name))events.set(name,new Set());events.get(name).add(fn);},removeEventListener(name,fn){events.get(name)?.delete(fn);}};
   const dispatch=(name,event)=>{for(const fn of events.get(name)||[])fn(event);};
   const context=vm.createContext({window,document,navigator:{userAgent:'fixture-no-secrets',connection},location:{href:'https://gateway.test/',hash:'',search:'',reload(){reloads++;}},
-    localStorage:{getItem(key){return key==='bridge-appearance'?JSON.stringify(appearance):null;}},AbortController,Promise,fetch(){},Date:class extends Date{static now(){return now;}},
+    localStorage:{getItem(key){return key==='bridge-appearance'?JSON.stringify(appearance):null;}},AbortController,Promise,URL,fetch(){},Date:class extends Date{static now(){return now;}},
     setTimeout(fn,delay){timers.set(++id,{fn,at:now+delay});return id;},clearTimeout(id){timers.delete(id);}});
   vm.runInContext(fs.readFileSync(path.join(root,'web/shared/bootstrap.js'),'utf8'),context);
   async function flush(){for(let i=0;i<8;i++)await Promise.resolve();}
@@ -34,14 +35,14 @@ function fixture({styles=[],scripts=[],deferred=false,shellSheet,preloadSupporte
 
 test('the eager shell stylesheet recovers even though its error preceded bootstrap execution',()=>{
   const ui=fixture({shellSheet:{cssRules:[]},styles:['/feature.css'],scripts:['/app.js']});
-  assert.equal(ui.requests[0].href,'/style.css?v=hash');assert.equal(ui.requests.length,1);
+  assert.equal(ui.requests[0].href,retried('/style.css?v=hash',2));assert.equal(ui.requests.length,1);
   ui.finish(ui.requests[0]);assert.equal(ui.requests[1].href,'/feature.css');ui.finish(ui.requests[1]);assert.equal(ui.requests[2].src,'/app.js');
 });
 
 test('an unreadable failed shell stylesheet retries instead of aborting startup',()=>{
   const sheet={get cssRules(){throw Object.assign(new Error('Cannot access rules'),{name:'SecurityError'});}};
   const ui=fixture({shellSheet:sheet,styles:['/feature.css'],scripts:['/app.js']});
-  assert.deepEqual(ui.requests.map(n=>n.href),['/style.css?v=hash']);
+  assert.deepEqual(ui.requests.map(n=>n.href),[retried('/style.css?v=hash',2)]);
   assert.doesNotMatch(ui.nodes.get('bootstrap-title').textContent,/尚未加载完成/);
   ui.finish(ui.requests[0]);ui.finish(ui.requests[1]);ui.finish(ui.requests[2]);ui.window.BridgeBootstrap.ready();
   assert.equal(ui.nodes.get('bootstrap-status').hidden,true);
@@ -50,7 +51,7 @@ test('an unreadable failed shell stylesheet retries instead of aborting startup'
 
 test('a missing shell stylesheet retries while a loaded sheet is reused',()=>{
   const missing=fixture({shellSheet:null,styles:['/feature.css']});
-  assert.equal(missing.requests[0].href,'/style.css?v=hash');
+  assert.equal(missing.requests[0].href,retried('/style.css?v=hash',2));
   const loaded=fixture({shellSheet:{cssRules:[{}]},styles:['/feature.css']});
   assert.deepEqual(loaded.requests.map(n=>n.href),['/feature.css']);
 });
@@ -59,7 +60,7 @@ test('an unreadable shell stylesheet keeps the initial request within the three-
   const sheet={get cssRules(){throw Object.assign(new Error('Cannot access rules'),{name:'SecurityError'});}};
   const ui=fixture({shellSheet:sheet,scripts:['/app.js']});
   ui.finish(ui.requests[0],true);await ui.tick(1500);ui.finish(ui.requests[1],true);await ui.tick(60000);
-  assert.deepEqual(ui.requests.map(n=>n.href),['/style.css?v=hash','/style.css?v=hash']);
+  assert.deepEqual(ui.requests.map(n=>n.href),[retried('/style.css?v=hash',2),retried('/style.css?v=hash',3)]);
   assert.match(ui.nodes.get('bootstrap-title').textContent,/尚未加载完成/);
 });
 
@@ -73,7 +74,8 @@ test('styles retain cascade order, stay bounded at four and all finish before sc
 test('failed eager clipboard script recovers before downstream execution without an idle load-event gap',()=>{
   const ui=fixture({deferred:true,scripts:['/app.js']});ui.domReady();ui.eagerFailure();assert.equal(ui.requests.length,1);
   ui.domReady();assert.equal(ui.requests.length,1);ui.finish(ui.requests[0],true);assert.equal(ui.requests.length,2);
-  assert.equal(ui.requests[1].src,'/message-actions.js?v=hash');ui.finish(ui.requests[1]);assert.equal(ui.requests[2].src,'/app.js');
+  assert.equal(ui.requests[0].src,retried('/message-actions.js?v=hash',2));
+  assert.equal(ui.requests[1].src,retried('/message-actions.js?v=hash',3));ui.finish(ui.requests[1]);assert.equal(ui.requests[2].src,'/app.js');
 });
 
 test('transient stylesheet failure recovers without showing the fatal page or changing its URL',async()=>{
@@ -81,7 +83,7 @@ test('transient stylesheet failure recovers without showing the fatal page or ch
   ui.finish(ui.requests[0],true);
   assert.doesNotMatch(ui.nodes.get('bootstrap-title').textContent,/尚未加载完成/);
   assert.equal(ui.requests.length,1);await ui.tick(500);
-  assert.equal(ui.requests[1].href,'/a.css?v=hash');ui.finish(ui.requests[1]);
+  assert.equal(ui.requests[1].href,retried('/a.css?v=hash',2));ui.finish(ui.requests[1]);
   assert.equal(ui.requests[2].src,'/a.js?v=hash');ui.finish(ui.requests[2]);ui.window.BridgeBootstrap.ready();
   assert.equal(ui.nodes.get('bootstrap-status').hidden,true);assert.equal(ui.reloads,0);
 });
@@ -90,10 +92,10 @@ test('script retries hold the execution barrier while all required downloads are
   const urls=['a','b','c','d','e'].map(x=>'/'+x+'.js?v=hash'),ui=fixture({scripts:urls});
   assert.equal(ui.requests.length,1);assert.deepEqual(ui.preloads.map(n=>n.href),urls);
   const failed=ui.requests[0];ui.finish(failed,true);await ui.tick(500);
-  assert.equal(ui.requests.length,2);assert.equal(ui.requests[1].src,urls[0]);
+  assert.equal(ui.requests.length,2);assert.equal(ui.requests[1].src,retried(urls[0],2));
   ui.finish(ui.requests[1]);assert.equal(ui.requests[2].src,urls[1]);
   for(let i=2;i<6;i++)ui.finish(ui.requests[i]);
-  assert.deepEqual(ui.requests.map(n=>n.src),[urls[0],...urls]);
+  assert.deepEqual(ui.requests.map(n=>n.src),[urls[0],retried(urls[0],2),...urls.slice(1)]);
   assert.ok(ui.requests.every(n=>n.async===false));
 });
 
@@ -112,12 +114,83 @@ test('script preloads overlap pending styles and retain their content-version UR
   ui.finish(ui.requests[0]);assert.equal(ui.requests[1].src,urls[0]);
 });
 
+test('explicit resource failures get distinct cache keys without changing path, origin or content version',async()=>{
+  const url='/app.js?v=content-hash&lang=en#fixture',ui=fixture({scripts:[url]});
+  assert.equal(ui.requests[0].src,url);assert.equal(ui.preloads[0].href,url);
+  ui.finish(ui.requests[0],true);await ui.tick(500);
+  assert.equal(ui.requests[1].src,retried(url,2));
+  ui.finish(ui.requests[1],true);await ui.tick(1500);
+  assert.equal(ui.requests[2].src,retried(url,3));
+  for(const node of ui.requests){
+    const value=new URL(node.src,'https://gateway.test');
+    assert.equal(value.origin,'https://gateway.test');assert.equal(value.pathname,'/app.js');
+    assert.equal(value.searchParams.get('v'),'content-hash');assert.equal(value.searchParams.get('lang'),'en');assert.equal(value.hash,'#fixture');
+  }
+  ui.finish(ui.requests[2],true);await ui.tick(60000);assert.equal(ui.requests.length,3);
+  assert.match(ui.nodes.get('bootstrap-diagnostics').textContent,/3 \/ 3/);
+  assert.doesNotMatch(ui.nodes.get('bootstrap-diagnostics').textContent,/content-hash|lang=en|#fixture|bridge_retry/);
+});
+
 test('a blocked proxy-injected analytics script does not stop the workspace',()=>{
   const ui=fixture({deferred:true,scripts:['/app.js']});
   ui.dispatch('error',{target:{tagName:'SCRIPT',src:'https://static.cloudflareinsights.com/beacon.min.js'}});
   assert.doesNotMatch(ui.nodes.get('bootstrap-title').textContent,/尚未加载完成/);
   ui.domReady();ui.domReady();assert.equal(ui.requests.length,1);ui.finish(ui.requests[0]);ui.window.BridgeBootstrap.ready();
   assert.equal(ui.nodes.get('bootstrap-status').hidden,true);
+});
+
+test('an opaque window error before DOMContentLoaded does not cancel startup at zero seconds',()=>{
+  const ui=fixture({deferred:true,scripts:['/app.js']});ui.domReady();
+  ui.dispatch('error',{target:ui.window,message:'Script error.',filename:'',lineno:0,error:null});
+  assert.doesNotMatch(ui.nodes.get('bootstrap-title').textContent,/尚未加载完成/);
+  assert.equal(ui.requests.length,0);
+  ui.domReady();assert.equal(ui.requests.length,1);ui.finish(ui.requests[0]);ui.window.BridgeBootstrap.ready();
+  assert.equal(ui.nodes.get('bootstrap-status').hidden,true);
+});
+
+test('foreign, injected and optional runtime errors cannot stop required scripts',()=>{
+  for(const filename of ['https://analytics.test/app.js','safari-extension://fixture/injected.js','https://gateway.test/injected.js','https://gateway.test/optional.js']){
+    const ui=fixture({scripts:['/app.js'],features:[{url:'/optional.js',group:'files'}]});
+    ui.dispatch('error',{target:ui.window,filename,error:{name:'TypeError',stack:'TypeError\n    at https://gateway.test/app.js:2:1'}});
+    ui.finish(ui.requests[0]);ui.window.BridgeBootstrap.ready();
+    assert.equal(ui.nodes.get('bootstrap-status').hidden,true,filename);
+  }
+});
+
+test('unknown promise rejections remain nonfatal and never postpone the startup deadline',async()=>{
+  for(const reason of [null,'private-rejection',{name:'Error',message:'private-rejection'},{name:'TypeError',stack:'TypeError: private-message\n    at https://other.test/app.js?private-query:8:2'}]){
+    const ui=fixture({scripts:['/app.js']});
+    ui.dispatch('unhandledrejection',{reason});
+    assert.doesNotMatch(ui.nodes.get('bootstrap-title').textContent,/尚未加载完成/);
+    await ui.tick(29000);ui.dispatch('unhandledrejection',{reason});await ui.tick(1000);
+    assert.match(ui.nodes.get('bootstrap-title').textContent,/尚未加载完成/);
+    assert.doesNotMatch(ui.nodes.get('bootstrap-message').textContent,/页面组件/);
+    assert.doesNotMatch(ui.nodes.get('bootstrap-diagnostics').textContent,/private-|other\.test/);
+  }
+});
+
+test('required script rejections retain a terminal barrier with WebKit and V8 source metadata',()=>{
+  for(const extra of [
+    {sourceURL:'https://gateway.test/a.js?private-query',line:17},
+    {fileName:'https://gateway.test/a.js?private-query'},
+    {stack:'load@https://gateway.test/a.js?private-query:17:3\nglobal code@https://gateway.test/other.js:1:1'},
+    {stack:'TypeError: private-message\n    at load (https://gateway.test/a.js?private-query:17:3)\n    at https://gateway.test/other.js:1:1'}
+  ]){
+    const ui=fixture({scripts:['/a.js','/b.js']});
+    ui.dispatch('unhandledrejection',{reason:{name:'TypeError',message:'private-message',...extra}});
+    ui.finish(ui.requests[0]);ui.window.BridgeBootstrap.ready();
+    assert.equal(ui.requests.length,1);assert.equal(ui.nodes.get('bootstrap-status').hidden,false);
+    assert.match(ui.nodes.get('bootstrap-diagnostics').textContent,/TypeError @ \/a\.js/);
+    assert.doesNotMatch(ui.nodes.get('bootstrap-diagnostics').textContent,/private-|gateway\.test/);
+  }
+});
+
+test('the bootstrap itself remains a required runtime source',()=>{
+  const ui=fixture({scripts:['/app.js']});
+  ui.dispatch('error',{target:ui.window,filename:'https://gateway.test/bootstrap.js',error:{name:'TypeError'}});
+  ui.finish(ui.requests[0]);ui.window.BridgeBootstrap.ready();
+  assert.equal(ui.nodes.get('bootstrap-status').hidden,false);
+  assert.match(ui.nodes.get('bootstrap-diagnostics').textContent,/TypeError @ \/bootstrap\.js/);
 });
 
 test('permanent script failure stops after three attempts and keeps diagnostics collapsed',async()=>{
