@@ -2,7 +2,15 @@
 
 手机扫描网关二维码后连接 Codex、Claude Desktop 和 DeepSeek Harness，电脑继续执行任务。手机 App 保存多台电脑，提供原生扫码、剪贴板、文件下载和通知；浏览器入口同时保留。
 
-**[v2.1.5 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.5)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
+**[v2.1.6 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.6)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
+
+## v2.1.6：会话整理、复制与阅读 / Chat organization, copying and reading
+
+网关与手机版本为 **2.1.6**，Android/iOS 构建号 **39**。完善最近交互列表的本地优先置顶、二次确认归档、原生剪贴板复制、Markdown 阅读与文件字号，以及 API 表单和上游模型获取。归档能力取决于原生接入，部分 Codex App 会话、Cowork 等仍有限制，详见 [v2.1.6 更新说明](../RELEASE_NOTES.md#v216)。
+
+覆盖安装匹配的原 App，不要卸载或清除数据；Android 沿用原签名，iOS 使用相同应用标识和签名身份。更新网关后刷新共享页面。正式版与 Test 如共用 DSH 连接器，应一并升级到兼容版本，并仅在原生任务停止后显式重启接入。
+
+**English:** v2.1.6/build 39 improves local-first pinning, confirmed archival where supported, native clipboard writes, Markdown/file reading and API setup. Native archive limitations remain; see the release notes. Install over the matching app with the same signing identity and retain data. Refresh shared pages after updating the gateway; shared DSH connectors require compatible gateways and an explicit restart after tasks stop.
 
 ## v2.1.5：WSL CLI 与聊天管理 / WSL CLI and message management
 
