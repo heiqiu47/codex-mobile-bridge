@@ -16,8 +16,9 @@ async function ready(page, scenario = 'success') {
   });
 }
 
-for (const scenario of ['success', 'css-once', 'js-twice', 'js-fatal', 'runtime']) {
-  test('startup and login: ' + scenario, async ({page, browserName}, testInfo) => {
+for (const scenario of ['success', 'css-once', 'js-twice', 'js-fatal', 'runtime',
+  'opaque-error', 'external-runtime', 'external-rejection', 'app-cached-failure']) {
+  test('startup and login: ' + scenario, async ({page}, testInfo) => {
     await ready(page, scenario);
     const evidence = await page.evaluate(async () => ({
       state: await (await fetch('/__state')).json(), probe: window.__startupTest,
@@ -25,18 +26,7 @@ for (const scenario of ['success', 'css-once', 'js-twice', 'js-fatal', 'runtime'
       diagnostic: document.getElementById('bootstrap-details').textContent,
     }));
     await testInfo.attach('startup-evidence', {body: JSON.stringify(evidence), contentType: 'application/json'});
-    // v2.1.6 WebKit can reuse the first failed script fetch for all retries.
-    // Only this observed signature is an expected failure, never a general WebKit skip.
-    const knownRetryFailure = browserName === 'webkit' && scenario === 'js-twice'
-      && evidence.status === 'failed' && evidence.state.requests['/i18n.js'] === 1
-      && evidence.diagnostic.includes('resource @ /i18n.js')
-      && evidence.probe.errors.length === 0 && !evidence.probe.executed.includes('/app.js');
     expect(evidence.state.writes).toEqual([]);
-    if (knownRetryFailure) {
-      testInfo.annotations.push({type: 'known-baseline',
-        description: 'v2.1.6 WebKit failed-URL cache; related PR #88 is not included in this test-only change.'});
-      test.fail(true, 'Known v2.1.6 failure: https://github.com/try2love/codex-mobile-bridge/pull/88');
-    }
     await page.addScriptTag({url: '/__checks.js'});
     const result = await page.evaluate(() => runBootstrapBrowserChecks());
     expect(result.passed).toBe(true);

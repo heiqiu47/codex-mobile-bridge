@@ -74,6 +74,7 @@
 // Keep this small and independent: even i18n or the main app may fail to load.
 (function startWhenParsed() {
   if (startWhenParsed.started) return;
+  if (document.currentScript) startWhenParsed.source = document.currentScript.src;
   if (document.readyState === 'loading') {
     // Interactive precedes deferred clipboard execution, whose failures we own.
     document.addEventListener('readystatechange', startWhenParsed, {once: true});
@@ -92,7 +93,8 @@
   var timer = null, deadline = null, phase = 'loading', failureKind = null, cancelRead = null;
   var retryTimers = [], preloads = [];
   var eagerPending = false, startScripts = null;
-  var started = Date.now(), lastFailure = null, pendingResources = [];
+  var started = Date.now(), lastFailure = null, lastUnattributed = null, pendingResources = [];
+  var requiredSources = new Set();
   var english = false;
   try { english = localStorage.getItem('bridge-language') === 'en'; } catch (_) {}
   if (/(?:^|[?&])lang=en(?:&|$)/.test(location.search)) english = true;
@@ -106,6 +108,50 @@
     var name = error && error.name;
     return /^(?:Syntax|Reference|Type|Range|URI|Eval|Aggregate)?Error$/.test(name) ? name : 'Error';
   }
+  function localScriptPath(value) {
+    if (typeof value !== 'string' || !value) return '';
+    try {
+      var source = new URL(value, location.href);
+      return source.origin === new URL(location.href).origin ? assetPath(source.pathname) : '';
+    } catch (_) { return ''; }
+  }
+  function requiredPath(value) {
+    var path = localScriptPath(value);
+    return requiredSources.has(path) ? path : '';
+  }
+  function runtimePath(error, filename) {
+    var source = filename || error && (error.sourceURL || error.fileName);
+    if (source) return requiredPath(source);
+    var stack = error && error.stack;
+    if (typeof stack !== 'string') return '';
+    var frames = stack.slice(0, 8192).split('\n').slice(0, 20);
+    for (var i = 0; i < frames.length; i++) {
+      // WebKit uses name@URL, V8 uses "at name (URL)". Trust the first
+      // source frame, not an app caller below an injected/optional script.
+      var frame = /^\s*(?:at (?:.*?\()?|[^@]*@)([a-z][a-z\d+.-]*:\/\/[^\s()]+)\)?\s*$/i.exec(frames[i]);
+      if (frame) return requiredPath(frame[1].replace(/:\d+(?::\d+)?$/, ''));
+    }
+    return '';
+  }
+  function addRequiredSource(value) {
+    var path = localScriptPath(value);
+    if (path) requiredSources.add(path);
+  }
+  function retryResourceUrl(value, attempt) {
+    if (attempt < 2) return value;
+    try {
+      var url = new URL(value, location.href);
+      if (url.origin !== new URL(location.href).origin || !assetPath(url.pathname)) return value;
+      // A failed preload can remain cached. Only an explicit resource error
+      // permits a fresh request; a slow script might still execute later.
+      url.searchParams.set('bridge_retry', started.toString(36) + '-' + attempt);
+      return url.href;
+    } catch (_) { return value; }
+  }
+  addRequiredSource(startWhenParsed.source);
+  Array.from(document.querySelectorAll('script[data-bridge-src], #bridge-clipboard-script')).forEach(function (node) {
+    if (!node.dataset.bridgeFeature) addRequiredSource(node.getAttribute('data-bridge-src') || node.src);
+  });
   function diagnostics() {
     var missing = [];
     if (typeof fetch !== 'function') missing.push('fetch');
@@ -117,6 +163,8 @@
       text('阶段：', 'Phase: ') + phase + ' / ' + Math.round((Date.now() - started) / 1000) + 's'];
     if (lastFailure) lines.push(text('错误：', 'Error: ') + lastFailure.kind +
       (lastFailure.path ? ' @ ' + lastFailure.path : '') + (lastFailure.line ? ':' + lastFailure.line : ''));
+    if (lastFailure && lastFailure.attempts) lines.push(text('资源尝试：', 'Resource attempts: ') + lastFailure.attempts + ' / 3');
+    if (lastUnattributed) lines.push(text('未归属错误（未中断启动）：', 'Unattributed error (startup continued): ') + lastUnattributed.kind + ' / ' + lastUnattributed.event);
     if (pendingResources.length) lines.push(text('等待资源：', 'Waiting for: ') + pendingResources.map(assetPath).filter(Boolean).join(', '));
     if (missing.length) lines.push(text('浏览器缺少能力：', 'Missing browser features: ') + missing.join(', '));
     if (typeof navigator !== 'undefined') lines.push(String(navigator.userAgent || '').slice(0, 256));
@@ -243,14 +291,22 @@
     // Owned script resource errors are handled above. A proxy may inject an
     // optional analytics script that our CSP correctly blocks; it is not a
     // workspace dependency and must not stop the startup queue.
-    if (event.target === window) {
-      if (!lastFailure) lastFailure = {kind: errorKind(event.error),
-        path: assetPath(event.filename),
-        line: typeof event.lineno === 'number' && event.lineno > 0 ? event.lineno : 0};
-      fail('script');
-    }
+    if (event.target === window) runtimeFailure(event.error, event.filename, event.lineno, 'error');
   }
-  function onRejection(event) { if (!lastFailure) lastFailure = {kind: errorKind(event && event.reason)}; fail('script'); }
+  function runtimeFailure(error, filename, line, event) {
+    if (complete || stopped) return;
+    var path = runtimePath(error, filename);
+    // Opaque browser/extension errors do not establish a failed dependency.
+    // Keep loading; resource failures and the unchanged deadline still apply.
+    if (!path) { lastUnattributed = {kind: errorKind(error), event: event}; return; }
+    lastFailure = {kind: errorKind(error), path: path,
+      line: typeof line === 'number' && line > 0 ? line : 0};
+    fail('script');
+  }
+  function onRejection(event) {
+    var error = event && event.reason;
+    runtimeFailure(error, '', error && error.line, 'unhandledrejection');
+  }
   function loadResource(placeholder, url, scripts, done, eagerAttempts) {
     var attempt = eagerAttempts || 0;
     pendingResources.push(url);
@@ -264,7 +320,7 @@
         settled = true;
         node.onload = node.onerror = null;
         if (failed) {
-          lastFailure = {kind: 'resource', path: assetPath(url)};
+          lastFailure = {kind: 'resource', path: assetPath(url), attempts: attempt};
           if (attempt >= 3) { fail('script'); return; }
           recovering();
           if (eagerAttempts && scripts) { load(); return; }
@@ -280,10 +336,10 @@
       node.onerror = function () { finish(true); };
       if (scripts) {
         node.async = false;
-        node.src = url;
+        node.src = retryResourceUrl(url, attempt);
       } else {
         node.rel = 'stylesheet';
-        node.href = url;
+        node.href = retryResourceUrl(url, attempt);
       }
       placeholder.parentNode.replaceChild(node, placeholder);
       placeholder = node;

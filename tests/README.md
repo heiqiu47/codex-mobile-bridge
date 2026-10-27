@@ -50,7 +50,7 @@ npm run test:browser
 
 服务固定绑定隔离 loopback 端口 18279，拒绝复用已占用端口；浏览器请求不访问外部 origin。输出位于 `.tmp/browser-results/`，失败时包含截图和 trace。合成页面检查不替代真实登录后端、客户端协议或手机 WebView 验收。
 
-v2.1.6 的 WebKit 在同一脚本 URL 首次失败后可能缓存失败，使连续失败恢复用例提前终止（相关 [PR #88](https://github.com/try2love/codex-mobile-bridge/pull/88) 未纳入本次测试改动）。仅当诊断精确匹配 `/i18n.js` 资源失败、服务端仅收到一次请求、没有运行时异常或应用脚本执行时，标记 `known-baseline` 预期失败；其他失败仍阻止检查通过。报告须单列此项，不能称其恢复功能已通过。修复后正常执行完整恢复断言。
+纳入 [PR #88](https://github.com/try2love/codex-mobile-bridge/pull/88) 后，WebKit 连续资源失败恢复必须通过完整断言，不再保留 `known-baseline` 预期失败豁免。常规检查还覆盖无来源错误、非启动依赖脚本的异常和 Promise 拒绝、可缓存的错误脚本响应；真实必需脚本错误仍须停止依赖执行。详细边界见[启动错误归属记录](../.agents/notes/implemented/bug-fix/2026-10-27-startup-error-attribution-and-cache-retry.md)。
 
 `test_module_boundaries.py` 自动运行 AST 依赖检查，也可用 `python3 -B scripts/check-boundaries.py` 单独运行（Windows 可用 `python`）。[历史例外](../docs/architecture/dependency-exceptions.json) 精确到文件和符号，禁止通配放行；移除旧依赖必须删除对应例外。检查不执行应用，无法推断变量拼接的动态 import；原有平台选择、资源路径及共享脚本测试继续保留。
 
