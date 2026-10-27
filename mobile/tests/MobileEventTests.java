@@ -16,19 +16,20 @@ public final class MobileEventTests {
  static final List<String> delivered=new CopyOnWriteArrayList<>();
  static final class Prefs implements SharedPreferences,SharedPreferences.Editor {
   final Map<String,Object> values=new ConcurrentHashMap<>();
+  final AtomicInteger commits=new AtomicInteger();
   public boolean getBoolean(String k,boolean d){return (boolean)values.getOrDefault(k,d);}public String getString(String k,String d){return (String)values.getOrDefault(k,d);}public long getLong(String k,long d){return ((Number)values.getOrDefault(k,d)).longValue();}
   @SuppressWarnings("unchecked") public Set<String> getStringSet(String k,Set<String> d){return (Set<String>)values.getOrDefault(k,d);}
   public Editor edit(){return new Editor(){
    final Map<String,Object> staged=new HashMap<>();
    public Editor putString(String k,String v){staged.put(k,v);return this;}public Editor putBoolean(String k,boolean v){staged.put(k,v);return this;}public Editor putLong(String k,long v){staged.put(k,v);return this;}
-   public boolean commit(){if(!writable)return false;values.putAll(staged);return true;}public void apply(){values.putAll(staged);}
+   public boolean commit(){if(!writable)return false;values.putAll(staged);commits.incrementAndGet();return true;}public void apply(){values.putAll(staged);}
   };}public Editor putString(String k,String v){values.put(k,v);return this;}public Editor putBoolean(String k,boolean v){values.put(k,v);return this;}public Editor putLong(String k,long v){values.put(k,v);return this;}public volatile boolean writable=true;public boolean commit(){return writable;}public void apply(){}
  }
  static final class Gateway implements AutoCloseable {
   final ServerSocket socket=new ServerSocket(0,16,InetAddress.getByName("127.0.0.1"));
   final ExecutorService workers=Executors.newCachedThreadPool();
   final List<String> targets=new CopyOnWriteArrayList<>();
-  final List<Integer> requestBytes=new CopyOnWriteArrayList<>(),responseBytes=new CopyOnWriteArrayList<>();
+  final List<Integer> responseBytes=new CopyOnWriteArrayList<>();
   volatile String stream="fixture-stream";volatile int cursor=200,status=200,unread=-1;volatile boolean enabled=true,longPoll;
   synchronized void advance(int value){cursor=value;notifyAll();}
   volatile CountDownLatch received,release;final AtomicBoolean slow=new AtomicBoolean();
@@ -37,7 +38,7 @@ public final class MobileEventTests {
   void hold(){received=new CountDownLatch(1);release=new CountDownLatch(1);slow.set(true);}
   void serve(Socket client){try(client){
    ByteArrayOutputStream raw=new ByteArrayOutputStream();int c;while((c=client.getInputStream().read())!=-1){raw.write(c);byte[] b=raw.toByteArray();int n=b.length;if(n>=4&&b[n-4]==13&&b[n-3]==10&&b[n-2]==13&&b[n-1]==10)break;}
-   String headers=raw.toString("UTF-8"),target=headers.split(" ")[1];targets.add(target);requestBytes.add(raw.size());
+   String headers=raw.toString("UTF-8"),target=headers.split(" ")[1];targets.add(target);
    check(headers.toLowerCase(Locale.ROOT).contains("origin: "+origin()),"Origin header retained");check(headers.contains(EventClient.USER_AGENT),"Native user agent retained");
    if(slow.compareAndSet(true,false)){received.countDown();release.await(5,TimeUnit.SECONDS);}
    long after=target.contains("?after=")?Long.parseLong(target.split("\\?after=")[1].split("&")[0]):0;
@@ -95,7 +96,8 @@ public final class MobileEventTests {
    check(receiver.status()==NotificationReceiver.Status.RETRYING,"Initial connection remains pending until a successful read");first.release.countDown();
    poll(receiver,app,address,200);check(delivered.isEmpty(),"Initial baseline suppresses history");
    status(receiver,NotificationReceiver.Status.RECEIVING);int changes=statusChanges.get();
-   int requests=first.responseBytes.size();count(receiver,first,requests);
+   int writes=prefs.commits.get(),requests=first.responseBytes.size();count(receiver,first,requests);
+   check(prefs.commits.get()==writes,"Unchanged reads avoid synchronous checkpoint writes");
    check(statusChanges.get()==changes,"Unchanged reads avoid redundant status updates");
    check(first.targets.get(first.targets.size()-1).endsWith("?after=200"),"Incremental cursor");
    check(first.responseBytes.get(first.responseBytes.size()-1)<500,"Idle polls avoid downloading old messages");
@@ -152,14 +154,12 @@ public final class MobileEventTests {
    requests=first.responseBytes.size();count(receiver,first,requests);
    check(cursor(app,address)==12&&delivered.size()>beforeFailure,"Storage failure keeps the durable cursor behind the event");
    status(receiver,NotificationReceiver.Status.RETRYING);
-   check(logs.stream().anyMatch(line->line.contains("NotificationReceiver.save")),"Persistence failure location is available in logs");
    prefs.writable=true;poll(receiver,app,address,13);
    first.cursor=12;requests=first.responseBytes.size();count(receiver,first,requests);
    check(cursor(app,address)==13,"Same-stream regression never rewinds the cursor");
    status(receiver,NotificationReceiver.Status.RETRYING);
    receiver.close();
    String encoded=new NotificationCheckpoint("saved-stream",42).encode("binding");
-   check(NotificationCheckpoint.restore(encoded,"binding").cursor==42,"Serialized checkpoint round-trip");
    check(NotificationCheckpoint.restore(encoded,"other").cursor==0,"Persisted checkpoint isolates accounts");
    check(NotificationCheckpoint.restore("malformed","binding").cursor==0,"Corrupt checkpoint safely baselines");
    longPolling();

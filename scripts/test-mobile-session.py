@@ -28,11 +28,11 @@ public class CookieManager {
 for name, source in stubs.items():
     path = work / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source)
+    path.write_text(source, encoding='utf-8')
 java_home = os.environ.get('JAVA_HOME')
 def java_tool(name):
     return str(Path(java_home) / 'bin' / name) if java_home else shutil.which(name)
-subprocess.run([java_tool('javac'), '-d', str(work),
+subprocess.run([java_tool('javac'), '-encoding', 'UTF-8', '-d', str(work),
                 *[str(work / name) for name in stubs],
                 str(root / 'mobile/android/src/io/github/try2love/codexbridge/GatewayURL.java'),
                 str(root / 'mobile/android/src/io/github/try2love/codexbridge/EventClient.java'),

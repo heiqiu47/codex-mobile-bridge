@@ -115,7 +115,7 @@
   const computer = document.getElementById('connected-computer');
   const name = document.getElementById('computer-name');
   if (computer && name) {
-    const connectionName = window.prompt('codexbridge-computer:__BRIDGE_CLIPBOARD_TOKEN__', '');
+    const connectionName = '__BRIDGE_CONNECTION_NAME__';
     if (connectionName) {
       let device = false;
       try { device = localStorage.getItem('bridge-computer-name-mode') === 'device'; } catch {}

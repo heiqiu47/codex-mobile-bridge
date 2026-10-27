@@ -26,7 +26,6 @@ final class EventClient {
   void check()throws IOException {if(cancelled)throw new InterruptedIOException("Notification check cancelled");}
   void cancel(){HttpURLConnection current;synchronized(this){cancelled=true;current=connection;connection=null;}if(current!=null)current.disconnect();}
  }
- static String sessionCookie(String header){if(header!=null)for(String part:header.split(";"))if(part.trim().startsWith("codex_mobile_session="))return part.trim();return "";}
  static String sessionCookie(String header,String origin){String wanted=cookieName(origin)+"=";if(header!=null)for(String part:header.split(";"))if(part.trim().startsWith(wanted))return part.trim();return "";}
  static String tokenValue(String cookie){return cookie.isEmpty()?"":cookie.substring(cookie.indexOf('=')+1);}
  static synchronized void forget(String origin){CookieManager store=CookieManager.getInstance();store.setCookie(origin+"/",cookieName(origin)+"=; Path="+GatewayURL.cookiePath(origin)+"; Max-Age=0");store.flush();names.remove(origin);}

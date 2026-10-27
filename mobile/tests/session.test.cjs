@@ -2,10 +2,10 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../android/assets/mobile-session.js'),'utf8');
 function fixture({authenticated=false,frame=false}={}){
- const events={},calls=[],window={prompt:(...args)=>calls.push(args)};window.top=frame?{}:window;
-  const document={visibilityState:'visible',addEventListener:(name,fn)=>events[name]=fn,getElementById:()=>({hidden:!authenticated})};
+ const events={},listeners={},calls=[],window={prompt:(...args)=>calls.push(args)};window.top=frame?{}:window;
+  const document={visibilityState:'visible',addEventListener:(name,fn)=>{events[name]=fn;listeners[name]=(listeners[name]||0)+1;},getElementById:()=>({hidden:!authenticated})};
   const context={window,document};vm.runInNewContext(source,context);
-  return {events,calls,document,inject:()=>vm.runInNewContext(source,context)};
+  return {events,listeners,calls,document,inject:()=>vm.runInNewContext(source,context)};
 }
 test('Android persists session immediately after login without exposing credentials',()=>{
  const f=fixture();assert.equal(f.calls.length,0);f.events['bridge-authenticated']();
@@ -25,6 +25,7 @@ test('an authenticated page losing authorization asks for one guarded native rec
 
 test('visible chat signals carry only its routing identity and register once',()=>{
  const f=fixture();f.inject();f.events['bridge-chat-visible']({detail:{threadId:'chat',host:'desktop:claude',text:'private'}});
+ assert.ok(Object.values(f.listeners).every(count=>count===1));
  assert.deepEqual(f.calls,[['codexbridge-chat-visible:__BRIDGE_CLIPBOARD_TOKEN__','{"threadId":"chat","host":"desktop:claude"}']]);
  for(const detail of [{},{threadId:'',host:'local'},{threadId:'x'.repeat(513),host:'local'},{threadId:'chat',host:null},{threadId:'chat',host:'x'.repeat(257)}])f.events['bridge-chat-visible']({detail});
  f.document.visibilityState='hidden';f.events['bridge-chat-visible']({detail:{threadId:'chat',host:'local'}});

@@ -15,9 +15,9 @@ stubs = {
 'android/webkit/CookieManager.java': r'''package android.webkit;
 public class CookieManager {
  private static final CookieManager instance=new CookieManager();
- public volatile String value="codex_mobile_session=fixture";public Runnable afterRead;public int reads,switchAt;
+ public volatile String value="codex_mobile_session=fixture";
  public static CookieManager getInstance(){return instance;}
- public String getCookie(String url){String snapshot=value;if(++reads==switchAt&&afterRead!=null)afterRead.run();return snapshot;}
+ public String getCookie(String url){return value;}
  public void setCookie(String url,String header){value=header.split(";",2)[0];}
  public void flush(){}
 }''',

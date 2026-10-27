@@ -8,6 +8,18 @@ test('loaded desktop chat content reports readiness after rendering, including s
  ui.view.applyDetail(detail);assert.equal(ready,1);
  ui.view.applyDetail({...detail,connected:false});assert.equal(ready,2);
 });
+
+test('opening the current desktop chat keeps its draft, message nodes and workbench',async()=>{
+ const ui=await opened(),view=ui.view,session=view.workbench.current;
+ ui.setHandler(async()=>({session:{id:'a',title:'Chat',status:'idle'},messages:[{id:'reply',role:'assistant',text:'Current reply'}]}));await view.open('a');
+ view.input.value='unsent draft';Object.defineProperty(view.messages,'scrollHeight',{value:1000,configurable:true});view.messages.scrollTop=42;const nodes=[...view.messages.children];
+ const prepare=view.prepareChat;view.prepareChat=()=>{throw Error('chat rebuilt');};
+ await view.open(view.sid);
+ assert.equal(view.workbench.current,session);assert.equal(view.input.value,'unsent draft');
+ assert.equal(view.messages.scrollTop,42);assert.equal(view.messages.children.length,nodes.length);
+ assert.ok(nodes.every((node,index)=>node===view.messages.children[index]));
+ view.prepareChat=prepare;
+});
 function fixture({storage=new Map(),sessionStore=new Map()}={}){
  const listeners={};let document;
  class Node {
@@ -39,6 +51,12 @@ function fixture({storage=new Map(),sessionStore=new Map()}={}){
  return {view,root,document,calls,notices,storage,sessionStore,setHandler:fn=>handler=fn,setUploadHandler:fn=>uploadHandler=fn,run:s=>vm.runInContext(s,context),text:n=>n.textContent};
 }
 async function opened(){const ui=fixture();await ui.view.choose('claude');await ui.view.open('a');return ui;}
+test('notification provider selection skips list loading and the previously open chat',async()=>{
+ const ui=fixture(),prepared=[];ui.view.providerViews.set('claude',{rows:[],sid:'previous'});
+ ui.view.prepareChat=id=>prepared.push(id);
+ await ui.view.choose('claude',{loadList:false});
+ assert.equal(ui.view.provider,'claude');assert.deepEqual(prepared,[]);assert.equal(ui.calls.length,0);
+});
 
 test('older history prepends messages without adopting old approvals or access',async()=>{
  const ui=await opened(),message=i=>({id:String(i),role:'assistant',text:'Row '+i});

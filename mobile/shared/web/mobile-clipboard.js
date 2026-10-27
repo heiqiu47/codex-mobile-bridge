@@ -1,8 +1,15 @@
 (() => {
-  if (window !== window.top) return;
+  // Android can inject again after same-document navigation.
+  if (window !== window.top || window.BridgeNativeClipboard) return;
+  window.BridgeNativeClipboard = true;
   const nativePrompt = window.prompt.bind(window);
   const command = 'codexbridge-copy:__BRIDGE_CLIPBOARD_TOKEN__';
-  const syncLanguage = () => { if (typeof BridgeI18n !== 'undefined') nativePrompt('codexbridge-language:__BRIDGE_CLIPBOARD_TOKEN__', BridgeI18n.language()); };
+  let nativeLanguage = '__BRIDGE_NATIVE_LANGUAGE__';
+  const syncLanguage = () => {
+    if (typeof BridgeI18n === 'undefined') return;
+    const language = BridgeI18n.language();
+    if (language !== nativeLanguage && nativePrompt('codexbridge-language:__BRIDGE_CLIPBOARD_TOKEN__', language) === 'saved') nativeLanguage = language;
+  };
   document.addEventListener('bridge-language', syncLanguage); syncLanguage();
   let clicked = false;
   document.addEventListener('click', event => {

@@ -967,12 +967,12 @@ class Bridge:
                 'action': entry['action'], 'draft': entry['text'] if entry['status'] == 'created' and entry['action'] == 'edit-fork' else None,
                 'source': {'id': entry['source'], 'title': entry['sourceTitle'], 'turnId': entry['turnId']}}
 
-    def for_host(self, host):
+    def for_host(self, host, *, cached=False):
         if host == self.host:
             return self
         if isinstance(host, str) and host.startswith('wsl:') and self.entries is not None:
             return self.entries.get(host)
-        available = self.hosts.hosts()
+        available = self.hosts.hosts(cached=True) if cached else self.hosts.hosts()
         if self.host != "local" or host not in available:
             raise KeyError("未知 SSH 主机")
         with self.lock:
@@ -1344,7 +1344,7 @@ class Bridge:
     def notification_candidates(self):
         sources = [self]
         if self.host == 'local':
-            sources.extend(self.for_host(host) for host in self.hosts.hosts())
+            sources.extend(self.for_host(host, cached=True) for host in self.hosts.hosts(cached=True))
         rows = []
         for source in sources:
             source.notification_event = self.notification_event

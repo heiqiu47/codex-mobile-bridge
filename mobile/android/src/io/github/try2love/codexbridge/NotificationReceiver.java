@@ -208,6 +208,7 @@ final class NotificationReceiver implements AutoCloseable {
   }
 
   private void save(Computer computer, NotificationCheckpoint checkpoint) throws Exception {
+    if (checkpoint.stream.equals(computer.checkpoint.stream) && checkpoint.cursor == computer.checkpoint.cursor) return;
     if (!prefs.edit().putString("notificationCheckpoint:" + computer.origin, checkpoint.encode(computer.binding)).commit())
       throw new IOException("Could not save inbox checkpoint");
     computer.checkpoint = checkpoint;
