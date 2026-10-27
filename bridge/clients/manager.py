@@ -919,6 +919,15 @@ class DesktopSessions:
             raise ValueError('找不到已开启的 WSL Claude Code 会话')
         return remote.call(action, sid, body)
 
+    def navigation_clients(self):
+        """Configured native/WSL targets, without probing processes or connections."""
+        with self.read_lock:
+            enabled = self.config.get('enabled', {})
+            targets = [provider for provider in ('codex', 'claude', 'deepseek')
+                       if enabled.get(provider, provider == 'codex')]
+        entries = getattr(self.bridge, 'entries', None)
+        return targets + (list(entries.hosts()) if entries is not None else [])
+
     def enabled(self, provider):
         if isinstance(provider, str) and provider.startswith('wsl:'):
             entries = getattr(self.bridge, 'entries', None)

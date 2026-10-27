@@ -621,7 +621,22 @@ class Notifications:
             result['mobile'] = 'mobile:' + self.mobile.value['streamId']
         return result
 
-    def mobile_snapshot(self, after=0):
+    def mobile_snapshot(self, after=0, *, wait=0, stream=None, revision=None):
+        deadline = time.monotonic() + wait
+        while True:
+            version = self.mobile.version()
+            snapshot = self._mobile_snapshot(after)
+            # A content token also detects preferences saved by the desktop process.
+            state = {key: value for key, value in snapshot.items() if key != 'events'}
+            token = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()[:32]
+            remaining = deadline - time.monotonic()
+            if (remaining <= 0 or self.closed.is_set() or not snapshot['enabled']
+                    or stream != snapshot['streamId'] or after != snapshot['cursor'] or revision != token):
+                return {**snapshot, 'longPoll': 60, 'revision': token}
+            # Desktop preferences live in a separate process; retain their existing refresh bound.
+            self.mobile.wait(version, min(15, remaining))
+
+    def _mobile_snapshot(self, after):
         """One passive snapshot for all phones; reads never attach a desktop chat."""
         enabled = settings(self.data_dir).get('mobileEnabled', False)
         policies, legacy = self.policies(), self.watches()
@@ -652,6 +667,7 @@ class Notifications:
 
     def close(self):
         self.closed.set()
+        self.mobile.close()
         self.wakeup.set()
         if self.worker:
             self.worker.join(timeout=2)
@@ -676,6 +692,7 @@ class Notifications:
                 self.wakeup.set()
                 policies.update(value)
                 write_json(self.data_dir/'notification-policies.json', policies)
+                self.mobile.changed()
             return {key: policies[key] for key in ('requests', 'completion')}
 
     def _effective(self, row, policies=None, legacy_rows=None):
@@ -717,6 +734,7 @@ class Notifications:
                 self._clear_completion(host, thread_id)
                 write_json(self.data_dir/'notification-completions.json', self.completions)
                 write_json(self.data_dir/'notification-policies.json', policies)
+                self.mobile.changed()
             row = self._effective({'id': thread_id, 'host': host}, policies)
             return {'available': bool(self._targets(settings(self.data_dir))), 'watching': row['notifyOnRequest'] or row['notifyOnCompletion'],
                     'notifyOnRequest': row['notifyOnRequest'], 'notifyOnCompletion': row['notifyOnCompletion'],
@@ -793,6 +811,7 @@ class Notifications:
                 else:
                     policies.setdefault('chats', {}).pop(key, None)
                 write_json(self.data_dir/'notification-policies.json', policies)
+                self.mobile.changed()
             return {'available': bool(targets), 'watching': selected, 'notifyOnCompletion': selected and completion}
 
     def control(self, value):
@@ -882,7 +901,7 @@ class Notifications:
         heading = client + (' 运行已完成' if completed else ' 需要你的确认')
         body = f'有 {len(pending)} 次运行已完成，请打开聊天查看。' if completed else f'有 {len(pending)} 项请求等待处理，请打开聊天查看。'
         if config['includeTitle']:
-            body = title[:120] + '\n' + body
+            body = title[:120] if channel == 'mobile' else title[:120] + '\n' + body
         try:
             if channel == 'mobile':
                 self.mobile.append(pending, row, heading, body, completed)

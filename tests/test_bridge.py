@@ -1234,6 +1234,24 @@ class HttpTests(unittest.TestCase):
             self.assertIn(private['computer']['platform'], ['Darwin', 'Linux', 'Windows'])
             self.assertEqual(private['loginStatus'], before)
 
+    def test_authenticated_navigation_targets_use_configuration_without_runtime_probes(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from bridge.clients.manager import DesktopSessions
+        entry = 'wsl:' + 'a' * 32
+        manager = DesktopSessions.__new__(DesktopSessions)
+        manager.read_lock = threading.Lock()
+        manager.config = {'enabled': {'codex': False, 'claude': True, 'deepseek': False}}
+        manager.bridge = SimpleNamespace(entries=SimpleNamespace(hosts=lambda: {entry: {}}))
+        manager.applications = Mock(side_effect=AssertionError('runtime scan during authentication'))
+        self.server.desktop_sessions = manager
+        self.assertNotIn('enabledClients', self.request('GET', '/api/auth')[2])
+        auth = self.login()
+        self.assertEqual(self.request('GET', '/api/auth', headers=auth)[2]['enabledClients'], ['claude', entry])
+        manager.config['enabled']['claude'] = False
+        self.assertEqual(self.request('GET', '/api/auth', headers=auth)[2]['enabledClients'], [entry])
+        manager.applications.assert_not_called()
+
     def test_ignore_submission_route_requires_login_csrf_and_exact_payload(self):
         from types import SimpleNamespace
         from unittest.mock import Mock

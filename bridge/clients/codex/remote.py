@@ -1,5 +1,6 @@
 """Read existing App SSH metadata; turns still use the desktop's IPC owner."""
 import base64
+import copy
 from contextlib import contextmanager
 import json
 import os
@@ -351,6 +352,8 @@ def project_path_name(path):
 class AppHosts:
     def __init__(self, home):
         self.home = Path(home)
+        self._hosts_lock = threading.Lock()
+        self._hosts_cache = None
 
     def state(self):
         try:
@@ -358,12 +361,36 @@ class AppHosts:
         except (OSError, ValueError):
             return {}
 
-    def hosts(self):
+    def hosts(self, *, cached=False):
+        if cached:
+            return self._observed_hosts()
         state = self.state()
         return {h['hostId']: h for h in state.get('codex-managed-remote-connections', [])
                 if isinstance(h, dict) and isinstance(h.get('hostId'), str) and h['hostId']
                 and isinstance(h.get('alias'), str) and h['alias']
                 and not h['alias'].startswith('-') and not any(c.isspace() for c in h['alias'])}
+
+    def _signature(self):
+        try:
+            stat = (self.home / '.codex-global-state.json').stat()
+            return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+        except OSError:
+            return None
+
+    def _observed_hosts(self):
+        with self._hosts_lock:
+            signature = self._signature()
+            if signature is None:
+                self._hosts_cache = None
+                return {}
+            if self._hosts_cache is None or signature != self._hosts_cache[0]:
+                hosts = self.hosts()
+                # An atomic replacement during parsing belongs to the next discovery.
+                if signature != self._signature():
+                    self._hosts_cache = None
+                    return {}
+                self._hosts_cache = signature, hosts
+            return copy.deepcopy(self._hosts_cache[1])
 
     def lifecycle_hosts(self):
         """Keep shutdown/account checks scoped to App project and membership hosts."""

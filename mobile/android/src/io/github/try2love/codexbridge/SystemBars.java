@@ -10,7 +10,10 @@ final class SystemBars {
  private final Window window;
  private final BarBackground background=new BarBackground();
  SystemBars(Activity activity,View screen,Runnable insetsChanged){
-  this.window=activity.getWindow();
+  this(activity.getWindow(),screen,insetsChanged);
+ }
+ SystemBars(Window window,View screen,Runnable insetsChanged){
+  this.window=window;
   window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS|WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
   window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
   window.setStatusBarColor(Color.TRANSPARENT);window.setNavigationBarColor(Color.TRANSPARENT);

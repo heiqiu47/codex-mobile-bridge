@@ -113,7 +113,7 @@ Desktop packages cover macOS, Windows and experimental Linux x64/ARM64. Codex an
 - **Project tools:** file, Git, persistent terminal, Codex temporary side-chat and subagent-history tabs. Resizable split panes on wide screens, tablets and unfolded phones; single-pane layout on narrow screens.
 - **Files and images:** locate linked files in their folder or download them. Adjust the ordinary-download threshold live, and explicitly download large files/folders from the file list. Floating progress, speed, pause/resume, plus pinch/wheel/drag/double-click image zoom.
 - **Accounts and context:** inspect the current client's access, available models and upstream quota. Context usage sits beside permissions. Codex retains Fast, Skills, Plan/Goal, official quota and reset credits.
-- **Computers and alerts:** Android/iOS save multiple paired computers, sort by recent access and refresh availability. App icons show gateway-maintained unread counts and open the matching list. Standard mobile builds still need Bark, ntfy or PushPlus for dependable background alerts.
+- **Computers and alerts:** Android/iOS save multiple paired computers, sort by recent access and refresh availability. App icons show gateway-maintained unread counts and open the matching list. Android users can enable **Background notifications** in mobile Settings; iOS background alerts can use channels such as Bark, ntfy or PushPlus.
 - **Network choices:** LAN, temporary/fixed Cloudflare HTTPS, fixed Tailscale HTTPS, an existing HTTPS tunnel, your own SSH server, or an advanced NAS proxy.
 
 | Client | Scope | Requirements and limits |

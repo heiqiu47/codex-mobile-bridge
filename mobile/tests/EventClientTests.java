@@ -14,7 +14,7 @@ public final class EventClientTests {
   CookieManager cookies=CookieManager.getInstance();
   server.createContext("/api/",exchange->{
    agent.set(exchange.getRequestHeaders().getFirst("User-Agent"));
-   int status=mode.get().equals("denied")?401:200;
+   int status=mode.get().equals("denied")?401:mode.get().equals("forbidden")?403:200;
    if(mode.get().equals("replaced"))cookies.value="codex_mobile_session=newer-binding";
    if(mode.get().equals("removed"))cookies.value="";
    String attributes=mode.get().equals("domain")?"; Domain=127.0.0.1; Path=/":mode.get().equals("path")?"; Path=/other":"; Path=/";
@@ -37,9 +37,11 @@ public final class EventClientTests {
    EventClient.read(origin,0L,new EventClient.Read());
    check(cookies.lastSet.startsWith("codex_mobile_session_0123456789abcdef01234567="),"Scoped renewal preserves binding");
    EventClient.setName(origin,"codex_mobile_session");
-   for(String state:new String[]{"denied","replaced","removed","domain","path"}){
+   for(String state:new String[]{"denied","forbidden","replaced","removed","domain","path"}){
     cookies.reset();mode.set(state);
-    try{EventClient.read(origin);if(state.equals("denied"))throw new AssertionError("Unauthorized request accepted");}catch(java.io.IOException expected){if(!state.equals("denied"))throw expected;}
+    boolean rejected=state.equals("denied")||state.equals("forbidden");
+    try{EventClient.read(origin);if(rejected)throw new AssertionError("Rejected request accepted");}
+    catch(java.io.IOException expected){if(!rejected)throw expected;check((expected instanceof EventClient.AuthenticationRequired)==state.equals("denied"),"Only a server-confirmed expired login asks for sign-in");}
     check(cookies.lastSet.isEmpty(),"Late/denied renewal must not restore or overwrite a binding: "+state);
    }
    // Pause renewal after its cookie read and race a real local removal.
