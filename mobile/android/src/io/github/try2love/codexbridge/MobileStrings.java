@@ -12,9 +12,8 @@ final class MobileStrings {
   values.put("主题功能说明","Theme information");
   values.put("待开发项，暂时只支持设置页主题切换","In development. Theme changes currently apply to Settings only.");
   values.put("任务通知","Task notifications");
-  values.put("任务完成与审批提醒","Task completion and approval alerts");
-  values.put("后台接收","Background reception");
-  values.put("锁屏后接收提醒，显示常驻通知","Receive alerts while locked with an ongoing notification");
+  values.put("后台通知功能说明","Background notification information");
+  values.put("后台通知仍在完善中，开启后可能增加耗电或发热。\n遇到问题或有改进建议，欢迎提交 Issue 或 PR。感谢支持！","Background notifications are still being improved. Enabling them may increase battery use or cause your device to heat up.\nIf you encounter a problem or have a suggestion, please submit an Issue or PR. Thank you!");
   values.put("已开启","On");
   values.put("已关闭","Off");
   values.put("系统权限","System permissions");

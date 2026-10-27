@@ -44,8 +44,9 @@ final class SettingsPage extends Dialog implements SharedPreferences.OnSharedPre
   scroll=new ScrollView(getContext());scroll.setFillViewport(true);scroll.setClipToPadding(false);body=ui.column();body.setPadding(ui.dp(20),ui.dp(12),ui.dp(20),ui.dp(24));scroll.addView(body);content.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
   notificationHost=ui.column();body.addView(notificationHost);
   LinearLayout notifications=ui.section(notificationHost,"通知");
-  taskToggle=ui.toggle(notifications,"任务通知","任务完成与审批提醒",prefs.getBoolean("alerts",false),owner::toggleNotifications);
-  backgroundToggle=ui.toggle(notifications,"后台接收","锁屏后接收提醒，显示常驻通知",prefs.getBoolean("backgroundNotifications",false),owner::toggleBackgroundNotifications);backgroundDivider=notifications.getChildAt(1);
+  taskToggle=ui.toggle(notifications,"任务通知",prefs.getBoolean("alerts",false),owner::toggleNotifications);
+  backgroundToggle=ui.toggle(notifications,"后台通知",prefs.getBoolean("backgroundNotifications",false),owner::toggleBackgroundNotifications);backgroundDivider=notifications.getChildAt(1);
+  ui.hint(backgroundToggle.row,"后台通知功能说明",()->new AlertDialog.Builder(getContext()).setTitle(ui.L("后台通知功能说明")).setMessage(ui.L("后台通知仍在完善中，开启后可能增加耗电或发热。\n遇到问题或有改进建议，欢迎提交 Issue 或 PR。感谢支持！")).setPositiveButton(ui.L("关闭"),null).show());
   systemHost=ui.column();systemHost.setPadding(0,ui.dp(16),0,0);notificationHost.addView(systemHost);buildNotifications();
   LinearLayout app=ui.section(body,"应用");themeRow(app);
   LinearLayout update=ui.action(app,"检查更新","",()->{});TextView value=ui.value(update,owner.appVersion());
@@ -141,13 +142,8 @@ final class SettingsPage extends Dialog implements SharedPreferences.OnSharedPre
  private Intent detailsIntent(){return new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+owner.getPackageName()));}
  private void openSetting(Intent intent){try{owner.startActivity(intent);}catch(RuntimeException unavailable){try{owner.startActivity(detailsIntent());}catch(RuntimeException denied){Toast.makeText(getContext(),ui.L("请从系统设置打开本应用的详情页。"),Toast.LENGTH_LONG).show();}}}
  private void themeRow(LinearLayout app){
-  FrameLayout container=new FrameLayout(getContext());LinearLayout row=ui.row("主题","");
-  TextView label=(TextView)((LinearLayout)row.getChildAt(0)).getChildAt(0);label.setPadding(0,0,ui.dp(44),0);
-  ui.value(row,themeName());row.addView(ui.icon("chevron",ui.muted),new LinearLayout.LayoutParams(ui.dp(24),ui.dp(24)));ui.clickable(row,this::chooseTheme);container.addView(row,new FrameLayout.LayoutParams(-1,-2));
-  View info=ui.icon("info",ui.muted);info.setContentDescription(ui.L("主题功能说明"));ui.clickable(info,()->Toast.makeText(getContext(),ui.L("待开发项，暂时只支持设置页主题切换"),Toast.LENGTH_LONG).show());
-  FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(ui.dp(44),ui.dp(44),Gravity.START|Gravity.CENTER_VERTICAL);
-  // Keep the separate hint target beside the translated label, including larger fonts.
-  android.graphics.Paint paint=new android.graphics.Paint();paint.setTextSize(label.getTextSize());p.setMarginStart(ui.dp(16)+Math.round(paint.measureText(ui.L("主题"))));container.addView(info,p);ui.append(app,container);
+  LinearLayout row=ui.action(app,"主题",themeName(),this::chooseTheme);
+  ui.hint(row,"主题功能说明",()->Toast.makeText(getContext(),ui.L("待开发项，暂时只支持设置页主题切换"),Toast.LENGTH_LONG).show());
  }
  private String themeName(){String value=SettingsUi.theme(owner);return "light".equals(value)?"浅色":"dark".equals(value)?"深色":"跟随系统";}
  private void chooseTheme(){

@@ -57,8 +57,16 @@ final class SettingsUi {
  }
  TextView value(LinearLayout row,String value){TextView view=text(value,12,muted);view.setGravity(Gravity.END);view.setMaxWidth(Math.round((context.getResources().getDisplayMetrics().widthPixels-dp(72))*.42f));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);p.setMarginStart(dp(12));row.addView(view,p);return view;}
  LinearLayout action(LinearLayout list,String title,String value,Runnable action){LinearLayout row=row(title,"");if(!value.isEmpty())value(row,value);row.addView(icon("chevron",muted),new LinearLayout.LayoutParams(dp(24),dp(24)));clickable(row,action);append(list,row);return row;}
- ToggleRow toggle(LinearLayout list,String title,String detail,boolean checked,Runnable action){
-  LinearLayout row=row(title,detail);((TextView)((LinearLayout)row.getChildAt(0)).getChildAt(0)).setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
+ void hint(LinearLayout row,String description,Runnable action){
+  LinearLayout labels=(LinearLayout)row.getChildAt(0);TextView title=(TextView)labels.getChildAt(0);labels.removeView(title);
+  LinearLayout heading=new LinearLayout(context);heading.setGravity(Gravity.CENTER_VERTICAL);
+  heading.addView(title,new LinearLayout.LayoutParams(-2,-2,1));
+  View info=icon("info",muted);info.setContentDescription(L(description));clickable(info,action);
+  heading.addView(info,new LinearLayout.LayoutParams(dp(44),dp(44)));labels.addView(heading,0,new LinearLayout.LayoutParams(-2,-2));
+  row.setPadding(dp(16),dp(6),dp(16),dp(6));
+ }
+ ToggleRow toggle(LinearLayout list,String title,boolean checked,Runnable action){
+  LinearLayout row=row(title,"");row.setPadding(dp(16),dp(6),dp(16),dp(6));((TextView)((LinearLayout)row.getChildAt(0)).getChildAt(0)).setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
   AnimatedSwitch toggle=new AnimatedSwitch(checked);
   row.addView(toggle,new LinearLayout.LayoutParams(dp(48),dp(44)));
   row.setAccessibilityDelegate(new View.AccessibilityDelegate(){@Override public void onInitializeAccessibilityNodeInfo(View host,android.view.accessibility.AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName(Switch.class.getName());info.setCheckable(true);info.setChecked(toggle.isChecked());}});
