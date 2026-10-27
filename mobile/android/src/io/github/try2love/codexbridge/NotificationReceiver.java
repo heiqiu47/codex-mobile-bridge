@@ -122,6 +122,7 @@ final class NotificationReceiver implements AutoCloseable {
 
   private void check(Computer computer) {
     EventClient.Read read = new EventClient.Read();
+    long started = System.nanoTime();
     synchronized (this) {
       if (!current(computer) || computer.read != null) return;
       computer.read = read;
@@ -129,6 +130,13 @@ final class NotificationReceiver implements AutoCloseable {
     try {
       JSONObject data = EventClient.read(computer.origin, computer.checkpoint.cursor, read,
           computer.checkpoint.stream, computer.revision);
+      long received = System.nanoTime();
+      long requestMs = TimeUnit.NANOSECONDS.toMillis(received - started);
+      JSONObject timing = data.optJSONObject("timing");
+      long waitMs = timing == null ? -1 : timing.optLong("waitMs", -1);
+      android.util.Log.i("BridgeNotifications", "Inbox timing host=" + GatewayURL.httpOrigin(computer.origin)
+          + " requestMs=" + requestMs + " serverWaitMs=" + waitMs
+          + " overheadMs=" + (waitMs < 0 ? -1 : Math.max(0, requestMs - waitMs)));
       NotificationCheckpoint checkpoint = NotificationCheckpoint.read(data);
       synchronized (this) {
         // Removal and Cookie renewal share EventClient's binding lock.
@@ -138,7 +146,7 @@ final class NotificationReceiver implements AutoCloseable {
               CookieManager.getInstance().getCookie(computer.origin + "/"), computer.origin), data);
         }
       }
-      if (data.optBoolean("enabled")) receive(computer, checkpoint, data);
+      if (data.optBoolean("enabled")) receive(computer, checkpoint, data, received);
       synchronized (this) {
         if (current(computer)) {
           computer.failures = 0;
@@ -158,6 +166,7 @@ final class NotificationReceiver implements AutoCloseable {
           // Log the endpoint and code location while keeping credentials and notification content private.
           StackTraceElement[] trace = unavailable.getStackTrace();
           android.util.Log.w("BridgeNotifications", "Inbox failure host=" + GatewayURL.httpOrigin(computer.origin)
+              + " requestMs=" + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
               + " type=" + unavailable.getClass().getSimpleName()
               + (unavailable instanceof EventClient.HttpFailure ? " http=" + ((EventClient.HttpFailure) unavailable).status : "")
               + " at=" + (trace.length == 0 ? "unknown" : trace[0]));
@@ -177,7 +186,7 @@ final class NotificationReceiver implements AutoCloseable {
     }
   }
 
-  private void receive(Computer computer, NotificationCheckpoint checkpoint, JSONObject data) throws Exception {
+  private void receive(Computer computer, NotificationCheckpoint checkpoint, JSONObject data, long received) throws Exception {
     if (checkpoint.stream.equals(computer.checkpoint.stream) && checkpoint.cursor < computer.checkpoint.cursor)
       throw new IOException("Inbox cursor moved backwards");
     if (checkpoint.follows(computer.checkpoint)) {
@@ -195,6 +204,11 @@ final class NotificationReceiver implements AutoCloseable {
             if (sequence > cleared && (!event.has("unread") || event.optBoolean("unread"))
                 && prefs.getBoolean("alerts", false)) {
               TaskNotifications.show(context, computer.origin, checkpoint.stream, event, "foreground-tasks");
+              String trace = event.optString("trace", "");
+              android.util.Log.i("BridgeNotifications", "Inbox posted host=" + GatewayURL.httpOrigin(computer.origin)
+                  + " sequence=" + sequence + " trace=" + (trace.matches("[a-f0-9]{16}") ? trace : "unknown")
+                  + " serverAgeMs=" + event.optLong("ageMs", -1)
+                  + " receiveToPostMs=" + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - received));
             }
             save(computer, new NotificationCheckpoint(checkpoint.stream, sequence));
           }

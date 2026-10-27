@@ -155,7 +155,9 @@ class LongPollTests(unittest.TestCase):
         started = time.monotonic()
         value = manager.mobile_snapshot(0, wait=.08, stream=baseline['streamId'], revision=baseline['revision'])
         self.assertGreaterEqual(time.monotonic() - started, .07)
-        self.assertEqual(value, baseline)
+        self.assertGreaterEqual(value['timing']['waitMs'], 70)
+        self.assertEqual({k: v for k, v in value.items() if k != 'timing'},
+                         {k: v for k, v in baseline.items() if k != 'timing'})
 
     def test_event_wakes_every_waiter_without_holding_the_feed_lock(self):
         manager = self.manager()
@@ -165,6 +167,8 @@ class LongPollTests(unittest.TestCase):
             worker.join(.5)
             self.assertFalse(worker.is_alive())
             self.assertEqual(result[0]['cursor'], 1)
+            self.assertGreaterEqual(result[0]['events'][0]['ageMs'], 0)
+            self.assertLess(result[0]['events'][0]['ageMs'], 500)
 
     def test_acknowledgement_and_policy_changes_wake_without_new_events(self):
         manager = self.manager()

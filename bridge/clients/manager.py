@@ -869,7 +869,7 @@ class DesktopSessions:
                 continue
             try:
                 status = adapter.call('status') if provider == 'deepseek' else adapter.status()
-                if status.get('connected') is not True:
+                if status.get('connected') is not True and not (provider == 'claude' and status.get('cliAvailable') is True):
                     continue
                 listing = self._read(provider, 'list')
                 if listing.get('connected') is False:

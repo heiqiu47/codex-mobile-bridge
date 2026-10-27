@@ -102,6 +102,9 @@ public final class MobileEventTests {
    check(first.targets.get(first.targets.size()-1).endsWith("?after=200"),"Incremental cursor");
    check(first.responseBytes.get(first.responseBytes.size()-1)<500,"Idle polls avoid downloading old messages");
    first.cursor=201;poll(receiver,app,address,201);check(delivered.size()==1,"Completion delivered");
+   check(logs.stream().anyMatch(line->line.contains("requestMs=")&&line.contains("serverWaitMs=")&&line.contains("overheadMs=")),"Request stages are measured without clock subtraction");
+   check(logs.stream().anyMatch(line->line.contains("receiveToPostMs=")&&line.contains("serverAgeMs=")),"System handoff stage is measured");
+   check(logs.stream().noneMatch(line->line.contains("消息内容")||line.contains("任务提醒")||line.contains("codex_mobile_session")),"Timing logs omit notification content and credentials");
    requests=first.responseBytes.size();count(receiver,first,requests);check(delivered.size()==1,"Same cursor deduplicated");
    prefs.putLong("cleared:"+address+":"+first.stream,202);first.cursor=202;poll(receiver,app,address,202);check(delivered.size()==1,"Cleared event suppressed");
    first.status=401;first.cursor=203;requests=first.responseBytes.size();count(receiver,first,requests);check(cursor(app,address)==202,"Expired login preserves checkpoint");
