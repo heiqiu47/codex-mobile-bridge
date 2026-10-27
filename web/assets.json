@@ -9,6 +9,7 @@
   "/manifest.webmanifest": "manifest.webmanifest",
   "/app.js": [
     "shared/dialog-dismiss.js",
+    "features/chat/session-menu.js",
     "shell/app.js"
   ],
   "/bootstrap.js": "shared/bootstrap.js",
@@ -20,7 +21,8 @@
     "shell/content.css",
     "shared/output-directives.css",
     "features/chat/composer-quotes.css",
-    "features/chat/message-management.css"
+    "features/chat/message-management.css",
+    "features/chat/session-menu.css"
   ],
   "/activity.js": "features/chat/activity.js",
   "/attachments.js": [

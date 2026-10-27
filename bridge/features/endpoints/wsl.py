@@ -25,6 +25,7 @@ from bridge.features.sessions.store import StoreUnavailable
 from bridge.features.sessions.archive import ArchiveCommands
 from bridge.features.sessions.create import check_archive_runtime
 from bridge.features.sessions.pins import SessionPins
+from bridge.features.sessions.organization import organization as native_organization
 from bridge.features.sessions.projects import Projects
 from bridge.features.endpoints.wsl_features import WslFeatures
 from bridge.features.endpoints.wsl_models import WslModelCatalog
@@ -1286,6 +1287,14 @@ class WslEntry(WslFeatures):
         self.store.get(identifier)
         self.runtime().request('thread/name/set', {'threadId': identifier, 'name': title.strip()})
         return {'id': identifier, 'title': title.strip(), 'host': self.host}
+
+    @_entry_write
+    def organization(self, identifier, change=None):
+        uuid.UUID(identifier)
+        metadata = self.store.get(identifier)
+        runtime = self.runtime(allow_start=False)
+        return {**native_organization(runtime.request, identifier, change,
+                                      expected_cwd=metadata.get('cwd')), 'host': self.host}
 
     @_entry_write
     def workspace(self, identifier, action, params):

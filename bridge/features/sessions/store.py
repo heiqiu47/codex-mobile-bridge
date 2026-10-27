@@ -215,7 +215,7 @@ class SessionStore:
         labels, matches = self._cli_inputs(query)
         with self._connect() as conn:
             columns = {r[1] for r in conn.execute("PRAGMA table_info(threads)")}
-            fields = [name for name in ("id", "name", "title", "cwd", "updated_at", "updated_at_ms", "recency_at", "recency_at_ms", "model_provider", "model", "originator", "source", "archived", "is_pinned") if name in columns]
+            fields = [name for name in ("id", "name", "title", "cwd", "updated_at", "updated_at_ms", "recency_at", "recency_at_ms", "model_provider", "model", "originator", "source", "archived", "is_pinned", "project_id") if name in columns]
             where = ["archived = ?"]
             params = [int(archived)]
             where.append(self._user_origin_filter(columns))
@@ -242,8 +242,15 @@ class SessionStore:
             priority = 'bridge_session_pinned(id) DESC, ' if pinned else ''
             rows = conn.execute("SELECT " + ",".join(fields) + " FROM threads WHERE " + " AND ".join(where) + " ORDER BY " + priority + recency + " DESC, id DESC LIMIT ? OFFSET ?", params + [limit, offset]).fetchall()
             result = []
+            native_projects = None
+            if 'project_id' in columns and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects'").fetchone():
+                identifiers = list({row['project_id'] for row in rows if row['project_id']})
+                native_projects = {row['id']: dict(row) for row in conn.execute(
+                    'SELECT id,name FROM projects WHERE id IN (' + ','.join('?' for _ in identifiers) + ')', identifiers)} if identifiers else {}
             for row in rows:
                 item = dict(row)
+                if native_projects is not None:
+                    item['_nativeProject'] = native_projects.get(item.get('project_id'))
                 origin = self._origin(item)
                 if self.source == 'cli' and self._matches(item):
                     origin = 'cli'

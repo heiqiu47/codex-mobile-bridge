@@ -31,7 +31,7 @@ test('CLI creation picker offers existing and custom folders with an accurate ac
 function node(){return {addEventListener(){},hidden:false,disabled:false,value:'',textContent:'',title:'',children:[],scrollTop:0,classList:{toggle(){}},append(...parts){this.children.push(...parts);},replaceChildren(...parts){this.children=parts;},querySelector(){return node();}};}
 function fixture(){
   const nodes=new Map();const $=id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);};
-  const ctx={pinRow:row=>row,$ ,state:null,reconnectFailure:null,listRows:[],availableSources:[],listRenderStamp:'',listComplete:false,listReadFinished:false,listHasMore:false,currentId:'a',currentHost:'local',sending:false,catalogStarted:false,catalogLoads:0,startCatalog(){ctx.catalogLoads++;},selectedSkills:new Set(),invalidSkills:new Set(),renderSkillPills(){},BridgeI18n:{locale:()=> 'en-US'},t:key=>({'此电脑':'This computer','其他来源':'Other source','历史记录':'History','重新连接':'Reconnect','继续会话':'Continue chat'}[key]||key),localStorage:{getItem:()=>null,setItem(){}},dateText:()=> 'today',el:(tag,cls='',value='')=>Object.assign(node(),{tag,cls,textContent:value,dataset:{}}),renderActivity(){},contextUsageControl:{update(){}},fastModeControl:{sync(){}},visibleChat:()=>false,sessionActivity:{read(){}},attachments:{ready:()=>true},workModes:{render(view){ctx.modesView=view;}},workbench:{current:{}},chatTimeline:{refreshActions(){}},renderApprovals(rows){ctx.approvals=rows;},renderQueue(){},approvalStamp:'',chatKey:()=> 'local|a'};
+  const ctx={toast(){},window:{},SessionMenu:class{bind(){}},pinRow:row=>row,$ ,state:null,reconnectFailure:null,listRows:[],availableSources:[],listRenderStamp:'',listComplete:false,listReadFinished:false,listHasMore:false,currentId:'a',currentHost:'local',sending:false,catalogStarted:false,catalogLoads:0,startCatalog(){ctx.catalogLoads++;},selectedSkills:new Set(),invalidSkills:new Set(),renderSkillPills(){},BridgeI18n:{locale:()=> 'en-US'},t:key=>({'此电脑':'This computer','其他来源':'Other source','历史记录':'History','重新连接':'Reconnect','继续会话':'Continue chat'}[key]||key),localStorage:{getItem:()=>null,setItem(){}},dateText:()=> 'today',el:(tag,cls='',value='')=>Object.assign(node(),{tag,cls,textContent:value,dataset:{}}),renderActivity(){},contextUsageControl:{update(){}},fastModeControl:{sync(){}},visibleChat:()=>false,sessionActivity:{read(){}},attachments:{ready:()=>true},workModes:{render(view){ctx.modesView=view;}},workbench:{current:{}},chatTimeline:{refreshActions(){}},renderApprovals(rows){ctx.approvals=rows;},renderQueue(){},approvalStamp:'',chatKey:()=> 'local|a'};
   vm.createContext(ctx);vm.runInContext(accessCode+capabilitiesCode+listCode+stateCode,ctx);
   return {ctx,$,nodes};
 }
@@ -65,7 +65,7 @@ test('every Codex row identifies its source even with a single-source inventory'
 });
 test('history-only CLI hides join and write controls but keeps history and copy available',()=>{
   const {ctx,$}=fixture();ctx.listRows=[{id:'a',host:'local',access:cli}];ctx.renderState({host:'local',title:'CLI thread',cwd:'/work',access:cli,connected:false,status:'idle',requests:[],submissions:[],historyComplete:true});
-  assert.equal($('reconnect').hidden,true);assert.equal($('send').disabled,true);assert.equal($('message').disabled,true);assert.equal($('stop').hidden,true);assert.equal($('permissions-button').disabled,true);assert.equal($('rename-chat').disabled,true);assert.equal($('work-mode').disabled,true);assert.equal(ctx.approvals.length,0);
+  assert.equal($('reconnect').hidden,true);assert.equal($('send').disabled,true);assert.equal($('message').disabled,true);assert.equal($('stop').hidden,true);assert.equal($('permissions-button').disabled,true);assert.equal($('work-mode').disabled,true);assert.equal(ctx.approvals.length,0);
   assert.match($('notice-text').textContent,/CLI/);
 });
 test('joinable CLI presents an explicit join without enabling unsupported controls',()=>{
@@ -76,14 +76,14 @@ test('joinable CLI presents an explicit join without enabling unsupported contro
 test('joined CLI enables send, steer and approvals while keeping collaboration modes unavailable',()=>{
   const {ctx,$}=fixture(),access={...cli,readOnly:false,canSend:true,canInterrupt:true,canApprove:true,canReconnect:true};
   ctx.selectedSkills.add('stale-skill');ctx.renderState({host:'local',title:'CLI thread',cwd:'/work',access,connected:true,status:'active',requests:[{id:1}],submissions:[],historyComplete:true});
-  assert.equal($('send').disabled,false);assert.equal($('send-mode').disabled,false);assert.equal($('work-mode').disabled,true);assert.equal($('rename-chat').disabled,true);
+  assert.equal($('send').disabled,false);assert.equal($('send-mode').disabled,false);assert.equal($('work-mode').disabled,true);
   assert.equal($('stop').hidden,false);assert.equal(ctx.approvals.length,1);assert.equal(ctx.selectedSkills.size,1);
 });
 test('joined CLI exposes model, Skill, modes and permissions without enabling rename',()=>{
   const {ctx,$}=fixture(),access={...cli,readOnly:false,canSend:true,canReconnect:true,canChangePermissions:true,canChangeModel:true,canSelectSkills:true,canUseModes:true,canUseGoal:true};
   ctx.selectedSkills.add('draft-skill');ctx.renderState({host:'local',title:'CLI thread',cwd:'/work',access,connected:true,status:'idle',requests:[],submissions:[],historyComplete:true,goalRuntimeAvailable:true});
   assert.equal($('model-button').disabled,false);assert.equal($('skills-button').disabled,false);assert.equal($('work-mode').disabled,false);
-  assert.equal($('permissions-button').disabled,false);assert.equal($('rename-chat').disabled,true);assert.equal(ctx.catalogLoads,1);
+  assert.equal($('permissions-button').disabled,false);assert.equal(ctx.catalogLoads,1);
   assert.equal(ctx.selectedSkills.size,1);assert.equal(ctx.modesView.goalRuntimeAvailable,true);
   ctx.renderState({host:'local',title:'CLI thread',cwd:'/work',access:{...cli,canReconnect:true},connected:false,status:'idle',requests:[],submissions:[],historyComplete:true});
   assert.equal(ctx.selectedSkills.size,1);assert.equal(ctx.catalogLoads,1);

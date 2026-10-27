@@ -40,6 +40,7 @@ from bridge.features.sessions.create import (
 )
 from bridge.features.sessions.archive import ArchiveCommands
 from bridge.features.sessions.pins import SessionPins
+from bridge.features.sessions.organization import organization as native_organization
 from bridge.features.sessions.projects import Projects
 from bridge.features.sessions.timeline import Timeline
 from bridge.features.sessions.tool_images import TOOL_IMAGE_CACHE, public_turns
@@ -2581,6 +2582,31 @@ class Bridge:
                     session.saved_view['title'] = title
                 session.changed()
         return {'id': thread_id, 'host': self.host, 'title': title}
+
+    @operation
+    def organization(self, thread_id, change=None):
+        from bridge.features.sessions.create import _runtime_operation
+        uuid.UUID(thread_id)
+        metadata = self.store.get(thread_id)
+        session = self.session(thread_id, attach=False, background=True)
+        with session.action_lock:
+            if isinstance(self.store, RemoteStore):
+                source = source_text('features/sessions/create.py') + '\n' + source_text('features/sessions/organization.py')
+                source += '\nimport shutil\nhome=Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex")))\n'
+                source += 'runtime=shutil.which("codex") or str(Path.home()/".local/bin/codex")\n'
+                arguments = payload({'identifier': thread_id, 'change': change, 'expected_cwd': metadata.get('cwd')})
+                source += 'try:\n result=_runtime_operation(runtime,home,str(home),lambda request:organization(request,**' + arguments + '),failure_message="原生分类结果待核对，请刷新会话列表")\nexcept (CreationError,ValueError) as error:\n result={"error":str(error)}\nprint(json.dumps(result))\n'
+                result = ssh_read(self.store.alias, source, timeout=90)
+                if result.get('error'):
+                    raise ValueError(result['error'])
+                if change is not None:
+                    with self.store.lock:
+                        self.store.cache.clear()
+            else:
+                result = _runtime_operation(self.catalog_reader.executable, self.codex_home, str(self.codex_home),
+                    lambda request: native_organization(request, thread_id, change, expected_cwd=metadata.get('cwd')),
+                    failure_message='原生分类结果待核对，请刷新会话列表')
+        return {**result, 'host': self.host}
 
     def _linux_permission_options(self, session):
         with session.condition:

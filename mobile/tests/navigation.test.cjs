@@ -4,11 +4,11 @@ const root=path.resolve(__dirname,'../..');
 const android=fs.readFileSync(path.join(root,'mobile/android/src/io/github/try2love/codexbridge/MainActivity.java'),'utf8');
 const scripts=[...android.matchAll(/evaluateJavascript\("((?:\\.|[^"\\])*)"/g)].map(match=>JSON.parse('"'+match[1]+'"'));
 const back=scripts.find(value=>value.includes("const dialog=document.querySelector('dialog[open]')"));
-function fixture({navigation,dialog,chatOpen=false,toolOpen=false}={}){
+function fixture({navigation,dialog,animateDialog=false,chatOpen=false,toolOpen=false}={}){
   const calls=[],window={BridgeWorkbench:{back(){calls.push('legacy-tool');return toolOpen;}}};
   if(navigation)window.BridgeNavigation=navigation(calls);
-  const document={querySelector:()=>dialog?{close(){calls.push('dialog');}}:null,getElementById:id=>id==='app'?{classList:{contains:()=>chatOpen}}:{click(){calls.push(id);}}};
-  return {calls,run:script=>vm.runInNewContext(script,{window,document})};
+  const document={querySelector:()=>dialog?{dispatchEvent(event){assert.equal(event.type,'cancel');assert.equal(event.cancelable,true);if(animateDialog){calls.push('animate-dialog');event.preventDefault();}return !event.defaultPrevented;},close(){calls.push('dialog');}}:null,getElementById:id=>id==='app'?{classList:{contains:()=>chatOpen}}:{click(){calls.push(id);}}};
+  return {calls,run:script=>vm.runInNewContext(script,{window,document,Event})};
 }
 test('native Android back consumes current provider panels and chat before leaving the computer',()=>{
   for(const provider of ['codex','claude','deepseek']){
@@ -24,6 +24,10 @@ test('a dialog closes before provider navigation and old gateways retain preview
   const tool=fixture({toolOpen:true});assert.equal(tool.run(back),true);assert.deepEqual(tool.calls,['legacy-tool']);
   const chat=fixture({chatOpen:true});assert.equal(chat.run(back),true);assert.deepEqual(chat.calls,['legacy-tool','back']);
   assert.equal(fixture().run(back),false);
+});
+test('Android back lets an animated dialog finish its exit before removing its backdrop',()=>{
+ const modal=fixture({dialog:true,animateDialog:true,navigation:()=>({back(){throw Error('dialog owns this back gesture');}})});
+ assert.equal(modal.run(back),true);assert.deepEqual(modal.calls,['animate-dialog']);
 });
 test('native account menu routes by current provider and falls back only for old gateways',()=>{
   const script=scripts.find(value=>value.includes('BridgeNavigation?.accounts'));
