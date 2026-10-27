@@ -701,11 +701,17 @@ class IntegrationTests(unittest.TestCase):
     def test_project_grouping_recency_and_host_identity(self):
         from bridge.clients.codex.remote import AppHosts
         hosts = AppHosts(self.root)
-        hosts.state = lambda: {'remote-projects': [{'id': 'p', 'hostId': 'remote', 'label': 'Work', 'remotePath': '/work'}]}
+        hosts.state = lambda: {
+            'remote-projects': [{'id': 'p', 'hostId': 'remote', 'label': 'Work', 'remotePath': '/work'}],
+            'thread-project-assignments': {THREAD: {'projectId': 'p', 'hostId': 'remote'}},
+        }
         rows = hosts.decorate([{'id': THREAD, 'cwd': '/work/sub', 'recency_at': 5, 'updated_at': 20}], 'remote', 'Server')
         self.assertEqual(rows[0]['recency'], 5000)
         self.assertEqual(rows[0]['projectKey'], 'remote|p')
         self.assertEqual(rows[0]['projectName'], 'Work')
+        unassigned = hosts.decorate([{'id': 'unassigned', 'cwd': '/work/sub'}], 'remote', 'Server')[0]
+        self.assertEqual(unassigned['projectKey'], 'remote|unassigned')
+        self.assertEqual(unassigned['projectName'], '未归类')
         with self.assertRaises(KeyError):
             self.bridge.for_host('unconfigured-host')
 
