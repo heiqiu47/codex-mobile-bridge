@@ -521,8 +521,12 @@ class WslEntry(WslFeatures):
             with session.action_lock:
                 session.history_limit += 50
             self._refresh(session)
+        # view() reads write receipts; do not take the entry write gate while
+        # holding the session condition (writers acquire them in reverse order).
+        snapshot = self.view(identifier, attach=False)
         with session.condition:
-            session.timeline.update(self.view(identifier, attach=False))
+            if snapshot['sequence'] >= session.timeline.sequence:
+                session.timeline.update(snapshot)
             if mode == 'detail':
                 return session.timeline.detail(**options)
             result = session.timeline.changes(**options) if mode == 'changes' else session.timeline.page(**options)
