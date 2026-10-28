@@ -50,17 +50,25 @@ if baseline {
     precondition((inbox!["events"] as! [[String: Any]]).count == 200 && control(first).last!["target"] as! String == "/api/mobile/events", "Inbox must retain full historical read")
     controller.defaults.set([first, second], forKey: "origins")
     _ = control(first, "hold=1"); let before = control(first).count, secondBefore = control(second).count
-    controller.poll(); spin { control(first).count == before + 1 }; controller.background()
+    controller.poll(); spin { control(first).count == before + 1 && control(second).count == secondBefore + 1 }
+    spin { controller.defaults.integer(forKey: "cursor:" + second) == 200 }
+    // Repeated ticks keep checking the healthy computer while the first is held.
+    _ = control(second, "cursor=201"); controller.poll()
+    spin { controller.defaults.integer(forKey: "cursor:" + second) == 201 }
+    precondition(control(first).count == before + 1, "A slow computer received overlapping requests")
+    precondition(notices.delivered.count == 6, "Slow computer delayed the healthy computer's notification")
+    let secondAtBackground = control(second).count
+    controller.background(); controller.poll()
     _ = control(first, "release=1"); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
-    precondition(control(second).count == secondBefore, "Background requested subsequent computer")
+    precondition(control(second).count == secondAtBackground, "Background requested a computer")
     precondition(controller.defaults.integer(forKey: key) == 303, "Background callback advanced cursor")
     // Resume while the cancelled old URLSession callback is still in flight.
     controller.defaults.set([first], forKey: "origins"); _ = control(first, "hold=1")
     let previous = control(first).count; controller.foreground(); spin { control(first).count == previous + 1 }; controller.background()
     _ = control(first, "cursor=310"); controller.foreground(); spin { !controller.loading }
     _ = control(first, "release=1"); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
-    precondition(controller.defaults.integer(forKey: key) == 310 && notices.delivered.count == 5, "Old batch mutated resumed baseline")
-    poll("cursor=311"); precondition(notices.delivered.count == 6)
+    precondition(controller.defaults.integer(forKey: key) == 310 && notices.delivered.count == 6, "Old batch mutated resumed baseline")
+    poll("cursor=311"); precondition(notices.delivered.count == 7)
     // Cancellation before WebKit cookie callback must not start a request.
     let cookies = WKWebsiteDataStore.default().httpCookieStore
     cookies.delay = true; let delayedBefore = control(first).count
@@ -71,17 +79,17 @@ if baseline {
     _ = control(first, "hold=1&cursor=312"); let replacementBefore = control(first).count; controller.poll(); spin { control(first).count == replacementBefore + 1 }
     cookies.cookies = [HTTPCookie(properties: [.name: "codex_mobile_session", .value: "replacement", .domain: "127.0.0.1", .path: "/"])!]
     _ = control(first, "release=1"); spin { !controller.loading }
-    precondition(controller.defaults.integer(forKey: key) == 311 && notices.delivered.count == 6 && cookies.cookies[0].value == "replacement", "Old login committed a cursor or replaced cookie")
+    precondition(controller.defaults.integer(forKey: key) == 311 && notices.delivered.count == 7 && cookies.cookies[0].value == "replacement", "Old login committed a cursor or replaced cookie")
     controller.background(); controller.foreground(); spin { !controller.loading }
-    precondition(controller.defaults.integer(forKey: key) == 312 && notices.delivered.count == 6)
+    precondition(controller.defaults.integer(forKey: key) == 312 && notices.delivered.count == 7)
     // A later login during WebKit renewal completion must also invalidate commit.
     cookies.cookies = [HTTPCookie(properties: [.name: "codex_mobile_session", .value: "fixture", .domain: "127.0.0.1", .path: "/"])!]
     controller.background(); controller.foreground(); spin { !controller.loading }
     cookies.afterSet = { cookies.cookies = [HTTPCookie(properties: [.name: "codex_mobile_session", .value: "renewal-window", .domain: "127.0.0.1", .path: "/"])!] }
     poll("cursor=313")
-    precondition(controller.defaults.integer(forKey: key) == 312 && notices.delivered.count == 6, "Login during renewal completion committed old cursor")
+    precondition(controller.defaults.integer(forKey: key) == 312 && notices.delivered.count == 7, "Login during renewal completion committed old cursor")
     controller.background(); controller.foreground(); spin { !controller.loading }
-    precondition(controller.defaults.integer(forKey: key) == 313 && notices.delivered.count == 6)
+    precondition(controller.defaults.integer(forKey: key) == 313 && notices.delivered.count == 7)
     // Removal during request must not restore cursor or renew its cookie.
     _ = control(first, "hold=1"); let removeBefore = control(first).count; controller.poll(); spin { control(first).count == removeBefore + 1 }
     controller.defaults.set([], forKey: "origins"); controller.defaults.removeObject(forKey: key); cookies.cookies = []
@@ -98,5 +106,5 @@ if baseline {
     poll("stream=summary-reset&cursor=1&unread=1"); precondition(controller.computerNotifications[first]?.text == "1")
     poll("status=401"); precondition(controller.computerNotifications[first]?.isHidden == true, "Invalid login leaves a visible summary")
     controller.background()
-    print("iOS event sync and computer summaries passed; background subsequent-origin requests=0")
+    print("iOS independent event sync and computer summaries passed; background requests=0")
 }

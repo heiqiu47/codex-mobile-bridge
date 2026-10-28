@@ -48,6 +48,9 @@ jobs:
           java-version: '17'
       - run: python3 scripts/test-mobile-releases.py
       - run: python3 scripts/test-mobile-downloads.py
+      - run: python3 scripts/test-ios-events.py
+      - run: python3 scripts/test-ios-notification-routing.py
+      - run: python3 scripts/test-ios-notification-source.py
   test:
     strategy:
       fail-fast: false

@@ -10,9 +10,6 @@
     if (document.visibilityState !== 'visible' || typeof threadId !== 'string' || !threadId || threadId.length > 512 || typeof host !== 'string' || host.length > 256) return;
     window.prompt('codexbridge-chat-visible:__BRIDGE_CLIPBOARD_TOKEN__', JSON.stringify({threadId, host}));
   });
-  document.addEventListener('bridge-theme-change', event => {
-    if (['system', 'light', 'dark'].includes(event.detail?.theme)) window.prompt('codexbridge-theme:__BRIDGE_CLIPBOARD_TOKEN__', event.detail.theme);
-  });
   const app = document.getElementById('app');
   if (app && !app.hidden) persist();
 })();

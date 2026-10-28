@@ -119,13 +119,14 @@ final class BridgeController: NSObject {
     var generation = 0
     let defaults = MemoryDefaults()
     var foregroundBaselines = Set<String>()
-    var loading = false
+    var loading: Bool { !polling.isEmpty }
+    var polling = Set<String>()
     var timer: Timer?
     var activityTimer: Timer?
     let downloads = Downloads()
 '''
 if 'private var pollGeneration' in source:
-    fields += '    var pollGeneration = 0\n    var pollTask: URLSessionDataTask?\n'
+    fields += '    var pollGeneration = 0\n    var pollTasks: [String: URLSessionDataTask] = [:]\n'
 fields += section('    private let redirect = NoRedirect()', '    override func viewDidLoad()')
 fields += section('    private func cookieName(', '    private let page = UIStackView()').replace('private func', 'func')
 methods = '''

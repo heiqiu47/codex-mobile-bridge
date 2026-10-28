@@ -24,6 +24,9 @@
     '.bridge-mobile input:not([type=checkbox]):not([type=radio]), .bridge-mobile textarea { font-size: max(16px, 1em); }'
   ]) sheet.insertRule(rule, sheet.cssRules.length);
   document.documentElement.classList.add('bridge-mobile');
+  if (window === window.top) document.addEventListener('bridge-theme-change', event => {
+    if (['system', 'light', 'dark'].includes(event.detail?.theme)) window.prompt('codexbridge-theme:__BRIDGE_CLIPBOARD_TOKEN__', event.detail.theme);
+  });
   let focusedAnswer = null, answerTimer = 0, answerDeadline = 0;
   const stopAnswerVisibility = () => {
     clearTimeout(answerTimer);clearTimeout(answerDeadline);answerTimer=answerDeadline=0;

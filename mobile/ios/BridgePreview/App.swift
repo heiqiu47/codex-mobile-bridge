@@ -96,6 +96,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let window = UIWindow(windowScene: windowScene)
         window.rootViewController = BridgeNavigationController(rootViewController: app.controller)
         self.window = window
+        window.overrideUserInterfaceStyle = app.controller.themeStyle
         window.makeKeyAndVisible()
         DispatchQueue.main.async {
             if let response = connectionOptions.notificationResponse { app.receiveNotification(response, fromScene: true) }
@@ -193,9 +194,9 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     private var timer: Timer?
     private var activityTimer: Timer?
     private var foregroundBaselines = Set<String>()
-    private var loading = false
+    private var polling = Set<String>()
     private var pollGeneration = 0
-    private var pollTask: URLSessionDataTask?
+    private var pollTasks: [String: URLSessionDataTask] = [:]
     private var generation = 0
     private var authLossAttempted = false
     private var bindingRevision = 0
@@ -273,7 +274,30 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     }
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        applyTheme()
         requestStartupNotifications()
+    }
+    private var theme: String {
+        let value = defaults.string(forKey: "settingsTheme") ?? "system"
+        return ["system", "light", "dark"].contains(value) ? value : "system"
+    }
+    var themeStyle: UIUserInterfaceStyle { theme == "dark" ? .dark : theme == "light" ? .light : .unspecified }
+    private func applyTheme() {
+        view.window?.overrideUserInterfaceStyle = themeStyle
+        syncWebTheme()
+    }
+    private func syncWebTheme() {
+        // UIKit propagates the window override through its children after the
+        // trait callback. Read the settled style, including when returning to system.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let web = self.web, let url = web.url, GatewayURL.same(url, self.origin) else { return }
+            let dark = self.view.traitCollection.userInterfaceStyle == .dark
+            web.evaluateJavaScript("window.BridgeNativeTheme={theme:'" + self.theme + "',dark:" + String(dark) + "};document.dispatchEvent(new Event('bridge-native-theme'));")
+        }
+    }
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle { syncWebTheme() }
     }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews(); updatePageBottom()
@@ -686,8 +710,10 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         guard webView === web, connectionError == nil, let url = webView.url, GatewayURL.same(url, origin) else { return }
         connectionDeadline?.cancel(); connectionDeadline = nil; subtitle.isHidden = true
+        syncWebTheme()
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { if nativeMainNavigation?.web === webView { nativeMainNavigation = nil }; guard webView === web, connectionError == nil, let url = webView.url, GatewayURL.same(url, origin) else { return }; subtitle.isHidden = true; registerNativePush(); rememberConnection()
+        syncWebTheme()
         if let snapshot = pendingStorage { pendingStorage = nil; webView.evaluateJavaScript("(()=>{const data=" + snapshot + ";for(const [k,v] of Object.entries(data))if(typeof v==='string')localStorage.setItem(k,v);location.reload();})()", completionHandler: nil) }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { if nativeMainNavigation?.web === webView { nativeMainNavigation = nil }; guard webView === web, connectionError == nil else { return }
@@ -717,6 +743,13 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) { guard frame.isMainFrame else { completionHandler(); return }; let a = UIAlertController(title: nil, message: message, preferredStyle: .alert); a.addAction(UIAlertAction(title: MobileStrings.text("好"), style: .default) { _ in completionHandler() }); present(a, animated: true) }
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) { guard frame.isMainFrame else { completionHandler(false); return }; let a = UIAlertController(title: nil, message: message, preferredStyle: .alert); a.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel) { _ in completionHandler(false) }); a.addAction(UIAlertAction(title: MobileStrings.text("确认"), style: .default) { _ in completionHandler(true) }); present(a, animated: true) }
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        if prompt == "codexbridge-theme:" + clipboardToken {
+            guard webView === web, connectionError == nil, UIApplication.shared.applicationState == .active,
+                  frame.isMainFrame, let source = frame.request.url, GatewayURL.same(source, origin),
+                  let current = webView.url, GatewayURL.same(current, origin),
+                  let value = defaultText, ["system", "light", "dark"].contains(value) else { completionHandler(nil); return }
+            defaults.set(value, forKey: "settingsTheme"); completionHandler("saved"); applyTheme(); return
+        }
         if prompt == "codexbridge-system-bars:" + clipboardToken {
             guard webView === web, UIApplication.shared.applicationState == .active, frame.isMainFrame,
                   let source = frame.request.url, GatewayURL.same(source, origin),
@@ -879,7 +912,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
                        name.range(of: #"^codex_mobile_session_[a-f0-9]{24}$"#, options: .regularExpression) != nil {
                         self.defaults.set(name, forKey: "cookieName:" + address)
                     }
-                    if poll != nil { self.pollTask = nil }
+                    if poll != nil { self.pollTasks.removeValue(forKey: address) }
                     let response = response as? HTTPURLResponse
                     let headers = response?.allHeaderFields as? [String: String] ?? [:]
                     let renewed = code == 200 && response?.url.map({ GatewayURL.same($0, address) }) == true ? HTTPCookie.cookies(withResponseHeaderFields: headers, for: target).first(where: { cookie in
@@ -909,7 +942,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
                     }
                 }
             }
-            if poll != nil { self.pollTask = task }
+            if poll != nil { self.pollTasks[address] = task }
             task.resume()
         }
     }
@@ -976,28 +1009,26 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
             }
         }
     } }
-    @objc private func active() { computerNotifications.values.forEach { $0.alpha = 0.5 }; cancelSync(); checkComputers(); foregroundBaselines.removeAll();sync(); activityTimer?.invalidate(); activityTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.syncLiveActivity() }; syncLiveActivity(); timer?.invalidate(); timer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.sync() } }
+    @objc private func active() { computerNotifications.values.forEach { $0.alpha = 0.5 }; cancelSync(); checkComputers(); foregroundBaselines.removeAll();sync(); activityTimer?.invalidate(); activityTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.syncLiveActivity() }; syncLiveActivity(); timer?.invalidate(); timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.sync() } }
     @objc private func inactive() { routeDiscovery?.cancel(); routeDiscovery = nil; routeAttempted = false; computerNotifications.values.forEach { $0.alpha = 0.5 }; cancelSync(); downloads.pause(); stopComputerChecks(); timer?.invalidate(); timer = nil; activityTimer?.invalidate(); activityTimer = nil; if #available(iOS 16.2, *) { Task { await LiveActivityController.shared.pause() } } }
     private func cancelSync() {
-        pollGeneration += 1; pollTask?.cancel(); pollTask = nil; loading = false
+        pollGeneration += 1; pollTasks.values.forEach { $0.cancel() }; pollTasks.removeAll(); polling.removeAll()
     }
     private func pollCurrent(_ ticket: Int) -> Bool {
         ticket == pollGeneration && UIApplication.shared.applicationState == .active
     }
     private func sync() {
-        guard UIApplication.shared.applicationState == .active, !loading else { return }
+        guard UIApplication.shared.applicationState == .active else { return }
         registerNativePush()
-        loading = true; pollGeneration += 1
         let ticket = pollGeneration
-        let addresses = saved
-        func next(_ index: Int) {
-            guard self.pollCurrent(ticket) else { return }
-            guard index < addresses.count else { self.loading = false; return }
-            let address = addresses[index]
-            guard self.saved.contains(address) else { next(index + 1); return }
+        // Each saved computer has one request in flight. A slow/offline gateway
+        // must not delay notifications from another computer.
+        for address in saved where !polling.contains(address) {
+            polling.insert(address)
             let after = self.defaults.integer(forKey: "cursor:" + address)
             self.fetch(address: address, after: after, poll: ticket) { result in
                 guard self.pollCurrent(ticket) else { return }
+                self.polling.remove(address)
                 if case .success(let data) = result, self.saved.contains(address) { self.updateComputerNotifications(data, address: address) }
                 else { if case .failure(let error) = result, [401, 403].contains((error as NSError).code) { self.computerSnapshots.removeValue(forKey: address); self.computerNotifications[address]?.arrangedSubviews.forEach { $0.removeFromSuperview() } }; self.updateComputerNotifications(nil, address: address) }
                 if self.saved.contains(address), case .success(let data) = result, data["enabled"] as? Bool == true, let stream = data["streamId"] as? String {
@@ -1020,10 +1051,8 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
                     self.defaults.set(stream, forKey: "stream:" + address)
                     self.foregroundBaselines.insert(address)
                 }
-                next(index + 1)
             }
         }
-        next(0)
     }
     private func requestStartupNotifications() {
         // Preserve explicit choices and avoid prompting again after refusal.
@@ -1075,6 +1104,16 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     }
     @objc private func settings() {
         let (sheet, content) = sheet(MobileStrings.text("设置"))
+        content.addArrangedSubview(label(MobileStrings.text("外观与显示"), size: 19, weight: .semibold))
+        let themes = ["system", "light", "dark"]
+        let choice = UISegmentedControl(items: ["跟随系统", "浅色", "深色"].map(MobileStrings.text))
+        choice.accessibilityLabel = MobileStrings.text("主题")
+        choice.selectedSegmentIndex = themes.firstIndex(of: theme) ?? 0
+        choice.addAction(UIAction { [weak self, weak choice] _ in
+            guard let self, let index = choice?.selectedSegmentIndex, themes.indices.contains(index) else { return }
+            self.defaults.set(themes[index], forKey: "settingsTheme"); self.applyTheme()
+        }, for: .valueChanged)
+        content.addArrangedSubview(card([label(MobileStrings.text("主题"), size: 17, weight: .semibold), choice]))
         content.addArrangedSubview(label(MobileStrings.text("通知"), size: 19, weight: .semibold))
         content.addArrangedSubview(card([
             label(MobileStrings.text("前台任务提醒"), size: 17, weight: .semibold),
@@ -1318,6 +1357,10 @@ enum ComputerNotificationSummary {
 
 enum MobileStrings {
     static let values: [String: String] = [
+        "主题": "Theme",
+        "跟随系统": "System",
+        "浅色": "Light",
+        "深色": "Dark",
         "正在连接…": "Connecting…",
         "已暂停": "Paused",
         "下载未完成": "Download incomplete",

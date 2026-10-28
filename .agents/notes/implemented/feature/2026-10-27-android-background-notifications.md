@@ -45,3 +45,5 @@ Android 原生设置采用 PR 的独立全屏窗口，主题仅作用于设置�
 Java 接收器真实回环 HTTP/JSON 检查通过，覆盖流重置、游标、去重、并行电脑、暂停、断网恢复与登录/移除竞态；Android 权限、Cookie 续期、Android/Swift URL 检查通过。Android APK 编译和签名验证、iOS 无签名编译与资源检查通过。
 
 独立空白 Android 35 模拟器中已核对设置页、默认关闭、开启后的实际前台服务、锁屏后本机测试通知和暂停后的服务降级；这些使用合成环境，不接入用户真实账号。详细日志和截图位于本地 `.tmp/pr85-20261028/`，不提交。作者此前报告的 Android 真机体验与本轮证据分开，未重新执行 iPhone 或 Windows/Linux 实机测试。
+
+后续 [iOS 全局主题与前台通知](../feature/2026-10-28-ios-theme-and-foreground-notifications.md) 将统一主题契约扩展到 iOS，并共用主题回传脚本；本篇原有平台范围保留为当时决定，其他安卓行为不变。

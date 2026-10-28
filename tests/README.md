@@ -70,6 +70,8 @@ Android 后台通知定向验证：`python scripts/test-mobile-events.py` 通过
 
 `python scripts/test-mobile-urls.py --android-only` 编译并执行 Android URL 与通知页面复用的边界验证；完整双平台入口还需 macOS 的 Swift 工具链。
 
+iOS 通知回归在 macOS 上运行 `scripts/test-ios-events.py`、`scripts/test-ios-notification-routing.py` 和 `scripts/test-ios-notification-source.py`，并进入现有移动端 CI 作业。分别覆盖真实 HTTP 的多电脑隔离与生命周期、场景与通知点击去重、来源图标文件在提交通知时仍可读。通知系统类型在最后一项中使用替身，系统授权与实际送达仍需 iPhone 验收。
+
 Android 设置页资源合约：`node --test mobile/tests/settings.test.cjs mobile/tests/resources.test.cjs` 检查浅深色资源对齐、文字对比度及两种宿主的配置声明。原生交互另外验收整行与开关点击、后台服务启停、权限返回刷新、设置页主题作用域、主题持久化与跟随系统、提示吐司、翻译、返回原聊天，以及窄屏和大字体布局。
 
 设置页动效另外检查进入和返回、开关与权限布局、主题弹层及浅深色交叉淡化的中间帧；同时覆盖快速反向操作、系统动画时长为零时的直接呈现，以及关闭窗口后的动画和临时画面清理。
