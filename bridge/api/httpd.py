@@ -148,6 +148,25 @@ class GatewayServer(ThreadingHTTPServer):
     def handle_error(self, request, client_address):
         LOG.warning("HTTP connection failed")
 
+    def shutdown_request(self, request):
+        # A rejected POST can still have unread body bytes. Closing immediately
+        # can reset the connection on Windows before the client receives 401/403.
+        # Half-close first, then discard a bounded tail without handling requests.
+        try:
+            request.shutdown(socket.SHUT_WR)
+            deadline = time.monotonic() + .2
+            remaining = 65536
+            while remaining and time.monotonic() < deadline:
+                request.settimeout(max(.001, deadline - time.monotonic()))
+                chunk = request.recv(min(8192, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
+            pass
+        finally:
+            super().shutdown_request(request)
+
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"

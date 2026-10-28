@@ -97,6 +97,21 @@ class ProxyHTTPTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertFalse(response.will_close)
 
+    def test_rejected_post_returns_error_before_delayed_body_and_closes(self):
+        self.start()
+        connection = self.connect()
+        connection.sendall((f'POST /api/accounts/switch HTTP/1.1\r\nHost: {HOST}\r\n'
+                            'Origin: https://wrong.example\r\nContent-Length: 4\r\n'
+                            'Content-Type: application/json\r\n\r\n').encode())
+        response = http.client.HTTPResponse(connection)
+        response.begin()
+        self.assertEqual(response.status, 403)
+        self.assertIn('error', json.loads(response.read()))
+        self.assertEqual(response.getheader('Connection'), 'close')
+        # The body arrives after rejection. It must never become another request.
+        connection.sendall(b'null')
+        self.assertEqual(connection.recv(1), b'')
+
     def test_chunked_writes_remain_rejected(self):
         self.start()
         connection = self.connect()

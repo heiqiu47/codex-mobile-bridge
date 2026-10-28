@@ -291,7 +291,9 @@ class CreationTests(unittest.TestCase):
         host='remote-ssh-discovered:test'
         self.bridge.hosts.state=lambda:{'remote-projects':[{'id':'r','hostId':host,'remotePath':'/remote/project'}],
                                       'codex-managed-remote-connections':[{'hostId':host,'alias':'test'}]}
-        with patch('bridge.app.service.ssh_read', return_value={'id':self.tid}) as remote, patch('bridge.app.service.open_in_desktop') as opened:
+        with patch('bridge.clients.codex.remote.RemoteStore.list', return_value=[]), \
+             patch('bridge.app.service.ssh_read', return_value={'id':self.tid}) as remote, \
+             patch('bridge.app.service.open_in_desktop') as opened:
             result=self.bridge.create_chat(host+'|r', 'quoted " title $()', str(uuid.uuid4()))
             self.assertEqual(result['host'],host)
             self.assertEqual(remote.call_args.args[0],'test')

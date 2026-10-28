@@ -11,7 +11,7 @@ import secrets
 import sys
 import uuid
 from pathlib import Path
-from contextlib import contextmanager, nullcontext
+from contextlib import closing, contextmanager, nullcontext
 from concurrent.futures import Future
 
 from bridge.clients.claude.adapter import Claude
@@ -2200,7 +2200,7 @@ class DesktopSessions:
                     if status.get('connected') is not True:
                         raise ValueError('插件尚未连接，请在第三方客户端加载插件')
                     # Independent gateways using this plugin share mutation receipts.
-                    with sqlite3.connect(adapter.receipts_path) as db:
+                    with closing(sqlite3.connect(adapter.receipts_path)) as db, db:
                         db.execute('CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, fingerprint TEXT, result TEXT)')
                     adapter.receipts_path.chmod(0o600)
                     self.config['deepseekManualBinding'] = {'file': str(adapter.directory/'binding.json'),

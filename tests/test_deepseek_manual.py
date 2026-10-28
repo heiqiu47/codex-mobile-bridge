@@ -1,6 +1,7 @@
 """Manual bundles bind one authenticated local profile without native lifecycle."""
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -122,6 +123,20 @@ class ManualPluginTests(unittest.TestCase):
         self.assertTrue(manager.adapters['deepseek'].receipts_path.is_file())
         self.assertFalse(manager.control({'action': 'unbind-deepseek-plugin'})['bound'])
         self.assertTrue((self.directory/'connection.json').is_file())
+
+    def test_binding_closes_receipt_initialization_connection(self):
+        manager = self.manager()
+        original = sqlite3.connect
+        opened = []
+        def connect(*args, **kwargs):
+            connection = original(*args, **kwargs)
+            opened.append(connection)
+            return connection
+        with patch('bridge.clients.manager.sqlite3.connect', side_effect=connect):
+            self.bind(manager)
+        self.assertEqual(len(opened), 1)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            opened[0].execute('SELECT 1')
 
     def test_scan_and_startup_never_launch_or_replace_manual_instance(self):
         manager = self.manager(); self.bind(manager)

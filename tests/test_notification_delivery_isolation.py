@@ -116,6 +116,15 @@ class DeliveryIsolation(unittest.TestCase):
                 row = {'id': 'native', 'status': 'idle', 'updatedAt': 1, 'requests': []}
                 records = []
                 if provider == 'claude':
+                    # Model identity must use the synthetic desktop profile too;
+                    # this protocol fixture does not require an installed app.
+                    home = Path(directory)/'claude-home'
+                    home.mkdir()
+                    desktop.config['discovered'] = {'claude': {
+                        'installed': True, 'dataDirectory': str(home),
+                        'dataDirectoryExplicit': True}}
+                    stack.enter_context(patch.object(desktop._account_store('claude'), '_current',
+                                                    return_value=('official', 'fixture-account', None)))
                     adapter.desktop = Mock(connected=True, capabilities={'code': ['getAll', 'mobileList', 'mobileDetail']})
                     async def native_call(kind, method, *args, **kwargs):
                         if method == 'mobileList':
