@@ -20,6 +20,30 @@ export async function readHistoryPage(controller,row,body={},signal=new AbortCon
   if(!Array.isArray(rows)||typeof page.hasMore!=='boolean'||page.hasMore&&(!Number.isSafeInteger(boundary)||cursor&&boundary>=cursor.before))throw Error('历史分页响应无效');
   return {rows,history:{before:page.hasMore?Buffer.from(JSON.stringify({sid:row.sessionId,seq,before:boundary})).toString('base64url'):null,hasMore:page.hasMore}};
 }
+// Retain only display metadata from request headers; never forward the header itself.
+export async function historyRecords(ctx,rows,signal=new AbortController().signal){
+  let selection;
+  const first=rows[0]?.event?.seq,query=ctx.get?.('sessionQuery');
+  const firstRelevant=rows.find(r=>['request/header','assistant/message'].includes(r.event.type));
+  if(first>0&&firstRelevant?.event.type==='assistant/message'&&typeof query?.observeSession==='function'){
+    // The native pager returns a contiguous suffix. Its preceding request may be
+    // outside that page; a cold observation reads it without activating an agent.
+    const observation=await query.observeSession(ctx.sessionId,{signal,projectionMode:'none'});
+    try{for(const event of observation.events){if(event.seq>=first)break;if(event.type==='request/header')selection=event.data?.header?.config;}}
+    finally{observation[Symbol.dispose]();}
+  }
+  const result=[];
+  for(const row of rows){
+    const event=row.event;
+    if(event.type==='request/header'){selection=event.data?.header?.config;continue;}
+    if(!['user/message','assistant/message','tool/call','tool/result','todo/write','turn/start','turn/end'].includes(event.type))continue;
+    if(event.type==='assistant/message'&&selection){
+      const modelSelection={};for(const key of ['provider','model','reasoningEffort'])if(typeof selection[key]==='string')modelSelection[key]=selection[key];
+      result.push({...row,event:{...event,data:{...event.data,modelSelection}}});
+    }else result.push(row);
+  }
+  return result;
+}
 export async function apply(ctx,config){
   const {token,endpoint}=JSON.parse(await readFile(config.configPath,'utf8'));
   // The gateway accepts at most 100 MiB of decoded images plus small JSON fields.
@@ -107,12 +131,12 @@ export async function apply(ctx,config){
   function lifecycle(){
       // The runtime registry includes child agents omitted from the chat list.
       // This snapshot is requested only before a native quit/restart.
-      if(typeof ctx.agents.list!=='function')return {connected:true,bridgeRevision:7,complete:false,sessions:[]};
+      if(typeof ctx.agents.list!=='function')return {connected:true,bridgeRevision:8,complete:false,sessions:[]};
       const agents=ctx.agents.list();
-      if(!Array.isArray(agents))return {connected:true,bridgeRevision:7,complete:false,sessions:[]};
+      if(!Array.isArray(agents))return {connected:true,bridgeRevision:8,complete:false,sessions:[]};
       const sessions=agents.map(agent=>({id:agent.id,status:agent.status==='running'?'active':agent.status==='idle'?'idle':'unknown',runtimeKnown:['idle','running'].includes(agent.status),requests:[...questions.values()].filter(q=>q.sid===agent.id).map(q=>q.public)}));
       for(const question of questions.values())if(!sessions.some(s=>s.id===question.sid))sessions.push({id:question.sid,status:'waiting',runtimeKnown:true,requests:[question.public]});
-      return {connected:true,bridgeRevision:7,complete:sessions.every(s=>typeof s.id==='string'&&s.id.length>0),sessions};
+      return {connected:true,bridgeRevision:8,complete:sessions.every(s=>typeof s.id==='string'&&s.id.length>0),sessions};
   }
   const idle=runtime=>runtime.complete&&runtime.sessions.every(s=>s.runtimeKnown&&s.status==='idle'&&!s.requests.length);
   const quitFailed=error=>{quitting=false;ctx.logger?.error?.('Harness native quit failed: '+String(error.message||error));};
@@ -135,7 +159,7 @@ export async function apply(ctx,config){
       quitting=true;
       return {status:'accepted',pid:process.pid,generation};
     }
-    if(action==='status')return {connected:true,bridgeRevision:7,projectDirectories:true,nativeQuit:typeof ctx.get?.('appExit')==='function',configured:(await account()).status==='configured'};
+    if(action==='status')return {connected:true,bridgeRevision:8,projectDirectories:true,nativeQuit:typeof ctx.get?.('appExit')==='function',configured:(await account()).status==='configured'};
     if(action==='account')return account(sid);
     if(action==='list')return {connected:true,sessions:(await list()).filter(r=>r.origin!=='subagent').map(r=>({...normalize(r),archived:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(r.sessionId)})).sort((a,b)=>Number(a.archived)-Number(b.archived))};
     if(action==='projects'){const seen=new Map();for(const row of await list())if(row.cwd)seen.set(row.cwd,{key:row.cwd,cwd:row.cwd,name:row.cwd.replaceAll('\\','/').split('/').pop()});for(const w of ctx.workspaceRegistry.list())seen.set(w.path,{key:w.path,cwd:w.path,name:w.title||w.name||w.path,workspaceId:w.id});return {projects:[...seen.values()]};}
@@ -193,7 +217,7 @@ export async function apply(ctx,config){
       return {status:'accepted'};
     }
     if(action==='open')return {ok:true};
-    if(action==='detail'){const page=await readHistoryPage(ctx.sessionController,row,body,signal());return {session:normalize(row),capabilities:capabilities(),records:page.rows.filter(r=>['user/message','assistant/message','tool/call','tool/result','todo/write','turn/start','turn/end'].includes(r.event.type)),history:page.history,steps:values(row).todos||[],connected:true};}
+    if(action==='detail'){const page=await readHistoryPage(ctx.sessionController,row,body,signal());return {session:normalize(row),capabilities:capabilities(),records:await historyRecords({sessionId:sid,get:name=>ctx.get?.(name)},page.rows,signal()),history:page.history,steps:values(row).todos||[],connected:true};}
     if(action==='catalog')return catalog(sid,body.section||'all');
     if(action==='access'){const presets=ctx.permissionPresets.catalog(),options=presets.options;if(body.mode){if(!options.some(o=>o.value===body.mode))throw Error('权限选项无效');await ctx.sessionController.create({sessionId:sid,cwd:row.cwd});const agent=ctx.agents.get(sid);if(!agent)throw Error('当前会话没有活动智能体');ctx.permissionPresets.set(agent.session,body.mode);}return {status:'accepted',mode:body.mode||values(row).permissions?.currentValue||presets.defaultPreset,modes:options.map(o=>o.value),options};}
     if(action==='settings'){const c=await catalog(sid,'models'),selected=body.model||c.currentModel,m=c.models.find(m=>m.id===selected);if(!m)throw Error('请选择可用模型');const effort=body.effort??(selected===c.currentModel?c.currentEffort:m.defaultEffort);if(effort&&!m.efforts.includes(effort))throw Error('该模型不支持所选思考强度');const slash=selected.indexOf('/'),result=await ctx.sessionController.selectModel({sessionId:sid,provider:selected.slice(0,slash),model:selected.slice(slash+1),reasoningEffort:effort||undefined}),actual=result.selected;return {status:'accepted',model:actual.provider+'/'+actual.model,effort:actual.reasoningEffort||''};}

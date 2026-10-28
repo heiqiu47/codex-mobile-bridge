@@ -16,6 +16,8 @@ Status: implemented
 
 Android 原生设置采用 PR 的独立全屏窗口，主题仅作用于设置页，后台开关和权限区域联动。Web/桌面样式与 HTML 不变；不能将设置页重做描述为“所有 UI 不变”。iOS 仅同步共享脚本注入所需参数，不增加后台通知能力。Test 使用原有独立安装和签名，实操反馈前不推进 main。
 
+原设置页局部主题的范围由[安卓 App 统一主题](../bug-fix/2026-10-28-android-app-theme.md)部分取代；本篇保留原采用范围及通知、权限、导航决定。
+
 ### 既有记录核对
 
 - [网关 Cookie 隔离](../../implemented/bug-fix/2026-10-13-gateway-cookie-namespace.md)互补：继续按连接地址选择 Cookie，检查点绑定令牌，不改变旧认证决定。

@@ -14,10 +14,10 @@ from bridge.features.sessions.create import ArchiveNotSent
 from bridge.clients.deepseek.setup import MARKER, insertion, verified_directory, legacy_account_configured
 
 PLUGIN_ID = re.compile(r'''["']?id["']?\s*:\s*["']?codex-mobile-desktop(?:["'\s,}]|$)''')
-BRIDGE_REVISION = 7
-# Revisions 3–6 share the complete native-agent lifecycle schema; presentation
+BRIDGE_REVISION = 8
+# Revisions 3–7 share the complete native-agent lifecycle schema; presentation
 # and fork capability additions do not invalidate an older idle snapshot.
-LIFECYCLE_REVISIONS = (3, 4, 5, 6, BRIDGE_REVISION)
+LIFECYCLE_REVISIONS = (3, 4, 5, 6, 7, BRIDGE_REVISION)
 UPDATE_REASON = 'Harness 接入需要更新，请结束任务后点击“重启并接入”'
 
 
@@ -280,13 +280,24 @@ def messages(records):
                 final_assistant['forkMessageId'] = str(event['seq'])
             final_assistant = None
         if kind in ('user/message', 'assistant/message'):
-            content = data.get('message', data).get('content', [])
+            message = data.get('message', data)
+            metadata = {}
+            if kind == 'assistant/message':
+                selection = data.get('modelSelection') or {}
+                source = message.get('source') or {}
+                provider, model = source.get('provider'), source.get('model')
+                if isinstance(provider, str) and isinstance(model, str) and model:
+                    metadata['model'] = provider+'/'+model if provider else model
+                    if (selection.get('provider') == provider and selection.get('model') == model
+                            and isinstance(selection.get('reasoningEffort'), str)):
+                        metadata['effort'] = selection['reasoningEffort']
+            content = message.get('content', [])
             if isinstance(content, str):
                 content = [{'type': 'text', 'text': content}]
             for i, block in enumerate(content):
                 text = block.get('text') or block.get('thinking') or ('[图片]' if block.get('type') == 'image' else '')
                 if text:
-                    result.append({'id': str(event.get('seq'))+':'+str(i), 'role': 'reasoning' if block.get('type') in ('thinking', 'reasoning') else kind.split('/')[0], 'text': text})
+                    result.append({'id': str(event.get('seq'))+':'+str(i), 'role': 'reasoning' if block.get('type') in ('thinking', 'reasoning') else kind.split('/')[0], 'text': text, **metadata})
                     if kind == 'assistant/message' and result[-1]['role'] == 'assistant':
                         final_assistant = result[-1]
         elif kind in ('tool/call', 'tool/result', 'todo/write'):

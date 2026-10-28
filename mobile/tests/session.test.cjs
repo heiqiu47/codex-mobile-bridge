@@ -47,3 +47,10 @@ test('only the currently displayed and loaded chat requests notification cleanup
  context.desktopSessions.state=null;run();assert.equal(events.length,0);
  context.desktopSessions.state={};context.desktopSessions.visibleActivity=()=>false;run();assert.equal(events.length,0);
 });
+
+test('Android theme bridge sends only supported preferences and never acts in subframes',()=>{
+ const f=fixture();for(const theme of ['dark','light','system'])f.events['bridge-theme-change']({detail:{theme,private:'ignored'}});
+ assert.deepEqual(f.calls.map(c=>c[1]),['dark','light','system']);
+ for(const theme of ['',null,'auto','dark\n'])f.events['bridge-theme-change']({detail:{theme}});
+ assert.equal(f.calls.length,3);assert.equal(fixture({frame:true}).events['bridge-theme-change'],undefined);
+});

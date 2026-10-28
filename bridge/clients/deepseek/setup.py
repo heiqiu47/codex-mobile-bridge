@@ -52,6 +52,10 @@ PREVIOUS_DISCONNECT_SOURCES = ('b8b05cd4d93af60913b505c842dc6b74d2860199980bab07
                                '95451e5ff26ba7e0e5f139a1109ceeaaf3dba1a51b169d3e5d5207d5ef29873b')
 
 
+# Revision 7 before per-message model metadata, LF and Windows CRLF.
+PREVIOUS_MESSAGE_MODEL_SOURCES = ('74c6a26a7a8eca9a6dfe5e6256f595a174c58b3645d3bd15497c9877d1422938',
+                                  '740533827d3817803605c490bd95f3ffbff1bc841cf14f99820ebcf0db14ab4b')
+
 def insertion(text):
     """Read only our JSON flow insertion, including Harness's line wrapping.
 
@@ -170,7 +174,7 @@ def verified_directory(entry, home):
                 LEGACY_SOURCE, PREVIOUS_SOURCE, PREVIOUS_CLEANUP_SOURCE, PREVIOUS_CATALOG_SOURCE,
                 *PREVIOUS_QUIT_SOURCES, *PREVIOUS_CONTEXT_SOURCES, *PREVIOUS_HISTORY_SOURCES,
                 *PREVIOUS_PROJECT_SOURCES, *PREVIOUS_WORKSPACE_SOURCES, *PREVIOUS_ARCHIVE_SOURCES,
-                *PREVIOUS_DISCONNECT_SOURCES):
+                *PREVIOUS_DISCONNECT_SOURCES, *PREVIOUS_MESSAGE_MODEL_SOURCES):
             return None
         return directory, digest not in current_sources
     except (OSError, ValueError, KeyError, TypeError, IndexError):

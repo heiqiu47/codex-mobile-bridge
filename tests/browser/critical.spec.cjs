@@ -59,3 +59,19 @@ for (const provider of ['claude', 'deepseek']) {
     expect(result.passed).toBeGreaterThan(0);
   });
 }
+
+test('Android app theme synchronizes list and chat without replacing drafts or other appearance settings',async({page})=>{
+ await ready(page);
+ const result=await page.evaluate(()=>{
+  const input=document.getElementById('message'),root=document.documentElement,theme=document.getElementById('appearance-theme');
+  input.value='keep this draft';const original=input,changes=[];
+  document.addEventListener('bridge-theme-change',event=>changes.push(event.detail.theme));
+  const accent=document.getElementById('appearance-accent');accent.value='#6655cc';accent.oninput();
+  const native=(choice,dark)=>{window.BridgeNativeTheme={theme:choice,dark};document.dispatchEvent(new Event('bridge-native-theme'));return root.dataset.theme;};
+  const states=[native('system',true),native('system',false),native('dark',false),native('light',true)];
+  theme.value='dark';theme.onchange();states.push(root.dataset.theme);
+  const saved=JSON.parse(localStorage.getItem('bridge-appearance'));
+  return {states,changes,draft:input.value,sameInput:original===document.getElementById('message'),accent:saved.accent,choice:saved.theme};
+ });
+ expect(result).toEqual({states:['dark','light','dark','light','dark'],changes:['dark'],draft:'keep this draft',sameInput:true,accent:'#6655cc',choice:'dark'});
+});

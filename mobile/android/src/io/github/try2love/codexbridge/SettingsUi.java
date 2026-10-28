@@ -8,12 +8,13 @@ import android.graphics.drawable.*;
 import android.view.*;
 import android.widget.*;
 
-/** Colors and controls are scoped to the settings window, leaving the live chat intact. */
+/** Native palettes share the app preference; live web content updates without recreation. */
 final class SettingsUi {
  final Context context;
+ final boolean dark;
  final int page, surface, pressed, line, muted, text, accent, danger, track;
  SettingsUi(Context context) {
-  this.context=context;
+  this.context=context;dark=(context.getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
   page=color("settings_page");surface=color("settings_surface");pressed=color("settings_pressed");
   line=color("settings_line");muted=color("settings_muted");text=color("settings_text");
   accent=color("settings_accent");danger=color("settings_danger");track=color("settings_track");

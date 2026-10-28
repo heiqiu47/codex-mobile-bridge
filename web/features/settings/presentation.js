@@ -50,7 +50,7 @@ if(typeof document!=='undefined')(()=>{
   }
   function save(){try{localStorage.setItem(key,JSON.stringify(settings));}catch{}}
   function apply(){
-    const dark=settings.theme==='dark'||settings.theme==='system'&&system.matches;
+    const dark=settings.theme==='dark'||settings.theme==='system'&&(window.BridgeNativeTheme?.dark??system.matches);
     const colors=ChatAppearance.colors(settings.accent,dark);
     root.dataset.theme=dark?'dark':'light';root.dataset.density=settings.density;
     root.dataset.showActivity=String(settings.showActivity);
@@ -76,7 +76,13 @@ if(typeof document!=='undefined')(()=>{
     get('appearance-activity').checked=settings.showActivity;get('appearance-reasoning').checked=settings.showReasoning;get('appearance-process').checked=settings.showProcess;
     document.querySelectorAll('[data-accent]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.accent===settings.accent.toLowerCase())));
   }
-  function change(values){preserveReading(()=>{settings=ChatAppearance.normalize({...settings,...values});apply();save();});}
+  function change(values){preserveReading(()=>{settings=ChatAppearance.normalize({...settings,...values});apply();save();if(Object.hasOwn(values,'theme'))document.dispatchEvent(new CustomEvent('bridge-theme-change',{detail:{theme:settings.theme}}));});}
+  function nativeTheme(){
+    const value=window.BridgeNativeTheme;
+    if(!value||!['system','light','dark'].includes(value.theme)||typeof value.dark!=='boolean')return;
+    preserveReading(()=>{settings=ChatAppearance.normalize({...settings,theme:value.theme});apply();save();});
+  }
+  document.addEventListener('bridge-native-theme',nativeTheme);
   function relabel(){
     const text=BridgeI18n.t(collapsed?'展开输入区':'收起输入区');
     toggle.setAttribute('aria-label',text);toggle.title=text;
@@ -120,6 +126,6 @@ if(typeof document!=='undefined')(()=>{
   get('appearance-reset').onclick=()=>change(ChatAppearance.defaults);
   system.addEventListener('change',()=>{if(settings.theme==='system')preserveReading(apply);});
   window.BridgePresentation={resizeMessage,relabel,openChat:()=>{setCollapsed(false);requestAnimationFrame(resizeMessage);},showError:()=>setCollapsed(false)};
-  apply();relabel();resizeMessage();
+  apply();nativeTheme();relabel();resizeMessage();
   document.body.classList.toggle('chat-detail',!get('app').hidden&&get('app').classList.contains('chat-open'));
 })();
