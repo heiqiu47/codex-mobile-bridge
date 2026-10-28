@@ -144,13 +144,15 @@ class RemoteCatalog:
         self.alias = alias
         self.kind_caches = {}
         self.lock = threading.RLock()
+        self.kind_locks = {kind: threading.RLock() for kind in ('catalog', 'models', 'skills')}
+        self.skill_refreshing = set()
         self.model_refreshing = set()
         self.model_timers = {}
         self.model_retry_at = {}
         self.model_closed = False
 
     def invalidate_models(self):
-        with self.lock:
+        with self.kind_locks['catalog'], self.kind_locks['models'], self.lock:
             for kind in ('catalog', 'models'):
                 self.kind_caches.pop(kind, None)
             for timer in self.model_timers.values():
@@ -172,8 +174,8 @@ class RemoteCatalog:
             'from bridge.features.accounts.models import model_catalog', '').replace(
             'from bridge.clients.codex.configuration import magpie_managed', '')
         source += '\nimport shutil\nhome=Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex")))\n'
-        source += 'runtime=shutil.which("codex") or str(Path.home()/".local/bin/codex")\n'
-        source += 'reader=Catalog(home, runtime, allow_background_refresh=False)\n'
+        source += 'runtime=Catalog.find_ssh_runtime(home) or str(Path.home()/".local/bin/codex")\n'
+        source += 'reader=Catalog(home, runtime, allow_background_refresh=False, auth_status_only=True)\n'
         return source
 
     def _start_model_refresh(self, key, cwd, provider):
@@ -212,7 +214,7 @@ class RemoteCatalog:
         timer.start()
 
     def get(self, cwd, refresh=False, provider=None):
-        with self.lock:
+        with self.kind_locks['catalog']:
             key = (cwd, provider)
             previous = self.kind_caches.setdefault('catalog', {}).get(key)
             if previous and not refresh and time.monotonic() - previous[0] < 300:
@@ -229,16 +231,21 @@ class RemoteCatalog:
     def get_kind(self, kind, cwd, refresh=False, provider=None, query='', offset=0, limit=200, ids=None):
         if kind not in ('models', 'skills'):
             raise CatalogError('未知目录类型')
+        identifiers = tuple(ids or [])
+        key = ((kind, cwd, query, offset, limit, identifiers) if kind == 'skills'
+               else (kind, cwd, provider))
+        # Cached Skills stay readable while a refresh owns the slow request lock.
         with self.lock:
-            identifiers = tuple(ids or [])
-            if kind == 'skills':
-                key = (kind, cwd, query, offset, limit, identifiers)
-            else:
-                key = (kind, cwd, provider)
             cache = self.kind_caches.setdefault(kind, {})
             previous = cache.get(key)
             if kind == 'skills' and previous and not refresh and time.monotonic() - previous[0] < 300:
                 return previous[1]
+        with self.kind_locks[kind]:
+            with self.lock:
+                cache = self.kind_caches.setdefault(kind, {})
+                previous = cache.get(key)
+                if kind == 'skills' and previous and not refresh and time.monotonic() - previous[0] < 300:
+                    return previous[1]
             source = self._source()
             source += ('print(json.dumps(reader.get_kind(' + payload(kind) + ', ' + payload(cwd) +
                         ', refresh=' + payload(refresh) + ', provider=' + payload(provider) +
@@ -249,17 +256,32 @@ class RemoteCatalog:
                 result = ssh_read(self.alias, source, timeout=120)
             except RemoteUnavailable as exc:
                 raise CatalogError(str(exc)) from exc
-            cache[key] = (time.monotonic(), result)
-            if kind == 'models':
-                metadata = result.get('cache') or {}
-                if metadata.get('state') == 'stale' and not refresh:
-                    self._start_model_refresh(key, cwd, provider)
-                elif metadata.get('state') == 'fresh' and metadata.get('updatedAt'):
-                    self._schedule_model_refresh(key, cwd, provider, metadata['updatedAt'], replace=refresh)
-            if kind == 'skills' and not refresh and result.get('cache', {}).get('state') in ('stale', 'legacy'):
-                return self.get_kind(kind, cwd, refresh=True, provider=provider, query=query,
-                                      offset=offset, limit=limit, ids=list(identifiers))
+            with self.lock:
+                cache[key] = (time.monotonic(), result)
+                if kind == 'models':
+                    metadata = result.get('cache') or {}
+                    if metadata.get('state') == 'stale' and not refresh:
+                        self._start_model_refresh(key, cwd, provider)
+                    elif metadata.get('state') == 'fresh' and metadata.get('updatedAt'):
+                        self._schedule_model_refresh(key, cwd, provider, metadata['updatedAt'], replace=refresh)
+                elif not refresh and result.get('cache', {}).get('state') in ('stale', 'legacy'):
+                    self._start_skill_refresh(key, cwd, provider, query, offset, limit, identifiers)
             return result
+
+    def _start_skill_refresh(self, key, cwd, provider, query, offset, limit, ids):
+        if self.model_closed or key in self.skill_refreshing:
+            return
+        self.skill_refreshing.add(key)
+        def update():
+            try:
+                self.get_kind('skills', cwd, refresh=True, provider=provider, query=query,
+                              offset=offset, limit=limit, ids=ids)
+            except (OSError, ValueError, CatalogError):
+                pass  # Keep the last successful cached list if the remote scan fails.
+            finally:
+                with self.lock:
+                    self.skill_refreshing.discard(key)
+        threading.Thread(target=update, daemon=True, name='ssh-skill-refresh').start()
 
     def validate_skills(self, cwd, ids, refresh=False):
         source = self._source()

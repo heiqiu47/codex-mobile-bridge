@@ -19,7 +19,7 @@ HTTP、中继、IPC、mailbox 等测试使用本机隔离监听和合成数据�
 
 | 修改范围 | 主要测试文件前缀 |
 | --- | --- |
-| 账号、额度、模型 | `test_account*`、`test_api_catalog*`、`test_saved_account*` |
+| 账号、额度、模型 | `test_account*`、`test_api_catalog*`、`test_saved_account*`、`test_remote_catalog.py` |
 | 客户端发现/启停 | `test_client_*`、`test_desktop_discovery*`、`test_desktop_idle*` |
 | Claude/DSH | `test_claude_*`、`test_deepseek_*`、`test_desktop_sessions*` |
 | 认证/配对/网络 | `test_auth*`、`test_pairing*`、`test_login_security*`、`test_shared_relay*`、`test_network*`、`test_http_proxy.py` |

@@ -319,9 +319,9 @@ class Catalog:
                            'defaultServiceTier': row.get('defaultServiceTier')})
         return result
 
-    METHODS = {"initialize", "model/list", "skills/list", "config/read", "account/read", "configRequirements/read"}
+    METHODS = {"initialize", "model/list", "skills/list", "config/read", "account/read", "getAuthStatus", "configRequirements/read"}
 
-    def __init__(self, codex_home, executable=None, allow_background_refresh=True):
+    def __init__(self, codex_home, executable=None, allow_background_refresh=True, auth_status_only=False):
         self.home = Path(codex_home)
         self._automatic_runtime = not executable
         self._executable = Path(executable) if executable else self.find_runtime()
@@ -337,6 +337,7 @@ class Catalog:
         self.skill_store = SkillStore(self.home)
         self.skill_refreshing = set()
         self.allow_background_refresh = allow_background_refresh
+        self.auth_status_only = auth_status_only
 
     @property
     def executable(self):
@@ -490,6 +491,28 @@ class Catalog:
         executable = shutil.which('codex')
         return Path(executable) if executable else None
 
+    @staticmethod
+    def find_ssh_runtime(home):
+        """Locate the App-managed SSH runtime without installing or starting a daemon."""
+        home = Path(home)
+        state = home / 'app-server-daemon'
+        dedicated = home / 'packages/app-server-daemon'
+        if os.path.lexists(dedicated / 'current') or any(os.path.lexists(state / name) for name in
+                ('daemon.pid', 'daemon.stderr.log', 'daemon-updater.pid', 'daemon-updater.stderr.log')):
+            root = dedicated
+        elif any(os.path.lexists(state / name) for name in
+                 ('app-server.pid', 'app-server.stderr.log', 'app-server-updater.pid', 'app-server-updater.stderr.log')):
+            root = home / 'packages/standalone'
+        else:
+            root = dedicated
+        for candidate in (root / 'current/bin/codex', root / 'current/codex'):
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        fallback = shutil.which('codex') or str(Path.home() / '.local/bin/codex')
+        if Path(fallback).is_file() and os.access(fallback, os.X_OK):
+            return fallback
+        return None
+
     def linux_permission_capabilities(self, cwd, reader):
         if sys.platform != 'linux':
             raise ValueError('Linux permission discovery is unavailable on this host')
@@ -524,6 +547,11 @@ class Catalog:
         counter = 0
         def request(method, params, timeout=request_timeout):
             nonlocal counter
+            if self.auth_status_only and method == 'account/read':
+                # These callers need auth mode, not workspace routing discovery.
+                # The native runtime remains authoritative and never exports tokens.
+                return self.account_from_auth_status(request('getAuthStatus', {
+                    'includeToken': False, 'refreshToken': False}, timeout=timeout))
             linux_permission_read = (sys.platform == 'linux' and kind == 'linux-permissions' and
                                      method in ('permissionProfile/list', 'experimentalFeature/list'))
             if method not in self.METHODS and not linux_permission_read:
@@ -608,6 +636,15 @@ class Catalog:
         return provider != 'openai' or any(definition.get(key) for key in
             ('base_url', 'env_key', 'experimental_bearer_token', 'http_headers',
              'env_http_headers', 'auth', 'gateway_oauth', 'query_params', 'aws'))
+
+    @staticmethod
+    def account_from_auth_status(status):
+        # Preserve the distinction used by upstream model discovery and Fast mode.
+        mode = status.get('authMethod')
+        if 'authMethod' not in status or mode not in (None, 'apikey', 'chatgpt', 'chatgptAuthTokens'):
+            raise CatalogError('无法确认 SSH 模型目录的认证类型')
+        account = None if mode is None else {'type': 'apiKey' if mode == 'apikey' else 'chatgpt'}
+        return {'account': account, 'requiresOpenaiAuth': status.get('requiresOpenaiAuth')}
 
     def read_models(self, request, cwd, provider=None, metadata_request=None, environment=None):
         # Desktop catalog reads have no verified owner environment. Only the
