@@ -14,6 +14,8 @@ MainActivity 在创建 WebView 时提供对应的主题 Context，在页面可�
 
 主题改变保留 WebView、聊天草稿、页面导航与工作台；不重建 Activity 或刷新网页。`BridgePresentation` 更新现有主题变量与外观控件，不覆盖强调色、字号、密度或内容显示开关。系统深色状态由原生提供，不依赖仍存活的 WebView 是否重新计算了 `prefers-color-scheme`。
 
+[Android 电脑选项菜单](../feature/2026-10-28-android-gateway-options-menu.md)复用该主题 Context 作为页面颜色读取失败时的回退；主题切换关闭旧菜单，继续保留现有 WebView。
+
 ### 既有记录核对
 
 - [安卓后台通知](../feature/2026-10-27-android-background-notifications.md)部分重叠：该篇原来仅设置页采用主题的范围被本篇取代；通知、权限和页面复用决定仍有效，双方互链。

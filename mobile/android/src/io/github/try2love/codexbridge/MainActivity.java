@@ -13,6 +13,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public final class MainActivity extends Activity implements SharedPreferences.OnSharedPreferenceChangeListener {
+ private GatewayMenu gatewayPopup;
  private LinearLayout root,bar;private WebView web;private String origin="";private TextView status;private SystemBars systemBars;
  private android.content.SharedPreferences prefs;private final ExecutorService worker=Executors.newSingleThreadExecutor();
  private final ExecutorService probes=Executors.newFixedThreadPool(3);
@@ -40,6 +41,7 @@ public final class MainActivity extends Activity implements SharedPreferences.On
  private int buttonColor(){return ui.dark?ui.pressed:0xfff4f5f7;}
  private void syncWebTheme(){if(web!=null&&GatewayURL.sameOrigin(web.getUrl(),origin))web.evaluateJavascript("window.BridgeNativeTheme={theme:"+JSONObject.quote(SettingsUi.theme(this))+",dark:"+ui.dark+"};document.dispatchEvent(new Event(\"bridge-native-theme\"));",null);}
  private void applyTheme(){
+  dismissGatewayMenu();
   ui=new SettingsUi(SettingsUi.themed(this));root.setBackgroundColor(pageColor());status.setTextColor(mutedColor());
   if(web==null)home();else{web.setBackgroundColor(pageColor());if(chatMenu!=null)chatMenu.setColorFilter(textColor());syncWebTheme();}
  }
@@ -116,10 +118,38 @@ public final class MainActivity extends Activity implements SharedPreferences.On
   });}catch(Exception ignored){}});
  }
  void webAccounts(){if(web!=null&&GatewayURL.sameOrigin(web.getUrl(),origin))web.evaluateJavascript("(()=>{if(typeof window.BridgeNavigation?.accounts==='function')return window.BridgeNavigation.accounts();document.getElementById('accounts-button')?.click();return true;})()",null);}
- void gatewayMenu(View anchor){PopupMenu menu=new PopupMenu(ui.context,anchor);menu.getMenu().add(L("返回电脑列表")).setOnMenuItemClickListener(i->{home();return true;});menu.getMenu().add(L("账号与接入")).setOnMenuItemClickListener(i->{webAccounts();return true;});menu.getMenu().add(L("通知收件箱")).setOnMenuItemClickListener(i->{inbox();return true;});menu.getMenu().add(L("外观与显示")).setOnMenuItemClickListener(i->{webAction("[data-open-appearance]");return true;});menu.getMenu().add(L("手机设置")).setOnMenuItemClickListener(i->{settings();return true;});menu.getMenu().add(L("刷新页面")).setOnMenuItemClickListener(i->{if(web!=null){routeAttempted=false;web.reload();}return true;});for(int n=0;n<menu.getMenu().size();n++){int[] icons={android.R.drawable.ic_menu_revert,android.R.drawable.ic_menu_myplaces,android.R.drawable.ic_dialog_email,android.R.drawable.ic_menu_edit,android.R.drawable.ic_menu_preferences,android.R.drawable.ic_popup_sync};menu.getMenu().getItem(n).setIcon(icons[n]);}final WebView current=web;final String address=origin;final int ticket=generation;
-  final android.view.MenuItem appIcons=menu.getMenu().add(L("隐藏底部 APP 图标")).setIcon(android.R.drawable.ic_menu_view).setVisible(false);appIcons.setOnMenuItemClickListener(i->{if(web==current&&generation==ticket)webAction("#client-switch-toggle");return true;});
-  if(current!=null&&GatewayURL.sameOrigin(current.getUrl(),address))current.evaluateJavascript("(()=>{const button=document.getElementById('client-switch-toggle');return document.getElementById('app')?.hidden===false&&button&&!button.hidden?button.getAttribute('aria-expanded')==='false':null;})()",value->{if(web!=current||generation!=ticket||!GatewayURL.sameOrigin(current.getUrl(),address))return;if("true".equals(value)||"false".equals(value)){appIcons.setTitle(L("true".equals(value)?"显示底部 APP 图标":"隐藏底部 APP 图标"));appIcons.setVisible(true);}});
-  if(Build.VERSION.SDK_INT>=29)menu.setForceShowIcon(true);menu.show();}
+ void dismissGatewayMenu(){GatewayMenu popup=gatewayPopup;gatewayPopup=null;if(popup!=null)popup.dismiss();}
+ void gatewayMenu(View anchor){
+  if(web==null||!anchor.isShown()||!anchor.isEnabled())return;
+  dismissGatewayMenu();
+  final WebView current=web;final String address=origin;final int ticket=generation;
+  GatewayMenu menu=new GatewayMenu(ui.context);gatewayPopup=menu;
+  menu.setOnDismissListener(()->{if(gatewayPopup==menu)gatewayPopup=null;});
+  menu.add(L("返回电脑列表"),"ic_menu_monitor",this::home);
+  menu.separator();
+  menu.add(L("账号与接入"),"ic_menu_user_round",this::webAccounts);
+  menu.add(L("通知收件箱"),"ic_menu_bell",this::inbox);
+  menu.separator();
+  menu.add(L("外观与显示"),"ic_menu_palette",()->webAction("[data-open-appearance]"));
+  menu.add(L("手机设置"),"ic_menu_settings",this::settings);
+  menu.separator();
+  menu.add(L("刷新页面"),"ic_menu_refresh_cw",()->{if(web==current&&generation==ticket){routeAttempted=false;current.reload();}});
+  final LinearLayout appIcons=menu.add(L("隐藏底部 APP 图标"),"ic_menu_eye_off",()->{if(web==current&&generation==ticket)webAction("#client-switch-toggle");});
+  appIcons.setVisibility(View.GONE);
+  current.evaluateJavascript("(()=>{const button=document.getElementById('client-switch-toggle');return document.getElementById('app')?.hidden===false&&button&&!button.hidden?button.getAttribute('aria-expanded')==='false':null;})()",value->{
+   if(web!=current||generation!=ticket||gatewayPopup!=menu||!GatewayURL.sameOrigin(current.getUrl(),address))return;
+   if("true".equals(value)||"false".equals(value)){
+    boolean hidden="true".equals(value);
+    menu.update(appIcons,L(hidden?"显示底部 APP 图标":"隐藏底部 APP 图标"),hidden?"ic_menu_eye":"ic_menu_eye_off");
+    appIcons.setVisibility(View.VISIBLE);menu.resize(anchor);
+   }
+  });
+  current.evaluateJavascript("(()=>{const style=getComputedStyle(document.documentElement),color=name=>style.getPropertyValue(name).trim();return {surface:color('--raised'),text:color('--text'),muted:color('--muted'),line:color('--line'),pressed:color('--surface')};})()",value->{
+   if(web!=current||generation!=ticket||gatewayPopup!=menu||!anchor.isShown()||!anchor.isEnabled()||!GatewayURL.sameOrigin(current.getUrl(),address))return;
+   menu.palette(value);if(!menu.isShowing())menu.show(anchor);
+  });
+  anchor.postDelayed(()->{if(web==current&&generation==ticket&&gatewayPopup==menu&&anchor.isShown()&&anchor.isEnabled()&&!menu.isShowing())menu.show(anchor);},120);
+ }
 
  void message(String value){resetExitGesture();new AlertDialog.Builder(ui.context).setMessage(L(value)).setPositiveButton(L("好"),null).show();}
  Set<String> saved(){return new LinkedHashSet<>(prefs.getStringSet("origins",new HashSet<>()));}
@@ -139,7 +169,7 @@ public final class MainActivity extends Activity implements SharedPreferences.On
    connectionDeadline=null;status.setVisibility(View.VISIBLE);status.setText(L("连接失败，请在更多菜单中刷新"));recoverConnection(url);
   };homeHandler.postDelayed(connectionDeadline,12000);
  }
- void clear(){cancelConnectionDeadline();if(connectionTask!=null){connectionTask.cancel(true);connectionTask=null;}if(preparingUpdate!=null){preparingUpdate.cancel();preparingUpdate=null;}pendingStorage=null;if(routeDiscovery!=null){routeDiscovery.cancel();routeDiscovery=null;}if(files!=null){files.onReceiveValue(null);files=null;fileView=null;}stopComputerChecks();homeStates.clear();homeNotifications.clear();resetExitGesture();generation++;if(web!=null){web.stopLoading();web.destroy();web=null;}systemBars.update(pageColor(),pageColor());while(root.getChildCount()>2)root.removeViewAt(2);}
+ void clear(){dismissGatewayMenu();cancelConnectionDeadline();if(connectionTask!=null){connectionTask.cancel(true);connectionTask=null;}if(preparingUpdate!=null){preparingUpdate.cancel();preparingUpdate=null;}pendingStorage=null;if(routeDiscovery!=null){routeDiscovery.cancel();routeDiscovery=null;}if(files!=null){files.onReceiveValue(null);files=null;fileView=null;}stopComputerChecks();homeStates.clear();homeNotifications.clear();resetExitGesture();generation++;if(web!=null){web.stopLoading();web.destroy();web=null;}systemBars.update(pageColor(),pageColor());while(root.getChildCount()>2)root.removeViewAt(2);}
  void home(){clear();header(false);status.setVisibility(View.GONE);ScrollView scroll=new ScrollView(ui.context);scroll.setFillViewport(true);LinearLayout content=column();content.setPadding(dp(20),dp(16),dp(20),dp(24));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
   ImageView icon=new ImageView(ui.context);icon.setImageResource(getResources().getIdentifier("ic_computer","drawable",getPackageName()));icon.setColorFilter(textColor());icon.setScaleType(ImageView.ScaleType.FIT_CENTER);LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(dp(64),dp(58));ip.gravity=Gravity.CENTER;ip.bottomMargin=dp(24);content.addView(icon,ip);
   TextView headline=text(L("电脑上的工作，\n带在身边。"),30);headline.setTypeface(null,android.graphics.Typeface.BOLD);headline.setGravity(Gravity.CENTER);add(headline,content,10);
@@ -196,6 +226,7 @@ public final class MainActivity extends Activity implements SharedPreferences.On
   // Keep the WebView glyph size aligned with the terminal's 6px lower bound.
   s.setMinimumFontSize(6);s.setMinimumLogicalFontSize(6);
   web.setWebViewClient(new WebViewClient(){
+   public void onPageStarted(WebView view,String target,android.graphics.Bitmap favicon){if(view==web)dismissGatewayMenu();}
    public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){String target=request.getUrl().toString();if(!request.isForMainFrame())return !htmlPreviewShell(target);if(htmlPreviewShell(target))return true;if(target.equals("codexbridge://home")&&request.hasGesture()&&GatewayURL.sameOrigin(view.getUrl(),origin)){home();return true;}if(ArtifactDownload.accepts(target,origin)&&request.hasGesture()){downloadArtifact(target);return true;}if(GatewayURL.sameOrigin(target,origin))return false;if(request.hasGesture()&&("https".equals(request.getUrl().getScheme())||"http".equals(request.getUrl().getScheme())))new AlertDialog.Builder(ui.context).setMessage(L("在浏览器打开外部链接？\n")+request.getUrl().getHost()).setPositiveButton(L("打开"),(d,w)->startActivity(new Intent(Intent.ACTION_VIEW,request.getUrl()))).setNegativeButton(L("取消"),null).show();return true;}
    public void onPageCommitVisible(WebView view,String target){if(view==web&&GatewayURL.sameOrigin(target,origin)){cancelConnectionDeadline();syncWebTheme();status.setVisibility(View.GONE);}}
    public void onPageFinished(WebView view,String target){if(view==web&&GatewayURL.sameOrigin(target,origin)){cancelConnectionDeadline();CookieManager.getInstance().flush();view.evaluateJavascript("window.BridgeMobileCapabilities = Object.freeze({ diagnosticsExport: true });",null);view.evaluateJavascript(appearance,null);syncWebTheme();status.setVisibility(View.GONE);registerPushToken();rememberConnection();
@@ -213,7 +244,7 @@ public final class MainActivity extends Activity implements SharedPreferences.On
      result.cancel();return true;
     }
     if(prompt.equals("codexbridge-modal:"+clipboardToken)){
-     if(view==web&&view.hasWindowFocus()&&GatewayURL.sameOrigin(url,origin)&&GatewayURL.sameOrigin(view.getUrl(),origin)&&("open".equals(value)||"closed".equals(value))){boolean open="open".equals(value);menu.setVisibility(open?View.GONE:View.VISIBLE);menu.setEnabled(!open);result.confirm("saved");}else result.cancel();return true;
+     if(view==web&&view.hasWindowFocus()&&GatewayURL.sameOrigin(url,origin)&&GatewayURL.sameOrigin(view.getUrl(),origin)&&("open".equals(value)||"closed".equals(value))){boolean open="open".equals(value);menu.setVisibility(open?View.GONE:View.VISIBLE);menu.setEnabled(!open);if(open)dismissGatewayMenu();result.confirm("saved");}else result.cancel();return true;
     }
     if(prompt.equals("codexbridge-session:"+clipboardToken)){
      if(view==web&&GatewayURL.sameOrigin(url,origin)&&GatewayURL.sameOrigin(view.getUrl(),origin)){authLossAttempted=false;CookieManager.getInstance().flush();MonitorService.bindingsChanged();rememberConnection();result.confirm("saved");}else result.cancel();return true;
@@ -525,10 +556,10 @@ public final class MainActivity extends Activity implements SharedPreferences.On
  @Override protected void onSaveInstanceState(Bundle state){state.putString("choosingUpdateFile",choosingUpdateFile);if(pendingSaveResult!=null)state.putBundle("pendingSaveResult",pendingSaveResult);if(settingsPage!=null&&settingsPage.isShowing()&&!settingsPage.isClosing()){state.putBoolean("settingsOpen",true);state.putInt("settingsScroll",settingsPage.scrollPosition());}super.onSaveInstanceState(state);}
  @Override protected void onResume(){super.onResume();resumed=true;if(ui.dark!=new SettingsUi(SettingsUi.themed(this)).dark)applyTheme();ComputerNotifications.onChange=()->runOnUiThread(this::renderComputerNotifications);checkComputers();MonitorService.setVisible(true);if(!MonitorService.startBackground(this))message(L("后台通知启动失败，请重新打开 App 后再试。"));if(web!=null)web.onResume();registerPushToken();resumeUpdateInstall();if(settingsPage!=null&&settingsPage.isShowing())settingsPage.refresh();}
  // Keep the live WebView and its drafts/tabs when rotating or resizing the window.
- @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if("system".equals(SettingsUi.theme(this))&&ui.dark!=new SettingsUi(SettingsUi.themed(this)).dark)applyTheme();screen.requestApplyInsets();downloadCard.post(downloadCard::place);if(web!=null){web.requestLayout();web.invalidate();}if(settingsPage!=null&&"system".equals(SettingsUi.theme(this)))reopenSettings(settingsPage);}
- @Override protected void onPause(){if(routeDiscovery!=null){routeDiscovery.cancel();routeDiscovery=null;}routeAttempted=false;ComputerNotifications.onChange=null;resumed=false;stopComputerChecks();resetExitGesture();MonitorService.setVisible(false);if(web!=null)web.onPause();CookieManager.getInstance().flush();super.onPause();}
+ @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);dismissGatewayMenu();if("system".equals(SettingsUi.theme(this))&&ui.dark!=new SettingsUi(SettingsUi.themed(this)).dark)applyTheme();screen.requestApplyInsets();downloadCard.post(downloadCard::place);if(web!=null){web.requestLayout();web.invalidate();}if(settingsPage!=null&&"system".equals(SettingsUi.theme(this)))reopenSettings(settingsPage);}
+ @Override protected void onPause(){dismissGatewayMenu();if(routeDiscovery!=null){routeDiscovery.cancel();routeDiscovery=null;}routeAttempted=false;ComputerNotifications.onChange=null;resumed=false;stopComputerChecks();resetExitGesture();MonitorService.setVisible(false);if(web!=null)web.onPause();CookieManager.getInstance().flush();super.onPause();}
  void resetExitGesture(){homeBackAt=0;if(exitToast!=null){exitToast.cancel();exitToast=null;}}
  @Override public void onBackPressed(){handleBack();}
- void handleBack(){if(web==null){long now=SystemClock.elapsedRealtime();if(homeBackAt!=0&&now-homeBackAt<=2000){resetExitGesture();finishAndRemoveTask();}else{homeBackAt=now;if(exitToast!=null)exitToast.cancel();exitToast=Toast.makeText(this,L("再按一次返回退出 App"),Toast.LENGTH_SHORT);exitToast.show();}return;}resetExitGesture();if(!GatewayURL.sameOrigin(web.getUrl(),origin)){home();return;}final int ticket=generation;web.evaluateJavascript("(()=>{const dialog=document.querySelector('dialog[open]');if(dialog){if(dialog.dispatchEvent(new Event('cancel',{cancelable:true})))dialog.close();return true;}if(typeof window.BridgeNavigation?.back==='function')return window.BridgeNavigation.back();if(window.BridgeWorkbench?.back())return true;if(document.getElementById('app')?.classList.contains('chat-open')){document.getElementById('back')?.click();return true;}return false;})()",result->{if(ticket==generation&&!"true".equals(result))home();});}
+ void handleBack(){if(gatewayPopup!=null){dismissGatewayMenu();return;}if(web==null){long now=SystemClock.elapsedRealtime();if(homeBackAt!=0&&now-homeBackAt<=2000){resetExitGesture();finishAndRemoveTask();}else{homeBackAt=now;if(exitToast!=null)exitToast.cancel();exitToast=Toast.makeText(this,L("再按一次返回退出 App"),Toast.LENGTH_SHORT);exitToast.show();}return;}resetExitGesture();if(!GatewayURL.sameOrigin(web.getUrl(),origin)){home();return;}final int ticket=generation;web.evaluateJavascript("(()=>{const dialog=document.querySelector('dialog[open]');if(dialog){if(dialog.dispatchEvent(new Event('cancel',{cancelable:true})))dialog.close();return true;}if(typeof window.BridgeNavigation?.back==='function')return window.BridgeNavigation.back();if(window.BridgeWorkbench?.back())return true;if(document.getElementById('app')?.classList.contains('chat-open')){document.getElementById('back')?.click();return true;}return false;})()",result->{if(ticket==generation&&!"true".equals(result))home();});}
  @Override public void onDestroy(){prefs.unregisterOnSharedPreferenceChangeListener(this);if(settingsPage!=null)settingsPage.dismiss();if(downloadTask!=null&&(updateSession==null||downloadTask.state!=ArtifactDownload.State.COMPLETE))downloadTask.cancel();downloads.shutdownNow();clear();probes.shutdownNow();worker.shutdownNow();if(monitor!=null)getApplicationContext().unbindService(monitor);super.onDestroy();}
 }

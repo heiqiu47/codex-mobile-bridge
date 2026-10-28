@@ -55,6 +55,22 @@ test('native app-bar menu reads the shared toggle without creating one for old o
  }
 });
 
+test('Android menu reads the active page palette including custom theme colors',()=>{
+ const script=scripts.find(value=>value.includes("surface:color('--raised')"));assert.ok(script);
+ const root={};
+ for(const values of [
+  ['#ffffff','#24262b','#777d88','#e9ebef','#f6f7f9'],
+  ['#272a32','#e4e6ed','#a0a5b1','#30333c','#202228'],
+  ['#123456','#fedcba','#aabbcc','#334455','#234567']
+ ]){
+  const names=['--raised','--text','--muted','--line','--surface'];
+  const palette=vm.runInNewContext(script,{document:{documentElement:root},getComputedStyle:element=>{
+   assert.equal(element,root);return {getPropertyValue:name=>' '+values[names.indexOf(name)]+' '};
+  }});
+  assert.deepEqual(JSON.parse(JSON.stringify(palette)),Object.fromEntries(['surface','text','muted','line','pressed'].map((name,index)=>[name,values[index]])));
+ }
+});
+
 test('iOS replaces tunnel error pages with a native way back to the computer list',()=>{
  const swift=fs.readFileSync(path.join(root,'mobile/ios/BridgePreview/App.swift'),'utf8');
  const policy=swift.slice(swift.indexOf('decidePolicyFor response: WKNavigationResponse'),swift.indexOf('decidePolicyFor action: WKNavigationAction'));
