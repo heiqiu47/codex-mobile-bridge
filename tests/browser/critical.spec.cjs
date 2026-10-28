@@ -33,6 +33,46 @@ test('Markdown, literal code and math rendering', async ({page}, testInfo) => {
   }
 });
 
+test('answering one pending card leaves the other independently answerable', async ({page}) => {
+  await ready(page);
+  const result = await page.evaluate(async () => {
+    await BridgeFeatures.load('chat');
+    const originalApi = api, originalId = currentId, originalHost = currentHost;
+    const sent = [], cards = ['first', 'second'].map(id => ({id: 'async:questions:' + id,
+      method: 'bridge/requestUserInputAsync', supported: true,
+      params: {questions: [{id, question: id, options: []}]}}));
+    try {
+      currentId = 'synthetic-cards';currentHost = 'local';
+      api = async (url, body) => {sent.push(body);return {status: 'accepted'};};
+      renderApprovals(cards);
+      const answer = async (card, value) => {
+        card.querySelector('textarea').value = value;
+        card.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true}));
+        await Promise.resolve();
+      };
+      await answer($('approvals').children[0], 'Yes');
+      const beforeSnapshot = {count: $('approvals').children.length,
+        secondEnabled: !$('approvals').children[1].querySelector('button').disabled};
+      // The normalized live snapshot retains only the unanswered request.
+      renderApprovals([cards[1]]);
+      const remaining = $('approvals').firstElementChild;
+      const afterSnapshot = {count: $('approvals').children.length,
+        id: remaining.dataset.request, enabled: !remaining.querySelector('button').disabled};
+      await answer(remaining, 'No');
+      return {beforeSnapshot, afterSnapshot, sent};
+    } finally {
+      api = originalApi;currentId = originalId;currentHost = originalHost;
+      cards.forEach(card => submittedRequestIds.delete(card.id));renderApprovals([]);
+    }
+  });
+  expect(result.beforeSnapshot).toEqual({count: 2, secondEnabled: true});
+  expect(result.afterSnapshot).toEqual({count: 1, id: 'async:questions:second', enabled: true});
+  expect(result.sent).toEqual([
+    {requestId: 'async:questions:first', response: {answers: {first: ['Yes']}}},
+    {requestId: 'async:questions:second', response: {answers: {second: ['No']}}},
+  ]);
+});
+
 for (const scenario of ['success', 'css-once', 'js-twice', 'js-fatal', 'runtime',
   'opaque-error', 'external-runtime', 'external-rejection', 'app-cached-failure']) {
   test('startup and login: ' + scenario, async ({page}, testInfo) => {

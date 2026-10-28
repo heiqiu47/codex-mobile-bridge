@@ -441,16 +441,19 @@ def question_replies(text):
 def async_requests(state):
     result = []
     turns = ordered_turns(state)
-    for turn in turns[-1:]:
-        if turn.get("status") not in ("inProgress", "completed"):
-            continue
-        items = items_array(turn.get("items"))
-        answered = set()
-        for item in items:
+    # An answer can start a new turn while other cards remain pending.
+    answered = set()
+    for turn in turns:
+        text = text_content((turn.get("params") or {}).get("input", []))
+        answered.update(r.get("questionItemId") for r in question_replies(text))
+        for item in items_array(turn.get("items")):
             if item.get("type") == "userMessage" or (item.get("type") == "steeringUserMessage" and item.get("status") == "accepted"):
                 text = text_content(item.get("content", item.get("input", [])))
                 answered.update(r.get("questionItemId") for r in question_replies(text))
-        for item in items:
+    for turn in turns:
+        if turn.get("status") not in ("inProgress", "completed"):
+            continue
+        for item in items_array(turn.get("items")):
             if item.get("type") != "agentMessage" or not item.get("questions"):
                 continue
             questions = []

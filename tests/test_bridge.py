@@ -571,6 +571,29 @@ class IntegrationTests(unittest.TestCase):
         self.bridge.respond(THREAD, pending['id'], {'answers': {question['id']: ['Yes']}})
         self.assertEqual(self.fixture.requests[-1]['method'], 'thread-follower-start-turn')
 
+    def test_reply_to_one_async_card_keeps_other_card_across_turns(self):
+        self.fixture.state['turns'] = [{'turnId': 'questions', 'status': 'completed', 'items': [
+            {'id': name, 'type': 'agentMessage', 'questions': [{'title': name, 'options': ['Yes', 'No']}]}
+            for name in ('first', 'second')]}]
+        first, second = self.bridge.view(THREAD)['requests']
+        self.bridge.respond(THREAD, first['id'], {'answers': {first['params']['questions'][0]['id']: ['Yes']}})
+        call = next(r for r in self.fixture.requests if r['method'] == 'thread-follower-start-turn')
+        reply = call['params']['turnStart']['request']['input']
+        self.fixture.state['turns'].append({'turnId': 'reply', 'status': 'inProgress', 'items': [
+            {'id': 'reply-first', 'type': 'userMessage', 'content': reply}]})
+        self.fixture.state['threadRuntimeStatus'] = {'type': 'active'}
+        self.fixture.revision += 1
+        self.fixture.snapshot()
+        session = self.bridge.session(THREAD)
+        with session.condition:
+            self.assertTrue(session.condition.wait_for(lambda: session.revision == 2, timeout=2))
+        self.assertEqual(self.bridge.view(THREAD)['requests'], [second])
+        self.bridge.respond(THREAD, second['id'], {'answers': {second['params']['questions'][0]['id']: ['No']}})
+        call = self.fixture.requests[-1]
+        self.assertEqual(call['method'], 'thread-follower-steer-turn')
+        self.assertIn(second['params']['questions'][0]['id'],
+                      [r['questionItemId'] for r in json.loads(call['params']['input'][0]['text'].split('\n')[1])])
+
     def test_model_settings_use_native_owner_without_turn_or_policy_change(self):
         self.bridge.catalog_reader.get_kind = lambda *a, **k: {'models': [{'id': 'model-b', 'efforts': ['low', 'high']}], 'skills': []}
         result = self.bridge.settings(THREAD, 'model-b', 'high')
@@ -795,6 +818,28 @@ class IntegrationTests(unittest.TestCase):
 
 
 class ModelTests(unittest.TestCase):
+    def test_async_answers_match_question_ids_across_canonical_turns(self):
+        questions = {'turnId': 'questions', 'status': 'completed', 'items': [
+            {'id': 'card', 'type': 'agentMessage', 'questions': [{'title': 'One'}, {'title': 'Two'}]}]}
+        value = state()
+        value['turns'] = [questions]
+        first, second = normalize_state(value)['requests'][0]['params']['questions']
+        def reply(question):
+            return '<send_user_message_question_reply>\n' + json.dumps([
+                {'questionItemId': question['id'], 'question': question['question'], 'answer': 'Yes'}
+            ]) + '\n</send_user_message_question_reply>'
+        answer = {'turnId': 'answer', 'status': 'completed', 'params': {'input': [
+            {'type': 'text', 'text': reply(first)}]}, 'items': [
+            {'id': 'rejected', 'type': 'steeringUserMessage', 'status': 'rejected', 'input': reply(second)}]}
+        value['turnHistory'] = {'kind': 'canonical', 'history': {
+            'entitiesByKey': {'q': questions, 'a': answer},
+            'islands': [{'entries': [{'value': 'q'}, {'value': 'a'}]}]}}
+        pending = normalize_state(value)['requests']
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]['params']['questions'], [second])
+        answer['items'][0]['status'] = 'accepted'
+        self.assertEqual(normalize_state(value)['requests'], [])
+
     def test_canonical_history(self):
         value = state()
         value['turnHistory'] = {'kind': 'canonical', 'history': {'isComplete': True, 'entitiesByKey': {
