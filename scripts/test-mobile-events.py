@@ -50,7 +50,7 @@ source = ROOT / 'mobile/android/src/io/github/try2love/codexbridge'
 subprocess.run([java_tool('javac'), '-encoding', 'UTF-8', '-cp', str(jar), '-d', str(WORK),
                *[str(WORK / name) for name in stubs],
                *[str(source / (name + '.java')) for name in
-                 ('NotificationReceiver', 'NotificationCheckpoint', 'GatewayURL', 'EventClient', 'ComputerNotifications')],
+                 ('NotificationSources', 'NotificationReceiver', 'NotificationCheckpoint', 'GatewayURL', 'EventClient', 'ComputerNotifications')],
                str(ROOT / 'mobile/tests/MobileEventTests.java')], check=True)
 subprocess.run([java_tool('java'), '-Dsun.net.http.allowRestrictedHeaders=true', '-cp',
                 str(WORK) + os.pathsep + str(jar), 'io.github.try2love.codexbridge.MobileEventTests'], check=True)

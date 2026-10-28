@@ -85,7 +85,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
         let data = response.notification.request.content.userInfo
         if let origin = data["origin"] as? String { controller.openNotification(origin, thread: data["thread"] as? String, host: data["host"] as? String ?? "local") }
     }
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completion: @escaping (UNNotificationPresentationOptions) -> Void) { completion([.banner, .sound]) }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completion: @escaping (UNNotificationPresentationOptions) -> Void) {
+        if let address = notification.request.content.userInfo["origin"] as? String, !controller.notificationSourceEnabled(address) { completion([]); return }
+        completion([.banner, .sound])
+    }
 }
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
@@ -621,6 +624,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
                 guard current() else { return }
                 store.delete(cookie) {
                 guard current() else { return }
+                if !self.saved.contains(next) { self.defaults.set(!self.notificationSourceEnabled(address), forKey: "notificationsMuted:" + next) }; self.defaults.removeObject(forKey: "notificationsMuted:" + address)
                 var all = self.saved.filter { $0 != address }; if !all.contains(next) { all.append(next) }; self.defaults.set(all, forKey: "origins")
                 self.defaults.set(descriptor, forKey: "connection:" + next); self.defaults.removeObject(forKey: "connection:" + address)
                 if let name = self.defaults.string(forKey: "cookieName:" + address) { self.defaults.set(name, forKey: "cookieName:" + next) }; self.defaults.removeObject(forKey: "cookieName:" + address)
@@ -1035,7 +1039,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
                     let key = "cursor:" + address, previous = self.defaults.integer(forKey: key)
                     let ready = self.foregroundBaselines.contains(address) && self.defaults.string(forKey: "stream:" + address) == stream
                     let cleared = self.defaults.integer(forKey: "cleared:" + address + ":" + stream)
-                    if ready, self.defaults.bool(forKey: "foregroundAlerts"), UIApplication.shared.applicationState == .active {
+                    if ready, self.defaults.bool(forKey: "foregroundAlerts"), self.notificationSourceEnabled(address), UIApplication.shared.applicationState == .active {
                         for event in data["events"] as? [[String: Any]] ?? [] where event["unread"] as? Bool != false && (event["sequence"] as? Int ?? 0) > max(previous, cleared) {
                             let content = UNMutableNotificationContent()
                             content.title = event["title"] as? String ?? MobileStrings.text("任务提醒")
@@ -1052,6 +1056,34 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
                     self.foregroundBaselines.insert(address)
                 }
             }
+        }
+    }
+    func notificationSourceEnabled(_ address: String) -> Bool {
+        !defaults.bool(forKey: "notificationsMuted:" + address)
+    }
+    private func setNotificationSource(_ address: String, enabled: Bool) {
+        guard saved.contains(address), notificationSourceEnabled(address) != enabled else { return }
+        defaults.set(!enabled, forKey: "notificationsMuted:" + address)
+        // Retire pending polls before baselining this source; other inbox cursors stay intact.
+        cancelSync(); foregroundBaselines.remove(address); sync()
+    }
+    private func notificationSources() {
+        let (_, content) = sheet(MobileStrings.text("通知来源"))
+        content.addArrangedSubview(label(MobileStrings.text("仅控制这台手机的任务提醒，不影响聊天和通知收件箱。"), secondary: true))
+        if saved.isEmpty { content.addArrangedSubview(label(MobileStrings.text("尚未保存电脑连接"), secondary: true)) }
+        for address in saved {
+            let toggle = UISwitch(); toggle.isOn = notificationSourceEnabled(address)
+            toggle.accessibilityLabel = computerName(address) + ", " + address
+            toggle.addAction(UIAction { [weak self, weak toggle] _ in
+                guard let self, let toggle else { return }
+                self.setNotificationSource(address, enabled: toggle.isOn)
+            }, for: .valueChanged)
+            let text = column(spacing: 4)
+            text.addArrangedSubview(label(computerName(address), size: 17, weight: .semibold))
+            text.addArrangedSubview(label(address, size: 13, secondary: true))
+            let row = UIStackView(arrangedSubviews: [text, toggle]); row.axis = .horizontal; row.spacing = 12; row.alignment = .center
+            toggle.setContentCompressionResistancePriority(.required, for: .horizontal)
+            content.addArrangedSubview(card([row]))
         }
     }
     private func requestStartupNotifications() {
@@ -1119,6 +1151,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
             label(MobileStrings.text("前台任务提醒"), size: 17, weight: .semibold),
             button(defaults.bool(forKey: "foregroundAlerts") ? MobileStrings.text("关闭任务通知") : MobileStrings.text("开启任务通知"), symbol: "bell") { [weak self, weak sheet] in sheet?.dismiss(animated: true) { self?.toggleForegroundAlerts() } },
             label(MobileStrings.text("App 打开时提醒已连接电脑的新任务消息。离开 App 或锁屏后不保证通知；可在电脑端配置 Bark 或 ntfy。"), secondary: true),
+            button(MobileStrings.text("通知来源"), symbol: "bell") { [weak self, weak sheet] in sheet?.dismiss(animated: true) { self?.notificationSources() } },
             button(MobileStrings.text("测试本机通知"), symbol: "bell.badge") { [weak self, weak sheet] in sheet?.dismiss(animated: true) { self?.testNotification() } },
             label(MobileStrings.text("10 秒后显示，用于检查手机的通知权限。"), size: 13, secondary: true)
         ]))
@@ -1240,7 +1273,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
                 if target == self.origin, #available(iOS 16.2, *) { Task { await LiveActivityController.shared.stop() } }
                 self.defaults.set(self.saved.filter { $0 != target }, forKey: "origins"); self.computerSnapshots.removeValue(forKey: target)
                 if self.defaults.string(forKey: "active") == target { self.defaults.removeObject(forKey: "active") }
-                self.defaults.removeObject(forKey: "connection:" + target); self.defaults.removeObject(forKey: "cursor:" + target); self.defaults.removeObject(forKey: "stream:" + target); self.defaults.removeObject(forKey: "name:" + target); self.defaults.removeObject(forKey: "last-opened:" + target)
+                self.defaults.removeObject(forKey: "notificationsMuted:" + target); self.defaults.removeObject(forKey: "connection:" + target); self.defaults.removeObject(forKey: "cursor:" + target); self.defaults.removeObject(forKey: "stream:" + target); self.defaults.removeObject(forKey: "name:" + target); self.defaults.removeObject(forKey: "last-opened:" + target)
                 WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
                     for cookie in cookies where self.cookieMatches(cookie, address: target) { WKWebsiteDataStore.default().httpCookieStore.delete(cookie) }
                 }
@@ -1357,6 +1390,9 @@ enum ComputerNotificationSummary {
 
 enum MobileStrings {
     static let values: [String: String] = [
+        "通知来源": "Notification sources",
+        "仅控制这台手机的任务提醒，不影响聊天和通知收件箱。": "Choose task alerts for this phone. Chats and notification inboxes remain available.",
+        "尚未保存电脑连接": "No saved computer connections",
         "主题": "Theme",
         "跟随系统": "System",
         "浅色": "Light",

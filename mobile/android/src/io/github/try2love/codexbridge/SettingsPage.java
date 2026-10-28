@@ -117,11 +117,32 @@ final class SettingsPage extends Dialog implements SharedPreferences.OnSharedPre
    PowerManager power=(PowerManager)owner.getSystemService(Context.POWER_SERVICE);
    ui.action(system,"电池优化",power.isIgnoringBatteryOptimizations(owner.getPackageName())?"已豁免":"已启用",()->openSetting(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
   }
+  ui.action(system,"通知来源","",this::showNotificationSources);
   ui.action(system,"发送测试通知","10 秒后提醒",owner::testNotification);
   Map<String,String> connections=connectionStates();
   if(connections.values().stream().anyMatch(value->!"已连接".equals(value))){
    LinearLayout row=ui.action(system,"电脑连接","需处理",this::showConnections);((TextView)row.getChildAt(1)).setTextColor(ui.danger);
   }
+ }
+ private void showNotificationSources(){
+  LinearLayout content=ui.column();content.setPadding(ui.dp(8),ui.dp(8),ui.dp(8),ui.dp(8));
+  TextView hint=ui.text("仅控制这台手机的任务提醒，不影响聊天和通知收件箱。",13,ui.muted);hint.setPadding(ui.dp(16),ui.dp(8),ui.dp(16),ui.dp(12));content.addView(hint);
+  if(owner.saved().isEmpty())content.addView(ui.text("尚未保存电脑连接",15,ui.muted));
+  LinearLayout list=ui.column();content.addView(list);
+  for(String address:new TreeSet<>(owner.saved())){
+   SettingsUi.ToggleRow[] choice=new SettingsUi.ToggleRow[1];
+   choice[0]=ui.toggle(list,owner.computerName(address),NotificationSources.enabled(prefs,address),()->{
+    boolean enabled=!NotificationSources.enabled(prefs,address);
+    NotificationSources.setEnabled(prefs,address,enabled);choice[0].checked(enabled);
+    choice[0].row.setContentDescription(owner.computerName(address)+", "+address+", "+ui.L(enabled?"已开启":"已关闭"));
+    MonitorService.refresh();
+   });
+   LinearLayout labels=(LinearLayout)choice[0].row.getChildAt(0);
+   TextView url=ui.text(address,12,ui.muted);url.setPadding(0,ui.dp(4),ui.dp(8),0);labels.addView(url);
+   choice[0].row.setContentDescription(owner.computerName(address)+", "+address+", "+ui.L(NotificationSources.enabled(prefs,address)?"已开启":"已关闭"));
+  }
+  ScrollView scroll=new ScrollView(getContext());scroll.addView(content);
+  new AlertDialog.Builder(getContext()).setTitle(ui.L("通知来源")).setView(scroll).setPositiveButton(ui.L("完成"),null).show();
  }
  private boolean blocked(String id){NotificationChannel channel=((NotificationManager)owner.getSystemService(Context.NOTIFICATION_SERVICE)).getNotificationChannel(id);return channel!=null&&channel.getImportance()==NotificationManager.IMPORTANCE_NONE;}
  private Map<String,String> connectionStates(){

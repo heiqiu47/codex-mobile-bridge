@@ -12,6 +12,9 @@ final class MobileStrings {
   values.put("主题功能说明","Theme information");
   values.put("待开发项，暂时只支持设置页主题切换","In development. Theme changes currently apply to Settings only.");
   values.put("任务通知","Task notifications");
+  values.put("通知来源","Notification sources");
+  values.put("仅控制这台手机的任务提醒，不影响聊天和通知收件箱。","Choose task alerts for this phone. Chats and notification inboxes remain available.");
+  values.put("尚未保存电脑连接","No saved computer connections");
   values.put("后台通知功能说明","Background notification information");
   values.put("后台通知仍在完善中，开启后可能增加耗电或发热。\n遇到问题或有改进建议，欢迎提交 Issue 或 PR。感谢支持！","Background notifications are still being improved. Enabling them may increase battery use or cause your device to heat up.\nIf you encounter a problem or have a suggestion, please submit an Issue or PR. Thank you!");
   values.put("已开启","On");

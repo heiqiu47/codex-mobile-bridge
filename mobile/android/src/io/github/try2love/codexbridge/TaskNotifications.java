@@ -14,6 +14,8 @@ final class TaskNotifications {
  }
 
  static void show(Context context, String origin, String stream, JSONObject event, String channel) throws Exception {
+  synchronized (EventClient.class) {
+  if (!NotificationSources.enabled(context.getSharedPreferences("bridge", 0), origin)) return;
   NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
   if (!manager.areNotificationsEnabled()) throw new java.io.IOException("Notifications disabled");
   createChannel(context, channel);
@@ -57,6 +59,7 @@ final class TaskNotifications {
    notification.setLargeIcon(android.graphics.BitmapFactory.decodeStream(image));
   } catch (java.io.IOException ignored) { /* Artwork availability never gates delivery. */ }
   manager.notify(tag, id, notification.build());
+  }
  }
 
  private static String chatTag(String origin, String host, String thread) {

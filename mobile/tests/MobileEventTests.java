@@ -22,7 +22,7 @@ public final class MobileEventTests {
   public Editor edit(){return new Editor(){
    final Map<String,Object> staged=new HashMap<>();
    public Editor putString(String k,String v){staged.put(k,v);return this;}public Editor putBoolean(String k,boolean v){staged.put(k,v);return this;}public Editor putLong(String k,long v){staged.put(k,v);return this;}
-   public boolean commit(){if(!writable)return false;values.putAll(staged);commits.incrementAndGet();return true;}public void apply(){values.putAll(staged);}
+   public boolean commit(){if(!writable)return false;staged.forEach((k,v)->{if(v==null)values.remove(k);else values.put(k,v);});commits.incrementAndGet();return true;}public void apply(){staged.forEach((k,v)->{if(v==null)values.remove(k);else values.put(k,v);});}
   };}public Editor putString(String k,String v){values.put(k,v);return this;}public Editor putBoolean(String k,boolean v){values.put(k,v);return this;}public Editor putLong(String k,long v){values.put(k,v);return this;}public volatile boolean writable=true;public boolean commit(){return writable;}public void apply(){}
  }
  static final class Gateway implements AutoCloseable {
@@ -166,6 +166,7 @@ public final class MobileEventTests {
    check(NotificationCheckpoint.restore(encoded,"other").cursor==0,"Persisted checkpoint isolates accounts");
    check(NotificationCheckpoint.restore("malformed","binding").cursor==0,"Corrupt checkpoint safely baselines");
    longPolling();
+   sourceSelection();
    System.out.println("PASS inbox baseline, incremental reads, deduplication, clear/mute, reconnect, process recreation, stream reset, login/removal races, parallel computers, pause and reception status transitions; long-poll capability, four concurrent computers, cancellation and network recovery");
   }finally{for(NotificationReceiver receiver:receivers)receiver.close();}
  }
@@ -194,4 +195,31 @@ public final class MobileEventTests {
    receiver.close();
   }
  }
+ static void sourceSelection()throws Exception {
+  try(Gateway a=new Gateway();Gateway b=new Gateway();Gateway c=new Gateway();Gateway d=new Gateway()){
+   List<Gateway> gateways=List.of(a,b,c,d);App app=new App();Set<String> origins=new HashSet<>();
+   for(Gateway gateway:gateways)origins.add(gateway.origin());
+   app.prefs.values.put("origins",origins);app.prefs.putBoolean("alerts",true);
+   NotificationReceiver reader=receiver(app);reader.configure(true,true);
+   for(Gateway gateway:gateways)poll(reader,app,gateway.origin(),200);
+   int before=delivered.size();for(Gateway gateway:gateways){gateway.cursor=201;poll(reader,app,gateway.origin(),201);}
+   check(delivered.size()==before+4,"Four saved addresses default to enabled");
+   for(Gateway gateway:List.of(b,c,d))sourceEnabled(app,gateway.origin(),false);
+   reader.configure(true,true);for(Gateway gateway:gateways)poll(reader,app,gateway.origin(),201);
+   before=delivered.size();for(Gateway gateway:gateways){gateway.cursor=202;poll(reader,app,gateway.origin(),202);}
+   check(delivered.size()==before+1&&delivered.get(before).startsWith(a.origin()+":"),"Only the selected address alerts; other inboxes still advance");
+   check(ComputerNotifications.clients(app,b.origin()).getJSONObject(0).optLong("unread")==202,"Muted address keeps its inbox badge");
+   reader.close();reader=receiver(app);reader.configure(true,true);b.cursor=203;poll(reader,app,b.origin(),203);
+   check(delivered.size()==before+1,"Source mute survives service recreation");
+   b.hold();b.cursor=204;awaitHeld(reader,b,"Muted response remains in flight");
+   sourceEnabled(app,b.origin(),true);sourceEnabled(app,b.origin(),false);sourceEnabled(app,b.origin(),true);
+   reader.configure(true,true);b.release.countDown();poll(reader,app,b.origin(),204);
+   check(delivered.size()==before+1,"Rapid toggles retire old responses and do not replay muted backlog");
+   b.cursor=205;poll(reader,app,b.origin(),205);check(delivered.size()==before+2,"Re-enabled source alerts for new events");
+   b.hold();b.cursor=206;awaitHeld(reader,b,"Enabled response remains in flight");
+   sourceEnabled(app,b.origin(),false);reader.configure(true,true);b.release.countDown();poll(reader,app,b.origin(),206);
+   check(delivered.size()==before+2,"Disabling an address rejects its in-flight alert");reader.close();
+  }
+ }
+ static void sourceEnabled(App app,String origin,boolean enabled){NotificationSources.setEnabled(app.prefs,origin,enabled);}
 }

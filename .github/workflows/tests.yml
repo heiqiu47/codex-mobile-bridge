@@ -51,6 +51,7 @@ jobs:
       - run: python3 scripts/test-ios-events.py
       - run: python3 scripts/test-ios-notification-routing.py
       - run: python3 scripts/test-ios-notification-source.py
+      - run: python3 scripts/test-ios-notification-sources.py
   test:
     strategy:
       fail-fast: false

@@ -14,6 +14,8 @@ final class NotificationReceiver implements AutoCloseable {
 
   private static final class Computer {
     final String origin, binding;
+    final long sourceRevision;
+    final boolean notificationsEnabled;
     NotificationCheckpoint checkpoint;
     EventClient.Read read;
     ScheduledFuture<?> next;
@@ -22,10 +24,12 @@ final class NotificationReceiver implements AutoCloseable {
     boolean reconnect;
     Status status = Status.RETRYING;
 
-    Computer(String origin, String binding, NotificationCheckpoint checkpoint) {
+    Computer(String origin, String binding, NotificationCheckpoint checkpoint, SharedPreferences prefs) {
       this.origin = origin;
       this.binding = binding;
       this.checkpoint = checkpoint;
+      sourceRevision = NotificationSources.revision(prefs, origin);
+      notificationsEnabled = NotificationSources.enabled(prefs, origin);
     }
   }
 
@@ -55,7 +59,8 @@ final class NotificationReceiver implements AutoCloseable {
     Iterator<Computer> iterator = computers.values().iterator();
     while (iterator.hasNext()) {
       Computer computer = iterator.next();
-      if (!computer.binding.equals(bindings.get(computer.origin))) {
+      if (!computer.binding.equals(bindings.get(computer.origin))
+          || computer.sourceRevision != NotificationSources.revision(prefs, computer.origin)) {
         iterator.remove();
         retire(computer);
       }
@@ -64,7 +69,7 @@ final class NotificationReceiver implements AutoCloseable {
       NotificationCheckpoint checkpoint = resume
           ? NotificationCheckpoint.restore(prefs.getString("notificationCheckpoint:" + row.getKey(), null), row.getValue())
           : NotificationCheckpoint.empty();
-      Computer computer = new Computer(row.getKey(), row.getValue(), checkpoint);
+      Computer computer = new Computer(row.getKey(), row.getValue(), checkpoint, prefs);
       computers.put(row.getKey(), computer);
       schedule(computer, 0);
     }
@@ -112,6 +117,7 @@ final class NotificationReceiver implements AutoCloseable {
 
   private boolean current(Computer computer) {
     return !closed && computers.get(computer.origin) == computer
+        && computer.sourceRevision == NotificationSources.revision(prefs, computer.origin)
         && prefs.getStringSet("origins", Collections.emptySet()).contains(computer.origin)
         && computer.binding.equals(binding(computer.origin));
   }
@@ -202,7 +208,7 @@ final class NotificationReceiver implements AutoCloseable {
           synchronized (EventClient.class) {
             if (!current(computer)) return;
             if (sequence > cleared && (!event.has("unread") || event.optBoolean("unread"))
-                && prefs.getBoolean("alerts", false)) {
+                && computer.notificationsEnabled && prefs.getBoolean("alerts", false)) {
               TaskNotifications.show(context, computer.origin, checkpoint.stream, event, "foreground-tasks");
               String trace = event.optString("trace", "");
               android.util.Log.i("BridgeNotifications", "Inbox posted host=" + GatewayURL.httpOrigin(computer.origin)
