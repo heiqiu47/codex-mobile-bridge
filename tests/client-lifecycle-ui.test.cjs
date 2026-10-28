@@ -25,6 +25,21 @@ test('a real close dialog presents three distinct choices and defaults focus to 
   buttons[expected===null?2:expected?1:0].onclick();assert.equal(await result,expected);assert.equal(ui.document.body.children.length,0);
  }
 });
+test('manual DSH binding only offers disabling access and cancellation',async()=>{
+ const ui=fixture(),pending=ui.choose({id:'deepseek',name:'DSH',bindingMode:'manual',canForceQuit:false});
+ const buttons=ui.dialog().children.at(-1).children;
+ assert.equal(buttons.length,2);assert.match(buttons[0].textContent,/仅停用手机接入/);
+ assert.equal(ui.document.activeElement,buttons[1]);buttons[0].onclick();assert.equal(await pending,false);
+});
+
+test('manual plugin controls use selected local paths and cancellation submits nothing',async()=>{
+ const ui=fixture();vm.runInContext(fs.readFileSync('desktop/features/clients/desktop-sessions.js','utf8'),ui.context);
+ const Panel=vm.runInContext('DesktopConnectionsPanel',ui.context),controller=Object.create(Panel.prototype),calls=[],messages=[];
+ let selected='/local/plugin';
+ Object.assign(controller,{clientsRevision:0,statusRevision:0,renderClients(){},renderScan(){},refreshClients:async()=>{},refresh:async()=>{},feedback:(...args)=>messages.push(args),api:{choose:async kind=>{calls.push(kind);return selected;},desktopSessions:async value=>{calls.push(JSON.parse(JSON.stringify(value)));return {bound:true};}}});
+ await controller.manualDeepseek('bind-deepseek-plugin');assert.deepEqual(calls,['file',{action:'bind-deepseek-plugin',file:'/local/plugin'}]);
+ calls.length=0;selected=null;await controller.manualDeepseek('export-deepseek-plugin');assert.deepEqual(calls,['folder']);assert.equal(controller.busy,false);
+});
 
 test('background force quit requires an explicit capability and fresh choice with a translated warning',async()=>{
  for(const language of ['zh','en'])for(const id of ['codex','claude','deepseek']){

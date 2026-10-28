@@ -2,6 +2,23 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"选择已有接入，或通过“添加接入”配置客户端。":"Select an existing connection, or choose Add connection to configure a client.",
+"添加接入":"Add connection",
+"DSH / 自定义 Harness":"DSH / Custom Harness",
+"尚未发现客户端，请添加接入或重新扫描。":"No clients found. Add a connection or scan again.",
+"扫描 Harness 数据目录":"Scan Harness data directory",
+"未发现接入插件，请先在此 Harness 核心中安装并加载插件。":"No connector found. Install and load the plugin in this Harness core first.",
+"绑定档案：":"Bind profile: ",
+"第三方客户端：手动安装与绑定":"Third-party clients: manual installation and binding",
+"导出插件包，在第三方 DSH 客户端中本地安装并重新加载；然后选择当前档案下 codex-mobile-bridge/binding.json。切换前请先仅停用 DSH 手机接入。":"Export the plugin, install it locally in your third-party DSH client, and reload. Then select codex-mobile-bridge/binding.json in the active profile. Disable DSH mobile access before changing the binding.",
+"导出插件包":"Export plugin package",
+"选择绑定文件":"Select binding file",
+"解除手动绑定":"Remove manual binding",
+"插件包已保存：":"Plugin package saved: ",
+"已绑定，请开启 DSH 接入":"Bound. Enable DSH access to continue.",
+"已解除手动绑定":"Manual binding removed",
+"账号和 API 请在已绑定的第三方客户端中管理":"Manage accounts and APIs in the bound third-party client.",
+
 "原会话未正常退出，尚未发送归档请求":"The original session did not exit cleanly. No archive request has been sent.",
 "无法确认原生后台任务状态":"The native background task state could not be verified.",
 "原会话身份已变化，尚未发送归档请求":"The original session identity changed. No archive request has been sent.",

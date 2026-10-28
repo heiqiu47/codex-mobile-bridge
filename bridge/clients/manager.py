@@ -90,7 +90,14 @@ class DesktopSessions:
             bridge.desktop_sessions = self
             self.adapters['claude'].cli.profile_resolver = bridge.cli_access.claude_profile
         self.deepseek_restore_error = None
-        if self.config.get('deepseekAdapterDirectory'):
+        if self.config.get('deepseekManualBinding'):
+            from bridge.clients.deepseek.manual import ManualDeepSeek
+            try:
+                binding = self.config['deepseekManualBinding']
+                self.adapters['deepseek'] = ManualDeepSeek(binding['file'], binding['instanceId'])
+            except (OSError, ValueError, TypeError, KeyError):
+                self.deepseek_restore_error = '手动 DSH 绑定无法验证，请重新绑定；不会切换到其他实例'
+        elif self.config.get('deepseekAdapterDirectory'):
             try:
                 self.adapters['deepseek'].use_existing(self.config['deepseekAdapterDirectory'])
             except (OSError, ValueError, TypeError):
@@ -230,6 +237,11 @@ class DesktopSessions:
                     kind, fingerprint, _ = store._current()
                 scope = ('desktop', row['backend'], row.get('cwd'), tuple(row.get('folders') or []),
                          str(store.home), str(store.threep), kind, fingerprint)
+        elif self.config.get('deepseekManualBinding'):
+            adapter._connection()
+            paths.append(Path(adapter.binding['profileDirectory'])/'cordis.patch.yml')
+            paths.append(adapter.home/'.credentials.yaml')
+            scope = ('manual', adapter.binding['instanceId'], str(adapter.directory), self._deepseek_endpoint(adapter))
         else:
             paths.append(adapter.home/'profiles/desktop/cordis.patch.yml')
             paths.append(adapter.home/'.credentials.yaml')
@@ -451,6 +463,12 @@ class DesktopSessions:
 
     def _account_model_identity(self, provider):
         adapter = self.adapters[provider]
+        if provider == 'deepseek' and self.config.get('deepseekManualBinding'):
+            if self.deepseek_restore_error:
+                raise BridgeUnavailable(self.deepseek_restore_error)
+            adapter._connection()
+            endpoint = self._deepseek_endpoint(adapter)
+            return ModelStore.key('manual-dsh-account', adapter.binding, endpoint)
         store = self._account_store(provider)
         paths = []
         if provider == 'claude':
@@ -502,6 +520,10 @@ class DesktopSessions:
         return value
 
     def _account_models(self, provider, refresh=False):
+        if provider == 'deepseek' and self.config.get('deepseekManualBinding'):
+            if self.deepseek_restore_error:
+                raise BridgeUnavailable(self.deepseek_restore_error)
+            return self._read(provider, 'account')
         identity = self._account_model_identity(provider)
         try:
             persisted = self.model_store.read(identity)
@@ -982,6 +1004,8 @@ class DesktopSessions:
             self.config['discovered'] = discovered
             outcomes = self.config.setdefault('setup', {})
             for provider in ('claude', 'deepseek'):
+                if provider == 'deepseek' and self.config.get('deepseekManualBinding'):
+                    continue  # Discovery cannot replace an explicit plugin binding.
                 row = discovered[provider]
                 if not row['installed']:
                     outcomes[provider] = {'setupStatus': 'not-installed', 'reason': '尚未安装此客户端'}
@@ -1055,6 +1079,9 @@ class DesktopSessions:
             self.startup_thread.start()
 
     def _descriptor(self, provider):
+        if provider == 'deepseek' and self.config.get('deepseekManualBinding'):
+            return {'id': provider, 'installed': False, 'executable': '',
+                    'dataDirectory': str(self.adapters[provider].home)}
         row = dict(self.config.get('discovered', {}).get(provider, {}))
         if provider == 'codex' and self.bridge:
             from bridge.clients.desktop_app import DesktopApp
@@ -1071,6 +1098,8 @@ class DesktopSessions:
                 or self.config.get('discovered', {}).get('codex', {}).get('executable', ''))
 
     def _verified(self, provider):
+        if provider == 'deepseek' and self.config.get('deepseekManualBinding'):
+            return {}
         row = self.config.get('discovered', {}).get(provider, {})
         return {key: row.get(key) for key in ('executable', 'dataDirectory')}
 
@@ -1239,6 +1268,8 @@ class DesktopSessions:
         self._deepseek_launched(result)
 
     def connect_deepseek(self, restart=False):
+        if self.config.get('deepseekManualBinding'):
+            raise ValueError('请在已绑定的第三方客户端中重新加载插件；网关不会重启它')
         if not self.gateway_running:
             return self.toggle_client({'provider': 'deepseek', 'enabled': True})
         with self.client_lock, self._changing('deepseek'):
@@ -1247,6 +1278,8 @@ class DesktopSessions:
 
     def recover_deepseek(self, value):
         """Private desktop control only; web app controls never dispatch here."""
+        if self.config.get('deepseekManualBinding'):
+            raise ValueError('手动绑定不管理第三方客户端进程，请在客户端内重启或退出')
         from bridge.clients.deepseek.recovery import DeepSeekRecovery
         with self.client_lock, self._changing('deepseek'):
             if not self.config.get('discovered', {}).get('deepseek'):
@@ -1482,7 +1515,7 @@ class DesktopSessions:
                     setup_status = 'recovered' if ready and setup_status == 'recovered' else 'ready' if ready else 'unconfigured'
                 verified = self.config.setdefault('verified', {})
                 binding = self._verified(provider)
-                if invalid and provider in verified:
+                if invalid and provider in verified and not (provider == 'deepseek' and self.config.get('deepseekManualBinding')):
                     del verified[provider]
                     private_json(self.config_path, self.config)
                 if ready and binding.get('executable'):
@@ -1510,6 +1543,8 @@ class DesktopSessions:
             descriptors = []
             for row in rows:
                 if row['installed']:
+                    if row['id'] == 'deepseek' and self.config.get('deepseekManualBinding'):
+                        continue
                     try:
                         descriptors.append(self._descriptor(row['id']))
                     except (AttributeError, ValueError, OSError):
@@ -1520,6 +1555,13 @@ class DesktopSessions:
                 native_states = {}
             for row in rows:
                 native = {}
+                if row['id'] == 'deepseek' and self.config.get('deepseekManualBinding'):
+                    row.update(bindingMode='manual', installed=True, running=False, mainRunning=False,
+                               backgroundRunning=False, backgroundCount=0, canForceQuit=False,
+                               selectable=True, connectionState='connected' if row['connected'] else 'disconnected')
+                    if not row['connected']:
+                        row['reason'] = self.deepseek_restore_error or '请打开已绑定的第三方客户端并加载接入插件'
+                    continue
                 row.update(running=False, mainRunning=False, backgroundRunning=False, backgroundCount=0)
                 row['canForceQuit'] = bool(sys.platform in ('darwin', 'win32', 'linux') and self.gateway_running and row['installed'])
                 if row['installed']:
@@ -1752,6 +1794,16 @@ class DesktopSessions:
             raise ValueError('应用初始化请求无效')
         # Older clients use disabling as native quit. New clients choose explicitly.
         quit_desktop = value.get('quitDesktop', True)
+        if provider == 'deepseek' and self.config.get('deepseekManualBinding'):
+            with self.client_lock, self._changing(provider):
+                if not enabled and quit_desktop:
+                    raise ValueError('手动绑定仅支持停用手机接入；请在第三方客户端退出应用')
+                if enabled and self.deepseek_restore_error:
+                    raise ValueError(self.deepseek_restore_error)
+                self.config.setdefault('enabled', {})[provider] = enabled
+                private_json(self.config_path, self.config)
+                self.client_cache = None
+                return self.clients(refresh=True)
         from bridge.clients.lifecycle import inspect_client, launch_client
         accounts = self.bridge.accounts if provider == 'codex' and self.bridge else None
         with self.client_lock, self._changing(provider), accounts.gate if accounts else nullcontext(), accounts.lock if accounts else nullcontext():
@@ -1819,6 +1871,8 @@ class DesktopSessions:
             return self.clients()
 
     def _account_store(self, provider):
+        if provider == 'deepseek' and self.config.get('deepseekManualBinding'):
+            raise ValueError('手动绑定的账号和 API 请在第三方客户端中管理')
         if provider not in self.adapters:
             raise ValueError('不支持的桌面客户端')
         if provider not in self.config.get('discovered', {}):
@@ -1875,6 +1929,15 @@ class DesktopSessions:
 
     def client_accounts(self, provider, value):
         operation = value.get('operation', 'list')
+        if provider == 'deepseek' and self.config.get('deepseekManualBinding'):
+            if operation != 'list':
+                raise ValueError('手动绑定的账号和 API 请在第三方客户端中管理')
+            if self.deepseek_restore_error:
+                raise BridgeUnavailable(self.deepseek_restore_error)
+            native = self.adapters[provider].call('account')
+            return {**native, 'accounts': [], 'provider': provider, 'gatewayRunning': self.gateway_running,
+                    'canImport': False, 'canSwitch': False, 'readOnly': True,
+                    'message': '账号和 API 请在已绑定的第三方客户端中管理'}
         sync_cli = value.get('syncLocalCli') is True
         if 'syncLocalCli' in value and not isinstance(value['syncLocalCli'], bool):
             raise ValueError('本机 CLI 同步选项无效')
@@ -2014,6 +2077,9 @@ class DesktopSessions:
 
     def control(self, value):
         action = value.get('action', 'status')
+        if action == 'scan-deepseek-plugins':
+            from bridge.clients.deepseek.manual import discover_plugins
+            return {'candidates': discover_plugins(value.get('home'))}
         if action == 'scan-wsl':
             return self.scan_wsl()
         if action == 'claude-prerequisites':
@@ -2048,12 +2114,42 @@ class DesktopSessions:
             return self.toggle_client(value)
         if action == 'status':
             return {'backends': self.status(), 'deepseekHome': str(self.adapters['deepseek'].home),
+                    'deepseekBinding': self.config.get('deepseekManualBinding'),
                     'claudeWorkspace': str(self.adapters['claude'].directory)}
         provider = 'claude' if action == 'prepare-claude' else 'deepseek'
         with self._changing(provider):
+            if action == 'export-deepseek-plugin':
+                from bridge.clients.deepseek.manual import export_package
+                return export_package(value.get('destination', ''))
+            if action in ('bind-deepseek-plugin', 'unbind-deepseek-plugin'):
+                if self.enabled('deepseek'):
+                    raise ValueError('请先仅停用 DSH 手机接入，再切换或解除绑定')
+                if action == 'bind-deepseek-plugin':
+                    from bridge.clients.deepseek.manual import ManualDeepSeek
+                    adapter = ManualDeepSeek(value.get('file', ''))
+                    status = adapter.call('status')
+                    if status.get('connected') is not True:
+                        raise ValueError('插件尚未连接，请在第三方客户端加载插件')
+                    # Independent gateways using this plugin share mutation receipts.
+                    with sqlite3.connect(adapter.receipts_path) as db:
+                        db.execute('CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, fingerprint TEXT, result TEXT)')
+                    adapter.receipts_path.chmod(0o600)
+                    self.config['deepseekManualBinding'] = {'file': str(adapter.directory/'binding.json'),
+                                                           'instanceId': adapter.binding['instanceId']}
+                else:
+                    self.config.pop('deepseekManualBinding', None)
+                    adapter = DeepSeek(self.directory/'deepseek', self.config.get('deepseekHome'))
+                self.adapters['deepseek'] = adapter
+                self.deepseek_restore_error = None
+                self.config.setdefault('setup', {}).pop('deepseek', None)
+                private_json(self.config_path, self.config)
+                self.client_cache = None
+                return {'bound': action == 'bind-deepseek-plugin'}
             if action == 'prepare-claude':
                 return self.adapters['claude'].prepare()
             if action == 'install-deepseek':
+                if self.config.get('deepseekManualBinding'):
+                    raise ValueError('请先解除手动绑定，再使用官方客户端一键安装')
                 home = value.get('home')
                 if not isinstance(home, str) or not Path(home).expanduser().is_dir():
                     raise ValueError('请选择 Harness 数据目录')

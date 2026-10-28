@@ -380,7 +380,7 @@ test('desktop WSL disable only changes its own environment and skips native quit
 });
 test('desktop aggregate WSL readiness cannot enable an unavailable native Codex entry',async()=>{
  const ui=fixture();ui.panel.clients=[codexEntries({native:false,nativeSelectable:false})];ui.panel.renderClients();
- const native=ui.all().find(row=>row.dataset.clientId==='codex');assert.equal(native.querySelector('input').disabled,true);await ui.panel.toggleClient('codex',true);assert.equal(ui.calls.length,0);
+ assert.equal(ui.all().some(row=>row.dataset.clientId==='codex'),false);assert.ok(ui.all().some(row=>row.dataset.clientId?.startsWith('wsl:')));await ui.panel.toggleClient('codex',true);assert.equal(ui.calls.length,0);
 });
 test('desktop reconciliation checks native quit against the native entry while WSL stays connected',async()=>{
  const ui=fixture(),client=codexEntries({native:false});ui.panel.clients=[client];ui.panel.operationFailures=new Map([['codex',{action:'quit',uncertain:true,message:'pending'}]]);
@@ -407,4 +407,14 @@ test('Codex overview shows unsaved native login quota and refreshes that exact l
  ui.panel.renderAccount(value);assert.match(ui.text(),/75%/);assert.match(ui.text(),/重置卡 · 2/);assert.equal(ui.all().find(node=>node.tag==='progress').value,75);
  const calls=[];ui.panel.api.accounts=async request=>{calls.push(request);return value;};await ui.all().find(node=>node.textContent==='查看剩余额度').onclick();assert.deepEqual(JSON.parse(JSON.stringify(calls)),[{action:'details',id:'native-login',section:'usage',refresh:true}]);
  ui.panel.renderAccount({accounts:[{...login,id:'another'}],activeId:null,current:{name:'Unknown'}});assert.doesNotMatch(ui.text(),/75%|重置卡/);
+});
+
+test('absent unconfigured clients do not occupy the list, but offline configured bindings remain',()=>{
+ const ui=fixture();
+ ui.panel.clients=[{id:'codex',name:'Codex',installed:true},{id:'claude',name:'Claude',installed:false,configured:false,enabled:false},{id:'deepseek',name:'DSH',bindingMode:'manual',connected:false}];
+ ui.panel.renderClients();assert.match(ui.text(),/Codex/);assert.doesNotMatch(ui.text(),/Claude/);assert.match(ui.text(),/DSH/);
+ ui.panel.clients=[{id:'claude',name:'Claude',configured:true,installed:false}];ui.panel.renderClients();assert.match(ui.text(),/Claude/);
+ ui.panel.clients=[];ui.panel.renderClients();assert.match(ui.text(),/尚未发现客户端/);
+ ui.panel.addClient();const dialog=ui.document.body.children[0],buttons=dialog.children[1].children;
+ assert.equal(dialog.open,true);assert.deepEqual(buttons.map(button=>button.textContent),['Codex','Claude','DSH / 自定义 Harness','取消']);buttons[2].onclick();assert.equal(ui.document.body.children.length,0);
 });

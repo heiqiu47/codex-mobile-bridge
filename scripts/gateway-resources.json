@@ -1,4 +1,5 @@
 [
+  "LICENSE",
   "bridge/features/sessions/store.py",
   "bridge/features/sessions/message_management.py",
   "bridge/clients/codex/catalog.py",
@@ -31,6 +32,10 @@
   "bridge/clients/claude/remote_worker.py",
   "bridge/clients/claude/file_archive.py",
   "bridge/clients/deepseek/host.mjs",
+  "bridge/clients/deepseek/plugin/package.json",
+  "bridge/clients/deepseek/plugin/cordis.patch.yml",
+  "bridge/clients/deepseek/plugin/index.mjs",
+  "bridge/clients/deepseek/plugin/README.md",
   "bridge/clients/LICENSE.coding-mobile",
   "web/features/workspace/source-view.js",
   "web/vendor/prism/source-view.min.js",

@@ -56,3 +56,7 @@ DSH 使用原生 `workspace/session-stop` 提供者停止选定会话的轮次�
 ## 分支清理
 
 用户批准删除远程及本地 `release/v2.1.4-preview.1`（4c251de061da073c6138780d2c9a3a868ea123c5）和 `release/v2.1.0-preview.1`（422a46b6ae90b0c52748894c387741ce346ebb92）。删除前重新检查 main 祖先关系和工作树占用。远程删除采用原子操作及精确预期 HEAD 租约。标签和 Releases 保留。当时未发布 v2.1.6 Release 或标签。
+
+## 关联接入
+
+[DSH 通用插件与显式档案绑定](2026-10-28-dsh-generic-plugin-binding.md)复用本篇契约，记录第三方核心的接入边界和隔离运行验证；不替代其他客户端及版本的验证限制。
