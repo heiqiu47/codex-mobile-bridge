@@ -412,10 +412,10 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
         let heading = label(MobileStrings.text("电脑上的工作，\n带在身边。"), size: 30, weight: .semibold); heading.textAlignment = .center; hero.addArrangedSubview(heading)
         let hint = label(MobileStrings.text("继续聊天、查看结果，让电脑替你运行。"), secondary: true); hint.textAlignment = .center; hero.addArrangedSubview(hint)
         hero.setCustomSpacing(24, after: visual); content.addArrangedSubview(hero)
-        content.addArrangedSubview(card([button(MobileStrings.text("扫码连接电脑"), symbol: "qrcode.viewfinder", primary: true) { [weak self] in self?.scan() }, button(MobileStrings.text("输入网关地址"), symbol: "link") { [weak self] in self?.manualAddress() }]))
+        content.addArrangedSubview(card([button(MobileStrings.text("扫码连接电脑"), symbol: "qrcode.viewfinder", primary: true) { [weak self] in self?.scan() }, button(MobileStrings.text("输入网关地址"), symbol: "link") { [weak self] in self?.manualAddress() }, button("DSH Mobile", symbol: "link") { [weak self] in self?.manualDsh() }]))
         let computersHeading = UIStackView(arrangedSubviews: [label(MobileStrings.text("我的电脑"), size: 19, weight: .semibold), button(MobileStrings.text("刷新状态"), symbol: "arrow.clockwise") { [weak self] in self?.checkComputers(); self?.sync() }])
         computersHeading.axis = .horizontal; computersHeading.alignment = .center; computersHeading.spacing = 8; content.addArrangedSubview(computersHeading)
-        if saved.isEmpty {
+        if saved.isEmpty && DshMobileStore.ids.isEmpty {
             content.addArrangedSubview(card([label(MobileStrings.text("还没有连接的电脑"), size: 17, weight: .medium), label(MobileStrings.text("在电脑网关中展开“扫码登录”，然后用上方按钮扫描。"), secondary: true)]))
         } else {
             for address in recentComputers {
@@ -437,6 +437,18 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
                 content.addArrangedSubview(card([heading, label(address, size: 13, secondary: true), actions]))
                 updateComputerNotifications(computerSnapshots[address], address: address)
             }
+        }
+        for id in DshMobileStore.ids {
+            let url = DshMobileStore.load(id)
+            let open = button("DSH Mobile · " + (url.map(DshMobileURL.display) ?? MobileStrings.text("连接凭据不可用"))) { [weak self] in
+                guard let url else { self?.info(MobileStrings.text("连接凭据不可用，请移除后重新添加")); return }; self?.openDsh(url)
+            }
+            let remove = button(MobileStrings.text("移除这台电脑"), symbol: "trash") { [weak self] in
+                let alert = UIAlertController(title: MobileStrings.text("移除这台电脑") + "？", message: nil, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel))
+                alert.addAction(UIAlertAction(title: MobileStrings.text("移除"), style: .destructive) { _ in DshMobileStore.remove(id); self?.home() }); self?.present(alert, animated: true)
+            }
+            content.addArrangedSubview(card([open, remove]))
         }
         let foot = label(MobileStrings.text("外出使用 HTTPS 地址；局域网地址需要连接同一网络。"), size: 13, secondary: true); foot.textAlignment = .center; content.addArrangedSubview(foot)
         checkComputers(); sync()
@@ -510,11 +522,32 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
         a.addTextField { field in field.text = "https://"; field.keyboardType = .URL; field.autocapitalizationType = .none; field.autocorrectionType = .no; field.placeholder = "https://codex.try2love.com" }
         a.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel)); a.addAction(UIAlertAction(title: MobileStrings.text("继续"), style: .default) { [weak self, weak a] _ in self?.choose(a?.textFields?.first?.text ?? "") }); present(a, animated: true)
     }
+    private func manualDsh() {
+        let alert = UIAlertController(title: "DSH Mobile", message: MobileStrings.text("粘贴 DSH 客户端 Mobile 功能提供的完整链接"), preferredStyle: .alert)
+        alert.addTextField { $0.placeholder = "https://…/?auth=…"; $0.keyboardType = .URL; $0.autocapitalizationType = .none; $0.autocorrectionType = .no }
+        alert.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel))
+        alert.addAction(UIAlertAction(title: MobileStrings.text("继续"), style: .default) { [weak self, weak alert] _ in self?.chooseDsh(alert?.textFields?.first?.text ?? "") }); present(alert, animated: true)
+    }
+    private func chooseDsh(_ value: String) {
+        do {
+            let url = try DshMobileURL.connection(value)
+            let alert = UIAlertController(title: MobileStrings.text("连接 DSH Mobile？"), message: DshMobileURL.display(url) + MobileStrings.text("\n请确认这是你自己的 DSH 客户端。将打开它自带的手机界面。"), preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel))
+            alert.addAction(UIAlertAction(title: MobileStrings.text("连接"), style: .default) { [weak self] _ in
+                do { try DshMobileStore.save(url); self?.home(); self?.openDsh(url) } catch { self?.info(MobileStrings.text("无法保存 DSH Mobile 连接")) }
+            }); present(alert, animated: true)
+        } catch { info(error.localizedDescription) }
+    }
+    private func openDsh(_ url: URL) {
+        let controller = UINavigationController(rootViewController: DshMobileController(url)); controller.modalPresentationStyle = .fullScreen
+        controller.overrideUserInterfaceStyle = overrideUserInterfaceStyle; present(controller, animated: true)
+    }
     func choose(_ value: String) {
         do { let url = try GatewayURL.connection(value); let address = try GatewayURL.origin(value)
             let alert = UIAlertController(title: MobileStrings.text("连接到这台电脑？"), message: address + MobileStrings.text("\n请确认这是你自己的网关。"), preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel)); alert.addAction(UIAlertAction(title: MobileStrings.text("连接"), style: .default) { _ in self.connect(url, address: address) }); present(alert, animated: true)
-        } catch { info(error.localizedDescription) }
+            alert.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel)); alert.addAction(UIAlertAction(title: MobileStrings.text("连接"), style: .default) { _ in self.connect(url, address: address) })
+            alert.addAction(UIAlertAction(title: "DSH Mobile", style: .default) { [weak self] _ in self?.chooseDsh(value) }); present(alert, animated: true)
+        } catch { chooseDsh(value) }
     }
     func openNotification(_ address: String, thread: String?, host: String) {
         guard saved.contains(address) else { info(MobileStrings.text("请先连接通知对应的电脑。")); return }
@@ -1390,6 +1423,16 @@ enum ComputerNotificationSummary {
 
 enum MobileStrings {
     static let values: [String: String] = [
+        "粘贴 DSH 客户端 Mobile 功能提供的完整链接": "Paste the full link from your DSH client’s Mobile feature",
+        "连接 DSH Mobile？": "Connect to DSH Mobile?",
+        "\n请确认这是你自己的 DSH 客户端。将打开它自带的手机界面。": "\nConfirm this is your DSH client. Its own mobile interface will open.",
+        "无法保存 DSH Mobile 连接": "Could not save the DSH Mobile connection",
+        "连接凭据不可用，请移除后重新添加": "Connection credentials are unavailable. Remove and add this connection again.",
+        "连接凭据不可用": "Connection credentials unavailable",
+        "Android 8 请使用浏览器打开 DSH Mobile；App 内连接需要 Android 9 或更高版本。": "On Android 8, open DSH Mobile in your browser. In-app access requires Android 9 or later.",
+        "连接失败，请刷新重试": "Connection failed. Refresh to retry",
+        "DSH Mobile 地址无效": "Invalid DSH Mobile URL",
+        "请使用完整的 DSH Mobile HTTPS 链接，或局域网 HTTP 链接。": "Use a full DSH Mobile HTTPS link, or an HTTP link on your local network.",
         "通知来源": "Notification sources",
         "仅控制这台手机的任务提醒，不影响聊天和通知收件箱。": "Choose task alerts for this phone. Chats and notification inboxes remain available.",
         "尚未保存电脑连接": "No saved computer connections",

@@ -10,6 +10,8 @@ test('standalone bundle preserves instance identity and refuses duplicate writer
     const source=resolve('bridge/clients/deepseek'),bundle=join(root,'bundle'),home=join(root,'home'),profile=join(home,'profiles/web');
     await mkdir(bundle);await mkdir(profile,{recursive:true});
     await copyFile(join(source,'plugin/index.mjs'),join(bundle,'index.mjs'));
+    await copyFile(join(source,'plugin/package.json'),join(bundle,'package.json'));
+    await copyFile(join(source,'plugin/cordis.patch.yml'),join(bundle,'cordis.patch.yml'));
     await copyFile(join(source,'host.mjs'),join(bundle,'host.mjs'));
     const {apply}=await import(pathToFileURL(join(bundle,'index.mjs')));
     const ctx={profileContext:{name:'web',dir:profile,home},
@@ -24,7 +26,7 @@ test('standalone bundle preserves instance identity and refuses duplicate writer
     assert.equal(binding.packageDirectory,bundle);assert.equal(connection.token.length,64);
     if(process.platform!=='win32')assert.equal((await stat(join(directory,'connection.json'))).mode&0o777,0o600);
     const response=await fetch(`http://127.0.0.1:${endpoint.port}/mobile`,{method:'POST',headers:{Authorization:'Bearer '+connection.token},body:JSON.stringify({action:'status'})});
-    assert.equal((await response.json()).bridgeRevision,9);
+    const status=await response.json();assert.equal(status.bridgeRevision,9);assert.deepEqual(status.plugin,binding.plugin);assert.equal(status.plugin.version,'0.2.0');
     await assert.rejects(apply(ctx),/已有 Bridge 接入/);
     assert.deepEqual(await json('endpoint.json'),endpoint);
     await disposers.pop()();

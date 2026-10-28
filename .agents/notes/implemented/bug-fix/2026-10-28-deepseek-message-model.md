@@ -35,3 +35,6 @@ DSH 插件在历史页内部顺序关联请求头；当首条相关事件已经�
 ## 关联接入
 
 [DSH 通用插件与显式档案绑定](../feature/2026-10-28-dsh-generic-plugin-binding.md)复用本篇契约，记录第三方核心的接入边界和隔离运行验证；不替代其他客户端及版本的验证限制。
+
+
+后续 [DSH 双路线接入](../feature/2026-10-29-dsh-mobile-and-plugin-compatibility.md) 增加独立 Mobile 浏览容器与插件协议校验；本篇 Bridge 路径的既有约束保持。

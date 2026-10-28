@@ -35,9 +35,10 @@ test('manual DSH binding only offers disabling access and cancellation',async()=
 test('manual plugin controls use selected local paths and cancellation submits nothing',async()=>{
  const ui=fixture();vm.runInContext(fs.readFileSync('desktop/features/clients/desktop-sessions.js','utf8'),ui.context);
  const Panel=vm.runInContext('DesktopConnectionsPanel',ui.context),controller=Object.create(Panel.prototype),calls=[],messages=[];
- let selected='/local/plugin';
- Object.assign(controller,{clientsRevision:0,statusRevision:0,renderClients(){},renderScan(){},refreshClients:async()=>{},refresh:async()=>{},feedback:(...args)=>messages.push(args),api:{choose:async kind=>{calls.push(kind);return selected;},desktopSessions:async value=>{calls.push(JSON.parse(JSON.stringify(value)));return {bound:true};}}});
- await controller.manualDeepseek('bind-deepseek-plugin');assert.deepEqual(calls,['file',{action:'bind-deepseek-plugin',file:'/local/plugin'}]);
+ let selected='/local/plugin',confirmed=true;ui.context.window={confirm:()=>confirmed};
+ Object.assign(controller,{clientsRevision:0,statusRevision:0,renderClients(){},renderScan(){},refreshClients:async()=>{},refresh:async()=>{},feedback:(...args)=>messages.push(args),api:{choose:async kind=>{calls.push(kind);return selected;},desktopSessions:async value=>{calls.push(JSON.parse(JSON.stringify(value)));return {bound:true,profile:'web',home:'/local/home',instanceId:'fixture',plugin:{version:'0.2.0'}};}}});
+ await controller.manualDeepseek('bind-deepseek-plugin');assert.deepEqual(calls,['file',{action:'preview-deepseek-plugin',file:'/local/plugin'},{action:'bind-deepseek-plugin',file:'/local/plugin',instanceId:'fixture'}]);
+ calls.length=0;confirmed=false;await controller.manualDeepseek('bind-deepseek-plugin');assert.deepEqual(calls,['file',{action:'preview-deepseek-plugin',file:'/local/plugin'}]);
  calls.length=0;selected=null;await controller.manualDeepseek('export-deepseek-plugin');assert.deepEqual(calls,['folder']);assert.equal(controller.busy,false);
 });
 

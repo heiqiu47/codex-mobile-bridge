@@ -21,3 +21,6 @@ WebView 加载前，如 Cookie 缺失或与安全副本不符，原生端用只�
 Cookie 丢失后，仍有效的绑定可在加载登录界面前或已打开页面遇到 401 时恢复；服务器撤销后不能恢复。需要恢复时会增加有限时的只读校验，离线时仍进入原有页面错误路径。Android KeyStore 或 iOS Keychain 不可用时不会把明文令牌写入普通偏好设置。真实设备上的存储与系统清理行为仍需设备验证。
 
 相关 Cookie 名称和旧版兼容规则见[网关会话 Cookie 隔离记录](../bug-fix/2026-10-13-gateway-cookie-namespace.md)。历史笔记只有该记录部分重叠；它规定网关命名，本篇规定原生安全副本与恢复时序。
+
+
+后续 [DSH 双路线接入](2026-10-29-dsh-mobile-and-plugin-compatibility.md) 增加独立 Mobile 浏览容器与插件协议校验；本篇 Bridge 路径的既有约束保持。

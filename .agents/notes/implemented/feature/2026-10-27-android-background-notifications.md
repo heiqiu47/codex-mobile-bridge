@@ -55,3 +55,6 @@ Java 接收器真实回环 HTTP/JSON 检查通过，覆盖流重置、游标、�
 后续 [iOS 全局主题与前台通知](../feature/2026-10-28-ios-theme-and-foreground-notifications.md) 将统一主题契约扩展到 iOS，并共用主题回传脚本；本篇原有平台范围保留为当时决定，其他安卓行为不变。
 
 后续由[手机按连接地址选择通知来源](2026-10-28-mobile-notification-sources.md)补充本机逐地址开关；本篇原有权限、接收及平台边界继续适用。
+
+
+后续 [DSH 双路线接入](2026-10-29-dsh-mobile-and-plugin-compatibility.md) 增加独立 Mobile 浏览容器与插件协议校验；本篇 Bridge 路径的既有约束保持。

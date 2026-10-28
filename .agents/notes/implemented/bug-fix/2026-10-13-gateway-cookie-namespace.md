@@ -19,3 +19,6 @@ Status: implemented
 ## 影响
 
 同一主机的不同网关可以并存并保留各自登录；旧令牌在有效期内有条件迁移。新增公开的 Cookie 名称不是认证秘密。原生客户端必须维护按连接地址的名称映射，且真实设备的 Cookie 存储行为仍需平台构建验证。
+
+
+后续 [DSH 双路线接入](../feature/2026-10-29-dsh-mobile-and-plugin-compatibility.md) 增加独立 Mobile 浏览容器与插件协议校验；本篇 Bridge 路径的既有约束保持。

@@ -303,10 +303,13 @@ class DesktopConnectionsPanel {
         payload.destination=await this.api.choose('folder');if(!payload.destination)return;
       }else if(action==='bind-deepseek-plugin'){
         payload.file=file||await this.api.choose('file');if(!payload.file)return;
+        const preview=await this.api.desktopSessions({action:'preview-deepseek-plugin',file:payload.file});
+        if(!window.confirm(BridgeI18n.t('连接这个 Harness 档案？')+'\n'+preview.profile+'\n'+preview.home+'\n'+BridgeI18n.t('插件版本：')+(preview.plugin?.version||BridgeI18n.t('旧版'))+'\n'+BridgeI18n.t('仅绑定当前网关，不退出或修改原客户端。')))return;
+        payload.instanceId=preview.instanceId;
       }
       const value=await this.api.desktopSessions(payload);
       if(action==='scan-deepseek-plugins'){this.renderPluginCandidates(value.candidates||[]);return;}
-      this.feedback(value.path?BridgeI18n.t('插件包已保存：')+value.path:BridgeI18n.t(value.bound?'已绑定，请开启 DSH 接入':'已解除手动绑定'));
+      this.feedback(value.path?BridgeI18n.t('插件包已保存：')+value.path+(value.tarPath?' · '+value.tarPath:''):BridgeI18n.t(value.bound?'已绑定，请开启 DSH 接入':'已解除手动绑定'));
     }catch(error){this.feedback(error.message,true);}
     finally{this.busy=false;await this.refreshClients(true);await this.refresh();this.renderClients();this.renderScan();}
   }

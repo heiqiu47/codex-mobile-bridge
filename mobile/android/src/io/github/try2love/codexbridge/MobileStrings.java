@@ -3,6 +3,17 @@ import android.content.Context;
 final class MobileStrings {
  private static final java.util.Map<String,String> values=new java.util.HashMap<>();
  static {
+  values.put("粘贴 DSH 客户端 Mobile 功能提供的完整链接","Paste the full link from your DSH client’s Mobile feature");
+  values.put("连接 DSH Mobile？","Connect to DSH Mobile?");
+  values.put("\n请确认这是你自己的 DSH 客户端。将打开它自带的手机界面。","\nConfirm this is your DSH client. Its own mobile interface will open.");
+  values.put("无法保存 DSH Mobile 连接","Could not save the DSH Mobile connection");
+  values.put("连接凭据不可用，请移除后重新添加","Connection credentials are unavailable. Remove and add this connection again.");
+  values.put("连接凭据不可用","Connection credentials unavailable");
+  values.put("Android 8 请使用浏览器打开 DSH Mobile；App 内连接需要 Android 9 或更高版本。","On Android 8, open DSH Mobile in your browser. In-app access requires Android 9 or later.");
+  values.put("连接失败，请刷新重试","Connection failed. Refresh to retry");
+  values.put("DSH Mobile 地址无效","Invalid DSH Mobile URL");
+  values.put("请使用完整的 DSH Mobile HTTPS 链接，或局域网 HTTP 链接。","Use a full DSH Mobile HTTPS link, or an HTTP link on your local network.");
+
   values.put("设置","Settings");
   values.put("返回","Back");
   values.put("主题","Theme");

@@ -1,6 +1,6 @@
 {
   "name": "dsh-codex-mobile-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Connect an existing DeepSeek Harness profile to Codex Mobile Bridge",
   "type": "module",
   "main": "index.mjs",
@@ -17,5 +17,12 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "engines": {
+    "dsh": "0.2.1-rc.2"
+  },
+  "dshBridge": {
+    "protocol": 1,
+    "revision": 9
   }
 }

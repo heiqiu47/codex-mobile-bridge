@@ -4,6 +4,9 @@ import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {apply as attach,inject as services} from './host.mjs';
+const packageDirectory=dirname(fileURLToPath(import.meta.url));
+const manifest=JSON.parse(await readFile(join(packageDirectory,'package.json'),'utf8'));
+const plugin={name:manifest.name,version:manifest.version,...manifest.dshBridge};
 
 export const inject=[...services,'profileContext'];
 async function privateFile(path){
@@ -41,7 +44,7 @@ async function start(ctx,identity){
     await save(configPath,connection);
   }
   if(typeof connection.token!=='string'||connection.token.length!==64||connection.endpoint!==endpoint||typeof connection.instanceId!=='string')throw Error('Bridge 接入配置不匹配');
-  const binding={protocol:1,...identity,instanceId:connection.instanceId,packageDirectory:dirname(fileURLToPath(import.meta.url))};
+  const binding={protocol:1,...identity,instanceId:connection.instanceId,packageDirectory,plugin};
   await save(join(directory,'binding.json'),binding);
-  await attach(ctx,{configPath});
+  await attach(ctx,{configPath,plugin});
 }

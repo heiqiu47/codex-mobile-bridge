@@ -36,3 +36,6 @@ MainActivity 在创建 WebView 时提供对应的主题 Context，在页面可�
 Chrome/WebKit 宽窄屏回归验证四种原生选择组合、反向事件、强调色与草稿保留。Android 35 隔离模拟器的真实 Activity/WebView 验证首次深色进入、两个入口同步、系统实时切换和同一 WebView/草稿保留。真机验收仍由用户安装本轮 APK 后进行；不把模拟器结果当作所有厂商 Android 的保证。
 
 后续 [iOS 全局主题与前台通知](../feature/2026-10-28-ios-theme-and-foreground-notifications.md) 将统一主题契约扩展到 iOS，并共用主题回传脚本；本篇原有平台范围保留为当时决定，其他安卓行为不变。
+
+
+后续 [DSH 双路线接入](../feature/2026-10-29-dsh-mobile-and-plugin-compatibility.md) 增加独立 Mobile 浏览容器与插件协议校验；本篇 Bridge 路径的既有约束保持。

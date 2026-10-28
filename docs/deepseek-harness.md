@@ -107,3 +107,14 @@ npm run test:desktop
 协议测试使用本地模拟运行时，不调用模型，覆盖认证隔离、二进制上传下载、实时连接和进程关闭。真实桌面冒烟脚本为 `scripts/smoke-harness.cjs`，需用 Electron 运行，并设置全新的隔离 `CMB_DATA_DIR` 与已安装程序的 `CMB_HARNESS_EXECUTABLE`；禁止指向正在使用的数据目录。
 
 上游协议参考：[Web 包](https://github.com/deepseek-ai/deepseek-harness/tree/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/bundle/web-app)、[公开部署说明](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/docs/user/guide/public-deployments.md)。仓库版本的 `--public-url` 尚未出现在上述 npm 版本中，因此本实现使用共同支持的 `--profile web --no-open --port` 与官方前端的相对路径。
+
+
+## DSH 自带的 Mobile 连接
+
+Android / iOS 的电脑连接页增加 **DSH Mobile**。粘贴客户端 Mobile 功能生成的完整链接，或扫码后选择 DSH Mobile；确认目标后，App 打开该客户端原有的手机界面，保留路径、查询参数及片段。链接中的认证信息保存在设备加密存储中，电脑列表只显示地址来源，不显示认证参数。
+
+这类连接独立于 Bridge 网关连接，不调用 Bridge 专属账号、通知、探测和下载 API，也不注入 Bridge 聊天脚本。通知及网页主题由原 DSH Mobile 页面支持的能力决定；需要 Bridge 通知和统一聊天界面时，使用通用插件路线。原 Bridge 的主题、返回键和通知来源开关保持原行为。
+
+Android 9 及以上使用独立进程的 WebView 数据目录；Android 8 保留原 Bridge 功能，DSH Mobile 经确认后在系统浏览器中打开。iOS 使用独立临时网站数据存储，关闭后不保留网页 Cookie；重新打开时使用加密保存的原 Mobile 链接。如果客户端发的是一次性链接，需要在客户端重新生成。移除连接不修改原客户端账号或聊天。
+
+通用插件安装、配对、核心范围与更新规则参见 [插件说明](../bridge/clients/deepseek/plugin/README.md)。官方一键接入入口保留；导出的 ZIP 和 npm 格式 `.tgz` 均可用于本地安装，不代表已发布插件市场。

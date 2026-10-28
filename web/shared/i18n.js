@@ -2,6 +2,11 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"连接这个 Harness 档案？":"Connect this Harness profile?",
+"插件版本：":"Plugin version: ",
+"旧版":"Legacy",
+"仅绑定当前网关，不退出或修改原客户端。":"Bind this gateway only, without quitting or changing the original client.",
+
 "提醒已开启":"Notifications on",
 "提醒已关闭":"Notifications off",
 "此开关对当前网关的所有设备生效，默认关闭。":"This switch applies to all devices on this gateway and is off by default.",

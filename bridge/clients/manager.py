@@ -2146,6 +2146,15 @@ class DesktopSessions:
 
     def control(self, value):
         action = value.get('action', 'status')
+        if action == 'preview-deepseek-plugin':
+            from bridge.clients.deepseek.manual import ManualDeepSeek
+            adapter = ManualDeepSeek(value.get('file', ''))
+            status = adapter.call('status')
+            if status.get('connected') is not True:
+                raise ValueError('插件尚未连接，请在第三方客户端加载插件')
+            return {'profile': adapter.binding['profile'], 'home': adapter.binding['home'],
+                    'instanceId': adapter.binding['instanceId'], 'plugin': adapter.plugin,
+                    'file': str(adapter.directory/'binding.json')}
         if action == 'scan-deepseek-plugins':
             from bridge.clients.deepseek.manual import discover_plugins
             return {'candidates': discover_plugins(value.get('home'))}
@@ -2195,7 +2204,7 @@ class DesktopSessions:
                     raise ValueError('请先仅停用 DSH 手机接入，再切换或解除绑定')
                 if action == 'bind-deepseek-plugin':
                     from bridge.clients.deepseek.manual import ManualDeepSeek
-                    adapter = ManualDeepSeek(value.get('file', ''))
+                    adapter = ManualDeepSeek(value.get('file', ''), value.get('instanceId'))
                     status = adapter.call('status')
                     if status.get('connected') is not True:
                         raise ValueError('插件尚未连接，请在第三方客户端加载插件')
