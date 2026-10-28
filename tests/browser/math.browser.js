@@ -30,6 +30,13 @@ $$\frac{a}{b}$$`;
   check('display and inline modes', node.querySelectorAll('.katex-display').length === 3);
   check('TeX survives Markdown escapes', node.querySelectorAll('annotation')[2]?.textContent.includes(String.raw`\sum_v w_v p_v(A)`));
   check('fractions have MathML', node.querySelector('mfrac'));
+  const adjacent = render(String.raw`要证明存在正数，先令
+\[
+S=\{x>0:x^2\le b\},\qquad a=\sup S.
+\]
+后续正文`);
+  check('display math interrupts a paragraph without a blank line', adjacent.querySelectorAll('.katex-display').length === 1);
+  check('adjacent display math preserves TeX', adjacent.querySelector('annotation')?.textContent.trim() === String.raw`S=\{x>0:x^2\le b\},\qquad a=\sup S.`);
   check('code and escaped dollars stay literal', !render('`\\(x\\)`\n\n```tex\n\\[x^2\\]\n```\n\n\\$x\\$').querySelector('.katex'));
   check('currency stays text', !render('价格 $20 和 $30，合计 $50。').querySelector('.katex'));
   check('plain brackets stay text', render('[这是说明]').textContent === '[这是说明]');
