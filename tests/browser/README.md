@@ -8,6 +8,8 @@
 
 `npm run test:browser` 自动启动隔离服务，在 Chromium/WebKit 的 1280 px 与 390 px 视口执行 `critical.spec.cjs` 指定的检查。它调用并等待实际检查函数，不把页面加载计作通过。准备方式及失败证据见 [验证入口](../README.md#node-与浏览器)。其他专项夹具仍按下面各节单独执行；这套通过不代表所有浏览器功能均已覆盖。
 
+Markdown 与公式检查也由此入口执行：先加载生产聊天与公式资源，再运行 `markdown.browser.js` 的 15 项检查和 `math.browser.js` 的 13 项检查，覆盖无空行块公式、TeX 原文、代码、链接安全、流式片段及窄屏滚动。可用 `npm run test:browser -- --grep 'Markdown, literal code and math rendering'` 单独运行这四组浏览器与视口组合；不代表手机 WebView 真机验收。
+
 ## 启动恢复检查
 
 运行 `python3 -B tests/browser/bootstrap-fixture.py`，在一个测试标签页访问它打印的 loopback 地址。用 `?case=success` 等参数选择场景，完整清单见夹具文件头。夹具提供生产 Web 资源与合成认证，不连接真实网关；每次导航重置故障计数，不能多页同时操作。

@@ -1,5 +1,7 @@
 'use strict';
 const {test, expect} = require('@playwright/test');
+const {readFileSync} = require('node:fs');
+const path = require('node:path');
 
 test.beforeEach(async ({context, request, baseURL}) => {
   // Even a test failure must never fall through to a real client or upstream API.
@@ -15,6 +17,21 @@ async function ready(page, scenario = 'success') {
     return status && (status.hidden || status.dataset.state === 'failed');
   });
 }
+
+test('Markdown, literal code and math rendering', async ({page}, testInfo) => {
+  await ready(page);
+  await expect(page.locator('#bootstrap-status')).toBeHidden();
+  await page.evaluate(async () => {
+    await BridgeFeatures.load('chat');
+    await BridgeFeatures.load('math');
+    await document.fonts.ready;
+  });
+  for (const [file, count] of [['markdown', 15], ['math', 13]]) {
+    const result = await page.evaluate(readFileSync(path.join(__dirname, file + '.browser.js'), 'utf8'));
+    expect(result.passed).toBe(count);
+    await testInfo.attach(file + '-checks', {body: JSON.stringify(result), contentType: 'application/json'});
+  }
+});
 
 for (const scenario of ['success', 'css-once', 'js-twice', 'js-fatal', 'runtime',
   'opaque-error', 'external-runtime', 'external-rejection', 'app-cached-failure']) {
