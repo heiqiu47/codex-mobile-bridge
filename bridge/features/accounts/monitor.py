@@ -10,7 +10,9 @@ from bridge.features.notifications.channels import channels, publish, publish_ba
 
 
 DEFAULTS = {'lowQuota':False, 'quotaReset':False, 'resetExpiry':False,
-            'subscriptionExpiry':False, 'desktopUpdate':False}
+            'subscriptionExpiry':False, 'desktopUpdate':False,
+            'globalReset':False, 'globalResetSignal':False}
+GLOBAL_REMINDERS = ('globalReset', 'globalResetSignal')
 
 
 def account_identity(owner, fallback):
@@ -55,6 +57,8 @@ class AccountMonitor:
         self.path = manager.root/'reminders.json'
         self.ledger_path = manager.root/'reminder-delivery.json'
         self.preferences = {**DEFAULTS, **read_json(self.path, {})}
+        enabled = any(self.preferences[k] for k in GLOBAL_REMINDERS)
+        self.preferences.update({k: enabled for k in GLOBAL_REMINDERS})
         self.ledger = read_json(self.ledger_path, {})
         self.previous = {}
         self.closed = threading.Event()
@@ -63,6 +67,8 @@ class AccountMonitor:
         self.current_value = None
         self.current_stamp = None
         self.current_checked = 0
+        self.global_watch_path = manager.root/'global-reset-watch.json'
+        self.global_watch = read_json(self.global_watch_path, {})
 
     def adopt_identity(self, identity, aliases):
         before = self.ledger.copy()
@@ -92,9 +98,20 @@ class AccountMonitor:
     def configure(self, value):
         if not isinstance(value, dict) or set(value)-set(DEFAULTS) or any(type(v) is not bool for v in value.values()):
             raise ValueError('提醒设置无效')
+        if any(k in value for k in GLOBAL_REMINDERS):
+            enabled = any(value.get(k, False) for k in GLOBAL_REMINDERS)
+            value = {**value, **{k: enabled for k in GLOBAL_REMINDERS}}
         with self.manager.lock:
+            for kind in GLOBAL_REMINDERS:
+                if value.get(kind) is True and not self.preferences.get(kind):
+                    self.global_watch[kind] = time.time()
+            write_json(self.global_watch_path, self.global_watch)
             self.preferences = {**self.preferences, **value}
             write_json(self.path, self.preferences)
+
+    def reset_global_watch(self):
+        self.global_watch.update({kind: time.time() for kind in GLOBAL_REMINDERS})
+        write_json(self.global_watch_path, self.global_watch)
 
     def deliver(self, identity, event):
         kind, key, title, body = event
@@ -110,7 +127,8 @@ class AccountMonitor:
                 delivered = False
                 continue
             current = settings(self.manager.bridge.data_dir)
-            if self.closed.is_set() or not self.preferences[kind] or channels(current).get(channel) != destination:
+            if (self.closed.is_set() or not self.preferences[kind] or channels(current).get(channel) != destination or
+                    kind in GLOBAL_REMINDERS and (not self.manager.reset_dynamic_enabled or float(key) <= self.global_watch.get(kind, 0))):
                 continue
             try:
                 if channel == 'webhook' or channel.startswith('webhook:'):
@@ -129,19 +147,49 @@ class AccountMonitor:
             write_json(self.ledger_path, self.ledger)
         return delivered
 
+    def scan_global_reset(self):
+        with self.manager.lock:
+            if not self.manager.reset_dynamic_enabled:
+                return
+            forecast = self.manager.reset_forecast
+            forecast.request()
+        value = forecast.status()
+        if value.get('state') != 'ready' or value.get('stale'):
+            return
+        now = time.time()
+        pending = []
+        with self.manager.lock:
+            for kind in GLOBAL_REMINDERS:
+                if self.preferences[kind] and kind not in self.global_watch:
+                    self.global_watch[kind] = now
+                    write_json(self.global_watch_path, self.global_watch)
+            reset = value.get('lastResetAt')
+            if self.preferences['globalReset'] and reset and reset > self.global_watch['globalReset']:
+                pending.append(('globalReset', str(reset), 'Codex 重置动态',
+                                '第三方来源报告了全局重置。个人剩余额度请查看账号卡片。\n数据：' + value['source']))
+            signal = value.get('officialSignal')
+            if (self.preferences['globalResetSignal'] and signal and signal.get('at') and
+                    signal['at'] > self.global_watch['globalResetSignal']):
+                pending.append(('globalResetSignal', str(signal['at']), 'Codex 重置预告动态',
+                                '第三方来源收录了重置预告，尚未确认完成。\n数据：' + value['source']))
+        for event in pending:
+            self.deliver('global', event)
+
     def scan(self):
         if self.closed.is_set() or not any(self.preferences.values()):
             return
         # No quota polling when all delivery channels are disabled.
         if not channels(settings(self.manager.bridge.data_dir)):
             return
+        if any(self.preferences[k] for k in GLOBAL_REMINDERS):
+            self.scan_global_reset()
         if self.preferences['desktopUpdate']:
             self.manager.updates.check(background=True)
             update = self.manager.updates.status()
             if update.get('state') == 'available':
                 self.deliver('desktop', ('desktopUpdate', str(update['targetBuild']), 'Codex Desktop 有新版本',
                                         '官方更新渠道发布了新版本，请在客户端管理的 Codex 版本与更新中查看。'))
-        if not any(self.preferences[k] for k in DEFAULTS if k != 'desktopUpdate'):
+        if not any(self.preferences[k] for k in DEFAULTS if k not in (*GLOBAL_REMINDERS, 'desktopUpdate')):
             return
         with self.manager.lock:
             self.manager.check_ready()

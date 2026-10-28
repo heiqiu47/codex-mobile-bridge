@@ -18,6 +18,24 @@ class AccountsHttpTests(unittest.TestCase):
         self.server.bridge.accounts = manager
         return manager
 
+    def test_reset_dynamic_setting_and_requests_require_auth_and_enabled_feature(self):
+        manager = self.manager()
+        manager.reset_dynamic_enabled = False
+        manager.reset_forecast = SimpleNamespace(request=Mock())
+        manager.set_reset_dynamic = Mock()
+        path = '/api/accounts/reset-dynamic'
+        self.assertEqual(self.request('POST', path, {'enabled': True})[0], 401)
+        headers = self.login()
+        self.assertEqual(self.request('POST', path, {'enabled': True}, {'Cookie': headers['Cookie']})[0], 403)
+        self.assertEqual(self.request('POST', path, {'enabled': True, 'extra': True}, headers)[0], 400)
+        self.assertEqual(self.request('POST', path, {'enabled': True}, headers)[0], 200)
+        manager.set_reset_dynamic.assert_called_once_with(True)
+        self.assertEqual(self.request('GET', '/api/accounts?resetForecast=1', headers=headers)[0], 200)
+        manager.reset_forecast.request.assert_not_called()
+        manager.reset_dynamic_enabled = True
+        self.assertEqual(self.request('GET', '/api/accounts?resetForecast=1', headers=headers)[0], 200)
+        manager.reset_forecast.request.assert_called_once_with(refresh=False)
+
     def test_switch_requires_auth_csrf_and_exact_payload(self):
         manager = self.manager()
         value = {'id': 'fixture', 'requestId': 'fixture', 'confirmed': True, 'tasksConfirmed': True}

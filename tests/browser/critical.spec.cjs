@@ -175,3 +175,33 @@ for(const provider of ['Codex','Claude','DSH']){
   expect(await page.evaluate(()=>window.__startupTest.errors)).toEqual([]);
  });
 }
+
+test('reset outlook is opt-in and fits both themes',async({page},testInfo)=>{
+  await ready(page);
+  await page.evaluate(()=>{
+    const now=Date.now()/1000;
+    const value={accounts:[],resetDynamicEnabled:true,reminders:{},globalReset:{state:'ready',updatedAt:now,checkedAt:now,lastResetAt:now-172800,probabilities:{h24:24,h48:48},confidence:'low'}};
+    accountsPanel.read=async()=>value;
+    accountsPanel.request=async()=>value;
+    accountsPanel.accept(value);
+    document.getElementById('accounts-dialog').showModal();
+  });
+  const card=page.locator('.accounts-global-reset');
+  for(const theme of ['light','dark']){
+    await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
+    await expect(card).toBeVisible();
+    await expect(card).toContainText('第三方统计与预测');
+    await expect(card).toContainText('24%');
+    await expect(card).toContainText('48%');
+    await expect(card.getByRole('button',{name:'开启重置动态提醒'})).toHaveAttribute('aria-pressed','false');
+    const bounds=await card.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x+bounds.width).toBeLessThanOrEqual(page.viewportSize().width);
+    await page.screenshot({path:testInfo.outputPath('reset-outlook-'+theme+'.png')});
+  }
+  await page.evaluate(()=>accountsPanel.accept({...accountsPanel.value,globalReset:{...accountsPanel.value.globalReset,state:'error',stale:true}}));
+  await expect(card).toContainText('数据延迟');
+  await expect(card.locator('.accounts-global-odds')).toHaveCount(0);
+  await page.evaluate(()=>accountsPanel.accept({...accountsPanel.value,resetDynamicEnabled:false,globalReset:null}));
+  await expect(card).toBeHidden();
+});

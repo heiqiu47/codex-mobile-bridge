@@ -25,6 +25,7 @@ from bridge.clients.desktop_app import DesktopApp
 from bridge.features.accounts.models import model_catalog, model_ids
 from bridge.clients.codex.catalog import Catalog, ModelStore, MODEL_REFRESH_SECONDS
 from bridge.features.accounts.info import AccountInfo
+from bridge.features.accounts.reset_forecast import ResetForecast
 from bridge.clients.codex.configuration import magpie_managed
 from bridge.clients.codex.transport import connect_stream
 from bridge.features.notifications.channels import read_json
@@ -156,6 +157,8 @@ class Accounts:
         self.discovery = None
         self.candidates = {}
         self.info = AccountInfo(self)
+        self.reset_forecast = ResetForecast()
+        self.reset_dynamic_enabled = read_json(self.root/'reset-dynamic.json', {}).get('enabled') is True
         from bridge.features.updates.codex import DesktopUpdates
         from bridge.features.accounts.monitor import AccountMonitor
         self.updates = DesktopUpdates(self)
@@ -248,9 +251,20 @@ class Accounts:
                     'externalChange': bool(self.index.get('activeId')) and not verified,
                     'sharedWithLocalCli': True, 'switch': dict(self.state),
                     'loginAccount': copy.deepcopy(self.info.current_login()),
+                    'resetDynamicEnabled':self.reset_dynamic_enabled,
+                    'globalReset':self.reset_forecast.status() if self.reset_dynamic_enabled else None,
                     'reminders':dict(self.monitor.preferences), 'reminderError':self.monitor.last_error,
                     'desktopUpdate':self.updates.status(), 'management': management,
                     'canSwitch': not management['external']}
+
+    def set_reset_dynamic(self, enabled):
+        if type(enabled) is not bool:
+            raise ValueError('重置动态设置无效')
+        with self.lock:
+            if enabled and not self.reset_dynamic_enabled:
+                self.monitor.reset_global_watch()
+            private_json(self.root/'reset-dynamic.json', {'enabled': enabled})
+            self.reset_dynamic_enabled = enabled
 
     def management(self):
         try:
@@ -773,6 +787,8 @@ class Accounts:
             self.info.request(value)
             return self.desktop_status()
         if action == 'list':
+            if self.reset_dynamic_enabled and value.get('resetForecast') in (True, 'refresh'):
+                self.reset_forecast.request(refresh=value.get('resetForecast') == 'refresh')
             return self.desktop_status()
         if action in ('scan', 'import', 'models'):
             return {'scan': self.scan, 'import': self.import_account, 'models': self.models}[action](value)
