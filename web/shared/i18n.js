@@ -2,6 +2,8 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"提醒已开启":"Notifications on",
+"提醒已关闭":"Notifications off",
 "此开关对当前网关的所有设备生效，默认关闭。":"This switch applies to all devices on this gateway and is off by default.",
 "第三方统计与预测，仅供参考；个人额度以账号卡片为准。":"Third-party statistics and forecasts are for reference. Check account cards for your actual quota.",
 "改名结果待核对；不会重复提交，请先在原客户端核对":"Rename needs verification. Check the original client; it will not be submitted again.",
@@ -104,7 +106,7 @@ const en={
 "今天 ":"Today ",
 "昨天 ":"Yesterday ",
 "机器翻译":"Machine translation",
-"重置动态卡片":"Reset outlook card",
+"Codex官方重置动态":"Codex official reset updates",
 "重置动态提醒":"Reset outlook notifications",
 "Tibo 重置动态":"Tibo reset outlook",
 "正在读取重置动态…":"Loading reset outlook…",

@@ -182,10 +182,11 @@ test('reset outlook is opt-in and fits both themes',async({page},testInfo)=>{
     const now=Date.now()/1000;
     const value={accounts:[],resetDynamicEnabled:true,reminders:{},globalReset:{state:'ready',updatedAt:now,checkedAt:now,lastResetAt:now-172800,probabilities:{h24:24,h48:48},confidence:'low'}};
     accountsPanel.read=async()=>value;
-    accountsPanel.request=async()=>value;
+    accountsPanel.request=async request=>{if(request.action==='reminders')value.reminders={...value.reminders,...request.preferences};return value;};
     accountsPanel.accept(value);
     document.getElementById('accounts-dialog').showModal();
   });
+  await expect(page.locator('label:has(#appearance-reset-dynamic)')).toHaveText('Codex官方重置动态');
   const card=page.locator('.accounts-global-reset');
   for(const theme of ['light','dark']){
     await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
@@ -194,11 +195,26 @@ test('reset outlook is opt-in and fits both themes',async({page},testInfo)=>{
     await expect(card).toContainText('24%');
     await expect(card).toContainText('48%');
     await expect(card.getByRole('button',{name:'开启重置动态提醒'})).toHaveAttribute('aria-pressed','false');
+    await expect(card.locator('.accounts-global-reminder')).toHaveText('提醒已关闭');
+    await card.getByRole('button',{name:'开启重置动态提醒'}).click();
+    await expect(card.locator('.accounts-global-reminder')).toHaveText('提醒已开启');
+    await expect(card.getByRole('button',{name:'关闭重置动态提醒'})).toHaveAttribute('aria-pressed','true');
+    await card.getByRole('button',{name:'关闭重置动态提醒'}).click();
+    await expect(card.locator('.accounts-global-reminder')).toHaveText('提醒已关闭');
     const bounds=await card.boundingBox();
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x+bounds.width).toBeLessThanOrEqual(page.viewportSize().width);
     await page.screenshot({path:testInfo.outputPath('reset-outlook-'+theme+'.png')});
   }
+  const alignment=await page.evaluate(()=>{
+    accountsPanel.tools.open=true;
+    return [...accountsPanel.reminders.querySelectorAll('.account-reminder')].map(row=>{
+      const measure=()=>{const a=row.querySelector('input').getBoundingClientRect(),b=row.querySelector('span').getBoundingClientRect();return Math.abs(a.y+a.height/2-b.y-b.height/2);};
+      const normal=measure();row.style.width='160px';const wrapped=measure();row.style.width='';return {normal,wrapped};
+    });
+  });
+  expect(alignment.length).toBeGreaterThan(0);
+  for(const row of alignment){expect(row.normal).toBeLessThanOrEqual(1);expect(row.wrapped).toBeLessThanOrEqual(1);}
   await page.evaluate(()=>accountsPanel.accept({...accountsPanel.value,globalReset:{...accountsPanel.value.globalReset,state:'error',stale:true}}));
   await expect(card).toContainText('数据延迟');
   await expect(card.locator('.accounts-global-odds')).toHaveCount(0);

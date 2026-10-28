@@ -118,6 +118,12 @@ class AccountsTests(unittest.TestCase):
         wait_for_account_worker(self)
         self.tmp.cleanup()
 
+    def test_reset_outlook_and_reminders_default_off_without_saved_settings(self):
+        self.assertFalse(self.manager.reset_dynamic_enabled)
+        self.assertFalse(self.manager.monitor.preferences['globalReset'])
+        self.assertFalse(self.manager.monitor.preferences['globalResetSignal'])
+        self.assertFalse((self.manager.root/'reset-dynamic.json').exists())
+
     def api(self, **changes):
         return self.manager.add_api({'name':'Test API','baseUrl':'https://fixture.invalid/v1',
                                     'apiKey':'secret-fixture','model':'test-model', **changes})['accounts'][-1]

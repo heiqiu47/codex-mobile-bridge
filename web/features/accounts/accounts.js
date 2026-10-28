@@ -327,6 +327,7 @@ class AccountsPanel {
     const reminder=this.button('',()=>this.perform({action:'reminders',preferences:{globalReset:!reminderEnabled,globalResetSignal:!reminderEnabled}}));
     reminder.className='accounts-global-reminder';reminder.disabled=this.busy;reminder.title=this.text(reminderEnabled?'关闭重置动态提醒':'开启重置动态提醒');reminder.setAttribute('aria-label',reminder.title);reminder.setAttribute('aria-pressed',String(reminderEnabled));reminder.setAttribute('data-enabled',String(reminderEnabled));
     reminder.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="accounts-global-bell" d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z"/><path d="M10 21h4"/></svg>';
+    reminder.append(this.node('span',reminderEnabled?'提醒已开启':'提醒已关闭'));
     header.append(this.node('h3','Tibo 重置动态'),reminder);this.globalReset.append(header,this.node('p','第三方统计与预测，仅供参考；个人额度以账号卡片为准。','account-muted'));
     const today=new Date(Date.now()),now=today.getTime()/1000;
     const {stale,resetToday,status,showAnnouncement,showForecast}=resetCardState(value,today);
