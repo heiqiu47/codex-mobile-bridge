@@ -56,6 +56,7 @@ for (const [name, file, invoke] of [
   ['chat history, list entry and scroll position', 'desktop-history', 'runDesktopHistoryBrowserChecks'],
   ['account-scoped drafts and late send acknowledgement', 'persistent-drafts', 'runPersistentDraftTests'],
   ['API form labels, layout and upstream model selection', 'api-form', 'runApiFormBrowserChecks'],
+  ['shared session menu on desktop and mobile', 'session-menu', 'runSessionMenuBrowserChecks'],
   ['composer quotes retain draft and layout', 'composer-quotes', 'runComposerQuoteLayoutChecks'],
 ]) {
   test(name, async ({page}, testInfo) => {
@@ -92,3 +93,47 @@ test('Android app theme synchronizes list and chat without replacing drafts or o
  });
  expect(result).toEqual({states:['dark','light','dark','light','dark'],changes:['dark'],draft:'keep this draft',sameInput:true,accent:'#6655cc',choice:'dark'});
 });
+
+for(const provider of ['Codex','Claude','DSH']){
+ test(provider+' list menu entry, themes and equal archive confirmation',async({page},testInfo)=>{
+  await ready(page,'session-menu');
+  await expect(page.locator('#login')).toBeHidden();
+  await page.locator('#client-switch').getByRole('button',{name:provider,exact:true}).click();
+  const row=page.locator('.session:visible').filter({hasText:provider+' · 页面交互验证'}).first();
+  await expect(row).toBeVisible();
+  const listIdentity=await row.getAttribute('data-id');
+  for(const theme of ['light','dark']){
+   await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+   if(page.viewportSize().width<=640){
+    await row.dispatchEvent('pointerdown',{pointerType:'touch',button:0,clientX:80,clientY:150});
+    await expect(page.locator('dialog.session-menu')).toBeVisible();
+    await row.dispatchEvent('pointerup',{pointerType:'touch',button:0});
+    await row.dispatchEvent('click');
+   }else await row.click({button:'right'});
+   const box=page.locator('dialog.session-menu');
+   await expect(box).toBeVisible();
+   await expect(page.locator('#app')).not.toHaveClass(/chat-open/);
+   await expect(row).toHaveAttribute('data-id',listIdentity);
+   await expect(box.locator('.sm-name strong')).toHaveText(provider+' · 页面交互验证');
+   await expect(box.getByRole('button',{name:'聊天通知设置',exact:true})).toBeVisible();
+   await expect(box.getByRole('button',{name:'项目',exact:true})).toHaveCount(provider==='Codex'?1:0);
+   await box.evaluate(node=>Promise.all(node.getAnimations().map(a=>a.finished)));
+   await page.screenshot({path:testInfo.outputPath(provider+'-'+theme+'-list.png')});
+   await box.getByRole('button',{name:'停止任务并归档…',exact:true}).click();
+   const confirm=box.getByRole('button',{name:'确认归档',exact:true}),cancel=box.getByRole('button',{name:'取消',exact:true});
+   await expect(cancel).toBeFocused();
+   const left=await confirm.boundingBox(),right=await cancel.boundingBox();
+   expect(left.x).toBeLessThan(right.x);expect(Math.abs(left.width-right.width)).toBeLessThan(1);expect(left.height).toBe(right.height);
+   const styles=await box.locator('.sm-confirm-actions button').evaluateAll(buttons=>buttons.map(b=>{const s=getComputedStyle(b);return [s.backgroundColor,s.color,s.borderRadius,s.fontSize];}));
+   expect(styles[0]).toEqual(styles[1]);
+   await page.screenshot({path:testInfo.outputPath(provider+'-'+theme+'-list-confirm.png')});
+   await cancel.click();
+   await expect(box.locator('.sm-name strong')).toHaveText(provider+' · 页面交互验证');
+   await page.keyboard.press('Escape');await expect(box).toHaveCount(0);
+  }
+  const evidence=await page.evaluate(async()=>await(await fetch('/__state')).json());
+  expect(evidence.writes.filter(path=>!path.endsWith('/activity'))).toEqual([]);
+  expect(Object.keys(evidence.requests).filter(path=>/\/(detail|activate|resume)$/.test(path))).toEqual([]);
+  expect(await page.evaluate(()=>window.__startupTest.errors)).toEqual([]);
+ });
+}

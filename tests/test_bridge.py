@@ -185,6 +185,7 @@ class IntegrationTests(unittest.TestCase):
         self.bridge.store.list = unavailable
         remote = SimpleNamespace(host='remote:test', lock=threading.RLock(), live={}, listed=set(), origins={}, _access=self.bridge._access,
                                  session_pins=SimpleNamespace(identifiers=lambda: ()),
+                                 organization_commands=SimpleNamespace(native_memberships=lambda: set()),
                                  store=SimpleNamespace(list=lambda **kw: [{'id': THREAD, 'title': 'Remote chat', 'cwd': '/remote', 'updated_at': 1}]))
         self.bridge.hosts.hosts = lambda: {'remote:test': {'alias': 'test'}}
         self.bridge.for_host = lambda host: remote
@@ -701,11 +702,17 @@ class IntegrationTests(unittest.TestCase):
     def test_project_grouping_recency_and_host_identity(self):
         from bridge.clients.codex.remote import AppHosts
         hosts = AppHosts(self.root)
-        hosts.state = lambda: {'remote-projects': [{'id': 'p', 'hostId': 'remote', 'label': 'Work', 'remotePath': '/work'}]}
+        hosts.state = lambda: {
+            'remote-projects': [{'id': 'p', 'hostId': 'remote', 'label': 'Work', 'remotePath': '/work'}],
+            'thread-project-assignments': {THREAD: {'projectId': 'p', 'hostId': 'remote'}},
+        }
         rows = hosts.decorate([{'id': THREAD, 'cwd': '/work/sub', 'recency_at': 5, 'updated_at': 20}], 'remote', 'Server')
         self.assertEqual(rows[0]['recency'], 5000)
         self.assertEqual(rows[0]['projectKey'], 'remote|p')
         self.assertEqual(rows[0]['projectName'], 'Work')
+        unassigned = hosts.decorate([{'id': 'unassigned', 'cwd': '/work/sub'}], 'remote', 'Server')[0]
+        self.assertEqual(unassigned['projectKey'], 'remote|unassigned')
+        self.assertEqual(unassigned['projectName'], '未归类')
         with self.assertRaises(KeyError):
             self.bridge.for_host('unconfigured-host')
 
@@ -719,6 +726,7 @@ class IntegrationTests(unittest.TestCase):
         remote.origins = {}
         remote._access = self.bridge._access
         remote.session_pins.identifiers.return_value = ()
+        remote.organization_commands.native_memberships.return_value = set()
         remote.store.list.return_value = [{'id': 'remote-thread', 'cwd': '/work', 'updated_at': 50}]
         self.bridge.hosts.hosts = lambda: {'remote': {'alias': 'server'}}
         self.bridge.for_host = lambda host: remote

@@ -4,6 +4,8 @@
 
 仅使用合成会话和测试工作区。不要在真实用户会话中运行会发送消息、修改文件或操作 Git 的夹具。
 
+会话菜单检查：在只加载生产 `session-menu.js`、`session-menu.css` 和基础样式的隔离页面加载 `session-menu.browser.js`，调用并等待 `runSessionMenuBrowserChecks()`。它以合成回调验证置顶、名称转义、详情复制、原生项目与分区选择、当前归属标记、读取错误与迟到响应隔离、归档确认和取消、恢复、认证变化阻断、长按及滚动取消。分别在宽屏、390 px 与 320 px 检查边界和底部面板；合成检查与真实 Android WebView 验收分别记录。
+
 这些脚本不会由 `npm run test:desktop` 执行。该命令只发现 `tests/` 和 `mobile/tests/` 下的 `*.test.js`、`*.test.cjs`、`*.test.mjs`；浏览器检查应单独记录实际执行与未执行情况。
 
 `npm run test:browser` 自动启动隔离服务，在 Chromium/WebKit 的 1280 px 与 390 px 视口执行 `critical.spec.cjs` 指定的检查。它调用并等待实际检查函数，不把页面加载计作通过。准备方式及失败证据见 [验证入口](../README.md#node-与浏览器)。其他专项夹具仍按下面各节单独执行；这套通过不代表所有浏览器功能均已覆盖。

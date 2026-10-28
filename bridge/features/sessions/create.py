@@ -28,7 +28,7 @@ class ForkUnavailable(CreationUnavailable):
     """The capability check failed before any thread could be created."""
 
 
-def _runtime_operation(executable, codex_home, cwd, operation):
+def _runtime_operation(executable, codex_home, cwd, operation, *, failure_message=None):
     if not executable:
         raise CreationUnavailable('找不到 Codex 运行时，请在电脑启动器的运行配置中指定路径')
     if not Path(cwd).is_dir():
@@ -67,17 +67,17 @@ def _runtime_operation(executable, codex_home, cwd, operation):
             try:
                 result = messages.get(timeout=max(.01, deadline - time.monotonic()))
             except queue.Empty as exc:
-                raise CreationError('创建聊天超时，请先检查桌面聊天列表，不要重复创建') from exc
+                raise CreationError(failure_message or '创建聊天超时，请先检查桌面聊天列表，不要重复创建') from exc
             if result is None:
-                raise CreationError('创建聊天的运行时已断开，请先检查桌面聊天列表')
+                raise CreationError(failure_message or '创建聊天的运行时已断开，请先检查桌面聊天列表')
             if result.get('id') != counter:
                 if time.monotonic() >= deadline:
-                    raise CreationError('创建聊天超时，请先检查桌面聊天列表')
+                    raise CreationError(failure_message or '创建聊天超时，请先检查桌面聊天列表')
                 continue
             if 'error' in result:
                 if method in ('thread/archive', 'thread/unarchive'):
                     raise ArchiveRejected(result['error'])
-                raise CreationError(result['error'].get('message', '创建聊天失败'))
+                raise CreationError(result['error'].get('message', failure_message or '创建聊天失败'))
             return result['result']
 
     try:
@@ -98,12 +98,12 @@ def _runtime_operation(executable, codex_home, cwd, operation):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-            raise CreationError('创建运行时未正常退出，请先检查桌面聊天列表')
+            raise CreationError(failure_message or '创建运行时未正常退出，请先检查桌面聊天列表')
         finally:
             reader.join(timeout=1)
             process.stdout.close()
     if process.returncode:
-        raise CreationError('创建运行时退出异常，请先检查桌面聊天列表')
+        raise CreationError(failure_message or '创建运行时退出异常，请先检查桌面聊天列表')
     return result
 
 

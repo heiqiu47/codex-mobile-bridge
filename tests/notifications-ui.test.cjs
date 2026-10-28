@@ -19,7 +19,7 @@ async function fixture({sessionStore=new Map(),localStore=new Map(),skipStartup=
   let nextPost,nextGet;
   const response=(data,status=200)=>({ok:status===200,status,json:async()=>data});
   let listResponse=()=>response({sessions:[],unavailableHosts:[]}),knownRows=[];
-  const context=vm.createContext({ClientNavigation:class{constructor(){this.provider="codex";this.clients=[];}async refresh(){}acknowledgeList(provider,value){acknowledgements.push({provider,value});}},DesktopSessionsView:class{bindListCache(){}previewCachedList(){return false;}clear(){}},Workbench:class{constructor(){this.current={};}open(){}reset(){}setThumbnails(){}relabel(){}},navigator:{userAgent:'test'},document:{addEventListener(){},documentElement:{classList:{contains(){return false;}}},getElementById:id=>nodes.get(id),querySelector:selector=>selector==='.archive-filter'?archiveFilter:{disabled:false},querySelectorAll:selector=>selector==='[data-notification-channel]'?channelButtons:[],createElement:node},
+  const context=vm.createContext({SessionMenu:class{bind(){}close(){}},ClientNavigation:class{constructor(){this.provider="codex";this.clients=[];}async refresh(){}acknowledgeList(provider,value){acknowledgements.push({provider,value});}},DesktopSessionsView:class{bindListCache(){}previewCachedList(){return false;}clear(){}},Workbench:class{constructor(){this.current={};}open(){}reset(){}setThumbnails(){}relabel(){}},navigator:{userAgent:'test'},document:{addEventListener(){},documentElement:{classList:{contains(){return false;}}},getElementById:id=>nodes.get(id),querySelector:selector=>selector==='.archive-filter'?archiveFilter:{disabled:false},querySelectorAll:selector=>selector==='[data-notification-channel]'?channelButtons:[],createElement:node},
     renderMarkdown(){},window:{addEventListener(){}},localStorage,sessionStorage:scopedStorage,
     location:{hash:'',pathname:'/',search:''},history:{state:null,replaceState(state){this.state=state;},pushState(state){this.state=state;},back(){}},confirm:()=>true,setTimeout(){},clearTimeout(){},setInterval(){},
     ChatTimeline:class{constructor(){this.abort=new AbortController();}async start(){}dispose(){this.abort.abort();}relabel(){}refreshActions(){}},
@@ -357,38 +357,6 @@ test('failed common read blocks save and permits explicit retry',async()=>{
   assert.equal(ui.writes.length,0);
   await ui.nodes.get('notification-common-retry').onclick();
   assert.equal(ui.nodes.get('notification-common-save').disabled,false);
-});
-
-test('rename stays scoped to its original host and cannot overwrite a newly opened chat',async()=>{
-  const ui=await fixture();await ui.open(undefined,'remote:test');
-  ui.nodes.get('chat-title').textContent='Old';ui.nodes.get('rename-chat').onclick();
-  assert.equal(ui.nodes.get('rename-title').value,'Old');
-  ui.nodes.get('rename-title').value='New';
-  let resolve;ui.setPost(()=>new Promise(r=>resolve=r));
-  const pending=ui.nodes.get('rename-form').onsubmit({preventDefault(){}});
-  await new Promise(setImmediate);
-  await ui.open('22222222-2222-4222-8222-222222222222');
-  ui.nodes.get('chat-title').textContent='Other chat';
-  resolve(ui.response({title:'New'}));await pending;
-  assert.match(ui.writes[0].url,/rename\?host=remote%3Atest/);
-  assert.deepEqual(ui.writes[0].body,{title:'New'});
-  assert.equal(ui.nodes.get('chat-title').textContent,'Other chat');
-  assert.equal(ui.nodes.get('rename-dialog').open,false);
-});
-
-test('rename success updates header and detail; failed save retains draft',async()=>{
-  const ui=await fixture();await ui.open();ui.nodes.get('rename-chat').onclick();
-  ui.nodes.get('rename-title').value='A new title';
-  await ui.nodes.get('rename-form').onsubmit({preventDefault(){}});
-  assert.equal(ui.nodes.get('chat-title').textContent,'A new title');
-  assert.equal(ui.nodes.get('details-title').textContent,'A new title');
-  ui.nodes.get('rename-chat').onclick();ui.nodes.get('rename-title').value='Retry title';
-  ui.setPost(()=>ui.response({error:'Rename failed'},409));
-  await ui.nodes.get('rename-form').onsubmit({preventDefault(){}});
-  assert.equal(ui.nodes.get('rename-dialog').open,true);
-  assert.equal(ui.nodes.get('rename-title').value,'Retry title');
-  assert.equal(ui.nodes.get('rename-error').textContent,'Rename failed');
-  assert.equal(ui.nodes.get('chat-title').textContent,'A new title');
 });
 
 test('unconfigured channels still open chat policies instead of PushPlus',async()=>{

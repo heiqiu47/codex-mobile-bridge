@@ -87,8 +87,6 @@ class RemoteStore:
         suffix = ('\nimport os\nhome_source = "environment" if os.environ.get("CODEX_HOME") else "default"\n'
                   's = SessionStore(Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex"))))\n'
                   'result = s.' + method + '(**' + payload(args) + ')\n')
-        if method == 'list':
-            suffix += 'for row in result: row["_targetPathStyle"] = "windows" if os.name == "nt" else "posix"\n'
         if method == 'discovery_diagnostics':
             suffix += 'result["homeSource"] = home_source\n'
         return ssh_read(self.alias, source + suffix + 'print(json.dumps(result, ensure_ascii=False))\n', timeout=30)
@@ -439,46 +437,30 @@ class AppHosts:
                              'cwd': project['remotePath']})
         return rows
 
-    def decorate(self, rows, host, label):
+    def decorate(self, rows, host, label, native_memberships=()):
         state = self.state()
         if host == 'local':
-            projects = [{'id': p['id'], 'name': p['name'], 'roots': p.get('rootPaths', [])}
+            projects = [{'id': p['id'], 'name': p['name']}
                         for p in state.get('local-projects', {}).values()]
         else:
-            projects = [{'id': p['id'], 'name': p.get('label') or project_path_name(p['remotePath']), 'roots': [p['remotePath']]}
+            projects = [{'id': p['id'], 'name': p.get('label') or project_path_name(p['remotePath'])}
                         for p in state.get('remote-projects', []) if p['hostId'] == host]
         assignments = state.get('thread-project-assignments', {})
-        def normalized(path, windows=False):
-            if windows or _windows_path(path):
-                value = path.replace('\\', '/')
-                if value[:8].casefold() in ('//?/unc/', '//./unc/'):
-                    value = '//' + value[8:]
-                elif re.match(r'^//[?.]/[a-z]:/', value, re.I):
-                    value = value[4:]
-                return value.rstrip('/').casefold()
-            return path.rstrip('/')
+        projectless = set(state.get('projectless-thread-ids', []))
+        project_ids = {project['id'] for project in projects}
+        legacy_ids = {server_id: legacy_id
+                      for mapping in state.get('app-server-project-id-by-legacy-project-id-by-host', {}).values()
+                      for legacy_id, server_id in mapping.items() if legacy_id in project_ids}
         for row in rows:
-            # A plain // path can also be POSIX. Only the execution host can
-            # disambiguate it; remote list rows carry that host's path style.
-            target_style = row.pop('_targetPathStyle', None)
-            windows_host = os.name == 'nt' if host == 'local' else target_style == 'windows'
-            raw_cwd = row.get('cwd', '')
-            cwd = normalized(raw_cwd, windows_host and raw_cwd.startswith('//'))
             assigned = assignments.get(row['id'], {})
-            project = next((p for p in projects if p['id'] == assigned.get('projectId') and assigned.get('hostId', host) == host), None)
-            if project is None:
-                matches = []
-                for candidate in projects:
-                    for root in candidate['roots']:
-                        # Infer the target path syntax, never the gateway's OS.
-                        windows = (windows_host and (root.startswith('//') or raw_cwd.startswith('//'))) or _windows_path(root) or _windows_path(raw_cwd)
-                        prefix, target = normalized(root, windows), normalized(raw_cwd, windows)
-                        if target == prefix or target.startswith(prefix + '/'):
-                            matches.append((len(prefix), candidate))
-                project = max(matches, key=lambda v: v[0])[1] if matches else None
+            project = row.pop('_nativeProject', None)
+            explicitly_projectless = row['id'] in projectless
+            # Empty native metadata also occurs while Codex migrates memberships.
+            if project is None and not explicitly_projectless and row['id'] not in native_memberships:
+                project = next((p for p in projects if p['id'] == assigned.get('projectId') and assigned.get('hostId', host) == host), None)
             row.update(host=host, hostLabel=label,
-                       projectKey=host + '|' + (project['id'] if project else cwd or 'unassigned'),
-                       projectName=project['name'] if project else project_path_name(raw_cwd) or '未归类',
+                       projectKey=host + '|' + (legacy_ids.get(project['id'], project['id']) if project else 'unassigned'),
+                       projectName=project['name'] if project else '未归类',
                        recency=row.get('recency_at_ms') or (row.get('recency_at') or 0) * 1000 or row.get('updated_at_ms') or (row.get('updated_at') or 0) * 1000)
         return rows
 

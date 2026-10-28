@@ -25,7 +25,7 @@ PAYLOADS = {path: served_asset_bytes(WEB, path) for path in STATIC}
 state = {'case': 'success', 'requests': Counter(), 'writes': []}
 BROWSER_CHECKS = {f'/__browser/{name}': ROOT / 'tests/browser' / name for name in (
     'desktop-history.browser.js', 'persistent-drafts.browser.js',
-    'project-creation.browser.js', 'api-form.browser.js', 'composer-quotes.browser.js')}
+    'session-menu.browser.js', 'project-creation.browser.js', 'api-form.browser.js', 'composer-quotes.browser.js')}
 PROBE = b"""window.__startupTest={scenario:new URLSearchParams(location.search).get('case'),executed:[],errors:[],rejections:[],blockedScripts:[],visibilitySamples:[],titles:[],shellLoads:0,started:performance.now(),loadClipboard:null};
 addEventListener('error',e=>{if(e.target===window)__startupTest.errors.push(e.error?.name||'Error');});
 addEventListener('unhandledrejection',e=>{__startupTest.rejections.push(e.reason?.name||'Error');});
@@ -99,6 +99,41 @@ class Handler(BaseHTTPRequestHandler):
             return
         if case == 'app-cached-failure' and path == '/app.js' and not parse_qs(urlsplit(self.path).query).get('bridge_retry'):
             self.output('Cached non-script response', 'text/plain', cache_control='public, max-age=300, immutable')
+            return
+        if case == 'session-menu' and path.startswith('/api/'):
+            sid = '12345678-1234-4234-9234-123456789012'
+            clients = [{'id': provider, 'name': name, 'enabled': True, 'connected': True,
+                        'installed': True, 'running': True, 'configured': True, 'selectable': True}
+                       for provider, name in [('codex', 'Codex'), ('claude', 'Claude'), ('deepseek', 'DSH')]]
+            provider = path.split('/')[3] if path.startswith('/api/desktop-sessions/') else 'codex'
+            names = {'codex': 'Codex', 'claude': 'Claude', 'deepseek': 'DSH'}
+            rows = [{'id': sid if provider == 'codex' else provider + '-synthetic-' + str(i), 'host': 'local',
+                     'title': names.get(provider, provider) + ' · ' + title,
+                     'projectName': '示例项目', 'projectKey': 'synthetic', 'cwd': '/synthetic/project',
+                     'recency': 1793145600000 - i * 60000, 'updatedAt': 1793145600000 - i * 60000,
+                     'backend': 'code', 'runtime': 'desktop', 'access': {'source': 'desktop'},
+                     'capabilities': {'fork': True, 'archive': True, 'unarchive': True}, 'bridgePinned': False}
+                    for i, title in enumerate(['页面交互验证', '文档整理', '单元测试检查'])]
+            if provider == 'codex':
+                for i, row in enumerate(rows):
+                    row['id'] = sid[:-1] + str(i)
+            value = {}
+            if path == '/api/auth':
+                value = {'authenticated': True, 'csrf': 'synthetic', 'draftIdentity': 'synthetic',
+                         'listCacheIdentity': 'a' * 64, 'computer': {'name': '菜单测试电脑'}, 'uiLanguage': 'zh'}
+            elif path == '/api/clients':
+                value = {'clients': clients, 'computer': '菜单测试电脑'}
+            elif path == '/api/sessions' or path.endswith('/list'):
+                value = {'sessions': rows, 'complete': True, 'connected': True,
+                         'remoteHosts': [], 'availableSources': ['desktop']}
+            elif path == '/api/accounts' or path.endswith('/accounts'):
+                value = {'accounts': [], 'activeIds': []}
+            elif path == '/api/account':
+                value = {'visible': False}
+            elif path.endswith('/organization'):
+                value = {'projectId': None, 'sectionId': None, 'projects': [{'id': 'p', 'name': '示例项目'}],
+                         'sections': [{'id': 's', 'name': '示例分区'}], 'status': 'confirmed'}
+            self.output(json.dumps(value), 'application/json')
             return
         if path == '/api/auth':
             if case == 'auth-hang' and attempt == 1:

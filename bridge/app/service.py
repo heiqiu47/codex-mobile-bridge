@@ -15,6 +15,7 @@ import uuid
 import unicodedata
 from pathlib import Path
 
+from bridge.app.lifecycle import private_json
 from bridge.resources import source_text
 from bridge.features.sessions.message_management import snapshot as management_snapshot, mutate as management_mutate
 
@@ -39,7 +40,10 @@ from bridge.features.sessions.create import (
     project_directory_listing,
 )
 from bridge.features.sessions.archive import ArchiveCommands
+from bridge.features.sessions.organization_commands import OrganizationCommands
+from bridge.features.sessions.organization import OrganizationNotSent
 from bridge.features.sessions.pins import SessionPins
+from bridge.features.sessions.organization import organization as native_organization
 from bridge.features.sessions.projects import Projects
 from bridge.features.sessions.timeline import Timeline
 from bridge.features.sessions.tool_images import TOOL_IMAGE_CACHE, public_turns
@@ -229,6 +233,7 @@ class Bridge:
         self.data_dir = Path(data_dir)
         self.session_pins = SessionPins(data_dir, host + ":" + str(self.codex_home))
         self.archive_commands = ArchiveCommands(data_dir)
+        self.organization_commands = OrganizationCommands(data_dir, private_json)
         self.hosts = AppHosts(codex_home)
         self.directory_projects = Projects(data_dir)
         if host == 'local' and sys.platform == 'win32':
@@ -1278,7 +1283,7 @@ class Bridge:
                 rows = ([] if source == 'wsl' else bridge.store.list(
                     limit=limit + offset, archived=archived, query=query, source=source,
                     **({"pinned_ids": sorted(pins)} if pin_order else {})))
-                rows = self.hosts.decorate(rows, bridge.host, label)
+                rows = self.hosts.decorate(rows, bridge.host, label, bridge.organization_commands.native_memberships())
                 with bridge.lock:
                     bridge.listed.update(row['id'] for row in rows)
                     for row in rows:
@@ -2604,6 +2609,35 @@ class Bridge:
                     session.saved_view['title'] = title
                 session.changed()
         return {'id': thread_id, 'host': self.host, 'title': title}
+
+    @operation
+    def organization(self, thread_id, change=None):
+        from bridge.features.sessions.create import _runtime_operation
+        uuid.UUID(thread_id)
+        metadata = self.store.get(thread_id)
+        session = self.session(thread_id, attach=False, background=True)
+        def execute(change):
+            if isinstance(self.store, RemoteStore):
+                source = source_text('features/sessions/create.py') + '\n' + source_text('features/sessions/organization.py')
+                source += '\nimport shutil\nhome=Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex")))\n'
+                source += 'runtime=shutil.which("codex") or str(Path.home()/".local/bin/codex")\n'
+                arguments = payload({'identifier': thread_id, 'change': change, 'expected_cwd': metadata.get('cwd')})
+                source += 'try:\n result=_runtime_operation(runtime,home,str(home),lambda request:organization(request,**' + arguments + '),failure_message="原生分类结果待核对，请刷新会话列表")\nexcept (CreationError,ValueError) as error:\n result={"error":str(error),"notSent":isinstance(error,(OrganizationNotSent,CreationUnavailable))}\nprint(json.dumps(result))\n'
+                result = ssh_read(self.store.alias, source, timeout=90)
+                if result.get('error'):
+                    raise (OrganizationNotSent if result.get('notSent') else ValueError)(result['error'])
+                if change is not None:
+                    with self.store.lock:
+                        self.store.cache.clear()
+            else:
+                result = _runtime_operation(self.catalog_reader.executable, self.codex_home, str(self.codex_home),
+                    lambda request: native_organization(request, thread_id, change, expected_cwd=metadata.get('cwd')),
+                    failure_message='原生分类结果待核对，请刷新会话列表')
+            return result
+        with session.action_lock:
+            result = execute(None) if change is None else self.organization_commands.perform(
+                thread_id, change, lambda: execute(None), execute)
+        return {**result, 'host': self.host}
 
     def _linux_permission_options(self, session):
         with session.condition:

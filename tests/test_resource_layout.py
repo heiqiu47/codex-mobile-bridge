@@ -45,6 +45,7 @@ SSH_SOURCES = {
     'bridge/clients/codex/remote_models.py': ['remote_model_worker'],
     'bridge/clients/codex/configuration.py': ['magpie_managed'],
     'bridge/features/sessions/create.py': ['create_empty', 'fork_copy', 'rename_thread'],
+    'bridge/features/sessions/organization.py': ['organization'],
     'bridge/features/accounts/models.py': ['model_ids'],
     'bridge/features/accounts/draft_identity.py': ['draft_identity', 'codex_account_identity'],
     'bridge/features/auth/tls.py': ['client_context'],

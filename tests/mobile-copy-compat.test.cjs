@@ -24,7 +24,7 @@ for(const host of ['ios','android']){
   test(host+': old native injection copies title link and acknowledges visibly',async()=>{
     const f=fixture(host),id='019d0000-1234-7123-8123-123456789abc';
     vm.runInContext(`let currentId=${JSON.stringify(id)},currentHost='local';`,f.c);
-    const app=read('web/shell/app.js');vm.runInContext(app.slice(app.indexOf("$('copy-session-link').onclick=")),f.c);
+    const source=read('web/features/chat/session-menu.js');vm.runInContext(source,f.c);const SessionMenu=vm.runInContext('SessionMenu',f.c);const button=f.get('copy-session-link');button.className='message-copy';button.onclick=()=>SessionMenu.prototype.copy.call({valid(){},t:x=>x,notify:x=>f.notices.push(x)},'codex://threads/'+id,button);
     await f.click(f.get('copy-session-link'));
     assert.equal(f.writes.length,2); // Language sync plus one acknowledged copy.
     assert.equal(f.writes.at(-1).text,'codex://threads/'+id);assert.equal(f.get('copy-session-link').textContent,'已复制');assert.deepEqual(f.notices,['已复制']);
@@ -41,14 +41,16 @@ for(const host of ['ios','android']){
   test(host+': DSH title action copies exact native Session ID',async()=>{
     const f=fixture(host),source=read('web/features/clients/desktop-sessions.js');
     const method=source.slice(source.indexOf('  chatDetails(){'),source.indexOf('  async notifications(){'));
-    const invoke=vm.runInContext('({'+method+'}).chatDetails',f.c),dialogs=[];
-    const view={provider:'deepseek',sid:'original-dsh-session',state:{title:'Fixture'},notify:x=>f.notices.push(x),dialog(){const box=new f.Element('dialog');dialogs.push(box);return box;},button(text,onclick){const node=new f.Element('button');node.textContent=text;node.onclick=onclick;return node;},node:()=>new f.Element('p')};
-    invoke.call(view);const copy=dialogs[0].children.find(node=>node.textContent==='复制 Session ID');await f.click(copy);
+    const invoke=vm.runInContext('({'+method+'}).chatDetails',f.c);
+    vm.runInContext(read('web/features/chat/session-menu.js'),f.c);const SessionMenu=vm.runInContext('SessionMenu',f.c);
+    const copy=new f.Element('button');copy.className='message-copy';copy.textContent='复制 Session ID';
+    const view={provider:'deepseek',sid:'original-dsh-session',state:{title:'Fixture'},rows:[],onOpenSessionMenu(row){copy.onclick=()=>SessionMenu.prototype.copy.call({valid(){},t:x=>x,notify:x=>f.notices.push(x)},f.c.BridgeSessionLinks.text({provider:'deepseek',id:row.id}),copy);}};
+    invoke.call(view);await f.click(copy);
     assert.equal(f.writes.at(-1).text,'original-dsh-session');assert.deepEqual(f.notices,['已复制']);
   });
   test(host+': native rejection shows failure and never a success toast',async()=>{
     const f=fixture(host,'denied');vm.runInContext(`let currentId='019d0000-1234-7123-8123-123456789abc',currentHost='local';`,f.c);
-    const source=read('web/shell/app.js');vm.runInContext(source.slice(source.indexOf("$('copy-session-link').onclick=")),f.c);
+    const source=read('web/features/chat/session-menu.js');vm.runInContext(source,f.c);const SessionMenu=vm.runInContext('SessionMenu',f.c);const button=f.get('copy-session-link');button.className='message-copy';button.onclick=()=>SessionMenu.prototype.copy.call({valid(){},t:x=>x,notify:x=>f.notices.push(x)},'codex://threads/test',button);
     await f.click(f.get('copy-session-link'));assert.deepEqual(f.notices,['复制失败，请重试']);assert.equal(f.get('copy-session-link').textContent,'复制');
   });
 }
