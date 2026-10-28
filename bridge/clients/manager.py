@@ -25,12 +25,15 @@ from bridge.app.lifecycle import private_json
 from bridge.platforms.windows import session as windows_session
 from bridge.features.sessions.archive import ArchiveCommands
 from bridge.features.sessions.projects import Projects
+from bridge.features.sessions.display_metadata import DisplayMetadata, RenameCommands
+from bridge.features.sessions.organization_commands import OrganizationCommands
+from bridge.features.sessions.organization import OrganizationNotSent
 from bridge.features.sessions.create import project_directory, project_directory_listing
 from bridge.clients.codex.remote import ssh_read, payload
 from bridge.resources import source_text
 
-READS = {'list', 'detail', 'catalog', 'projects', 'account', 'access'}
-WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume', 'fork', 'pin', 'archive'}
+READS = {'list', 'detail', 'catalog', 'projects', 'account', 'access', 'organization'}
+WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume', 'fork', 'pin', 'archive', 'rename', 'organization'}
 
 
 class TaskStateUnavailable(ValueError):
@@ -69,6 +72,9 @@ class DesktopSessions:
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         from bridge.features.sessions.pins import SessionPins
         self.session_pins = {provider: SessionPins(self.directory/provider, provider) for provider in ('claude', 'deepseek')}
+        self.display_metadata = DisplayMetadata(self.directory, private_json)
+        self.rename_commands = RenameCommands(self.directory, private_json)
+        self.organization_commands = OrganizationCommands(self.directory, private_json)
         self.model_store = ModelStore(self.directory)
         self.directory_projects = Projects(self.directory/'projects')
         self.model_locks = {}
@@ -624,6 +630,61 @@ class DesktopSessions:
                 raise BridgeUnavailable('客户端状态已变化，请重试')
         return value
 
+    def _display_scope(self, provider, row):
+        adapter = self.adapters[provider]
+        # Connector directory/home identify the bound instance; host/backend
+        # separate CLI, WSL, Code and Cowork without changing their ownership.
+        return json.dumps([provider, str(adapter.directory), str(getattr(adapter, 'home', '')),
+                           row.get('host', 'local'), row.get('backend', 'desktop')], ensure_ascii=False)
+
+    def _metadata_row(self, provider, sid):
+        result = self._adapter_call(provider, 'list', None, {})
+        row = next((row for row in result.get('sessions', []) if row.get('id') == sid), None)
+        if not row:
+            raise ValueError('原会话暂不可读，请刷新列表后重试')
+        return row
+
+    def _session_metadata(self, provider, action, sid, body):
+        with self._changing(provider, rebind=False):
+            self.require_enabled(provider)
+            row = self._metadata_row(provider, sid)
+            scope = self._display_scope(provider, row)
+            scoped = str(uuid.uuid5(uuid.NAMESPACE_URL, scope + '\n' + sid))
+            capabilities = row.get('capabilities') or {}
+            if action == 'rename':
+                if capabilities.get('rename') is not True:
+                    return self.display_metadata.change(scope, sid, {**body, 'kind': 'rename'})
+                def read_name():
+                    latest = self._metadata_row(provider, sid)
+                    return {'title': latest.get('title'), 'identity': {key: latest.get(key)
+                        for key in ('id', 'cwd', 'host', 'backend', 'provider', 'modelProvider')}}
+                result = self.rename_commands.perform(scoped, body, read_name,
+                    lambda title: self._adapter_call(provider, 'rename', sid, {'title': title}))
+                self.display_metadata.clear_alias(scope, sid)
+                return result
+            native = capabilities.get('organization') is True
+            def read():
+                local = self.display_metadata.snapshot(scope, sid)
+                if not native:
+                    return local
+                result = self._adapter_call(provider, 'organization', sid, {'operation': 'read'})
+                return {**local, **result, 'sections': local['sections'], 'sectionId': local['sectionId'],
+                        'scope': 'native', 'projectScope': 'native', 'sectionScope': 'bridge'}
+            if not body:
+                return read()
+            if not native or body.get('kind') in ('section', 'create-section'):
+                self.display_metadata.change(scope, sid, body)
+                return read()
+            if body.get('kind') != 'project':
+                raise ValueError('请在原客户端中创建项目')
+            def dispatch(change):
+                result = self._adapter_call(provider, 'organization', sid,
+                    {'operation': 'set-project', 'projectId': change['targetId']})
+                if result.get('notSent') is True:
+                    raise OrganizationNotSent(result.get('message') or '项目设置未发送，请刷新后重试')
+                return read()
+            return self.organization_commands.perform(scoped, body, read, dispatch)
+
     def _list_activity(self, provider, adapter, binding, rows):
         """Enrich list indicators asynchronously; never wait for transcripts on list load."""
         candidates = []
@@ -785,12 +846,20 @@ class DesktopSessions:
         adapter = self.adapters[provider]
         if action == 'archive':
             return self._archive(provider, sid, body)
+        if action in ('rename', 'organization'):
+            return self._session_metadata(provider, action, sid, body)
         if action == 'account':
             return self._account_models(provider, refresh=body.get('refresh') is True)
         if action == 'catalog' and body.get('section') == 'models':
             return self._catalog_models(provider, sid, body)
         if action in READS and not (action == 'access' and 'mode' in body):
             result = self._read(provider, action, sid, body)
+            if action == 'list':
+                result['sessions'] = [self.display_metadata.decorate(self._display_scope(provider, row), row)
+                                      for row in result.get('sessions', [])]
+            if action == 'detail' and result.get('session'):
+                row = result['session']
+                result['session'] = self.display_metadata.decorate(self._display_scope(provider, row), row)
             if action == 'projects':
                 environments = self._project_environments(provider)
                 for project in result.get('projects', []):

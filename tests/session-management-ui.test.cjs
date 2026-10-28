@@ -63,7 +63,7 @@ test('recent chat order continues to use activity when a chat is unassigned',()=
 test('opaque provider IDs and archive capability stay isolated',async()=>{
  const ui=fixture(),chat={...ui.row('opaque/native-id',1),capabilities:{archive:true}};
  const menu=ui.context.sessionMenuContext(chat,'deepseek');
- assert.equal(menu.rename,undefined);assert.equal(menu.fork,undefined);assert.equal(menu.nativeOrganization,false);
+ assert.equal(typeof menu.rename,'function');assert.equal(menu.renameScope,'bridge');assert.equal(menu.fork,undefined);assert.equal(menu.nativeOrganization,true);assert.equal(menu.organizationScope,'bridge');
  await menu.archive();assert.equal(ui.requests[0].body.sessionId,chat.id);assert.equal(ui.requests[0].url,'/api/desktop-sessions/deepseek/archive');
  assert.equal(ui.context.sessionMenuContext({...chat,capabilities:{}},'claude').archive,undefined);
 });
@@ -92,10 +92,21 @@ for(const [provider,runtime] of [['codex','desktop'],['codex','cli'],['claude','
   }
   const menu=ui.context.sessionMenuContext(chat,provider);
   assert.equal(ui.requests.length,0,'opening the menu does not activate or write');
-  assert.equal(menu.nativeOrganization,provider==='codex');
+  assert.equal(menu.nativeOrganization,true);assert.equal(menu.organizationScope,provider==='codex'?'native':'bridge');assert.equal(typeof menu.rename,'function');
   assert.equal(typeof menu.pin,'function');assert.equal(typeof menu.fork,'function');assert.equal(typeof menu.archive,'function');
   await menu.notifications();assert.equal(notified,1);
   await menu.pin(true);assert.equal(ui.requests.at(-1).body.pinned,true);
   assert.equal(menu.linkLabel,provider==='deepseek'?'复制 Session ID':'复制深度链接');
  });
 }
+
+test('desktop metadata actions retain opaque identity and do not activate chats',async()=>{
+ const ui=fixture(),chat={...ui.row('code/native',1),capabilities:{rename:true}};
+ const menu=ui.context.sessionMenuContext(chat,'claude');assert.equal(menu.renameScope,'native');
+ await menu.organization();assert.equal(ui.requests[0].url,'/api/desktop-sessions/claude/organization?sessionId=code%2Fnative');
+ await menu.organization({id:'stable-id',kind:'create-section',title:'Todo'});
+ assert.equal(ui.requests[1].body.sessionId,'code/native');
+ await menu.rename('Title');await menu.rename('Title');
+ assert.equal(ui.requests[2].body.sessionId,'code/native');assert.equal(ui.requests[2].body.id,ui.requests[3].body.id);
+ assert.ok(ui.requests.every(row=>!/detail|open|resume|activate/.test(row.url)));
+});

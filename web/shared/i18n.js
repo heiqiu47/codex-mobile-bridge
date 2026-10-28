@@ -2,6 +2,16 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"改名结果待核对；不会重复提交，请先在原客户端核对":"Rename needs verification. Check the original client; it will not be submitted again.",
+"未分配项目":"Unassigned project",
+"暂无原生分区，请先在原客户端中创建":"No native sections. Create one in the original client first.",
+"暂无原生项目，请先在原客户端中创建":"No native projects. Create one in the original client first.",
+"新分区名称":"New section name",
+"新项目名称":"New project name",
+"已同步到原生侧边栏":"Synced to the native sidebar",
+"已更新 Bridge 分类":"Bridge classification updated",
+"分类结果待核对，请刷新会话列表":"Classification needs verification. Refresh the chat list.",
+"仅在 Bridge 中生效":"Only applies in Bridge",
 "选择已有接入，或通过“添加接入”配置客户端。":"Select an existing connection, or choose Add connection to configure a client.",
 "添加接入":"Add connection",
 "DSH / 自定义 Harness":"DSH / Custom Harness",

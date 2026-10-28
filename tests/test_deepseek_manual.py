@@ -42,7 +42,7 @@ class ManualPluginTests(unittest.TestCase):
                 owner.calls.append(request['action'])
                 if self.headers.get('Authorization') != 'Bearer '+'a'*64:
                     self.send_response(403); self.end_headers(); return
-                data = json.dumps({'connected': True, 'configured': True, 'bridgeRevision': 8,
+                data = json.dumps({'connected': True, 'configured': True, 'bridgeRevision': 9,
                                    'sessions': [], 'status': 'accepted', 'current': {'label': 'Fixture'}}).encode()
                 self.send_response(200); self.send_header('Content-Length', str(len(data)))
                 self.end_headers(); self.wfile.write(data)

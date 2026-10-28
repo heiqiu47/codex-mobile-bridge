@@ -32,7 +32,9 @@ if baseline {
     func poll(_ query: String = "") { if !query.isEmpty { _ = control(first, query) }; controller.poll(); spin { !controller.loading } }
     precondition(controller.computerNotifications[first]?.text == "200")
     let key = "cursor:" + first
-    poll("cursor=201"); precondition(notices.delivered.count == 1); metric("one_new", control(first)[2])
+    poll("cursor=201"); precondition(notices.delivered.count == 1)
+    precondition(notices.titles == ["Codex 需要你处理"], "Attention copy reaches native notification delivery")
+    metric("one_new", control(first)[2])
     poll(); precondition(notices.delivered.count == 1, "Repeated poll duplicated notification")
     controller.defaults.set(202, forKey: "cleared:" + first + ":fixture-stream")
     poll("cursor=202"); precondition(notices.delivered.count == 1)

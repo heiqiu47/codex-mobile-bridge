@@ -59,7 +59,7 @@ class MobileEvents:
             cursor = before['cursor'] + 1
             event = {'id': identity, 'sequence': cursor, 'threadId': row['id'], 'host': row['host'],
                      'trace': keys[0][-64:][:16] if len(keys[0]) >= 64 else '',
-                     'kind': 'completion' if completed else 'request', 'title': title, 'body': body,
+                     'kind': 'attention' if completed == 'attention' else 'completion' if completed else 'request', 'title': title, 'body': body,
                      'createdAt': time.time()}
             updated = {**before, 'cursor': cursor, 'events': (before['events'] + [event])[-self.LIMIT:],
                        'pending': before['pending'] + [self.metadata(event)]}

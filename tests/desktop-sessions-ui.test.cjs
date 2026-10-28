@@ -1069,3 +1069,12 @@ for(const provider of ['claude','deepseek'])for(const prefetched of [false,true]
  assert.equal(observed.length,1);assert.equal(observed[0][2],token);assert.equal(observed[0][0].provider,provider);assert.equal(observed[0][0].id,'pinned-chat');assert.equal(observed[0][1],true);
  assert.match(ui.view.rowsRoot.textContent,/Pinned chat/);assert.equal(ui.view.listSync.automaticFailures,0);
 });
+
+test('explicit Bridge project and section grouping preserves execution location',async()=>{
+ const ui=fixture();await ui.view.choose('claude');ui.view.listMode.value='project';
+ ui.view.rows=[{id:'a',title:'A',backend:'cli',cwd:'/original',projectId:'p',projectName:'Engineering',sectionId:'s',sectionName:'Todo'},
+ {id:'b',title:'B',backend:'cli',cwd:'/original',projectId:'p',projectName:'Engineering',sectionId:'s2',sectionName:'Review'}];
+ ui.view.renderList();assert.equal(ui.view.rowsRoot.querySelectorAll('details').length,2);
+ assert.match(ui.view.rowsRoot.textContent,/Engineering.*Todo/);assert.match(ui.view.rowsRoot.textContent,/Review/);
+ assert.ok(ui.view.rows.every(row=>row.cwd==='/original'));
+});

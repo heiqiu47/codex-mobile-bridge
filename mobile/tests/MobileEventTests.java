@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.*;
 public final class MobileEventTests {
  static final List<String> logs=android.util.Log.messages;
  static final List<String> delivered=new CopyOnWriteArrayList<>();
+ static final List<JSONObject> deliveredEvents=new CopyOnWriteArrayList<>();
  static final class Prefs implements SharedPreferences,SharedPreferences.Editor {
   final Map<String,Object> values=new ConcurrentHashMap<>();
   final AtomicInteger commits=new AtomicInteger();
@@ -47,7 +48,7 @@ public final class MobileEventTests {
    }
    // Keep events and metadata on one cursor while the test thread advances it.
    int responseCursor=cursor;
-   JSONArray events=new JSONArray();for(int i=Math.max(1,responseCursor-199);i<=responseCursor;i++)if(i>after)events.put(new JSONObject().put("id","event-"+i).put("sequence",i).put("threadId","thread").put("host","local").put("kind",i%2==0?"request":"completion").put("title","任务提醒").put("body","消息内容".repeat(30)));
+   JSONArray events=new JSONArray();for(int i=Math.max(1,responseCursor-199);i<=responseCursor;i++)if(i>after)events.put(new JSONObject().put("id","event-"+i).put("sequence",i).put("threadId","thread").put("host","local").put("kind",i==201?"attention":i%2==0?"request":"completion").put("title",i==201?"Codex 需要你处理":"任务提醒").put("body","消息内容".repeat(30)));
    JSONArray summary=new JSONArray().put(new JSONObject().put("provider","claude").put("kind",responseCursor%2==0?"request":"completion").put("sequence",responseCursor));
    JSONObject value=new JSONObject().put("clients",new JSONArray().put(new JSONObject().put("id","claude").put("enabled",true).put("unread",enabled?(unread<0?responseCursor:unread):0))).put("summary",summary).put("streamId",stream).put("cursor",responseCursor).put("events",events).put("enabled",enabled);
    if(longPoll)value.put("longPoll",60).put("revision",String.format("%032x",responseCursor));
@@ -101,7 +102,8 @@ public final class MobileEventTests {
    check(statusChanges.get()==changes,"Unchanged reads avoid redundant status updates");
    check(first.targets.get(first.targets.size()-1).endsWith("?after=200"),"Incremental cursor");
    check(first.responseBytes.get(first.responseBytes.size()-1)<500,"Idle polls avoid downloading old messages");
-   first.cursor=201;poll(receiver,app,address,201);check(delivered.size()==1,"Completion delivered");
+   first.cursor=201;poll(receiver,app,address,201);check(delivered.size()==1,"Attention delivered");
+   check(deliveredEvents.get(0).getString("kind").equals("attention")&&deliveredEvents.get(0).getString("title").equals("Codex 需要你处理"),"Attention copy reaches the original notification route");
    check(logs.stream().anyMatch(line->line.contains("requestMs=")&&line.contains("serverWaitMs=")&&line.contains("overheadMs=")),"Request stages are measured without clock subtraction");
    check(logs.stream().anyMatch(line->line.contains("receiveToPostMs=")&&line.contains("serverAgeMs=")),"System handoff stage is measured");
    check(logs.stream().noneMatch(line->line.contains("消息内容")||line.contains("任务提醒")||line.contains("codex_mobile_session")),"Timing logs omit notification content and credentials");

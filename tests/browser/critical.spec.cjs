@@ -102,23 +102,47 @@ for(const provider of ['Codex','Claude','DSH']){
   const row=page.locator('.session:visible').filter({hasText:provider+' · 页面交互验证'}).first();
   await expect(row).toBeVisible();
   const listIdentity=await row.getAttribute('data-id');
-  for(const theme of ['light','dark']){
-   await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+  const openMenu=async()=>{
    if(page.viewportSize().width<=640){
     await row.dispatchEvent('pointerdown',{pointerType:'touch',button:0,clientX:80,clientY:150});
     await expect(page.locator('dialog.session-menu')).toBeVisible();
     await row.dispatchEvent('pointerup',{pointerType:'touch',button:0});
     await row.dispatchEvent('click');
    }else await row.click({button:'right'});
+  };
+  for(const theme of ['light','dark']){
+   await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+   await openMenu();
    const box=page.locator('dialog.session-menu');
    await expect(box).toBeVisible();
    await expect(page.locator('#app')).not.toHaveClass(/chat-open/);
    await expect(row).toHaveAttribute('data-id',listIdentity);
    await expect(box.locator('.sm-name strong')).toHaveText(provider+' · 页面交互验证');
    await expect(box.getByRole('button',{name:'聊天通知设置',exact:true})).toBeVisible();
-   await expect(box.getByRole('button',{name:'项目',exact:true})).toHaveCount(provider==='Codex'?1:0);
+   await expect(box.getByRole('button',{name:'项目',exact:true})).toHaveCount(1);
+   await expect(box.getByRole('button',{name:'分区',exact:true})).toHaveCount(1);
    await box.evaluate(node=>Promise.all(node.getAnimations().map(a=>a.finished)));
    await page.screenshot({path:testInfo.outputPath(provider+'-'+theme+'-list.png')});
+   await box.getByRole('button',{name:'会话详情',exact:true}).click();
+   await page.keyboard.press('Escape');
+   await expect(box.locator('.sm-name strong')).toHaveText(provider+' · 页面交互验证');
+   await expect(page.locator('#app')).not.toHaveClass(/chat-open/);
+   await page.keyboard.press('Escape');await expect(box).toHaveCount(0);
+   await openMenu();
+   await box.getByRole('button',{name:'修改聊天名称',exact:true}).click();
+   await expect(box.getByRole('textbox',{name:'聊天名称',exact:true})).toHaveValue(provider+' · 页面交互验证');
+   await box.getByRole('textbox',{name:'聊天名称',exact:true}).fill('返回不保存这个名称');
+   await box.dispatchEvent('cancel',{cancelable:true});
+   await expect(box.locator('.sm-name strong')).toHaveText(provider+' · 页面交互验证');
+   for(const label of ['项目','分区']){
+    await box.getByRole('button',{name:label,exact:true}).click();
+    await expect(box.getByRole('button',{name:'示例'+label,exact:true})).toBeVisible();
+    const local=provider==='Claude'||provider==='DSH'&&label==='分区';
+    await expect(box.getByText('仅在 Bridge 中生效',{exact:true})).toHaveCount(local?1:0);
+    await expect(box.getByRole('textbox',{name:label==='项目'?'新项目名称':'新分区名称',exact:true})).toHaveCount(local?1:0);
+    await box.getByRole('button',{name:'返回会话菜单',exact:true}).click();
+    await expect(box.locator('.sm-name strong')).toHaveText(provider+' · 页面交互验证');
+   }
    await box.getByRole('button',{name:'停止任务并归档…',exact:true}).click();
    const confirm=box.getByRole('button',{name:'确认归档',exact:true}),cancel=box.getByRole('button',{name:'取消',exact:true});
    await expect(cancel).toBeFocused();
@@ -129,7 +153,21 @@ for(const provider of ['Codex','Claude','DSH']){
    await page.screenshot({path:testInfo.outputPath(provider+'-'+theme+'-list-confirm.png')});
    await cancel.click();
    await expect(box.locator('.sm-name strong')).toHaveText(provider+' · 页面交互验证');
-   await page.keyboard.press('Escape');await expect(box).toHaveCount(0);
+   await box.getByRole('button',{name:'停止任务并归档…',exact:true}).click();
+   await box.dispatchEvent('cancel',{cancelable:true});
+   await expect(box.locator('.sm-name strong')).toHaveText(provider+' · 页面交互验证');
+   if(page.viewportSize().width<=640){
+    const handle=box.locator('.sm-handle');
+    await handle.dispatchEvent('pointerdown',{pointerType:'touch',pointerId:8,button:0,clientX:100,clientY:100});
+    await handle.dispatchEvent('pointermove',{pointerType:'touch',pointerId:8,clientX:100,clientY:125});
+    await handle.dispatchEvent('pointerup',{pointerType:'touch',pointerId:8,clientX:100,clientY:125});
+    await expect(box).not.toHaveClass(/sm-returning/);
+    await expect(box).toBeVisible();
+    await handle.dispatchEvent('pointerdown',{pointerType:'touch',pointerId:8,button:0,clientX:100,clientY:100});
+    await handle.dispatchEvent('pointermove',{pointerType:'touch',pointerId:8,clientX:100,clientY:260});
+    await handle.dispatchEvent('pointerup',{pointerType:'touch',pointerId:8,clientX:100,clientY:260});
+   }else await page.keyboard.press('Escape');
+   await expect(box).toHaveCount(0);
   }
   const evidence=await page.evaluate(async()=>await(await fetch('/__state')).json());
   expect(evidence.writes.filter(path=>!path.endsWith('/activity'))).toEqual([]);

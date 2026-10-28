@@ -25,18 +25,48 @@ class SessionMenu {
       if(this.finishClosing===finish)this.finishClosing=null;
       box.close();box.remove();if(!this.box&&anchor?.element?.isConnected)anchor.element.focus();
     };
-    if(immediate||!box.open||window.matchMedia('(prefers-reduced-motion: reduce)').matches){finish();return;}
+    if(immediate||!box.open||window.matchMedia('(prefers-reduced-motion: reduce)').matches){this.clearDrag?.();finish();return;}
     const visual=getComputedStyle(box);
     box.style.setProperty('--sm-exit-transform',visual.transform);box.style.setProperty('--sm-exit-opacity',visual.opacity);
     box.style.setProperty('--sm-exit-backdrop-opacity',getComputedStyle(box,'::backdrop').opacity);
+    this.clearDrag?.();
+    box.style.removeProperty('animation');
     box.inert=true;box.classList.add('sm-closing');this.finishClosing=finish;
     box.addEventListener('animationend',end);timer=setTimeout(finish,260);
+  }
+  back(){if(!this.box)return;if(this.view!=='main'){this.render();this.box.querySelector('.sm-row:not(:disabled),button')?.focus();}else this.close();}
+  bindDrag(box){
+    let drag=null,timer;
+    const reset=()=>{clearTimeout(timer);drag=null;box.classList.remove('sm-dragging','sm-returning');box.style.removeProperty('transform');};
+    this.clearDrag=reset;
+    box.addEventListener('pointerdown',event=>{
+      if(event.pointerType==='mouse'||event.button!==0||!matchMedia('(max-width: 640px)').matches||!event.target.closest('.sm-handle,.sm-head,.sm-heading')||event.target.closest('button,input,a'))return;
+      reset();drag={id:event.pointerId,x:event.clientX,y:event.clientY,distance:0};
+      try{box.setPointerCapture(event.pointerId);}catch(_){/* Synthetic pointers do not own capture. */}
+    });
+    box.addEventListener('pointermove',event=>{
+      if(!drag||drag.id!==event.pointerId)return;
+      const y=event.clientY-drag.y,x=event.clientX-drag.x;
+      if(!drag.distance&&Math.abs(x)>Math.max(8,Math.abs(y))){reset();return;}
+      if(y<=8&&!drag.distance)return;
+      drag.distance=Math.max(0,y);box.style.animation='none';box.classList.remove('sm-returning');box.classList.add('sm-dragging');box.style.transform=`translateY(${drag.distance}px)`;
+    });
+    const end=event=>{
+      if(!drag||drag.id!==event.pointerId)return;
+      const distance=drag.distance;drag=null;
+      if(event.type==='pointerup'&&distance>=Math.min(96,Math.max(48,box.offsetHeight*.2))){this.close();return;}
+      if(!distance){reset();return;}
+      box.classList.add('sm-returning');box.classList.remove('sm-dragging');box.style.transform='translateY(0)';timer=setTimeout(reset,180);
+    };
+    box.addEventListener('pointerup',end);box.addEventListener('pointercancel',end);box.addEventListener('lostpointercapture',end);
+    box.addEventListener('click',event=>{if(box.classList.contains('sm-returning')){event.preventDefault();event.stopPropagation();}},true);
   }
   show(context,anchor){
     this.close({immediate:true});this.context=context;this.anchor=anchor;this.busy=false;
     const box=this.node('dialog','session-menu');this.box=box;box.setAttribute('aria-label',this.t('会话菜单'));
     box.addEventListener('close',()=>{box.remove();if(this.box===box){this.box=null;if(anchor?.element?.isConnected)anchor.element.focus();}});
-    box.addEventListener('cancel',event=>{event.preventDefault();this.close();});
+    box.addEventListener('cancel',event=>{event.preventDefault();this.back();});
+    this.bindDrag(box);
     box.addEventListener('keydown',event=>{
       if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key)||event.target.matches('input,textarea'))return;
       const items=[...box.querySelectorAll('button:not(:disabled)')],index=items.indexOf(document.activeElement);
@@ -68,8 +98,8 @@ class SessionMenu {
     finally{if(this.box===box){this.busy=false;if(button?.isConnected)button.disabled=false;}}
   }
   render(view='main'){
-    const c=this.context,box=this.box;this.view=view;box.replaceChildren();box.append(this.node('div','sm-handle'));
-    if(view!=='main')this.row('返回会话菜单','back',()=>this.render());
+    const c=this.context,box=this.box;this.clearDrag?.();this.view=view;box.replaceChildren();box.append(this.node('div','sm-handle'));
+    if(view!=='main')this.row('返回会话菜单','back',()=>this.back());
     else{
       const head=this.node('div','sm-head'),line=this.node('div','sm-name'),title=this.node('strong','',c.title),close=this.node('button','sm-icon');
       close.type='button';close.setAttribute('aria-label',this.t('关闭'));close.append(this.icon('close'));close.onclick=()=>this.close();
@@ -78,6 +108,7 @@ class SessionMenu {
       head.append(line,this.node('small','',c.subtitle||''),close);box.append(head);
     }
     if(view==='rename'){
+      if(c.renameScope==='bridge')box.append(this.node('p','sm-explanation',this.t('仅在 Bridge 中生效')));
       const form=this.node('form','sm-form'),input=this.node('input');input.value=c.title;input.maxLength=120;input.required=true;input.setAttribute('aria-label',this.t('聊天名称'));
       const save=this.node('button','primary',this.t('保存'));save.type='submit';form.append(input,save);box.append(form);
       form.onsubmit=event=>{event.preventDefault();const title=input.value.trim();if(title)this.execute(async()=>{await c.rename(title);c.title=title;},save,{close:false});};
@@ -114,20 +145,31 @@ class SessionMenu {
     try{
       this.valid();const snapshot=await context.organization();
       if(!active())return;this.valid();pending.remove();
+      const scope=snapshot[view+'Scope']||snapshot.scope||context.organizationScope||'native',local=scope==='bridge';
+      if(local)box.append(this.node('p','sm-explanation',this.t('仅在 Bridge 中生效')));
       const field=view==='project'?'projectId':'sectionId',selected=snapshot[field];
       const choices=[{id:null,name:this.t(view==='project'?'移出项目':'移出分区')},...snapshot[view==='project'?'projects':'sections']];
       for(const choice of choices){
         const requestId=this.newId();
-        const button=this.row(choice.name,view==='project'?'folder':'section',button=>this.execute(async()=>{
+        const label=choice.title||choice.name;
+        const button=this.row(label,view==='project'?'folder':'section',button=>this.execute(async()=>{
           const result=await context.organization({id:requestId,kind:view,targetId:choice.id,expectedId:selected});
-          if(result.status!=='confirmed')throw Error(this.t('原生分类结果待核对，请刷新会话列表'));
-          this.notify(this.t('已同步到 Codex 原生侧边栏'));
+          if(result.status!=='confirmed')throw Error(this.t('分类结果待核对，请刷新会话列表'));
+          this.notify(this.t(local?'已更新 Bridge 分类':'已同步到原生侧边栏'));
         },button),{disabled:choice.id===selected});
-        button.querySelector('span').textContent=choice.name;
+        button.querySelector('span').textContent=label;
         button.setAttribute('aria-pressed',String(choice.id===selected));
         if(choice.id===selected)button.append(this.node('span','sm-selected','✓'));
       }
-      if(choices.length===1)box.append(this.node('p','sm-explanation',this.t(view==='project'?'暂无原生项目，请先在 Codex 中创建':'暂无原生分区，请先在 Codex 中创建')));
+      if(local){
+        const form=this.node('form','sm-form'),input=this.node('input'),add=this.node('button','primary',this.t('添加'));
+        const label=this.t(view==='project'?'新项目名称':'新分区名称');input.maxLength=120;input.required=true;input.placeholder=label;input.setAttribute('aria-label',label);add.type='submit';form.append(input,add);box.append(form);
+        let request=null;
+        form.onsubmit=event=>{event.preventDefault();const title=input.value.trim();if(!title)return;
+          if(!request||request.title!==title)request={id:this.newId(),kind:'create-'+view,title};
+          this.execute(async()=>{const result=await context.organization(request);if(result.status!=='confirmed')throw Error(this.t('分类结果待核对，请刷新会话列表'));this.notify(this.t('已更新 Bridge 分类'));},add);
+        };
+      }else if(choices.length===1)box.append(this.node('p','sm-explanation',this.t(view==='project'?'暂无原生项目，请先在原客户端中创建':'暂无原生分区，请先在原客户端中创建')));
       this.position();
     }catch(error){
       if(!active())return;pending.remove();const message=this.node('p','sm-error',this.t(error.message));message.setAttribute('role','alert');box.append(message);this.position();

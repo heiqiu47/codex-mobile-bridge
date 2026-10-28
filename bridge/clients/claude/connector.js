@@ -116,6 +116,7 @@
     if(typeof api[surface]?.getSession==='function'&&typeof api[surface]?.getTranscript==='function')capabilities[kind].push('mobileDetail');
     if(kind==='code'&&typeof api[surface]?.getTranscriptTail==='function'&&typeof api[surface]?.getTranscriptPage==='function')capabilities[kind].push('mobileHistory');
     if(kind==='code'&&typeof api[surface]?.forkSession==='function'&&typeof api[surface]?.getTranscript==='function')capabilities[kind].push('mobileFork');
+    if(['getSession','updateSession'].every(method=>typeof api[surface]?.[method]==='function'))capabilities[kind].push('mobileRename');
   }
   function installObservers() {
     for (const surface of Object.values(surfaces)) {
@@ -277,6 +278,20 @@
     return [typeof options === 'string' ? {sessionId:options} :
       options && typeof options === 'object' && !Array.isArray(options) ? options : {}];
   }
+  async function mobileRename(target,id,options={}){
+    const title=typeof options.title==='string'?options.title.trim():'';
+    if(!title||[...title].length>120||/[\u0000-\u001f\u007f]/u.test(options.title))throw Error('标题为 1–120 字，不能包含控制字符');
+    const before=await target.getSession(id);
+    if(before?.sessionId!==id)throw Error('改名目标无法确认，尚未发送修改');
+    const cwd=before.cwd,folders=JSON.stringify(before.userSelectedFolders);
+    // Desktop 3.6556.2 owns title persistence for both Code and Cowork.
+    // updateSession changes metadata without starting or resuming a session.
+    await target.updateSession(id,{title,titleSource:'user'});
+    const after=await target.getSession(id);
+    if(after?.sessionId!==id||after.title!==title||after.cwd!==cwd||
+      JSON.stringify(after.userSelectedFolders)!==folders)throw Error('改名结果待核对，请检查原客户端；不会重复提交');
+    return {status:'confirmed',scope:'native',result:{id,title}};
+  }
   async function mobileFork(target,id,options={}){
     if(target!==api.LocalSessions||!capabilities.code.includes('mobileFork'))throw Error('当前 Claude 接入未提供原生分支接口');
     if(typeof options.id!=='string'||!/^[0-9a-f-]{36}$/i.test(options.id)||typeof options.messageId!=='string'||!options.messageId)throw Error('分支标识无效');
@@ -385,6 +400,7 @@
           if (msg.method === 'mobileList') return {result:await bounded(mobileList(),30000,'读取会话超时')};
           if (msg.method === 'mobileDetail' && capabilities[msg.surface].includes('mobileDetail')) return {result:await bounded(mobileDetail(target,msg.args[0],msg.args[1]),30000,'读取会话超时')};
           if (msg.method === 'mobileFork' && capabilities[msg.surface].includes('mobileFork')) return {result:await mobileFork(target,msg.args[0],msg.args[1])};
+          if (msg.method === 'mobileRename' && capabilities[msg.surface].includes('mobileRename')) return {result:await mobileRename(target,msg.args[0],msg.args[1])};
           if (msg.method === 'mobileProgress') { const page=msg.surface==='code'&&capabilities.code.includes('mobileHistory')?await target.getTranscriptTail(msg.args[0],24):await target.getTranscript(msg.args[0]); const rows=Array.isArray(page)?page:page?.messages; return {result:sanitize('getTranscript',Array.isArray(rows)?rows.slice(-24):[])}; }
           if (!allowed.has(msg.method) || typeof target[msg.method] !== 'function') throw new Error('不支持的桌面操作');
           return {result:sanitize(msg.method, await target[msg.method](...callArgs(msg.method,msg.args)))};
@@ -528,6 +544,7 @@
             if (target && msg.method === 'mobileList') return mobileList();
             if (target && msg.method === 'mobileDetail' && capabilities[msg.surface].includes('mobileDetail')) return mobileDetail(target,msg.args[0],msg.args[1]);
             if (target && msg.method === 'mobileFork' && capabilities[msg.surface].includes('mobileFork')) return mobileFork(target,msg.args[0],msg.args[1]);
+            if (target && msg.method === 'mobileRename' && capabilities[msg.surface].includes('mobileRename')) return mobileRename(target,msg.args[0],msg.args[1]);
             if (target && msg.method === 'mobileProgress') { const page=msg.surface==='code'&&capabilities.code.includes('mobileHistory')?await target.getTranscriptTail(msg.args[0],24):await target.getTranscript(msg.args[0]); const rows=Array.isArray(page)?page:page?.messages; return sanitize('getTranscript',Array.isArray(rows)?rows.slice(-24):[]); }
             if (!target || !allowed.has(msg.method) || typeof target[msg.method] !== 'function' || !Array.isArray(msg.args)) {
               throw new Error('不支持的桌面操作');

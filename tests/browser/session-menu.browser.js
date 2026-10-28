@@ -33,6 +33,41 @@ async function runSessionMenuBrowserChecks(){
     const before=calls.length;menu.show({...context(),isCurrent:()=>false},{element:anchor});await click('置顶会话');check(calls.length===before&&menu.box.querySelector('[role="alert"]'),'stale authentication blocks write');
     let resolve;menu.show({...context(),organization:()=>new Promise(done=>{resolve=done;})},{element:anchor});await click('项目');await click('返回会话菜单');resolve({projects:[],sections:[]});await new Promise(done=>setTimeout(done,0));check(!menu.box.textContent.includes('移出项目'),'late native list never paints another view');
     menu.show({...context(),organization:()=>Promise.reject(Error('native unavailable'))},{element:anchor});await click('分区');check(menu.box.querySelector('[role="alert"]').textContent==='native unavailable','native read error is visible');
+    const priorBackCalls=calls.length;
+    for(const view of ['details','rename','project','section','archive']){
+      menu.show(context(),{element:anchor});menu.render(view);const box=menu.box;
+      box.dispatchEvent(new Event('cancel',{cancelable:true}));
+      check(menu.box===box&&menu.view==='main','native back and Escape return '+view+' to the main menu');
+      check(calls.length===priorBackCalls,'back never submits a child page');
+    }
+    let completeWrite;menu.show({...context(),archive:()=>{calls.push(['pending-archive']);return new Promise(done=>{completeWrite=done;});}},{element:anchor});
+    await click('停止任务并归档…');await click('确认归档');menu.box.dispatchEvent(new Event('cancel',{cancelable:true}));
+    check(menu.view==='main'&&menu.busy,'returning does not cancel an already sent request');
+    await click('停止任务并归档…');await click('确认归档');check(calls.filter(row=>row[0]==='pending-archive').length===1,'returning cannot submit the pending request twice');
+    completeWrite();await new Promise(done=>setTimeout(done,0));check(!menu.box,'the original request still completes');
+    const localContext={...context(),renameScope:'bridge',organizationScope:'bridge',organization:change=>{if(change)calls.push(['local-organization',change]);return Promise.resolve({projectId:null,sectionId:null,projects:[{id:'local-p',title:'本地项目'}],sections:[],scope:'bridge',status:'confirmed'});}};
+    menu.show(localContext,{element:anchor});menu.render('rename');check(menu.box.textContent.includes('仅在 Bridge 中生效'),'local rename is labelled');
+    menu.back();await click('项目');check(menu.box.textContent.includes('仅在 Bridge 中生效')&&menu.box.textContent.includes('本地项目'),'local project scope and title are visible');
+    menu.box.querySelector('input').value='新建项目';menu.box.querySelector('form').requestSubmit();await new Promise(done=>setTimeout(done,0));
+    check(calls.at(-1)[1].kind==='create-project'&&calls.at(-1)[1].title==='新建项目'&&calls.at(-1)[1].id,'create project submits one named request');
+    menu.show({...context(),organization:()=>Promise.resolve({projectId:null,sectionId:null,projects:[],sections:[],scope:'native',sectionScope:'bridge'})},{element:anchor});await click('项目');check(!menu.box.querySelector('input'),'native projects have no Bridge creation form');
+    menu.back();await click('分区');check(menu.box.querySelector('[aria-label="新分区名称"]')&&menu.box.textContent.includes('仅在 Bridge 中生效'),'mixed native project and local section retain their scopes');
+    if(innerWidth<=640){
+      const gesture=(target,dx,dy,end='pointerup')=>{
+        target.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:'touch',pointerId:7,button:0,clientX:100,clientY:100}));
+        target.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerType:'touch',pointerId:7,clientX:100+dx,clientY:100+dy}));
+        target.dispatchEvent(new PointerEvent(end,{bubbles:true,pointerType:'touch',pointerId:7,clientX:100+dx,clientY:100+dy}));
+      };
+      menu.show(context(),{element:anchor});menu.render('details');let box=menu.box;
+      gesture(box.querySelector('.sm-details'),0,150);check(menu.box===box&&!box.classList.contains('sm-returning'),'content scrolling never drags the sheet');
+      gesture(box.querySelector('.sm-handle'),100,20);check(menu.box===box,'horizontal gestures never dismiss');
+      gesture(box.querySelector('.sm-handle'),0,24);check(menu.box===box&&box.classList.contains('sm-returning'),'short drag returns to its position');
+      await new Promise(done=>setTimeout(done,220));check(getComputedStyle(box).transform==='none'&&getComputedStyle(box).animationName==='none','spring back does not replay the entrance animation');
+      gesture(box.querySelector('.sm-handle'),0,150,'pointercancel');check(menu.box===box,'interrupted gesture never dismisses');
+      await new Promise(done=>setTimeout(done,220));
+      gesture(box.querySelector('.sm-handle'),0,150);check(!menu.box,'a downward drag dismisses child pages without submitting');
+      menu.show(context(),{element:anchor});gesture(menu.box.querySelector('.sm-name strong'),0,150);check(!menu.box,'the main title also supports downward dismissal');
+    }
     menu.close();let navigated=0;anchor.addEventListener('click',()=>navigated++);menu.bind(anchor,context);
     anchor.dispatchEvent(new PointerEvent('pointerdown',{pointerType:'touch',button:0,clientX:1,clientY:1}));
     anchor.dispatchEvent(new PointerEvent('pointermove',{pointerType:'touch',clientX:30,clientY:1}));

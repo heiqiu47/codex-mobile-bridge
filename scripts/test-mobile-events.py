@@ -29,7 +29,7 @@ public interface SharedPreferences {boolean getBoolean(String k,boolean d);Strin
 'io/github/try2love/codexbridge/MobileStrings.java': 'package io.github.try2love.codexbridge;final class MobileStrings {static String text(android.content.Context c,String s){return s;}}',
 }
 stubs['io/github/try2love/codexbridge/TaskNotifications.java'] = r'''package io.github.try2love.codexbridge;
-final class TaskNotifications {static long fail=-1;static void show(android.content.Context context,String origin,String stream,org.json.JSONObject event,String channel)throws Exception {if(event.getLong("sequence")==fail)throw new java.io.IOException("Delivery unavailable");MobileEventTests.delivered.add(origin+":"+stream+":"+event.getLong("sequence"));}}
+final class TaskNotifications {static long fail=-1;static void show(android.content.Context context,String origin,String stream,org.json.JSONObject event,String channel)throws Exception {if(event.getLong("sequence")==fail)throw new java.io.IOException("Delivery unavailable");MobileEventTests.deliveredEvents.add(event);MobileEventTests.delivered.add(origin+":"+stream+":"+event.getLong("sequence"));}}
 '''
 for name, source in stubs.items():
     path = WORK / name

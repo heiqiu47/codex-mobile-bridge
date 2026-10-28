@@ -616,6 +616,7 @@ class Claude:
                 'permissions': 'setPermissionMode' in methods, 'attachments': 'sendMessage' in methods,
                 'skills': 'getSupportedCommands' in methods, 'queue': kind == 'code', 'steer': kind == 'code',
                 'fork': kind == 'code' and 'mobileFork' in methods,
+                'rename': 'mobileRename' in methods,
                 'archive': kind == 'code' and 'mobileArchive' in methods,
                 'unarchive': kind == 'code' and 'mobileArchive' in methods,
                 'contextUsage': any(method in methods for method in ('getContextUsageSummary', 'getContextUsage'))}
@@ -769,6 +770,16 @@ class Claude:
         if not saved:
             raise ValueError('找不到 Claude 会话')
         kind, native = saved['backend'], saved['nativeId']
+        if action == 'rename':
+            if not self.session_capabilities(kind)['rename']:
+                raise ValueError('当前 Claude 接入未提供已确认的原生改名接口')
+            title = body.get('title')
+            if not isinstance(title, str) or not 1 <= len(title.strip()) <= 120 or re.search(r'[\x00-\x1f\x7f]', title):
+                raise ValueError('标题为 1–120 字，不能包含控制字符')
+            reply = await self.desktop.call(kind, 'mobileRename', native, {'title': title.strip()})
+            if reply.get('status') != 'confirmed' or reply.get('result') != {'id': native, 'title': title.strip()}:
+                raise BridgeUnavailable('改名结果待核对，请检查原客户端；不会重复提交')
+            return {**reply, 'result': {'id': sid, 'title': title.strip()}}
         if action in ('archive-state', 'archive'):
             if kind != 'code' or not self.session_capabilities(kind)['archive']:
                 raise ValueError('当前接入尚未确认原生归档和恢复能力')

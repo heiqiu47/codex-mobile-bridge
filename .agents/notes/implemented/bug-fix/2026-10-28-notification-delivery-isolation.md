@@ -51,6 +51,8 @@ UI、第三方接收地址、认证和用户原会话 owner/provider/auth/cwd �
 
 后续[手机通知来源选择](../feature/2026-10-28-mobile-notification-sources.md)仅增加手机本地开关，与本篇网关投递隔离互补，不改变第三方通道配置。
 
+[原生运行失败与阻塞通知](2026-10-28-terminal-attention-notifications.md)复用本篇发送隔离与目的地账本，增加 `attention` 事件及恢复后撤销；失败仍不会被当作成功完成。
+
 ## 关联接入
 
 [DSH 通用插件与显式档案绑定](../feature/2026-10-28-dsh-generic-plugin-binding.md)复用本篇契约，记录第三方核心的接入边界和隔离运行验证；不替代其他客户端及版本的验证限制。

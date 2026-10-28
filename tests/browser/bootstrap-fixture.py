@@ -112,7 +112,8 @@ class Handler(BaseHTTPRequestHandler):
                      'projectName': '示例项目', 'projectKey': 'synthetic', 'cwd': '/synthetic/project',
                      'recency': 1793145600000 - i * 60000, 'updatedAt': 1793145600000 - i * 60000,
                      'backend': 'code', 'runtime': 'desktop', 'access': {'source': 'desktop'},
-                     'capabilities': {'fork': True, 'archive': True, 'unarchive': True}, 'bridgePinned': False}
+                     'capabilities': {'fork': True, 'archive': True, 'unarchive': True, 'rename': True,
+                                      'organization': provider in ('codex', 'deepseek')}, 'bridgePinned': False}
                     for i, title in enumerate(['页面交互验证', '文档整理', '单元测试检查'])]
             if provider == 'codex':
                 for i, row in enumerate(rows):
@@ -131,8 +132,10 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/account':
                 value = {'visible': False}
             elif path.endswith('/organization'):
-                value = {'projectId': None, 'sectionId': None, 'projects': [{'id': 'p', 'name': '示例项目'}],
-                         'sections': [{'id': 's', 'name': '示例分区'}], 'status': 'confirmed'}
+                value = {'projectId': None, 'sectionId': None, 'projects': [{'id': 'p', 'title': '示例项目'}],
+                         'sections': [{'id': 's', 'title': '示例分区'}], 'status': 'confirmed',
+                         'scope': 'bridge' if provider == 'claude' else 'native',
+                         'sectionScope': 'native' if provider == 'codex' else 'bridge'}
             self.output(json.dumps(value), 'application/json')
             return
         if path == '/api/auth':

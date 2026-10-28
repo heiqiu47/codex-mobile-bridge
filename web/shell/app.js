@@ -354,12 +354,16 @@ function sessionMenuContext(chat,provider='codex'){
     isCurrent,pinned:sessionPins.value(identity,chat.bridgePinned),archived:!!view.archived,
     pin:pinned=>{sessionPins.set(identity,pinned);toast(t('已在此设备保存，等待同步'));},
     link:window.BridgeSessionLinks.text(identity),linkLabel:provider==='deepseek'?'复制 Session ID':'复制深度链接',
-    nativeOrganization:provider==='codex',projectName:view.projectName,
+    nativeOrganization:true,projectName:view.projectName,
+    organizationScope:provider==='codex'||caps.organization===true?'native':'bridge',
+    renameScope:provider==='codex'||caps.rename===true?'native':'bridge',
     organization:async change=>{
       if(!isCurrent())throw Error('连接或账号已变化，请重新打开会话菜单');
-      const result=await api(sessionUrl(chat.id,'organization',identity.host),change,undefined,isCurrent);
+      const result=await api(provider==='codex'?sessionUrl(chat.id,'organization',identity.host):
+        '/api/desktop-sessions/'+provider+'/organization'+(change?'':'?sessionId='+encodeURIComponent(chat.id)),
+        provider==='codex'||!change?change:{...change,sessionId:chat.id},undefined,isCurrent);
       if(!isCurrent())throw Error('连接或账号已变化，请重新打开会话菜单');
-      if(change)loadList(true).catch(error=>toast(t(error.message)));
+      if(change)(provider==='codex'?loadList(true):desktopSessions.refresh()).catch(error=>toast(t(error.message)));
       return result;
     },
     details:[['客户端',provider==='codex'?'Codex':provider==='claude'?'Claude':'DSH'],['会话 ID',chat.id,true],
@@ -367,11 +371,21 @@ function sessionMenuContext(chat,provider='codex'){
       ['工作目录',view.cwd,true],['模型',[view.model,view.effort].filter(Boolean).join(' · ')],['提供商',view.provider],['项目',view.projectName]],
     notifications:async()=>{await ensure();if(provider==='codex')return $('notify-button').onclick();return desktopSessions.notifications();},
     manage:async()=>{try{await ensure();await openMessageManagement();}catch(error){toast(t(error.message));}}};
-  if(provider==='codex'&&access.canConfigure)context.rename=async title=>{
-    const result=await api(sessionUrl(chat.id,'rename',identity.host),{title},undefined,isCurrent);
+  const renameIds=new Map();
+  if(provider!=='codex'||access.canConfigure)context.rename=async title=>{
+    if(!isCurrent())throw Error('连接或账号已变化，请重新打开会话菜单');
+    if(!renameIds.has(title))renameIds.set(title,uuid());
+    const result=await api(provider==='codex'?sessionUrl(chat.id,'rename',identity.host):'/api/desktop-sessions/'+provider+'/rename',
+      provider==='codex'?{title}:{title,id:renameIds.get(title),sessionId:chat.id},undefined,isCurrent);
+    if(provider!=='codex'&&result.status!=='confirmed')throw Error('改名结果待核对；不会重复提交，请先在原客户端核对');
     if(!isCurrent())return;
-    if(current()&&state){state.title=result.title;$('chat-title').textContent=result.title;}
-    await loadList(true);
+    if(provider==='codex'){
+      if(current()&&state){state.title=result.title;$('chat-title').textContent=result.title;}
+      await loadList(true);
+    }else{
+      if(current()&&desktopSessions.state){desktopSessions.state.title=result.title;desktopSessions.title.textContent=result.title;}
+      await desktopSessions.refresh();
+    }
   };
   if(provider==='codex'&&access.canEditMessages||provider!=='codex'&&caps.fork===true)context.fork=async()=>{
     await ensure();

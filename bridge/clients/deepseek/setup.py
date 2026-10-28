@@ -56,6 +56,10 @@ PREVIOUS_DISCONNECT_SOURCES = ('b8b05cd4d93af60913b505c842dc6b74d2860199980bab07
 PREVIOUS_MESSAGE_MODEL_SOURCES = ('74c6a26a7a8eca9a6dfe5e6256f595a174c58b3645d3bd15497c9877d1422938',
                                   '740533827d3817803605c490bd95f3ffbff1bc841cf14f99820ebcf0db14ab4b')
 
+# Revision 8 before guarded native rename and project membership, LF and CRLF.
+PREVIOUS_SESSION_METADATA_SOURCES = ('78b87c8f6f5b4633067d4c75fd50b8f006042bc1dc0aba26130e662748006911',
+                                     '87ab2a8dedbde1661c1f325b9371711704caaa140e3e4209ae71801d1c78bf6d')
+
 def insertion(text):
     """Read only our JSON flow insertion, including Harness's line wrapping.
 
@@ -174,7 +178,7 @@ def verified_directory(entry, home):
                 LEGACY_SOURCE, PREVIOUS_SOURCE, PREVIOUS_CLEANUP_SOURCE, PREVIOUS_CATALOG_SOURCE,
                 *PREVIOUS_QUIT_SOURCES, *PREVIOUS_CONTEXT_SOURCES, *PREVIOUS_HISTORY_SOURCES,
                 *PREVIOUS_PROJECT_SOURCES, *PREVIOUS_WORKSPACE_SOURCES, *PREVIOUS_ARCHIVE_SOURCES,
-                *PREVIOUS_DISCONNECT_SOURCES, *PREVIOUS_MESSAGE_MODEL_SOURCES):
+                *PREVIOUS_DISCONNECT_SOURCES, *PREVIOUS_MESSAGE_MODEL_SOURCES, *PREVIOUS_SESSION_METADATA_SOURCES):
             return None
         return directory, digest not in current_sources
     except (OSError, ValueError, KeyError, TypeError, IndexError):
