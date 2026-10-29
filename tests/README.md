@@ -46,7 +46,7 @@ npm run test:browser
 
 [浏览器夹具](browser/README.md) 位于 `tests/browser/*.browser.js`，依赖真实 DOM 或隔离服务，应由相应驱动调用。其中有些文件只定义测试函数，单独加载不会执行断言。本轮将它们与 Node 分开，避免虚增通过计数。
 
-`test:browser` 自动调用启动恢复、聊天历史、草稿隔离、API 表单、输入引用及 Claude/DSH 项目弹窗检查，包含 Chromium/WebKit、1280 px/390 px 四种组合。首次安装开发依赖后运行 `PLAYWRIGHT_BROWSERS_PATH=.local/tools/playwright npx playwright install chromium webkit`；Linux CI 加 `--with-deps`。Windows 可用 PowerShell 设置同名环境变量；配置默认也使用项目内的该目录。Chromium 官方下载暂不可用时，可用本机已有 Chrome：`CMB_CHROMIUM_CHANNEL=chrome npm run test:browser`，报告中注明浏览器来源；CI 默认使用锁定版本运行时。
+`test:browser` 自动调用启动恢复、聊天历史、草稿隔离、API 表单、输入引用及 Claude/DSH 项目弹窗检查，包含 Chromium/WebKit、1280 px/390 px 四种组合。发送反馈与模型设置回归还覆盖 Claude Code/Cowork、DSH、慢响应、手动输入和真实聊天背景的明暗主题。首次安装开发依赖后运行 `PLAYWRIGHT_BROWSERS_PATH=.local/tools/playwright npx playwright install chromium webkit`；Linux CI 加 `--with-deps`。Windows 可用 PowerShell 设置同名环境变量；配置默认也使用项目内的该目录。Chromium 官方下载暂不可用时，可用本机已有 Chrome：`CMB_CHROMIUM_CHANNEL=chrome npm run test:browser`，报告中注明浏览器来源；CI 默认使用锁定版本运行时。
 
 服务固定绑定隔离 loopback 端口 18279，拒绝复用已占用端口；浏览器请求不访问外部 origin。输出位于 `.tmp/browser-results/`，失败时包含截图和 trace。合成页面检查不替代真实登录后端、客户端协议或手机 WebView 验收。
 
