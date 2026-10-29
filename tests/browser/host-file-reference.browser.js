@@ -11,18 +11,19 @@ window.runHostFileReferenceChecks=async()=>{
   async request(url){calls.push(url);const path=new URL(url,location.href).searchParams.get('path');
    if(url.includes('/info'))return {kind:path==='folder'?'directory':'file',name:path.split('/').at(-1),path,absolutePath:'/project/'+path};
    if(url.includes('/files/'))return {name:'inside.txt',path:'inside.txt',size:4,clickDownloadMiB:1,locatable:true,kind:'file'};
-   return {project:'fixture',path,entries:path?[{kind:'file',path:'folder/inside.txt',name:'inside.txt',size:4}]:[{kind:'directory',path:'folder',name:'folder'}],nextOffset:null};
+   return {project:'fixture',path,entries:path?[{kind:'file',path:'folder/inside.txt',name:'inside.txt',size:4}]:[{kind:'directory',path:'folder',name:'folder'},...Array.from({length:60},(_,i)=>({kind:'file',name:'file-'+i+'.txt',path:'file-'+i+'.txt',size:4}))],nextOffset:null};
   },referenceFile:Workbench.prototype.referenceFile,locate:async(s,path)=>located.push(path)};
  BridgeFileActions.register(chat,workspace);
- const panel=new ChatAttachments({root,button,input,upload:()=>{throw Error('Unexpected upload');},onChange:()=>{},chooseReference:()=>BridgeFileActions.pickReference(workspace)});panel.open('local|fixture');
+ const panel=new ChatAttachments({root,button,input,upload:()=>{throw Error('Unexpected upload');},onChange:()=>{},chooseReference:()=>BridgeFileActions.pickReference(workspace)});panel.open('local|fixture');workspace.attachReference=info=>panel.addReference(info);
  const find=text=>[...document.querySelectorAll('dialog[open] button')].find(n=>n.textContent===text);
  try{
-  button.click();check(!!find('从本机上传'),'paperclip preserves local upload option');find('引用宿主机项目文件').click();await tick();
-  let dialog=document.querySelector('dialog[open]');check(!!dialog.querySelector('[data-path="folder"]'),'paperclip opens host directory directly');
+  button.click();check(!!find('从本机上传'),'paperclip preserves local upload option');check(document.querySelector('.attachment-menu[open]').getBoundingClientRect().height<180,'paperclip uses a compact menu');find('引用宿主机项目文件').click();await tick();
+  let dialog=document.querySelector('dialog.host-file-picker[open]');check(!!dialog.querySelector('[data-path="folder"]'),'paperclip opens host directory directly');
+  await new Promise(requestAnimationFrame);const list=dialog.querySelector('.wb-file-list'),head=dialog.querySelector('.wb-search'),top=head.getBoundingClientRect().top;check(list.scrollHeight>list.clientHeight,'long directory is constrained to its own viewport');list.scrollTop=200;await new Promise(requestAnimationFrame);check(list.scrollTop>0&&head.getBoundingClientRect().top===top&&dialog.scrollTop===0,'only file rows scroll while search stays fixed');list.scrollTop=0;
   dialog.querySelector('[data-path="folder"]').click();await tick();find('引用此文件夹').click();await tick();
-  check(composer.value==='已有草稿\n[folder](<./folder/>)\n','folder reference preserves draft without sending');
+  check(composer.value==='已有草稿'&&panel.references()[0].path==='folder','folder is an attachment and leaves message text unchanged');
   button.click();find('引用宿主机项目文件').click();await tick();document.querySelector('dialog[open] [data-path="folder"]').click();await tick();document.querySelector('dialog[open] [data-path="folder/inside.txt"]').click();await tick();
-  check(composer.value.includes('[inside.txt](<./folder/inside.txt>)'),'file reference uses project-relative path');
+  check(composer.value==='已有草稿'&&panel.references()[1].absolutePath==='/project/folder/inside.txt'&&panel.ids().length===0,'file reference retains native identity without upload');
   check(calls.every(url=>url.startsWith('/fixture/workspace/')),'reference selection fetches metadata only');
   button.click();const before=composer.value;panel.open('local|another');find('引用宿主机项目文件').click();await tick();check(!document.querySelector('dialog[open]')&&composer.value===before,'late attachment choice cannot target another chat');panel.open('local|fixture');
   button.click();find('引用宿主机项目文件').click();await tick();document.querySelector('dialog[open] [data-path="folder"]').click();await tick();dialog=document.querySelector('dialog[open]');let finish;workspace.request=()=>new Promise(resolve=>finish=resolve);dialog.querySelector('[data-path="folder/inside.txt"]').click();workspace.current={};finish({path:'unexpected',kind:'file'});await tick();check(composer.value===before,'late metadata from a previous session cannot append a reference');dialog.close();await tick();workspace.current=session;

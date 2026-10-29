@@ -110,7 +110,7 @@ class ComposerDrafts {
     const records=[],saved=this.read(this.key(scope,'pending-v2')),old=this.pending(scope);
     const add=(source,value)=>{
       if(!value||typeof value.id!=='string'||!value.id)return;
-      const body=value.body||Object.fromEntries(['text','mode','skills','workMode','attachments','uiLocale'].filter(key=>Object.prototype.hasOwnProperty.call(value,key)).map(key=>[key,value[key]]));
+      const body=value.body||Object.fromEntries(['text','mode','skills','workMode','attachments','references','uiLocale'].filter(key=>Object.prototype.hasOwnProperty.call(value,key)).map(key=>[key,value[key]]));
       records.push({source,scopeKey:this.key(scope),id:value.id,version:JSON.stringify(value),body:JSON.parse(JSON.stringify(body)),fingerprint:value.fingerprint||JSON.stringify(body),accountUnverified:(source==='session'||source==='memory')&&!value.account});
     };
     if(old&&saved?.legacyVersion!==JSON.stringify(old))add('v1',old);

@@ -24,6 +24,20 @@ class WorkspaceTests(unittest.TestCase):
         (self.root / 'folder').mkdir(); (self.root / 'hello.txt').write_bytes('你好\nworkspace🙂'.encode('utf-8'))
         (self.root / '.hidden').write_text('hidden')
 
+    def test_references_resolve_metadata_without_copying_and_reject_changed_roots(self):
+        refs = [{'path': path, 'absolutePath': self.work.info(path)['absolutePath']} for path in ['hello.txt', 'folder']]
+        with patch.object(Path, 'read_bytes', side_effect=AssertionError('must not read contents')):
+            files = self.work.references(refs)
+        self.assertEqual([f['kind'] for f in files], ['file', 'directory'])
+        self.assertEqual(files[0]['path'], str(self.root / 'hello.txt'))
+        for invalid in [refs * 6, refs[:1] * 2, [{'path': 'hello.txt', 'absolutePath': '/wrong/project/hello.txt'}],
+                        [{'path': '../outside', 'absolutePath': str(self.root.parent / 'outside')}]]:
+            with self.assertRaises((ValueError, PermissionError)):
+                self.work.references(invalid)
+        (self.root / 'link').symlink_to(self.root / 'hello.txt')
+        with self.assertRaises((ValueError, PermissionError, OSError)):
+            self.work.references([{'path': 'link', 'absolutePath': str(self.root / 'link')}])
+
     def tearDown(self): self.temp.cleanup()
 
     def test_display_absolute_path_only_normalizes_windows_drive_and_unc_prefixes(self):

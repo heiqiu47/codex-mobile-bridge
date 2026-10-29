@@ -1,4 +1,5 @@
 import UIKit
+import PhotosUI
 @preconcurrency import WebKit
 import AVFoundation
 import UserNotifications
@@ -157,7 +158,7 @@ final class GatewayReachability: NSObject, URLSessionDataDelegate {
     }
 }
 
-final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelegate, UIDocumentPickerDelegate, UIDocumentInteractionControllerDelegate {
+final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelegate, UIDocumentPickerDelegate, UIDocumentInteractionControllerDelegate, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
     private var web: WKWebView?
     private var nativeMainNavigation: (web: WKWebView, generation: Int, url: String)?
     private var origin = ""
@@ -194,6 +195,10 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     private var uploadPicker: UIDocumentPickerViewController?
     private var uploadCompletion: (([URL]?) -> Void)?
     private var uploadGeneration = 0
+    private var uploadSource: (name: String, at: Date)?
+    private var mediaPicker: UIViewController?
+    private var uploadTicket = UUID()
+    private var mediaUploadDirectory: URL?
     private var timer: Timer?
     private var activityTimer: Timer?
     private var foregroundBaselines = Set<String>()
@@ -403,7 +408,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
         let inbox = UIBarButtonItem(image: UIImage(systemName: "bell"), style: .plain, target: self, action: #selector(self.inbox)); inbox.accessibilityLabel = MobileStrings.text("通知")
         navigationItem.rightBarButtonItems = [settings, inbox]
     }
-    private func clear() { connectionDeadline?.cancel(); connectionDeadline = nil; updateSystemBars(reset: true); connectionError = nil; pendingStorage = nil; nativeMainNavigation = nil; routeDiscovery?.cancel(); routeDiscovery = nil; cancelSync(); finishUpload(nil); stopComputerChecks(); computerStates.removeAll(); computerNotifications.removeAll(); gatewayMenuTop?.isActive = false; gatewayMenuTop = nil; generation += 1; web?.stopLoading(); web?.navigationDelegate = nil; web?.uiDelegate = nil; web = nil; for v in page.arrangedSubviews where v !== subtitle { page.removeArrangedSubview(v); v.removeFromSuperview() } }
+    private func clear() { connectionDeadline?.cancel(); connectionDeadline = nil; updateSystemBars(reset: true); connectionError = nil; pendingStorage = nil; nativeMainNavigation = nil; routeDiscovery?.cancel(); routeDiscovery = nil; cancelSync(); finishUpload(nil); if let folder = mediaUploadDirectory { try? FileManager.default.removeItem(at: folder); mediaUploadDirectory = nil }; stopComputerChecks(); computerStates.removeAll(); computerNotifications.removeAll(); gatewayMenuTop?.isActive = false; gatewayMenuTop = nil; generation += 1; web?.stopLoading(); web?.navigationDelegate = nil; web?.uiDelegate = nil; web = nil; for v in page.arrangedSubviews where v !== subtitle { page.removeArrangedSubview(v); v.removeFromSuperview() } }
     @objc func home() {
         clear(); navigation(home: true); subtitle.isHidden = true
         let container = UIView(); page.addArrangedSubview(container); let content = scrollContent(in: container)
@@ -698,6 +703,12 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
         let nativeLanguage = (defaults.string(forKey: "bridge-language") ?? Locale.preferredLanguages.first ?? "zh").hasPrefix("en") ? "en" : "zh"
         let appearanceScript = scripts.appearance.replacingOccurrences(of: "__BRIDGE_CLIPBOARD_TOKEN__", with: clipboardToken).replacingOccurrences(of: "'__BRIDGE_CONNECTION_NAME__'", with: connectionName) + "\ndocument.addEventListener('bridge-authenticated', () => window.prompt('codexbridge-session:" + clipboardToken + "', ''));document.addEventListener('bridge-logged-out', () => window.prompt('codexbridge-logout:" + clipboardToken + "', ''));document.addEventListener('bridge-auth-lost', () => window.prompt('codexbridge-auth-lost:" + clipboardToken + "', ''));"
         configuration.userContentController.addUserScript(WKUserScript(source: appearanceScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        #if compiler(>=6.1)
+        if #available(iOS 18.4, *) {
+            let uploadScript = "window.BridgeUploadSource = (source, accept) => navigator.userActivation?.isActive && window.prompt('codexbridge-upload-source:" + clipboardToken + "', source + (source !== 'files' && accept && !accept.includes('video') ? '-images' : '')) === 'selected';"
+            configuration.userContentController.addUserScript(WKUserScript(source: uploadScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        }
+        #endif
         let clipboardScript = scripts.clipboard.replacingOccurrences(of: "__BRIDGE_CLIPBOARD_TOKEN__", with: clipboardToken).replacingOccurrences(of: "'__BRIDGE_NATIVE_LANGUAGE__'", with: "\"" + nativeLanguage + "\"")
         configuration.userContentController.addUserScript(WKUserScript(source: clipboardScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         let systemBarsScript = scripts.systemBars.replacingOccurrences(of: "__BRIDGE_CLIPBOARD_TOKEN__", with: clipboardToken)
@@ -784,6 +795,13 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) { guard frame.isMainFrame else { completionHandler(); return }; let a = UIAlertController(title: nil, message: message, preferredStyle: .alert); a.addAction(UIAlertAction(title: MobileStrings.text("好"), style: .default) { _ in completionHandler() }); present(a, animated: true) }
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) { guard frame.isMainFrame else { completionHandler(false); return }; let a = UIAlertController(title: nil, message: message, preferredStyle: .alert); a.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel) { _ in completionHandler(false) }); a.addAction(UIAlertAction(title: MobileStrings.text("确认"), style: .default) { _ in completionHandler(true) }); present(a, animated: true) }
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        if prompt == "codexbridge-upload-source:" + clipboardToken {
+            guard webView === web, connectionError == nil, UIApplication.shared.applicationState == .active,
+                  frame.isMainFrame, let source = frame.request.url, GatewayURL.same(source, origin),
+                  let current = webView.url, GatewayURL.same(current, origin), presentedViewController == nil,
+                  let value = defaultText, ["photos", "camera", "files", "photos-images", "camera-images"].contains(value) else { completionHandler(nil); return }
+            uploadSource = (value, Date()); completionHandler("selected"); return
+        }
         if prompt == "codexbridge-theme:" + clipboardToken {
             guard webView === web, connectionError == nil, UIApplication.shared.applicationState == .active,
                   frame.isMainFrame, let source = frame.request.url, GatewayURL.same(source, origin),
@@ -896,7 +914,20 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable ([URL]?) -> Void) {
         guard webView === web, frame.isMainFrame, let source = frame.request.url, GatewayURL.same(source, origin),
               let current = webView.url, GatewayURL.same(current, origin), presentedViewController == nil else { completionHandler(nil); return }
+        let uploadKind = uploadSource.flatMap { Date().timeIntervalSince($0.at) < 2 ? $0.name : nil }
         finishUpload(nil)
+        uploadCompletion = completionHandler; uploadGeneration = generation
+        if uploadKind == "photos" || uploadKind == "photos-images" {
+            var config = PHPickerConfiguration(); config.preferredAssetRepresentationMode = .compatible; if uploadKind == "photos-images" { config.filter = .images }; config.selectionLimit = parameters.allowsMultipleSelection ? 10 : 1
+            let picker = PHPickerViewController(configuration: config); picker.delegate = self
+            mediaPicker = picker; present(picker, animated: true); return
+        }
+        if uploadKind == "camera" || uploadKind == "camera-images" {
+            guard UIImagePickerController.isSourceTypeAvailable(.camera) else { finishUpload(nil); info(MobileStrings.text("此设备无法使用相机")); return }
+            let picker = UIImagePickerController(); picker.sourceType = .camera
+            picker.mediaTypes = uploadKind == "camera-images" ? [UTType.image.identifier] : [UTType.image.identifier, UTType.movie.identifier]; picker.delegate = self
+            mediaPicker = picker; present(picker, animated: true); return
+        }
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
         picker.allowsMultipleSelection = parameters.allowsMultipleSelection; picker.delegate = self
         uploadPicker = picker; uploadCompletion = completionHandler; uploadGeneration = generation
@@ -904,8 +935,60 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     }
     #endif
     private func finishUpload(_ urls: [URL]?) {
-        let completion = uploadCompletion; uploadCompletion = nil; uploadPicker = nil
+        let completion = uploadCompletion; uploadCompletion = nil; uploadPicker = nil; mediaPicker = nil; uploadSource = nil; uploadTicket = UUID()
         completion?(urls)
+    }
+    private func mediaUploadFolder() throws -> URL {
+        if let folder = mediaUploadDirectory { return folder }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("BridgeUpload-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        mediaUploadDirectory = folder; return folder
+    }
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        guard picker === mediaPicker else { picker.dismiss(animated: true); return }
+        let ticket = uploadTicket
+        picker.dismiss(animated: true)
+        guard !results.isEmpty, let folder = try? mediaUploadFolder() else { finishUpload(nil); return }
+        Task { @MainActor in
+            var urls = [URL]()
+            for result in results {
+                let provider = result.itemProvider
+                guard let type = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .image) == true || UTType($0)?.conforms(to: .movie) == true }) else { continue }
+                let saved: URL? = await withCheckedContinuation { continuation in
+                    provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
+                        guard let url else { continuation.resume(returning: nil); return }
+                        let destination = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension(url.pathExtension)
+                        do { try FileManager.default.copyItem(at: url, to: destination); continuation.resume(returning: destination) }
+                        catch { continuation.resume(returning: nil) }
+                    }
+                }
+                if let saved { urls.append(saved) }
+            }
+            guard ticket == uploadTicket, uploadGeneration == generation, let current = web?.url, GatewayURL.same(current, origin) else {
+                for url in urls { try? FileManager.default.removeItem(at: url) }; return
+            }
+            if urls.count == results.count { finishUpload(urls) }
+            else { for url in urls { try? FileManager.default.removeItem(at: url) }; finishUpload(nil); info(MobileStrings.text("无法读取所选文件，请从系统文件选择器重新选择。")) }
+        }
+    }
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        guard picker === mediaPicker else { return }
+        picker.dismiss(animated: true); finishUpload(nil)
+    }
+    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo values: [UIImagePickerController.InfoKey: Any]) {
+        guard picker === mediaPicker, uploadGeneration == generation, let current = web?.url, GatewayURL.same(current, origin) else { picker.dismiss(animated: true); return }
+        var saved: URL?
+        do {
+            let folder = try mediaUploadFolder()
+            if let movie = values[.mediaURL] as? URL {
+                let destination = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension(movie.pathExtension)
+                try FileManager.default.copyItem(at: movie, to: destination); saved = destination
+            } else if let image = values[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.95) {
+                let destination = folder.appendingPathComponent(UUID().uuidString + ".jpg")
+                try data.write(to: destination, options: .atomic); saved = destination
+            }
+        } catch { saved = nil }
+        picker.dismiss(animated: true); finishUpload(saved.map { [$0] })
     }
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         if controller === exportPicker { exportPicker = nil; if !urls.isEmpty { downloads.markSaved() }; return }
@@ -1427,6 +1510,7 @@ enum ComputerNotificationSummary {
 
 enum MobileStrings {
     static let values: [String: String] = [
+        "此设备无法使用相机": "Camera is unavailable on this device",
         "粘贴 DSH 客户端 Mobile 功能提供的完整链接": "Paste the full link from your DSH client’s Mobile feature",
         "连接 DSH Mobile？": "Connect to DSH Mobile?",
         "\n请确认这是你自己的 DSH 客户端。将打开它自带的手机界面。": "\nConfirm this is your DSH client. Its own mobile interface will open.",

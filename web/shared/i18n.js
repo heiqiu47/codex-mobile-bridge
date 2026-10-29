@@ -3,6 +3,10 @@
 const BridgeI18n=(()=>{
 const en={
 "添加附件":"Add attachment",
+"电脑项目引用":"Computer project reference",
+"照片图库":"Photo Library",
+"拍照或录像":"Take Photo or Video",
+"选择手机文件":"Choose Files",
 "从本机上传":"Upload from this device",
 "引用宿主机项目文件":"Reference a host project file",
 "引用此文件夹":"Reference this folder",

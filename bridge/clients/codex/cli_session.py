@@ -816,13 +816,13 @@ class CliSessions:
                 path = item.get('path')
                 if not path or not Path(path).is_absolute():
                     raise AppServerUnsupported('Invalid CLI file attachment path')
-            prefix = '# Files mentioned by the user:\n' + '\n'.join(
-                '- ' + item['path'] for item in files) + '\n\n## My request:\n'
+            from bridge.features.sessions.model import attachment_prompt
+            references = [{'path': item['path'], 'name': item.get('label') or Path(item['path']).name} for item in files]
             first_text = next((item for item in result if item['type'] == 'text'), None)
             if first_text is None:
-                result.insert(0, {'type': 'text', 'text': prefix})
+                result.insert(0, {'type': 'text', 'text': attachment_prompt('', references)})
             else:
-                first_text['text'] = prefix + first_text.get('text', '')
+                first_text['text'] = attachment_prompt(first_text.get('text', ''), references)
         return result
 
     @staticmethod

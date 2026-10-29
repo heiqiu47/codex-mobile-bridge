@@ -51,6 +51,27 @@ class UploadActivityTests(unittest.TestCase):
     def calls(self, method='thread-follower-start-turn'):
         return [r for r in self.fixture.requests if r['method'] == method]
 
+    def test_project_references_use_native_context_without_upload_and_bind_retries(self):
+        project = self.root / 'project'; project.mkdir()
+        file = project / '中文 file.txt'; file.write_text('fixture')
+        directory = project / 'folder'; directory.mkdir()
+        refs = [{'path': p.name, 'absolutePath': str(p)} for p in [file, directory]]
+        original = self.bridge.store.get
+        with patch.object(self.bridge.store, 'get', side_effect=lambda tid: {**original(tid), 'cwd': str(project)}):
+            identifier = str(uuid.uuid4())
+            result = self.bridge.send(THREAD, 'read references', identifier, references=refs)
+            self.assertEqual(result['status'], 'accepted')
+            self.bridge.send(THREAD, 'read references', identifier, references=refs)
+            self.assertEqual(len(self.calls()), 1)
+            context = self.calls()[0]['params']['turnStart']['context']
+            self.assertEqual(context['fileAttachments'], [{'path': str(p), 'label': p.name} for p in [file, directory]])
+            prompt = self.calls()[0]['params']['turnStart']['request']['input'][0]['text']
+            self.assertIn(str(file), prompt)
+            self.assertNotIn('[中文 file.txt]', prompt)
+            with self.assertRaises(ValueError):
+                self.bridge.send(THREAD, 'read references', identifier, references=refs[:1])
+            self.assertFalse(self.bridge.uploads.root.exists())
+
     def test_multiple_files_and_image_only_use_original_owner_and_native_image_input(self):
         file, image = self.upload(), self.upload('photo.png', PNG)
         identifier = str(uuid.uuid4())

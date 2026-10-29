@@ -264,10 +264,7 @@ class Workbench {
   referenceFile(session, info) {
     const input=this.composer;
     if(session!==this.current||!input||input.disabled||input.readOnly)return false;
-    const reference=window.BridgeFileActions.reference(info);
-    if(!reference)return false;
-    input.value+=(input.value&&!input.value.endsWith('\n')?'\n':'')+reference+'\n';
-    input.dispatchEvent(new Event('input',{bubbles:true}));
+    if(!this.attachReference?.(info))return false;
     this.select('chat');this.onReference?.();input.focus();return true;
   }
   cancelLocate() {

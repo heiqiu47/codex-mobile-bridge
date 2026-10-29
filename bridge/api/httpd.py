@@ -1246,7 +1246,7 @@ class Handler(BaseHTTPRequestHandler):
             elif action == "send":
                 result = bridge.send(thread_id, body.get("text"), body.get("id", ""), body.get("mode", "send"),
                                      body.get("skills", []), work_mode=body.get("workMode"),
-                                     attachments=body.get('attachments'), ui_locale=body.get("uiLocale"))
+                                     attachments=body.get('attachments'), references=body.get('references'), ui_locale=body.get("uiLocale"))
             elif action == "archive":
                 if set(body) not in ({'archived', 'id'}, {'archived', 'id', 'disconnect'}):
                     raise ValueError('聊天归档设置无效')

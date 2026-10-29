@@ -275,7 +275,7 @@ def artifact_paths(state, codex_home):
                 if isinstance(attachment, dict) and attachment.get('type') in ('localImage', 'image', 'file'):
                     value = attachment.get('path', attachment.get('url'))
                     if isinstance(value, str):
-                        candidates.add(value)
+                        (user_candidates if item.get('type') == 'userMessage' else candidates).add(value)
     result = {}
     model_images, trusted_views = _model_image_references(state)
     for raw in sorted(candidates | comments | user_candidates):
@@ -342,7 +342,7 @@ def artifact_paths(state, codex_home):
 def workspace_references(messages, cwd):
     """Expose only file links inside this client's own workspace."""
     if not cwd or not Path(cwd).is_absolute(): return []
-    state = {'cwd': cwd, 'turns': [{'items': [{'type': 'userMessage' if row.get('role') == 'user' else 'agentMessage', 'text': row.get('text', '')}
+    state = {'cwd': cwd, 'turns': [{'items': [{'type': 'userMessage' if row.get('role') == 'user' else 'agentMessage', 'text': row.get('text', ''), 'content': row.get('attachments', [])}
              for row in messages if row.get('role') in ('assistant', 'user')]} ]}
     root = Path(cwd).resolve()
     return [{'id': key, 'name': value['name'], 'reference': value['reference'],

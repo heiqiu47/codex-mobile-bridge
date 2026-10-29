@@ -3020,10 +3020,17 @@ class Bridge:
 
     @operation
     def send(self, thread_id, text, submission_id, mode="send", skills=None, *, work_mode=None,
-             plan_response=None, attachments=None, ui_locale=None, activation=None):
+             plan_response=None, attachments=None, references=None, ui_locale=None, activation=None):
         uuid.UUID(submission_id)
         identifiers = [] if attachments is None else attachments
         files = self.uploads.resolve(thread_id, identifiers)
+        references = [] if references is None else references
+        if references:
+            files += self.workspace(thread_id, 'references', {'references': references})
+        elif not isinstance(references, list):
+            raise ValueError('项目文件引用无效，请重新选择')
+        if len(files) > 10:
+            raise ValueError('每条消息最多添加 10 个不同附件')
         if not isinstance(text, str) or (not text.strip() and not files) or len(text) > 100000:
             raise ValueError("请输入 1–100000 字的消息")
         if mode not in ("send", "steer", "queue"):
@@ -3035,7 +3042,7 @@ class Bridge:
         if work_mode == "goal" and (mode != "send" or not text.strip() or len(text) > 4000):
             raise ValueError("目标需在当前任务结束后直接发送，且不超过 4000 字")
         if work_mode == "goal":
-            if identifiers:
+            if identifiers or references:
                 raise ValueError("目标模式暂不支持附件")
             if skills:
                 raise ValueError("目标模式只接受纯文本目标")
@@ -3073,6 +3080,7 @@ class Bridge:
                 if prior:
                     if (prior["text"] != text or prior["mode"] != mode or prior.get("skills", []) != selected or
                             prior.get("workMode") != work_mode or prior.get("planResponse") != plan_response or prior.get('attachments', []) != identifiers or
+                            prior.get('references', []) != references or
                             prior.get("goalActivation") != activation):
                         raise ValueError("同一消息标识不能用于不同内容")
                     return {"status": prior["status"], "duplicate": True, "id": submission_id}
@@ -3097,6 +3105,9 @@ class Bridge:
                 entry = {"text": text, "mode": mode, "skills": selected, "status": "queued" if mode == "queue" else "unknown", "at": time.time()}
                 if identifiers:
                     entry['attachments'] = identifiers
+                if references:
+                    entry['references'] = references
+                if files:
                     entry['attachmentNames'] = [f['name'] for f in files]
                 if work_mode is not None:
                     entry["workMode"] = work_mode
@@ -3149,6 +3160,8 @@ class Bridge:
         submission_id = key.split(":")[1]
         text = entry["text"]
         files = self.uploads.resolve(session.id, entry.get('attachments', []))
+        if entry.get('references'):
+            files += self.workspace(session.id, 'references', {'references': entry['references']})
         # CLI start already adds context.fileAttachments to its prompt.
         if session.runtime != 'cli':
             text = attachment_prompt(text, files)

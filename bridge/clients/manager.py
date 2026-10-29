@@ -226,6 +226,14 @@ class DesktopSessions:
             try:
                 value = self._adapter_call(provider, action, sid, body)
                 if action == 'detail' and isinstance(value, dict):
+                    from bridge.features.sessions.model import desktop_file_attachments, user_display_text
+                    for message in value.get('messages', []):
+                        if message.get('role') == 'user':
+                            text = message.get('text', '')
+                            files = desktop_file_attachments(text)
+                            if files:
+                                message['text'] = user_display_text(text)
+                                message.setdefault('attachments', []).extend(files)
                     self.history_images.bind(provider, sid, value.get('messages', []))
                     from bridge.features.workspace.files import workspace_references
                     value['files'] = workspace_references(value.get('messages', []), value.get('session', {}).get('cwd'))
@@ -974,7 +982,7 @@ class DesktopSessions:
             return result
         rid = str(uuid.UUID(body.get('id', '')))
         if action == 'send' and (not isinstance(body.get('text'), str) or
-                                 not body['text'].strip() and not (body.get('resolvedImages') or body.get('resolvedFiles')) or len(body['text']) > 100000):
+                                 not body['text'].strip() and not (body.get('resolvedImages') or body.get('resolvedFiles') or body.get('references')) or len(body['text']) > 100000):
             raise ValueError('请输入 1–100000 字的消息')
         if action == 'create' and (not isinstance(body.get('title', ''), str) or len(body.get('title', '')) > 120):
             raise ValueError('聊天名称不能超过 120 字')
@@ -996,6 +1004,11 @@ class DesktopSessions:
             if provider == 'claude':
                 from bridge.features.accounts.wsl_account_guard import request_scope
                 scope = request_scope(self, provider, action, sid, body)
+            reference_files = []
+            if action == 'send' and 'references' in body:
+                reference_files = self.workspace_bridge(provider, sid).workspace(sid, 'references', {'references': body['references']})
+                if len(reference_files) + len(body.get('resolvedImages', [])) + len(body.get('resolvedFiles', [])) > 10:
+                    raise ValueError('每条消息最多添加 10 个不同附件')
             with self.db_lock:
                 db = None
                 try:
@@ -1019,6 +1032,10 @@ class DesktopSessions:
                     raise
             try:
                 dispatched = body
+                if action == 'send' and reference_files:
+                    from bridge.features.sessions.model import attachment_prompt
+                    dispatched = {key: value for key, value in body.items() if key != 'references'}
+                    dispatched['text'] = attachment_prompt(body['text'], reference_files)
                 if action == 'create':
                     project = self.directory_projects.get(body.get('projectKey'))
                     if project and project.get('provider') == provider:

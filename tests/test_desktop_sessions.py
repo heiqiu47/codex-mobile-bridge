@@ -22,6 +22,28 @@ class Adapters(unittest.TestCase):
         self.manager = DesktopSessions(self.root)
         self.addCleanup(self.manager.close)
 
+    def test_host_references_reuse_prompt_contract_and_history_attachment_actions(self):
+        from bridge.features.workspace.workspace import operate
+        from bridge.features.sessions.model import desktop_file_attachments
+        file = self.root / '中文.txt'; file.write_text('fixture')
+        for provider in ['claude', 'deepseek']:
+            adapter = Mock(); adapter.receipts_path = None
+            adapter.call.return_value = {'status': 'accepted'}
+            self.manager.adapters[provider] = adapter
+            bridge = Mock(); bridge.workspace.side_effect = lambda sid, action, params: operate(str(self.root), action, params)
+            body = {'id': str(uuid.uuid4()), 'text': '', 'references': [{'path': file.name, 'absolutePath': str(file)}]}
+            with patch.object(self.manager, 'workspace_bridge', return_value=bridge):
+                self.assertEqual(self.manager.call(provider, 'send', 'chat', body)['status'], 'accepted')
+                self.manager.call(provider, 'send', 'chat', body)
+            self.assertEqual(adapter.call.call_count, 1)
+            dispatched = adapter.call.call_args.args[2]
+            self.assertNotIn('references', dispatched)
+            self.assertEqual(desktop_file_attachments(dispatched['text']), [{'type': 'file', 'path': str(file), 'name': file.name}])
+            adapter.call.return_value = {'session': {'cwd': str(self.root)}, 'messages': [{'id': 'message', 'role': 'user', 'text': dispatched['text']}]}
+            detail = self.manager._read(provider, 'detail', 'chat')
+            self.assertEqual(detail['messages'][0]['text'], '')
+            self.assertEqual(detail['files'][0]['path'], file.name)
+
     def test_claude_preparation_is_available_without_starting_gateway(self):
         self.manager.gateway_running = False
         adapter = self.manager.adapters['claude']

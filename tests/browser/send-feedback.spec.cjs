@@ -12,7 +12,7 @@ for(const [provider,backend] of [['claude','code'],['claude','cowork'],['deepsee
   const root=document.createElement('div');root.className='app';root.id='send-feedback-root';root.style.cssText='position:fixed;inset:0;background:var(--page);z-index:10';document.body.append(root);
   const select=document.createElement('select');['codex','claude','deepseek'].forEach(id=>select.add(new Option(id,id)));
   const fixture=window.sendFeedbackFixture={writes:[],notices:[],finish:null};
-  const detail={session:{id:'feedback-test',title:'发送交互验证',backend,status:'idle',capabilities:{send:true}},messages:[{id:'reply',role:'assistant',text:'可以发送一条测试消息。'}],connected:true};
+  const detail={session:{id:'feedback-test',title:'发送交互验证',backend,status:'idle',capabilities:{send:true,attachments:true}},messages:[{id:'reply',role:'assistant',text:'可以发送一条测试消息。'}],connected:true};
   const view=fixture.view=new DesktopSessionsView({root,select,notify:text=>fixture.notices.push(text),onSelect(){},csrf:()=>'',onUnauthorized(){},request:async(url,body)=>{
    if(body){fixture.writes.push(body);return new Promise(resolve=>fixture.finish=resolve);}
    if(url.includes('/detail'))return detail;if(url.includes('/workspace'))return {entries:[],total:0,project:'/fixture'};
@@ -60,9 +60,29 @@ for(const [provider,backend] of [['claude','code'],['claude','cowork'],['deepsee
  await page.keyboard.press('Escape');await expect(page.locator('#image-preview-dialog')).toBeHidden();
  await page.evaluate(()=>{const v=sendFeedbackFixture.view;document.documentElement.dataset.showProcess='true';v.applyDetail({connected:true,session:v.state,messages:[{id:'context',role:'activity',kind:'context',title:'上下文',text:'项目说明与自动注入内容'}]});});
  const context=page.locator('#send-feedback-root .activity');await expect(context.locator('pre')).toBeHidden();await context.locator('summary').click();await expect(context.locator('pre')).toBeVisible();
- await page.evaluate(()=>{const v=sendFeedbackFixture.view;v.collapseComposer(true);v.workbench.request=async()=>({name:'photo.png',path:'images/photo.png',kind:'file'});BridgeFileActions.menu(v.workbench,v.workbench.current,{name:'photo.png',path:'images/photo.png',kind:'file'});});
- await page.getByRole('button',{name:'引用到消息',exact:true}).click();await expect(input).toBeVisible();await expect(input).toHaveValue('下一条草稿\n[photo.png](<./images/photo.png>)\n');
+ await page.evaluate(()=>{const v=sendFeedbackFixture.view;v.collapseComposer(true);v.workbench.request=async()=>({name:'photo.png',path:'images/photo.png',absolutePath:'/fixture/images/photo.png',size:4,kind:'file'});BridgeFileActions.menu(v.workbench,v.workbench.current,{name:'photo.png',path:'images/photo.png',kind:'file'});});
+ await page.getByRole('button',{name:'引用到消息',exact:true}).click();await expect(input).toBeVisible();await expect(input).toHaveValue('下一条草稿');await expect(page.locator('#send-feedback-root .attachment-chip')).toContainText('photo.png');
  expect(await page.evaluate(()=>sendFeedbackFixture.writes.length)).toBe(2);
  await page.screenshot({path:testInfo.outputPath(`${provider}-${backend}-project-reference.png`)});
+ if(provider==='claude'&&backend==='code'){
+  await page.evaluate(()=>{
+   window.BridgeUploadSource=()=>true;
+   const v=sendFeedbackFixture.view;v.state.cwd='/fixture';v.updateComposer();
+   v.workbench.request=async()=>({project:'/fixture',entries:Array.from({length:60},(_,i)=>({name:`file-${i}.txt`,path:`file-${i}.txt`,kind:'file',size:10})),nextOffset:null});
+  });
+  await composer.locator('.attach-button').click();
+  await expect(page.locator('.attachment-menu button')).toHaveCount(4);
+  await page.screenshot({path:testInfo.outputPath('attachment-menu-chat.png')});
+  await page.getByRole('button',{name:'引用宿主机项目文件',exact:true}).click();
+  const picker=page.locator('.host-file-picker'),list=picker.locator('.wb-file-list'),search=picker.getByRole('searchbox');
+  await expect(list.locator('.wb-file')).toHaveCount(60);
+  const before=await search.boundingBox();
+  await list.locator('.wb-file').first().hover();await page.mouse.wheel(0,450);
+  await expect.poll(()=>list.evaluate(node=>node.scrollTop)).toBeGreaterThan(100);
+  expect((await search.boundingBox()).y).toBe(before.y);
+  expect(await picker.evaluate(node=>node.scrollTop)).toBe(0);
+  await page.screenshot({path:testInfo.outputPath('host-file-picker-scrolled-chat.png')});
+  await page.keyboard.press('Escape');
+ }
  await page.evaluate(()=>sendFeedbackFixture.view.clear());
 });

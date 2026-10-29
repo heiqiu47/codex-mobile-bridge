@@ -86,3 +86,23 @@ test('asynchronous historical baseline is not a new completion, observed running
  a.update([status('a','claude','active','old')]);a.update([status('a','claude','idle','new')]);assert.equal(a.indicator('claude|a').kind,'completed');
  a.update([{id:'a',host:'claude',connected:false,status:'idle'}]);assert.equal(a.indicator('claude|a').kind,'unknown');
 });
+
+test('host references keep structured identity without uploading, survive reload and stay chat-scoped',()=>{
+ const ui=fixture(),info={path:'中文/file.txt',absolutePath:'D:\\project\\中文\\file.txt',name:'file.txt',size:900*1024*1024,kind:'file'};
+ assert.equal(ui.panel.addReference(info),true);assert.equal(ui.calls.length,0);assert.equal(ui.panel.ids().length,0);
+ assert.deepEqual(JSON.parse(JSON.stringify(ui.panel.references())),[{path:info.path,absolutePath:info.absolutePath}]);
+ const id=ui.panel.rows[0].id;assert.equal(ui.panel.addReference(info),true);assert.equal(ui.panel.rows.length,1);
+ ui.panel.open('other|chat');assert.equal(ui.panel.references().length,0);ui.panel.open('local|one');assert.equal(ui.panel.references().length,1);
+ ui.panel.drafts.clear();ui.panel.open('local|one');assert.equal(ui.panel.rows[0].id,id);
+ ui.panel.setLocked(true);assert.equal(ui.panel.addReference({...info,path:'elsewhere'}),false);
+ ui.panel.clear('local|one',[id]);assert.equal(ui.panel.references().length,0);
+});
+
+
+test('large host references do not consume upload bytes; upload capability does not disable references',async()=>{
+ const ui=fixture(),info={path:'data.bin',absolutePath:'/project/data.bin',name:'data.bin',size:900*1024*1024,kind:'file'};
+ ui.panel.canUpload=()=>false;assert.equal(ui.panel.addReference(info),true);
+ ui.panel.add([file('blocked.png')]);assert.equal(ui.calls.length,0);
+ ui.panel.canUpload=()=>true;ui.panel.add([file('photo.png')]);await tick();
+ assert.equal(ui.calls.length,1);assert.equal(ui.panel.references().length,1);assert.equal(ui.panel.ids().length,1);
+});

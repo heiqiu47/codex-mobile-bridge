@@ -138,6 +138,7 @@ const attachments=new ChatAttachments({root:$('attachment-list'),button:$('attac
   const response=await fetch(sessionUrl(thread,'uploads/'+encodeURIComponent(id)+'/thumb',host)+'&width='+image.width+'&height='+image.height,{method:'POST',credentials:'same-origin',headers:{'Content-Type':image.mime,'X-CSRF-Token':csrf},body:image.data});
   const result=await response.json();if(!response.ok){if(response.status===401)authLost();throw Error(result.error||t('缩略图生成失败'));}return result;
 },upload:uploadAttachmentWithRetry});
+workbench.attachReference=info=>attachments.addReference(info);
 function visibleChat(){return currentId&&!workbench.isFileVisible&&!document.hidden&&$('app').classList.contains('chat-open')?chatKey():null;}
 function reportVisibleChat(){
   if(document.hidden||$('app').hidden)return;
@@ -1034,16 +1035,16 @@ $('composer').onsubmit=async event=>{
   const rawText=$('message').value,submittedQuotes=JSON.stringify(codexQuotes?.quotes||[]),text=codexQuotes?codexQuotes.serialize(rawText):rawText;
   if(text.length>100000){$('send-error').textContent=t('消息含引用超过 100000 字符，请缩短后发送');return;}
   if(!attachments.ready()){toast('请等待附件上传完成');return;}
-  const attachmentIds=attachments.ids();if(!text.trim()&&!attachmentIds.length)return;
+  const attachmentIds=attachments.ids(),references=attachments.references(),submittedAttachmentIds=attachments.rows.map(row=>row.id);if(!text.trim()&&!submittedAttachmentIds.length)return;
   const mode=$('send-mode').value,workMode=workModes.value(mode);
-  if(workMode==='goal'&&attachmentIds.length){$('send-error').textContent=t('目标模式暂不支持附件');return;}
+  if(workMode==='goal'&&submittedAttachmentIds.length){$('send-error').textContent=t('目标模式暂不支持附件');return;}
   if(invalidSkills.size){$('send-error').textContent=t('已选 Skill 已失效，请刷新列表后重新选择');return;}
   const skills=[...selectedSkills].sort(),scope=codexDraftScope;
-  const body={text,mode,skills,workMode,attachments:attachmentIds,uiLocale:BridgeI18n.locale()};
+  const body={text,mode,skills,workMode,attachments:attachmentIds,uiLocale:BridgeI18n.locale()};if(references.length)body.references=references;
   const revision=saveDraft()?.revision,submittedProvisional=codexProvisionalDrafts.get(chatKey());
   const submittedKey=chatKey(),legacyKey='pending:'+submittedKey;let legacy=composerDrafts.temporaryPending.get(legacyKey);try{legacy=JSON.parse(sessionStorage.getItem(legacyKey))||legacy;}catch{}
   const matchingLegacy=legacy?.id&&legacy.gateway===draftGateway&&legacy.target===submittedKey&&(!legacy.account||legacy.account===scope?.account);
-  const sameLegacy=matchingLegacy&&['text','mode','workMode','skills','attachments','uiLocale'].every(field=>JSON.stringify(legacy[field])===JSON.stringify(body[field]));
+  const sameLegacy=matchingLegacy&&['text','mode','workMode','skills','attachments','references','uiLocale'].every(field=>JSON.stringify(legacy[field])===JSON.stringify(body[field]));
   const attempt=uuid(),target=currentId,targetHost=currentHost;
   let pending,usedDurable=false;
   sending=true;
@@ -1062,7 +1063,7 @@ $('composer').onsubmit=async event=>{
     let confirmed=usedDurable?await composerDrafts.settleSend(scope,pending.id,attempt,'confirm',revision):false;
     if(!usedDurable){let saved=composerDrafts.temporaryPending.get(legacyKey);try{saved=JSON.parse(sessionStorage.getItem(legacyKey))||saved;}catch{}confirmed=saved?.id===pending.id&&saved.attempts?.includes(attempt);if(confirmed){composerDrafts.temporaryPending.delete(legacyKey);try{sessionStorage.removeItem(legacyKey);}catch{}}}
     if(confirmed&&submittedProvisional&&JSON.stringify(codexProvisionalDrafts.get(chatKey(target,targetHost)))===JSON.stringify(submittedProvisional)){codexProvisionalDrafts.delete(chatKey(target,targetHost));try{sessionStorage.removeItem('draft:'+chatKey(target,targetHost));sessionStorage.removeItem('skills:'+chatKey(target,targetHost));}catch{}}
-    if(confirmed)attachments.clear(chatKey(target,targetHost),attachmentIds);
+    if(confirmed)attachments.clear(chatKey(target,targetHost),submittedAttachmentIds);
     if(confirmed&&sameRevision&&$('message').value===rawText&&JSON.stringify(codexQuotes?.quotes||[])===submittedQuotes){
       if(!usedDurable)try{sessionStorage.removeItem('draft:'+chatKey(target,targetHost));}catch{}
       workModes.submitted(chatKey(target,targetHost),workMode);

@@ -5,24 +5,26 @@ window.BridgeFileActions = (() => {
   const node=(tag,text,cls='')=>{const n=document.createElement(tag);n.className=cls;if(text!==undefined)n.textContent=text;return n;};
   function dialog(title){const box=node('dialog',undefined,'picker'),head=node('div',undefined,'picker-head'),close=node('button','×','icon-button');close.type='button';close.setAttribute('aria-label',t('关闭'));close.onclick=()=>box.close();head.append(node('h2',title),close);box.append(head);box.addEventListener('close',()=>box.remove());document.body.append(box);return box;}
   function download(box,url,name){const link=node('a',t('下载到本地'),'wb-download');link.href=url;link.download=name;link.dataset.directDownload='true';link.onclick=()=>setTimeout(()=>box.close(),0);box.append(link);return link;}
-  function reference(info){
-    if(!['file','directory'].includes(info.kind)||typeof info.path!=='string'||!info.path||info.path.startsWith('/')||info.path.split('/').some(part=>part==='..'||part==='.')||/[\\\0\r\n]/.test(info.path))return null;
-    const name=String(info.name||info.path).replace(/&/g,'&amp;').replace(/\[/g,'&#91;').replace(/\]/g,'&#93;').replace(/[\r\n]/g,' ');
-    const path='./'+info.path.split('/').map(encodeURIComponent).join('/')+(info.kind==='directory'?'/':'');
-    return '['+name+'](<'+path+'>)';
-  }
-  function attach(upload,reference){
-    const box=dialog(t('添加附件'));
-    for(const [label,action] of [['从本机上传',upload],['引用宿主机项目文件',reference]]){
+  function attach(anchor,upload,reference){
+    const box=node('dialog',undefined,'attachment-menu');box.setAttribute('aria-label',t('添加附件'));
+    document.body.append(box);box.addEventListener('close',()=>box.remove());
+    const uploads=!upload?[]:window.BridgeUploadSource?[['照片图库',()=>upload('photos')],['拍照或录像',()=>upload('camera')],['选择手机文件',()=>upload('files')]]:[['从本机上传',upload]];
+    for(const [label,action] of [...uploads,['引用宿主机项目文件',reference]]){
       const button=node('button',t(label),'plain');button.type='button';button.onclick=()=>{box.close();action();};box.append(button);
     }
+    box.addEventListener('click',event=>{if(event.target===box)box.close();});
     box.showModal();
+    const rect=anchor.getBoundingClientRect(),bounds=box.getBoundingClientRect(),viewport=window.visualViewport;
+    const left=viewport?.offsetLeft||0,top=viewport?.offsetTop||0,width=viewport?.width||innerWidth;
+    box.style.left=Math.max(left+8,Math.min(rect.left,left+width-bounds.width-8))+'px';
+    box.style.top=Math.max(top+8,rect.top-bounds.height-8)+'px';
   }
   function pickReference(workbench){
     const session=workbench.current,input=workbench.composer;
     if(!session||!input||input.disabled||input.readOnly)return;
     const box=dialog(t('引用宿主机项目文件')),toolbar=node('div',undefined,'wb-toolbar'),up=node('button',t('上一级'),'plain'),folder=node('button',t('引用此文件夹'),'plain'),location=node('p','','wb-path'),form=node('form',undefined,'wb-search'),search=node('input'),submit=node('button',t('搜索'),'plain'),status=node('p','','muted'),list=node('div',undefined,'wb-file-list'),more=node('button',t('加载更多'),'plain');
-    up.type=folder.type=more.type='button';search.type='search';search.placeholder=t('搜索当前目录');search.setAttribute('aria-label',t('搜索当前目录'));submit.type='submit';form.append(search,submit);toolbar.append(up,folder);box.append(location,toolbar,form,status,list,more);
+    box.classList.add('host-file-picker');
+    up.type=folder.type=more.type='button';search.type='search';search.placeholder=t('搜索当前目录');search.setAttribute('aria-label',t('搜索当前目录'));submit.type='submit';form.append(search,submit);toolbar.append(up,folder);box.append(location,toolbar,form,status,list);list.append(more);
     let path='',ticket=0,busy=false,next=null;
     const current=()=>box.open&&session===workbench.current&&!input.disabled&&!input.readOnly;
     const controls=()=>{up.disabled=busy||!path;folder.disabled=busy||!path;more.disabled=busy;submit.disabled=busy;};
@@ -35,7 +37,7 @@ window.BridgeFileActions = (() => {
     }
     async function navigate(target,append=false){
       if(busy||!current())return;
-      const generation=++ticket;busy=true;path=target;controls();status.textContent=t('正在读取目录…');if(!append)list.replaceChildren();
+      const generation=++ticket;busy=true;path=target;controls();status.textContent=t('正在读取目录…');if(!append){list.replaceChildren(more);list.scrollTop=0;}
       try{
         const result=await workbench.request(workbench.url(session,'',path)+'&hidden=false&search='+encodeURIComponent(search.value||'')+'&offset='+(append?next:0));
         if(!current()||generation!==ticket)return;
@@ -43,7 +45,7 @@ window.BridgeFileActions = (() => {
         for(const entry of result.entries){
           const row=node('button',undefined,'wb-file');row.type='button';row.disabled=entry.kind==='blocked';row.dataset.path=entry.path;
           row.append(workbench.fileIcon(entry),node('span',entry.name,'wb-file-name'),node('span',entry.kind==='directory'?t('文件夹'):workbench.size(entry.size||0),'wb-file-meta'));
-          row.onclick=()=>{if(entry.kind==='directory'){search.value='';navigate(entry.path);}else select(entry);};list.append(row);
+          row.onclick=()=>{if(entry.kind==='directory'){search.value='';navigate(entry.path);}else select(entry);};list.insertBefore(row,more);
         }
         next=result.nextOffset;more.hidden=next===null;
       }catch(error){if(current())status.textContent=t(error.message);}
@@ -131,5 +133,5 @@ window.BridgeFileActions = (() => {
     new MutationObserver(()=>{if(!container.hidden&&(!('open' in container)||container.open))read();}).observe(container,{attributes:true,attributeFilter:['hidden','open']});
     window.addEventListener('focus',read);document.addEventListener('bridge-authenticated',read);return field;
   }
-  return {register:(chat,workbench)=>workbenches.set(chat,workbench),bindRow,menu,mountSettings,reference,attach,pickReference};
+  return {register:(chat,workbench)=>workbenches.set(chat,workbench),bindRow,menu,mountSettings,attach,pickReference};
 })();
