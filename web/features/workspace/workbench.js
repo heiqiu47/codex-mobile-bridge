@@ -29,8 +29,8 @@ const FileFont=(()=>{
 })();
 
 class Workbench {
-  constructor({chat, request, csrf, notify, onUnauthorized, openChat}) {
-    Object.assign(this, {chat, request, csrf, notify, onUnauthorized, openChat});
+  constructor({chat, request, csrf, notify, onUnauthorized, openChat, composer, onReference}) {
+    Object.assign(this, {chat, request, csrf, notify, onUnauthorized, openChat, composer, onReference});
     window.BridgeFileActions?.register(chat,this);
     this.sessions = new Map();
     this.mermaidScope=window.BridgeMermaidCards?.createScope();
@@ -260,6 +260,15 @@ class Workbench {
       this.directory(session, tab, session.directory);
     }
     this.select('files');
+  }
+  referenceFile(session, info) {
+    const input=this.composer;
+    if(session!==this.current||!input||input.disabled||input.readOnly)return false;
+    const reference=window.BridgeFileActions.reference(info);
+    if(!reference)return false;
+    input.value+=(input.value&&!input.value.endsWith('\n')?'\n':'')+reference+'\n';
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+    this.select('chat');this.onReference?.();input.focus();return true;
   }
   cancelLocate() {
     const state=this.locateState;if(!state)return;

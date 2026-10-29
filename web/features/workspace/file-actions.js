@@ -5,6 +5,12 @@ window.BridgeFileActions = (() => {
   const node=(tag,text,cls='')=>{const n=document.createElement(tag);n.className=cls;if(text!==undefined)n.textContent=text;return n;};
   function dialog(title){const box=node('dialog',undefined,'picker'),head=node('div',undefined,'picker-head'),close=node('button','×','icon-button');close.type='button';close.setAttribute('aria-label',t('关闭'));close.onclick=()=>box.close();head.append(node('h2',title),close);box.append(head);box.addEventListener('close',()=>box.remove());document.body.append(box);return box;}
   function download(box,url,name){const link=node('a',t('下载到本地'),'wb-download');link.href=url;link.download=name;link.dataset.directDownload='true';link.onclick=()=>setTimeout(()=>box.close(),0);box.append(link);return link;}
+  function reference(info){
+    if(!['file','directory'].includes(info.kind)||typeof info.path!=='string'||!info.path||info.path.startsWith('/')||info.path.split('/').some(part=>part==='..'||part==='.')||/[\\\0\r\n]/.test(info.path))return null;
+    const name=String(info.name||info.path).replace(/&/g,'&amp;').replace(/\[/g,'&#91;').replace(/\]/g,'&#93;').replace(/[\r\n]/g,' ');
+    const path='./'+info.path.split('/').map(encodeURIComponent).join('/')+(info.kind==='directory'?'/':'');
+    return '['+name+'](<'+path+'>)';
+  }
   function menu(workbench,session,entry){
     if(session!==workbench.current)return;
     const box=dialog(entry.name),url=workbench.url(session,'download',entry.path)+'&explicit=1'+(entry.kind==='directory'?'&archive=1':'');
@@ -16,6 +22,17 @@ window.BridgeFileActions = (() => {
       if(typeof info.absolutePath!=='string')throw Error(t('复制失败，请重试'));
       return info.absolutePath;
     },copy,workbench.notify);box.append(copy);
+    if(workbench.composer){
+      const quote=node('button',t('引用到消息'),'plain');quote.type='button';quote.disabled=workbench.composer.disabled||workbench.composer.readOnly;
+      quote.onclick=async()=>{
+        quote.disabled=true;
+        try{const info=await workbench.request(workbench.url(session,'info',entry.path));
+          if(session!==workbench.current||!box.open)return;
+          if(workbench.referenceFile(session,info)){box.close();workbench.notify(t('已加入草稿，尚未发送'));}
+        }catch(error){if(box.open&&session===workbench.current)workbench.notify(t(error.message));}
+        finally{quote.disabled=workbench.composer.disabled||workbench.composer.readOnly;}
+      };box.append(quote);
+    }
     if(entry.kind==='directory')box.append(node('p',t('文件夹将打包为 ZIP，准备完成后显示下载总量。'),'muted'));
     box.showModal();
   }
@@ -45,6 +62,7 @@ window.BridgeFileActions = (() => {
         const source=node('button',t('查看代码位置'),'plain');source.type='button';source.onclick=()=>{box.close();workbench.openSourceLocation(session,info.path,start,end).catch(error=>workbench.notify(t(error.message)));};box.append(source);
       }
       if(info.kind!=='directory'){
+        if(info.locatable&&info.path){const preview=node('button',t('预览文件'),'plain');preview.type='button';preview.onclick=()=>{box.close();workbench.preview(session,info).catch(error=>workbench.notify(t(error.message)));};box.append(preview);}
         if(info.size<=info.clickDownloadMiB*1024*1024)download(box,anchor.href,info.name);
         else box.append(node('p',t('文件超过点击下载阈值，请在文件标签页中定位后长按下载。'),'muted'));
       }
@@ -70,5 +88,5 @@ window.BridgeFileActions = (() => {
     new MutationObserver(()=>{if(!container.hidden&&(!('open' in container)||container.open))read();}).observe(container,{attributes:true,attributeFilter:['hidden','open']});
     window.addEventListener('focus',read);document.addEventListener('bridge-authenticated',read);return field;
   }
-  return {register:(chat,workbench)=>workbenches.set(chat,workbench),bindRow,menu,mountSettings};
+  return {register:(chat,workbench)=>workbenches.set(chat,workbench),bindRow,menu,mountSettings,reference};
 })();

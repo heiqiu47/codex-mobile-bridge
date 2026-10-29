@@ -254,9 +254,17 @@ def artifact_paths(state, codex_home):
         roots.append(Path(state['cwd']))
     roots = [root.resolve() for root in roots]
     candidates = set()
+    user_candidates = set()
     comments = set()
     for turn in ordered_turns(state):
         for item in items_array(turn.get('items')):
+            if item.get('type') == 'userMessage':
+                text = item.get('text') if isinstance(item.get('text'), str) else ''
+                for block in item.get('content', []) if isinstance(item.get('content'), list) else []:
+                    if isinstance(block, dict) and block.get('type') in ('text', 'inputText'):
+                        text += '\n' + str(block.get('text', ''))
+                for match in MARKDOWN_PATH.finditer(text):
+                    user_candidates.add(match[1] or match[2])
             if item.get('type') in ('agentMessage', 'assistantMessage'):
                 for match in MARKDOWN_PATH.finditer(item.get('text', '')):
                     candidates.add(match[1] or match[2])
@@ -269,7 +277,7 @@ def artifact_paths(state, codex_home):
                         candidates.add(value)
     result = {}
     model_images, trusted_views = _model_image_references(state)
-    for raw in sorted(candidates | comments):
+    for raw in sorted(candidates | comments | user_candidates):
         # Model-authored Markdown and response attachments remain bound to the
         # workspace/visualization roots even when they name an image suffix.
         value = re.sub(r':\d+$', '', raw)
@@ -292,6 +300,9 @@ def artifact_paths(state, codex_home):
                 if project not in unresolved.parents or any(part.is_symlink() for part in (unresolved, *unresolved.parents) if part != project and project in part.parents):
                     continue
             path = path.resolve(strict=True)
+            if raw in user_candidates and raw not in candidates | comments:
+                if not state.get('cwd') or workspace_relative_path(path, Path(state['cwd']).resolve()) is None:
+                    continue
             if not any(workspace_relative_path(path, root) is not None for root in roots) or not (path.is_file() or path.is_dir()):
                 continue
         except (OSError, RuntimeError):
@@ -330,8 +341,8 @@ def artifact_paths(state, codex_home):
 def workspace_references(messages, cwd):
     """Expose only file links inside this client's own workspace."""
     if not cwd or not Path(cwd).is_absolute(): return []
-    state = {'cwd': cwd, 'turns': [{'items': [{'type': 'agentMessage', 'text': row.get('text', '')}
-             for row in messages if row.get('role') == 'assistant']} ]}
+    state = {'cwd': cwd, 'turns': [{'items': [{'type': 'userMessage' if row.get('role') == 'user' else 'agentMessage', 'text': row.get('text', '')}
+             for row in messages if row.get('role') in ('assistant', 'user')]} ]}
     root = Path(cwd).resolve()
     return [{'id': key, 'name': value['name'], 'reference': value['reference'],
              'references': value['references'], 'path': workspace_relative_path(value['path'], root),

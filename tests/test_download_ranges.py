@@ -285,7 +285,8 @@ class WorkspaceReferenceTests(unittest.TestCase):
             rows = workspace_references(messages, str(project))
             self.assertEqual([row['path'] for row in rows], ['large.bin'])
             self.assertEqual(workspace_references(messages, ''), [])
-            self.assertEqual(workspace_references([{'role': 'user', 'text': '[large](large.bin)'}], str(project)), [])
+            self.assertEqual([row['path'] for row in workspace_references(
+                [{'role': 'user', 'text': messages[0]['text']}], str(project))], ['large.bin'])
 
 
 class TransferPolicyHttpTests(unittest.TestCase):

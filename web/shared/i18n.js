@@ -2,6 +2,9 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"引用到消息":"Reference in message",
+"已加入草稿，尚未发送":"Added to draft, not sent",
+"预览文件":"Preview file",
 "确认工作区信任…":"Confirm workspace trust\u2026",
 "信任此工作区？":"Trust this workspace?",
 "确认信任":"Confirm trust",
