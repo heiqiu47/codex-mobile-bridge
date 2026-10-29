@@ -1113,3 +1113,28 @@ test('network failure clears only transient sending UI and never retries or clea
 test('late send failure does not expose its message after leaving the original provider',async()=>{
  const ui=await opened(),view=ui.view;let reject;ui.setHandler((url,body)=>body?new Promise((resolve,fail)=>reject=fail):Promise.resolve({sessions:[]}));view.input.value='private message';const sending=view.submit();view.provider='deepseek';view.updateComposer();reject(Error('private source error'));await sending;assert.equal(view.error.textContent,'');assert.equal(ui.notices.length,0);
 });
+
+test('empty Claude and DSH catalogs retain manual model and effort without fake account switching',async()=>{
+ for(const provider of ['claude','deepseek']){
+  const ui=fixture();await ui.view.choose(provider);await ui.view.open('a');ui.view.state.modelCatalogIdentity='same-account';ui.view.state.capabilities={models:true,effort:true,manualModels:true,manualEffort:true};
+  ui.setHandler(async(url,body)=>body?{status:'accepted'}:{models:[],capabilities:{models:true,manualModels:true,manualEffort:true},cache:{identity:'same-account'}});
+  await ui.view.models();const dialog=ui.document.querySelector('dialog'),model=dialog.querySelector('.ds-manual-model'),effort=dialog.querySelector('.ds-manual-effort');
+  assert.equal(model.hidden,false);assert.doesNotMatch(dialog.textContent,/muted|账号已切换/);model.value=provider==='deepseek'?'provider/manual-model':'manual-model';model.oninput();
+  const custom=dialog.querySelector('.effort-options').querySelector('input');custom.checked=true;custom.onchange();effort.value='high';effort.oninput();
+  assert.equal(effort.hidden,false);assert.equal(dialog.querySelector('.primary').disabled,false);await dialog.querySelector('form').onsubmit({preventDefault(){}});
+  const write=ui.calls.find(call=>call.url.includes('/settings'));assert.equal(write.body.model,model.value);assert.equal(write.body.effort,'high');assert.equal(write.body.manualEffort,true);
+ }
+});
+test('model catalog account mismatch remains blocked and does not expose manual writes',async()=>{
+ const ui=await opened();ui.view.state.modelCatalogIdentity='account-a';ui.view.state.capabilities={models:true,effort:true};ui.setHandler(async()=>({models:[],capabilities:{models:true},cache:{identity:'account-b'}}));await ui.view.models();
+ const dialog=ui.document.querySelector('dialog');assert.match(dialog.querySelector('.error').textContent,/账号已切换/);assert.equal(dialog.querySelector('.primary').disabled,true);await dialog.querySelector('form').onsubmit({preventDefault(){}});assert.equal(ui.calls.filter(call=>call.body).length,0);
+});
+
+test('older model cache cannot erase verified live manual capability or revive an old DSH runtime',async()=>{
+ for(const supported of [true,false]){const ui=fixture();await ui.view.choose('deepseek');await ui.view.open('a');ui.view.state.capabilities={models:true,manualModels:supported,manualEffort:supported};ui.setHandler(async()=>({models:[{id:'model-a',efforts:[]}],capabilities:{models:true,manualModels:!supported,manualEffort:!supported}}));await ui.view.models();const dialog=ui.document.querySelector('dialog');assert.equal(dialog.querySelector('.model-options').querySelectorAll('input').some(input=>input.value==='__custom__'),supported);dialog.close();}
+});
+
+test('manual settings while catalog is pending carry the captured account and stale responses cannot replace it',async()=>{
+ const ui=await opened();ui.view.state.modelCatalogIdentity='account-a';ui.view.state.capabilities={models:true,manualModels:true,manualEffort:true};let finish;
+ ui.setHandler(async(url,body)=>body?{status:'unknown',message:'账号已切换，请重新打开模型设置'}:url.includes('/catalog')?new Promise(resolve=>finish=resolve):{sessions:[]});const opening=ui.view.models();const dialog=ui.document.querySelector('dialog'),input=dialog.querySelector('.ds-manual-model');input.value='manual-model';input.oninput();assert.equal(dialog.querySelector('.primary').disabled,false);await dialog.querySelector('form').onsubmit({preventDefault(){}});const write=ui.calls.find(call=>call.body);assert.equal(write.body.modelCatalogIdentity,'account-a');finish({models:[{id:'private-b'}],cache:{identity:'account-b'}});await opening;assert.doesNotMatch(dialog.textContent,/private-b/);assert.equal(dialog.querySelector('.primary').disabled,true);
+});

@@ -152,7 +152,7 @@ def _cli_catalog(owned, public, refresh=False):
         selection = {'currentModel': public['model'], 'currentEffort': ''}
         verified = False
     return {'models': rows, **selection,
-            'capabilities': {'models': bool(rows and verified),
+            'capabilities': {'models': bool(verified), 'manualModels': bool(verified), 'manualEffort': bool(verified),
                              'effort': bool(verified and any(row['efforts'] for row in rows)),
                              'skills': True}, 'skills': _skill_catalog(owned.catalog)}
 
@@ -160,10 +160,16 @@ def _cli_catalog(owned, public, refresh=False):
 def _set_cli_settings(owned, body):
     rows = _model_catalog(owned.catalog)
     selected = next((row for row in rows if row['id'] == body.get('model')), None)
-    if selected is None:
-        raise ValueError('请选择 Claude Code 提供的模型')
+    manual_model = selected is None
+    if manual_model:
+        identifier = body.get('model')
+        if not isinstance(identifier, str) or not re.fullmatch(r'[^\s\x00-\x1f\x7f]{1,256}', identifier):
+            raise ValueError('请输入有效的模型名称')
+        selected = {'id': identifier, 'efforts': []}
     effort = body.get('effort')
-    if effort is not None and effort not in selected['efforts']:
+    if body.get('manualEffort') is True and (not isinstance(effort, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', effort)):
+        raise ValueError('请输入有效的思考强度')
+    if effort is not None and body.get('manualEffort') is not True and effort not in selected['efforts']:
         raise ValueError('该模型不支持此思考强度')
     _applied_settings(owned)
     target = next((item for item in owned.catalog.get('models') or []
@@ -176,7 +182,7 @@ def _set_cli_settings(owned, body):
                        'settings': {'effortLevel': None if effort == 'auto' else effort}})
     settings = _applied_settings(owned)
     applied = settings['applied']
-    if (_has_resolved_models(owned.catalog) and applied.get('model') != expected or
+    if ((_has_resolved_models(owned.catalog) or manual_model) and applied.get('model') != expected or
             effort not in (None, 'auto') and applied.get('effort') != effort):
         raise BridgeUnavailable('Claude Code 未确认模型或思考强度设置，请刷新检查')
     sources = settings.get('sources')

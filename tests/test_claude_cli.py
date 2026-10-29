@@ -835,6 +835,15 @@ class ClaudeCliModelContract(unittest.TestCase):
         self.assertEqual(len(self.owner.catalog['models']), 2)
         self.assertEqual(self.calls[0], {'subtype': 'list_models'})
 
+    def test_empty_catalog_manual_model_and_effort_are_confirmed_by_native_settings(self):
+        self.owner.catalog = {'models': []}
+        result = _cli_catalog(self.owner, {'model': 'historical'})
+        self.assertTrue(result['capabilities']['manualModels'])
+        self.assertTrue(result['capabilities']['manualEffort'])
+        _set_cli_settings(self.owner, {'model': 'manual-model', 'effort': 'high', 'manualEffort': True})
+        self.assertEqual(self.state['model'], 'manual-model')
+        self.assertEqual(self.state['effort'], 'high')
+
     def test_model_and_effort_change_are_checked_against_applied_settings(self):
         _set_cli_settings(self.owner, {'model': 'claude-sonnet-5-5', 'effort': 'high'})
         self.assertEqual(self.state['model'], 'claude-sonnet-5-5')
@@ -888,7 +897,7 @@ class ClaudeCliModelContract(unittest.TestCase):
         self.assertEqual(result['currentModel'], 'claude-sonnet-4-6')
         self.assertEqual(result['currentEffort'], 'max')
         self.assertEqual(result['models'][0]['efforts'], ['auto', 'low', 'medium', 'high', 'max'])
-        self.assertEqual(result['capabilities'], {'models': True, 'effort': True, 'skills': True})
+        self.assertEqual(result['capabilities'], {'models': True, 'manualModels': True, 'manualEffort': True, 'effort': True, 'skills': True})
         self.assertEqual(calls, [{'subtype': 'get_settings'}])
         with self.assertRaisesRegex(BridgeUnavailable, '不支持刷新模型目录'):
             _cli_catalog(owner, public, refresh=True)

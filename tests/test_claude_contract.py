@@ -43,6 +43,29 @@ class ClaudeContract(unittest.IsolatedAsyncioTestCase):
 
     def sid(self, kind='code'): return claude_model.gateway_id(kind, self.rows[kind]['sessionId'])
 
+    async def test_manual_model_and_effort_use_native_setters_and_readback_on_both_surfaces(self):
+        original = self.call
+        async def call(kind, method, *args, **kwargs):
+            if method == 'mobileCatalog':
+                return {'models': [], 'capabilities': {'models': False, 'effort': False}}
+            return await original(kind, method, *args, **kwargs)
+        self.adapter.desktop.call.side_effect = call
+        for kind in ('code', 'cowork'):
+            result = await self.adapter.dispatch('catalog', self.sid(kind), {'section': 'models'})
+            self.assertTrue(result['capabilities']['models'])
+            self.assertTrue(result['capabilities']['manualEffort'])
+            await self.adapter.dispatch('settings', self.sid(kind), {'model': 'new-model', 'effort': 'high', 'manualEffort': True})
+            self.assertEqual(self.rows[kind]['model'], 'new-model')
+            self.assertEqual(self.rows[kind]['effort'], 'high')
+
+    async def test_unconfirmed_manual_selection_never_claims_success(self):
+        async def call(kind, method, *args, **kwargs):
+            if method == 'setModel': return False
+            return await self.call(kind, method, *args, **kwargs)
+        self.adapter.desktop.call.side_effect = call
+        with self.assertRaisesRegex(BridgeUnavailable, '未确认模型设置'):
+            await self.adapter.dispatch('settings', self.sid(), {'model': 'unconfirmed-model'})
+
     async def test_effort_only_update_does_not_require_resubmitting_model(self):
         await self.adapter.dispatch('settings', self.sid(), {'effort': 'low'})
         self.assertEqual(self.rows['code']['effort'], 'low')

@@ -613,6 +613,7 @@ class Claude:
     def session_capabilities(self, kind):
         methods = self.desktop.capabilities.get(kind, [])
         return {'models': 'setModel' in methods, 'effort': 'setEffort' in methods,
+                'manualModels': 'setModel' in methods, 'manualEffort': 'setEffort' in methods,
                 'permissions': 'setPermissionMode' in methods, 'attachments': 'sendMessage' in methods,
                 'skills': 'getSupportedCommands' in methods, 'queue': kind == 'code', 'steer': kind == 'code',
                 'fork': kind == 'code' and 'mobileFork' in methods,
@@ -868,6 +869,9 @@ class Claude:
                 return {'currentModel': row.get('model'), 'currentEffort': row.get('effort')}
             value = await self.desktop.call(kind, 'mobileCatalog', native)
             value.update(currentModel=row.get('model'), currentEffort=row.get('effort'))
+            native = self.session_capabilities(kind)
+            value['capabilities'] = {**value.get('capabilities', {}), 'models': native['models'],
+                                     'manualModels': native['models'], 'manualEffort': native['effort']}
             return value
         if action == 'send':
             text = body.get('text', '')
@@ -895,11 +899,18 @@ class Claude:
         elif action == 'stop':
             result = await self.desktop.call(kind, 'interrupt' if kind == 'code' else 'stop', native)
         elif action == 'settings':
-            catalog = await self.desktop.call(kind, 'mobileCatalog', native)
+            catalog = {'models': []} if body.get('manualModel') is True else await self.desktop.call(kind, 'mobileCatalog', native)
             selected = next((m for m in catalog['models'] if m['id'] == body.get('model', row.get('model'))), None)
-            if not selected or catalog.get('capabilities', {}).get('models') is not True:
-                raise ValueError('请选择桌面提供的模型')
-            if body.get('effort') and body['effort'] not in selected.get('efforts', []):
+            identifier = body.get('model', row.get('model'))
+            if not isinstance(identifier, str) or not re.fullmatch(r'[^\s\x00-\x1f\x7f]{1,256}', identifier):
+                raise ValueError('请输入有效的模型名称')
+            if not self.session_capabilities(kind)['models']:
+                raise ValueError('当前客户端未提供模型设置接口')
+            if selected is None:
+                selected = {'id': identifier, 'efforts': []}
+            if body.get('manualEffort') is True and (not isinstance(body.get('effort'), str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', body['effort'])):
+                raise ValueError('请输入有效的思考强度')
+            if body.get('effort') and body.get('manualEffort') is not True and body['effort'] not in selected.get('efforts', []):
                 raise ValueError('该模型不支持此思考强度')
             effort = body.get('effort') or (selected.get('defaultEffort') if kind == 'cowork' else None)
             if 'effort' in body and (not self.session_capabilities(kind)['effort'] or kind == 'cowork' and not effort):

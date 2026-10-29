@@ -93,6 +93,7 @@ for (const scenario of ['success', 'css-once', 'js-twice', 'js-fatal', 'runtime'
 }
 
 for (const [name, file, invoke] of [
+  ['agent manual model and reasoning settings', 'agent-model-settings', 'runAgentModelSettingsChecks'],
   ['chat history, list entry and scroll position', 'desktop-history', 'runDesktopHistoryBrowserChecks'],
   ['account-scoped drafts and late send acknowledgement', 'persistent-drafts', 'runPersistentDraftTests'],
   ['API form labels, layout and upstream model selection', 'api-form', 'runApiFormBrowserChecks'],
@@ -100,7 +101,7 @@ for (const [name, file, invoke] of [
   ['composer quotes retain draft and layout', 'composer-quotes', 'runComposerQuoteLayoutChecks'],
 ]) {
   test(name, async ({page}, testInfo) => {
-    await ready(page);
+    await ready(page, file==='agent-model-settings'?'session-menu':'success');
     await expect(page.locator('#bootstrap-status')).toBeHidden();
     await page.addScriptTag({url: `/__browser/${file}.browser.js`});
     const result = await page.evaluate(name => globalThis[name](), invoke);
@@ -261,3 +262,13 @@ test('reset outlook is opt-in and fits both themes',async({page},testInfo)=>{
   await page.evaluate(()=>accountsPanel.accept({...accountsPanel.value,resetDynamicEnabled:false,globalReset:null}));
   await expect(card).toBeHidden();
 });
+
+for(const surface of ['code','cowork','deepseek']){
+ test(surface+' model settings on actual chat surface',async({page},testInfo)=>{
+  await ready(page,'session-menu');await expect(page.locator('#login')).toBeHidden();
+  await page.addScriptTag({url:'/__browser/agent-model-settings.browser.js'});
+  await page.evaluate(surface=>runAgentModelSettingsChecks({provider:surface==='deepseek'?'deepseek':'claude',surface,leaveOpen:true}),surface);
+  await expect(page.locator('.ds-model-dialog')).toBeVisible();await expect(page.locator('#app')).toHaveClass(/chat-open/);
+  for(const theme of ['light','dark']){await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);await page.screenshot({path:testInfo.outputPath(surface+'-'+theme+'-model-settings.png')});}
+ });
+}

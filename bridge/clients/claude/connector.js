@@ -170,8 +170,8 @@
       const recommended=Array.isArray(options)?options.find(e=>e?.recommended)?.id:undefined;
       models.set(id, {id, name, efforts,...recommended?{defaultEffort:recommended}:{}});
     }
-    const canModel=source!=='session-history'&&typeof target.setModel==='function'&&models.size>0;
-    const result={models:[...models.values()],source,maxRequestBytes:10*1024*1024,capabilities:{models:canModel,
+    const canModel=typeof target.setModel==='function';
+    const result={models:[...models.values()],source,maxRequestBytes:10*1024*1024,capabilities:{models:canModel,manualModels:canModel,manualEffort:canModel&&typeof target.setEffort==='function',
       effort:canModel&&typeof target.setEffort==='function'&&[...models.values()].some(m=>m.efforts.length),
       attachments:typeof target.sendMessage==='function',permissions:typeof target.setPermissionMode==='function',
       skills:typeof target.getSupportedCommands==='function',queue:kind==='code',steer:kind==='code'}};

@@ -405,8 +405,22 @@ class DesktopSessions:
                              '模型目录刷新失败，已保留上次结果')
                     return self._cached_model_result(provider, sid, identity, persisted, error=error)
                 raise
+            if provider == 'claude' and sid in self.adapters[provider].index:
+                store = self._account_store(provider)
+                with store.lock:
+                    account_kind = store._current()[0]
+                if account_kind == 'api':
+                    try:
+                        account = self._account_models(provider, refresh=refresh)
+                        offered = {row['id']: row for row in account.get('models', []) if isinstance(row, dict) and isinstance(row.get('id'), str)}
+                        offered.update({row['id']: row for row in value.get('models', []) if isinstance(row, dict) and isinstance(row.get('id'), str)})
+                        value = {**value, 'models': list(offered.values())}
+                    except (OSError, ValueError, BridgeUnavailable):
+                        # Native choices and manual input remain usable when discovery fails.
+                        pass
             if self._model_identity(provider, sid) != identity:
                 raise BridgeUnavailable('客户端账号或配置已变化，请重试')
+            value['cache'] = {'state': 'unavailable', 'updatedAt': None, 'identity': identity}
             if (value.get('modelError') or value.get('capabilities', {}).get('models') is False) and persisted:
                 return self._cached_model_result(provider, sid, identity, persisted,
                     error=value.get('modelError') or '模型目录刷新失败，已保留上次结果',
@@ -905,6 +919,10 @@ class DesktopSessions:
         with self._changing(provider, rebind=False):
             if self.config.get('enabled', {}).get(provider) is False and not (provider == 'claude' and self._wsl_claude_enabled()):
                 raise ValueError('此应用已关闭，请在应用管理中开启')
+            if action == 'settings' and 'modelCatalogIdentity' in body:
+                expected_identity = body['modelCatalogIdentity']
+                if not isinstance(expected_identity, str) or not expected_identity or self._model_identity(provider, sid) != expected_identity:
+                    raise ValueError('账号已切换，请重新打开模型设置')
             scope = None
             if provider == 'claude':
                 from bridge.features.accounts.wsl_account_guard import request_scope

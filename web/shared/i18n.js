@@ -2,6 +2,13 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"手动输入":"Enter manually",
+"手动输入模型名称":"Enter a model name manually",
+"手动输入思考强度":"Enter reasoning effort manually",
+"输入 provider/model":"Enter provider/model",
+"输入模型名称":"Enter a model name",
+"输入思考强度，例如 high":"Enter reasoning effort, e.g. high",
+"更新 DSH 接入插件后可使用手动输入模型和思考强度":"Update the DSH connector to enter model and reasoning effort manually",
 "连接这个 Harness 档案？":"Connect this Harness profile?",
 "插件版本：":"Plugin version: ",
 "旧版":"Legacy",

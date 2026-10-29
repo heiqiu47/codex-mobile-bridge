@@ -66,6 +66,48 @@ class Adapters(unittest.TestCase):
         with self.assertRaises(ValueError): self.manager.call('deepseek', 'eval', 'session-one')
         with self.assertRaises(ValueError): self.manager.call('deepseek', 'send', 'session-one', {'id':str(uuid.uuid4()),'text':''})
 
+    def test_desktop_claude_reuses_only_its_current_api_account_catalog(self):
+        adapter = self.manager.adapters['claude']
+        adapter.index['session'] = {'backend': 'cowork'}
+        store = Mock(); store.lock = __import__('threading').RLock()
+        store._current.return_value = ('api', 'fingerprint', {})
+        native = {'models': [{'id': 'native', 'efforts': ['high']}], 'capabilities': {'models': True}}
+        with patch.object(self.manager, '_model_identity', return_value='same-account'), \
+             patch.object(self.manager, '_account_store', return_value=store), \
+             patch.object(self.manager, '_account_models', return_value={'models': [{'id': 'upstream', 'efforts': []}]}) as account, \
+             patch.object(self.manager, '_read', return_value=native):
+            result = self.manager._catalog_models('claude', 'session', {'section': 'models'})
+            self.assertEqual([row['id'] for row in result['models']], ['upstream', 'native'])
+            account.assert_called_once_with('claude', refresh=False)
+        self.assertEqual(result['cache']['identity'], 'same-account')
+
+    def test_manual_settings_captured_account_is_checked_before_native_write(self):
+        adapter = self.manager.adapters['deepseek']
+        adapter.call = Mock(return_value={'status': 'accepted'})
+        body = {'id': str(uuid.uuid4()), 'model': 'provider/manual', 'manualModel': True,
+                'modelCatalogIdentity': 'old-account'}
+        with patch.object(self.manager, '_model_identity', return_value='new-account'):
+            with self.assertRaisesRegex(ValueError, '账号已切换'):
+                self.manager.call('deepseek', 'settings', 'session', body)
+        adapter.call.assert_not_called()
+        self.assertEqual(self.manager.db.execute('SELECT COUNT(*) FROM requests').fetchone()[0], 0)
+        with patch.object(self.manager, '_model_identity', return_value='old-account'):
+            self.assertEqual(self.manager.call('deepseek', 'settings', 'session', body)['status'], 'accepted')
+        adapter.call.assert_called_once()
+
+    def test_unavailable_catalog_still_carries_verified_account_identity(self):
+        with patch.object(self.manager, '_model_identity', return_value='same-account'), \
+             patch.object(self.manager, '_read', return_value={'models': [], 'capabilities': {'models': False}}):
+            result = self.manager._catalog_models('claude', 'session', {'section': 'models'})
+        self.assertEqual(result['cache']['identity'], 'same-account')
+
+    def test_catalog_identity_survives_cache_write_failure(self):
+        with patch.object(self.manager, '_model_identity', return_value='same-account'), \
+             patch.object(self.manager, '_read', return_value={'models': [], 'capabilities': {'models': True}}), \
+             patch.object(self.manager.model_store, 'write', side_effect=OSError('read-only')):
+            result = self.manager._catalog_models('claude', 'session', {'section': 'models'})
+        self.assertEqual(result['cache']['identity'], 'same-account')
+
     def test_legacy_claude_catalog_does_not_schedule_unsupported_refresh(self):
         adapter = self.manager.adapters['claude']
         row = {'nativeId': 'native', 'origin': 'fixture', 'model': 'sonnet'}
