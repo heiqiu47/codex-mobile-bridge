@@ -13,7 +13,8 @@ spec.loader.exec_module(checker)
 
 class SourceLockTests(unittest.TestCase):
     def test_pinned_commit_and_drift(self):
-        with tempfile.TemporaryDirectory() as directory:
+        (ROOT/'.tmp').mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as directory:
             root = Path(directory)
             upstream = root/'source'
             upstream.mkdir()
