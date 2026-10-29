@@ -419,6 +419,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
             content.addArrangedSubview(card([label(MobileStrings.text("还没有连接的电脑"), size: 17, weight: .medium), label(MobileStrings.text("在电脑网关中展开“扫码登录”，然后用上方按钮扫描。"), secondary: true)]))
         } else {
             for address in recentComputers {
+                if address.hasPrefix("dsh:") { content.addArrangedSubview(dshComputer(String(address.dropFirst(4)))); continue }
                 let row = button(computerName(address)) { [weak self] in self?.openSaved(address) }
                 row.contentHorizontalAlignment = .leading
                 row.titleLabel?.lineBreakMode = .byTruncatingTail; row.titleLabel?.numberOfLines = 1
@@ -438,26 +439,28 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
                 updateComputerNotifications(computerSnapshots[address], address: address)
             }
         }
-        for id in DshMobileStore.ids {
-            let url = DshMobileStore.load(id)
-            let open = button("DSH Mobile · " + (url.map(DshMobileURL.display) ?? MobileStrings.text("连接凭据不可用"))) { [weak self] in
-                guard let url else { self?.info(MobileStrings.text("连接凭据不可用，请移除后重新添加")); return }; self?.openDsh(url)
-            }
-            let remove = button(MobileStrings.text("移除这台电脑"), symbol: "trash") { [weak self] in
-                let alert = UIAlertController(title: MobileStrings.text("移除这台电脑") + "？", message: nil, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel))
-                alert.addAction(UIAlertAction(title: MobileStrings.text("移除"), style: .destructive) { _ in DshMobileStore.remove(id); self?.home() }); self?.present(alert, animated: true)
-            }
-            content.addArrangedSubview(card([open, remove]))
-        }
         let foot = label(MobileStrings.text("外出使用 HTTPS 地址；局域网地址需要连接同一网络。"), size: 13, secondary: true); foot.textAlignment = .center; content.addArrangedSubview(foot)
         checkComputers(); sync()
     }
     private var recentComputers: [String] {
-        saved.sorted { a, b in
+        (Array(saved) + DshMobileStore.ids.map { "dsh:" + $0 }).sorted { a, b in
             let left = defaults.double(forKey: "last-opened:" + a), right = defaults.double(forKey: "last-opened:" + b)
             return left == right ? a < b : left > right
         }
+    }
+    private func dshComputer(_ id: String) -> UIView {
+        let url = DshMobileStore.load(id)
+        let open = button(MobileStrings.text("连接"), symbol: "link") { [weak self] in
+            guard let url else { self?.info(MobileStrings.text("连接凭据不可用，请移除后重新添加")); return }; self?.openDsh(url, id: id)
+        }
+        let remove = button(MobileStrings.text("移除这台电脑"), symbol: "trash") { [weak self] in
+            let alert = UIAlertController(title: MobileStrings.text("移除这台电脑") + "？", message: nil, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel))
+            alert.addAction(UIAlertAction(title: MobileStrings.text("移除"), style: .destructive) { _ in DshMobileStore.remove(id); self?.defaults.removeObject(forKey: "last-opened:dsh:" + id); self?.home() }); self?.present(alert, animated: true)
+        }
+        remove.configuration?.baseForegroundColor = .systemRed
+        let actions = UIStackView(arrangedSubviews: [open, remove]); actions.axis = .horizontal; actions.distribution = .fillEqually; actions.spacing = 8
+        return card([label("DSH Mobile", size: 17, weight: .semibold), label(url.map(DshMobileURL.display) ?? MobileStrings.text("连接凭据不可用"), size: 13, secondary: true), actions])
     }
     private func computerName(_ address: String) -> String {
         defaults.string(forKey: "name:" + address) ?? URL(string: address)?.host ?? address
@@ -534,11 +537,12 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
             let alert = UIAlertController(title: MobileStrings.text("连接 DSH Mobile？"), message: DshMobileURL.display(url) + MobileStrings.text("\n请确认这是你自己的 DSH 客户端。将打开它自带的手机界面。"), preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: MobileStrings.text("取消"), style: .cancel))
             alert.addAction(UIAlertAction(title: MobileStrings.text("连接"), style: .default) { [weak self] _ in
-                do { try DshMobileStore.save(url); self?.home(); self?.openDsh(url) } catch { self?.info(MobileStrings.text("无法保存 DSH Mobile 连接")) }
+                do { let id = try DshMobileStore.save(url); self?.openDsh(url, id: id) } catch { self?.info(MobileStrings.text("无法保存 DSH Mobile 连接")) }
             }); present(alert, animated: true)
         } catch { info(error.localizedDescription) }
     }
-    private func openDsh(_ url: URL) {
+    private func openDsh(_ url: URL, id: String) {
+        defaults.set(Date().timeIntervalSince1970, forKey: "last-opened:dsh:" + id); home()
         let controller = UINavigationController(rootViewController: DshMobileController(url)); controller.modalPresentationStyle = .fullScreen
         controller.overrideUserInterfaceStyle = overrideUserInterfaceStyle; present(controller, animated: true)
     }

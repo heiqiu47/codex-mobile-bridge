@@ -24,5 +24,15 @@
   "dshBridge": {
     "protocol": 1,
     "revision": 9
+  },
+  "author": "try2love",
+  "homepage": "https://github.com/try2love/codex-mobile-bridge",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/try2love/codex-mobile-bridge.git",
+    "directory": "bridge/clients/deepseek/plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/try2love/codex-mobile-bridge/issues"
   }
 }

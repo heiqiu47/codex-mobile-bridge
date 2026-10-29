@@ -178,6 +178,7 @@ public final class MainActivity extends Activity implements SharedPreferences.On
   LinearLayout sectionRow=new LinearLayout(ui.context);sectionRow.setGravity(Gravity.CENTER_VERTICAL);TextView section=text(L("我的电脑"),19);section.setTypeface(null,android.graphics.Typeface.BOLD);sectionRow.addView(section,new LinearLayout.LayoutParams(0,-2,1));sectionRow.addView(button(L("刷新状态"),()->{checkComputers();MonitorService.refresh();}));add(sectionRow,content,12);
   if(saved().isEmpty()&&DshMobileStore.ids(this).isEmpty()){LinearLayout empty=card();add(text(L("还没有连接的电脑"),17),empty,6);TextView hint=text(L("在电脑网关中展开“扫码登录”，然后用上方按钮扫描。"),14);hint.setTextColor(mutedColor());add(hint,empty,0);add(empty,content,18);}
   for(String entry:recentComputers()){
+   if(entry.startsWith("dsh:")){add(dshComputer(entry.substring(4)),content,12);continue;}
    LinearLayout computer=card(),heading=new LinearLayout(ui.context);heading.setGravity(Gravity.CENTER_VERTICAL);
    TextView reachability=text(L("检查中…"),12);reachability.setTextColor(mutedColor());reachability.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);heading.addView(reachability);homeStates.put(entry,reachability);
    TextView name=text(computerName(entry),17);name.setTypeface(null,android.graphics.Typeface.BOLD);name.setSingleLine();name.setEllipsize(android.text.TextUtils.TruncateAt.END);name.setPadding(dp(10),dp(5),dp(8),dp(5));heading.addView(name,new LinearLayout.LayoutParams(0,-2,1));LinearLayout apps=new LinearLayout(ui.context);apps.setGravity(Gravity.CENTER_VERTICAL);heading.addView(apps);homeNotifications.put(entry,apps);add(heading,computer,4);
@@ -186,14 +187,20 @@ public final class MainActivity extends Activity implements SharedPreferences.On
    LinearLayout.LayoutParams renameSize=new LinearLayout.LayoutParams(0,-2,1);renameSize.setMarginEnd(dp(8));actions.addView(rename,renameSize);actions.addView(remove,new LinearLayout.LayoutParams(0,-2,1));add(actions,computer,0);
    computer.setOnClickListener(v->connect(entry+"/"));computer.setContentDescription(L("连接 ")+computerName(entry));add(computer,content,12);
   }
-  for(String id:DshMobileStore.ids(this)){
-   String url=DshMobileStore.load(this,id);LinearLayout item=card();String address="DSH Mobile";try{address=DshMobileURL.display(url);}catch(Exception ignored){}
-   add(text("DSH Mobile · "+address,17),item,6);add(button(L("连接"),()->{if(url==null)message(L("连接凭据不可用，请移除后重新添加"));else openDsh(url);}),item,6);
-   add(button(L("移除这台电脑"),()->new AlertDialog.Builder(ui.context).setMessage(L("移除这台电脑")+"？").setNegativeButton(L("取消"),null).setPositiveButton(L("移除"),(d,w)->{DshMobileStore.remove(this,id);home();}).show()),item,0);add(item,content,12);
-  }
   TextView foot=text(L("外出使用 HTTPS 地址；局域网地址需要连接同一网络。"),13);foot.setTextColor(mutedColor());foot.setGravity(Gravity.CENTER);add(foot,content,0);renderComputerNotifications();checkComputers();
  }
- List<String> recentComputers(){List<String> entries=new ArrayList<>(saved());entries.sort((a,b)->{int order=Long.compare(prefs.getLong("last-opened:"+b,0),prefs.getLong("last-opened:"+a,0));return order!=0?order:a.compareTo(b);});return entries;}
+ List<String> recentComputers(){List<String> entries=new ArrayList<>(saved());for(String id:DshMobileStore.ids(this))entries.add("dsh:"+id);entries.sort((a,b)->{int order=Long.compare(prefs.getLong("last-opened:"+b,0),prefs.getLong("last-opened:"+a,0));return order!=0?order:a.compareTo(b);});return entries;}
+ LinearLayout dshComputer(String id){
+  String url=DshMobileStore.load(this,id);LinearLayout item=card();
+  TextView name=text("DSH Mobile",17);name.setTypeface(null,android.graphics.Typeface.BOLD);add(name,item,4);
+  String address=L("连接凭据不可用");try{address=DshMobileURL.display(url);}catch(Exception ignored){}
+  TextView detail=text(address,13);detail.setTextColor(mutedColor());add(detail,item,4);
+  Runnable connect=()->{if(url==null)message(L("连接凭据不可用，请移除后重新添加"));else openDsh(id,url);};
+  LinearLayout actions=new LinearLayout(ui.context);Button open=button(L("连接"),connect);
+  Button remove=button(L("移除这台电脑"),()->new AlertDialog.Builder(ui.context).setMessage(L("移除这台电脑")+"？").setNegativeButton(L("取消"),null).setPositiveButton(L("移除"),(d,w)->{DshMobileStore.remove(this,id);prefs.edit().remove("last-opened:dsh:"+id).apply();home();}).show());remove.setTextColor(ui.dark?ui.danger:0xffb44235);
+  LinearLayout.LayoutParams size=new LinearLayout.LayoutParams(0,-1,1);size.setMarginEnd(dp(8));actions.addView(open,size);actions.addView(remove,new LinearLayout.LayoutParams(0,-1,1));add(actions,item,0);
+  item.setOnClickListener(v->connect.run());item.setContentDescription(L("连接 ")+"DSH Mobile · "+address);return item;
+ }
  String computerName(String address){return prefs.getString("name:"+address,Uri.parse(address).getHost());}
  void renameComputer(String address){
   EditText field=new EditText(ui.context);field.setSingleLine();field.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(80)});field.setText(computerName(address));field.selectAll();field.setPadding(dp(24),dp(16),dp(24),dp(16));
@@ -226,8 +233,8 @@ public final class MainActivity extends Activity implements SharedPreferences.On
  void manualAddress(){resetExitGesture();EditText field=new EditText(ui.context);field.setSingleLine();field.setInputType(17);field.setText("https://");field.setSelection(field.length());field.setPadding(dp(24),dp(16),dp(24),dp(16));new AlertDialog.Builder(ui.context).setTitle(L("连接电脑")).setMessage(L("粘贴电脑网关提供的访问地址")).setView(field).setPositiveButton(L("继续"),(d,w)->choose(field.getText().toString())).setNegativeButton(L("取消"),null).show();}
  boolean htmlPreviewShell(String target){return target!=null&&target.equals(origin+"/html-preview-shell");}
  void manualDsh(){EditText field=new EditText(ui.context);field.setSingleLine();field.setInputType(17);field.setHint("https://…/?auth=…");new AlertDialog.Builder(ui.context).setTitle("DSH Mobile").setMessage(L("粘贴 DSH 客户端 Mobile 功能提供的完整链接")).setView(field).setPositiveButton(L("继续"),(d,w)->chooseDsh(field.getText().toString())).setNegativeButton(L("取消"),null).show();}
- void chooseDsh(String input){try{String url=DshMobileURL.connection(input);new AlertDialog.Builder(ui.context).setTitle(L("连接 DSH Mobile？")).setMessage(DshMobileURL.display(url)+L("\n请确认这是你自己的 DSH 客户端。将打开它自带的手机界面。")).setPositiveButton(L("连接"),(d,w)->{try{DshMobileStore.save(this,url);home();openDsh(url);}catch(Exception invalid){message(L("无法保存 DSH Mobile 连接"));}}).setNegativeButton(L("取消"),null).show();}catch(Exception invalid){message(invalid.getMessage());}}
- void openDsh(String url){if(Build.VERSION.SDK_INT<28){new AlertDialog.Builder(ui.context).setMessage(L("Android 8 请使用浏览器打开 DSH Mobile；App 内连接需要 Android 9 或更高版本。")).setPositiveButton(L("打开"),(d,w)->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)))).setNegativeButton(L("取消"),null).show();return;}startActivity(new Intent(this,DshMobileActivity.class).putExtra("url",url).putExtra("theme",SettingsUi.theme(this)));}
+ void chooseDsh(String input){try{String url=DshMobileURL.connection(input);new AlertDialog.Builder(ui.context).setTitle(L("连接 DSH Mobile？")).setMessage(DshMobileURL.display(url)+L("\n请确认这是你自己的 DSH 客户端。将打开它自带的手机界面。")).setPositiveButton(L("连接"),(d,w)->{try{String id=DshMobileStore.save(this,url);openDsh(id,url);}catch(Exception invalid){message(L("无法保存 DSH Mobile 连接"));}}).setNegativeButton(L("取消"),null).show();}catch(Exception invalid){message(invalid.getMessage());}}
+ void openDsh(String id,String url){prefs.edit().putLong("last-opened:dsh:"+id,System.currentTimeMillis()).apply();home();if(Build.VERSION.SDK_INT<28){new AlertDialog.Builder(ui.context).setMessage(L("Android 8 请使用浏览器打开 DSH Mobile；App 内连接需要 Android 9 或更高版本。")).setPositiveButton(L("打开"),(d,w)->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)))).setNegativeButton(L("取消"),null).show();return;}startActivity(new Intent(this,DshMobileActivity.class).putExtra("url",url).putExtra("theme",SettingsUi.theme(this)));}
  void choose(String value){resetExitGesture();try{String target=GatewayURL.connection(value);String base=GatewayURL.origin(value);new AlertDialog.Builder(ui.context).setTitle(L("连接到这台电脑？")).setMessage(base+L("\n请确认这是你自己的网关。")).setPositiveButton(L("连接"),(d,w)->connect(target)).setNeutralButton("DSH Mobile",(d,w)->chooseDsh(value)).setNegativeButton(L("取消"),null).show();}catch(Exception e){chooseDsh(value);}}
 
  void connect(String url){routeAttempted=false;try{String base=GatewayURL.targetBase(url);clear();header(true);status.setVisibility(View.VISIBLE);origin=base;Set<String> saved=saved();saved.add(origin);prefs.edit().putStringSet("origins",saved).putString("active",origin).putLong("last-opened:"+origin,System.currentTimeMillis()).apply();status.setText(L("正在连接 · ")+origin);

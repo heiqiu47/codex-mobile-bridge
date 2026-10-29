@@ -4,18 +4,21 @@
 
 ## 安装和绑定
 
-1. 可在支持的 Harness 插件市场中安装 `dsh-codex-mobile-bridge`；当前为本地测试包，尚未上架。也可以解压插件包，保留完整文件夹。在兼容 Harness 核心的客户端插件管理中选择本地安装，选择解压后的文件夹，按客户端提示重新加载。
-2. 在 Bridge 的“添加接入 → DSH / 自定义 Harness”中展开“第三方客户端：手动安装与绑定”，选择该档案生成的 `binding.json` 并绑定。
-3. 文件位于 **Harness 数据目录 / profiles / 当前档案名 / codex-mobile-bridge / binding.json**。数据目录和当前档案以客户端设置为准；也可使用“扫描 Harness 数据目录”选择该目录，再选择要绑定的档案。扫描只读取插件生成的身份文件，不依赖应用名称，不会自动绑定或启动会话。
-4. 开启 DSH 接入。以后先打开该客户端，再启动网关即可；网关不会代替第三方客户端启动或退出应用。
+1. 在网关 Test 的“客户端与接入 → 添加接入 → DSH / 自定义 Harness”中，展开“第三方客户端：手动安装与绑定”，选择“导出接入插件包”。会同时得到 ZIP 和 `.tgz`。当前尚未上架市场，不能直接从 npm 安装包名。
+2. 打开准备接入的第三方 DSH，确认它实际使用的 **Harness 核心版本、数据目录、当前档案（profile）**。账号和模型先在原客户端配置好。不同客户端、不同 profile 可以共用或使用不同的数据目录，不要直接假定都是 `~/.dsh` 或 `web`。
+3. 优先使用该客户端的插件管理入口安装：支持 npm 包文件时选择完整 `.tgz`；支持本地目录时解压 ZIP，选择内含 `package.json` 的 `dsh-codex-mobile-bridge` 文件夹。按客户端要求完成安装并重新加载，操作前先完成或停止当前任务。
+4. 若客户端只有 CLI 插件管理，使用**该客户端配套的** `dsh`，对它的实际 `DSH_HOME` 和 profile 安装本地包。例如已确认环境和档案为 `web` 时：
 
-使用原生 CLI 安装时，在对应核心的环境中运行：
+   ```sh
+   dsh plugin --profile web add "/绝对路径/dsh-codex-mobile-bridge-0.2.0.tgz"
+   ```
 
-```sh
-dsh plugin --profile web add file:/绝对路径/dsh-codex-mobile-bridge
-```
+   目录形式可用 `file:/绝对路径/dsh-codex-mobile-bridge`。不要为了安装插件另起一个默认核心，否则插件可能被装进另一个档案。Electron 的 `desktop` 为专属档案，通用 npm CLI 不等于 Desktop 配套命令；应使用该客户端提供的运行时与管理入口。官方客户端的既有一键安装仍可使用。
+5. 插件在目标档案内运行后，会生成 **数据目录 / profiles / 档案名 / codex-mobile-bridge / binding.json**。保持原客户端运行，在**同一台电脑**的网关中选择该文件。也可“扫描 Harness 数据目录”后选择“绑定档案”。扫描只读取身份文件，不会自动绑定或启动会话。
+6. 确认弹窗中的 profile、数据目录和插件版本都属于目标客户端，再确认绑定，并开启 DSH 手机接入。若已有另一个 DSH 接入，先“仅停用手机接入”再切换，不需要退出原电脑应用。
+7. 手机连接 **Bridge 网关的二维码或地址**，进入 DSH 聊天列表即可。此路线不使用原客户端的 DSH Mobile 二维码。以后先打开该客户端，再启动网关；网关不会代替第三方客户端启动或退出应用。
 
-将 `web` 替换为实际档案名；不要将插件重复安装到同一运行时。官方 DSH Desktop 仍使用 Bridge 已有的一键安装，无需手动安装此包。
+没有 `binding.json` 通常表示插件尚未在该档案中加载；不要手写文件或复制其他电脑的绑定文件。版本不兼容时核对核心版本和 profile，不要删除兼容性声明强行安装。
 
 ## 使用和移除
 
@@ -29,7 +32,7 @@ dsh plugin --profile web add file:/绝对路径/dsh-codex-mobile-bridge
 
 ## 兼容性
 
-这是面向 Harness 核心的通用插件，不限定 Electron、Tauri 或客户端名称。核心需提供 `profileContext` 和本包 `host.mjs` 所需的服务接口；仅有相似名称或 Web 页面并不代表兼容。当前实机验证：macOS arm64、DSH Tauri v0.25.0、`@deepseek-ai/dsh` 0.2.1-rc.2。其他版本与第三方客户端需验证后才能标为支持。网关绑定时核对插件版本并进行认证握手；仅扫描到档案不代表已连接。
+这是面向 Harness 核心的通用插件，不限定 Electron、Tauri 或客户端名称。核心需提供 `profileContext` 和本包 `host.mjs` 所需的服务接口；仅有相似名称或 Web 页面并不代表兼容。当前验证核心为 `@deepseek-ai/dsh` 0.2.1-rc.2：macOS 的 Tauri v0.25.0 插件组合、Windows 的 Tauri 与 DSH Desktop 2.0.18 所带核心，以及 Linux 的官方核心。该范围不代表所有第三方桌面功能均已验收；其他核心版本与客户端仍需单独验证。网关绑定时核对插件版本并进行认证握手；仅扫描到档案不代表已连接。
 
 
 ## 包格式与协议

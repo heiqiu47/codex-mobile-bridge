@@ -21,10 +21,10 @@ public final class DshMobileActivity extends Activity {
   if("dark".equals(theme)||"light".equals(theme))configuration.uiMode=(configuration.uiMode&~android.content.res.Configuration.UI_MODE_NIGHT_MASK)|("dark".equals(theme)?android.content.res.Configuration.UI_MODE_NIGHT_YES:android.content.res.Configuration.UI_MODE_NIGHT_NO);
   ContextThemeWrapper themed=new ContextThemeWrapper(this,0);themed.applyOverrideConfiguration(configuration);themed.setTheme(getResources().getIdentifier("SettingsTheme","style",getPackageName()));
   SettingsUi ui=new SettingsUi(themed);LinearLayout root=ui.column();root.setBackgroundColor(ui.page);
-  LinearLayout bar=new LinearLayout(ui.context);bar.setGravity(Gravity.CENTER_VERTICAL);
-  Button close=new Button(ui.context);close.setText(MobileStrings.text(this,"我的电脑"));close.setOnClickListener(v->finish());bar.addView(close);
-  TextView title=ui.text("DSH Mobile",16,ui.text);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-  Button reload=new Button(ui.context);reload.setText(MobileStrings.text(this,"刷新"));reload.setOnClickListener(v->web.reload());bar.addView(reload);root.addView(bar);
+  LinearLayout bar=new LinearLayout(ui.context);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(ui.dp(8),0,ui.dp(8),0);
+  ImageButton close=toolbarButton(ui,"ic_menu_monitor","我的电脑",this::finish);bar.addView(close,new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));
+  TextView title=ui.text("DSH Mobile",17,ui.text);title.setTypeface(null,android.graphics.Typeface.BOLD);title.setGravity(Gravity.CENTER);title.setSingleLine();title.setEllipsize(android.text.TextUtils.TruncateAt.END);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+  ImageButton reload=toolbarButton(ui,"ic_menu_refresh_cw","刷新",()->web.reload());bar.addView(reload,new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));root.addView(bar,new LinearLayout.LayoutParams(-1,ui.dp(56)));
   web=new WebView(ui.context);web.setBackgroundColor(ui.page);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
   new SystemBars(this,root,()->{}).update(ui.page,ui.page);
   WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
@@ -47,6 +47,9 @@ public final class DshMobileActivity extends Activity {
   });
   if(Build.VERSION.SDK_INT>=33)getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,this::back);
   web.loadUrl(entry);
+ }
+ private ImageButton toolbarButton(SettingsUi ui,String resource,String label,Runnable action){
+  ImageButton button=new ImageButton(ui.context);button.setImageResource(getResources().getIdentifier(resource,"drawable",getPackageName()));button.setColorFilter(ui.text);button.setPadding(ui.dp(12),ui.dp(12),ui.dp(12),ui.dp(12));button.setContentDescription(MobileStrings.text(this,label));ui.clickable(button,action);return button;
  }
  private void back(){if(web!=null&&web.canGoBack())web.goBack();else finish();}
  @Override public void onBackPressed(){back();}

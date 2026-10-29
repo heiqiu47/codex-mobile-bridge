@@ -12,12 +12,13 @@ enum DshMobileStore {
         guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data, let value = String(data: data, encoding: .utf8) else { return nil }
         return try? DshMobileURL.connection(value)
     }
-    static func save(_ url: URL) throws {
+    @discardableResult static func save(_ url: URL) throws -> String {
         let id = ids.first(where: { load($0) == url }) ?? UUID().uuidString
         var q = query(id); q[kSecValueData as String] = Data(url.absoluteString.utf8); q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let result = SecItemAdd(q as CFDictionary, nil)
         guard result == errSecSuccess || result == errSecDuplicateItem else { throw DshMobileURL.Invalid() }
         if !ids.contains(id) { UserDefaults.standard.set(ids + [id], forKey: "dshMobileConnections") }
+        return id
     }
     static func remove(_ id: String) { SecItemDelete(query(id) as CFDictionary); UserDefaults.standard.set(ids.filter { $0 != id }, forKey: "dshMobileConnections") }
 }
@@ -30,8 +31,12 @@ final class DshMobileController: UIViewController, WKNavigationDelegate, WKUIDel
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func viewDidLoad() {
         super.viewDidLoad(); title = "DSH Mobile"; view.backgroundColor = .systemBackground
-        navigationItem.leftBarButtonItem = UIBarButtonItem(title: MobileStrings.text("我的电脑"), style: .plain, target: self, action: #selector(close))
-        navigationItem.rightBarButtonItems = [UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(refresh)), UIBarButtonItem(image: UIImage(systemName: "chevron.left"), style: .plain, target: self, action: #selector(back))]
+        navigationItem.largeTitleDisplayMode = .never
+        navigationController?.navigationBar.tintColor = .label
+        navigationItem.leftBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "desktopcomputer"), style: .plain, target: self, action: #selector(close))
+        navigationItem.leftBarButtonItem?.accessibilityLabel = MobileStrings.text("我的电脑")
+        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(refresh))
+        navigationItem.rightBarButtonItem?.accessibilityLabel = MobileStrings.text("刷新")
         let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
         web = WKWebView(frame: .zero, configuration: config); web.navigationDelegate = self; web.uiDelegate = self; web.allowsBackForwardNavigationGestures = true
         web.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(web)
@@ -40,7 +45,6 @@ final class DshMobileController: UIViewController, WKNavigationDelegate, WKUIDel
     }
     @objc private func close() { dismiss(animated: true) }
     @objc private func refresh() { web.reload() }
-    @objc private func back() { if web.canGoBack { web.goBack() } else { close() } }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
         if DshMobileURL.same(url, entry), action.targetFrame != nil { decisionHandler(.allow); return }
