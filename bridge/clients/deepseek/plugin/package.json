@@ -26,13 +26,12 @@
     "revision": 9
   },
   "author": "try2love",
-  "homepage": "https://github.com/try2love/codex-mobile-bridge",
+  "homepage": "https://github.com/try2love/dsh-codex-mobile-bridge",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/try2love/codex-mobile-bridge.git",
-    "directory": "bridge/clients/deepseek/plugin"
+    "url": "git+https://github.com/try2love/dsh-codex-mobile-bridge.git"
   },
   "bugs": {
-    "url": "https://github.com/try2love/codex-mobile-bridge/issues"
+    "url": "https://github.com/try2love/dsh-codex-mobile-bridge/issues"
   }
 }

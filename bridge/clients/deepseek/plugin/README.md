@@ -47,4 +47,4 @@
 
 ## 源码维护
 
-插件在本地独立仓库 `dsh-codex-mobile-bridge` 维护；尚未创建公开远程。网关内置源码仍用于官方一键安装与导出，来源固定在相邻的 `plugin-source.json`。维护者同步后运行 `python3 scripts/check-dsh-plugin-source.py --plugin-repo <独立仓库路径>`，核对运行时、许可证与协议字段；不得静默使用浮动分支更新真实客户端。
+插件在公开独立仓库 [dsh-codex-mobile-bridge](https://github.com/try2love/dsh-codex-mobile-bridge) 维护；npm 和可安装市场索引尚未发布。网关内置源码仍用于官方一键安装与导出，来源固定在相邻的 `plugin-source.json`。维护者同步后运行 `python3 scripts/check-dsh-plugin-source.py --plugin-repo <独立仓库路径>`，核对运行时、许可证与协议字段；不得静默使用浮动分支更新真实客户端。
