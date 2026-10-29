@@ -107,4 +107,3 @@ class ClaudeCatalogSources(unittest.TestCase):
              patch.object(self.manager, '_read', return_value=self.native):
             result = self.manager._catalog_models('claude', 'session', {'refresh': True})
         self.assertEqual(result['notice'], HISTORY)
-
