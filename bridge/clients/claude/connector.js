@@ -1,6 +1,7 @@
 // Adapted from 2389859005/coding-mobile (MIT), commit 7a8f003. See LICENSE.coding-mobile.
 /* Injected into the Claude renderer through the verified DevTools Console. Uses the existing
- * workspace file APIs and session APIs; never changes CSP or workspace trust.
+ * workspace file APIs and session APIs; never changes CSP. Workspace trust is written
+ * only by the explicitly confirmed mobileProjectTrust operation.
  * Runtime files must remain local. Reloading the renderer removes this bridge.
  */
 (async () => {
