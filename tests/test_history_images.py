@@ -71,3 +71,13 @@ class HistoryImageTests(unittest.TestCase):
         self.assertNotEqual(first,second)
         with self.assertRaises(ValueError):
             images.preview('claude','first',first[0]['attachments'][0]['desktopId'],lambda _: PAYLOAD)
+
+    def test_only_native_producer_context_is_folded_without_text_heuristics(self):
+        records = [{'event':{'seq':i,'type':'user/message','data':{'message':{
+            'source':source,'content':[{'type':'text','text':'<context>exact user-visible text</context>'}]}}}}
+            for i, source in enumerate([{}, {'kind':'user'}, {'kind':'workspace-instructions','form':'instructions'}, {'kind':'future-plugin'}])]
+        result = messages(records)
+        self.assertEqual([row['role'] for row in result], ['user','user','activity','activity'])
+        self.assertEqual(result[2]['kind'],'context')
+        self.assertEqual(result[2]['title'],'上下文')
+        self.assertEqual(result[0]['text'],result[2]['text'])

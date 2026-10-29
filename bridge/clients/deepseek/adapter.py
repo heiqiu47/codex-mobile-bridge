@@ -282,6 +282,9 @@ def messages(records):
         if kind in ('user/message', 'assistant/message'):
             message = data.get('message', data)
             metadata = {}
+            source_kind = (message.get('source') or {}).get('kind')
+            if kind == 'user/message' and isinstance(source_kind, str) and source_kind and source_kind != 'user':
+                metadata.update(role='activity', kind='context', title='上下文')
             if kind == 'assistant/message':
                 selection = data.get('modelSelection') or {}
                 source = message.get('source') or {}
@@ -298,7 +301,7 @@ def messages(records):
                 if block.get('type') == 'image':
                     result.append({'id': str(event.get('seq'))+':'+str(i), 'role': kind.split('/')[0], 'text':'',
                         'attachments':[{'type':'image','name':(block.get('attachment') or {}).get('name') or '图片',
-                                        '_nativeImage':{'seq':event.get('seq'),'part':i}}]})
+                                        '_nativeImage':{'seq':event.get('seq'),'part':i}}], **metadata})
                     continue
                 text = block.get('text') or block.get('thinking') or ''
                 if text:

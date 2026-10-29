@@ -51,6 +51,14 @@ function fixture({storage=new Map(),sessionStore=new Map()}={}){
  return {view,root,document,calls,notices,storage,sessionStore,setHandler:fn=>handler=fn,setUploadHandler:fn=>uploadHandler=fn,run:s=>vm.runInContext(s,context),text:n=>n.textContent};
 }
 async function opened(){const ui=fixture();await ui.view.choose('claude');await ui.view.open('a');return ui;}
+test('native context reuses activity folding and retains explicit expansion after refresh',async()=>{
+ const ui=await opened(),view=ui.view;view.provider='deepseek';
+ const message={id:'context',role:'activity',kind:'context',title:'上下文',text:'Exact native context'};
+ const detail={connected:true,session:{id:'a',title:'Chat',status:'idle'},messages:[message]};
+ view.applyDetail(detail);const node=view.messageNodes.get('context').node;
+ assert.equal(node.tagName,'DETAILS');assert.equal(!!node.open,false);assert.match(node.textContent,/Exact native context/);
+ node.open=true;view.applyDetail(detail);assert.equal(view.messageNodes.get('context').node,node);assert.equal(node.open,true);
+});
 test('native history images use the shared preview markup and survive unchanged refreshes',async()=>{
  const ui=await opened(),view=ui.view,id='a'.repeat(64),message={id:'image',role:'user',text:'',attachments:[{type:'image',name:'photo.png',desktopId:id}]};
  const detail={connected:true,session:{id:'a',title:'Chat',status:'idle'},messages:[message]};
