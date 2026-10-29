@@ -1,4 +1,4 @@
-"""Only saved native project memberships determine chat list groups."""
+"""Native memberships and registered SSH project roots determine chat list groups."""
 import unittest
 from pathlib import Path
 
@@ -97,6 +97,51 @@ class ProjectGroupingTests(unittest.TestCase):
         self.assertEqual(self.decorate('D:/Work/Project')['projectKey'], 'local|assigned')
         self.assertEqual(self.decorate('C:/Work/Project', 'ssh')['projectKey'], 'ssh|unassigned')
         self.assertNotEqual(self.decorate('D:/Work/Project', 'other')['projectKey'], 'local|local')
+
+    def test_ssh_registered_root_matches_native_app_without_explicit_membership(self):
+        self.saved['remote-projects'][0]['remotePath'] = '/work/project'
+        row = {'id': 'new-ssh-chat', 'cwd': '/work/project', '_nativeProject': None,
+               'origin': 'desktop', 'model_provider': 'original'}
+        self.hosts.decorate([row], 'ssh', 'SSH')
+        self.assertEqual(row['projectKey'], 'ssh|remote')
+        self.assertEqual(row['projectName'], 'Remote')
+        self.assertEqual((row['cwd'], row['origin'], row['model_provider']),
+                         ('/work/project', 'desktop', 'original'))
+
+    def test_ssh_root_fallback_never_guesses_parent_case_or_other_host(self):
+        self.saved['remote-projects'][0]['remotePath'] = '/work/project'
+        for cwd, host in [('/work/project/subdir', 'ssh'), ('/work/Project', 'ssh'),
+                          ('/work/project-old', 'ssh'), ('/work/project', 'other'),
+                          ('/work/project', 'local')]:
+            with self.subTest(cwd=cwd, host=host):
+                self.assertEqual(self.decorate(cwd, host)['projectKey'], host + '|unassigned')
+
+    def test_ssh_explicit_projectless_and_confirmed_removal_override_root(self):
+        cwd = 'C:/Work/Project'
+        self.saved['projectless-thread-ids'] = ['fixture']
+        self.assertEqual(self.decorate(cwd, 'ssh')['projectKey'], 'ssh|unassigned')
+        self.saved['projectless-thread-ids'] = []
+        row = {'id': 'fixture', 'cwd': cwd, '_nativeProject': None}
+        self.hosts.decorate([row], 'ssh', 'SSH', {'fixture'})
+        self.assertEqual(row['projectKey'], 'ssh|unassigned')
+        row = {'id': 'projectless', 'cwd': cwd, 'workspaceKind': 'projectless'}
+        self.hosts.decorate([row], 'ssh', 'SSH')
+        self.assertEqual(row['projectKey'], 'ssh|unassigned')
+
+    def test_ssh_native_and_explicit_memberships_override_matching_root(self):
+        self.saved['remote-projects'].append({'id': 'other-project', 'hostId': 'ssh',
+                                             'label': 'Moved', 'remotePath': '/other'})
+        self.saved['thread-project-assignments'] = {
+            'fixture': {'projectKind': 'remote', 'hostId': 'ssh', 'projectId': 'other-project'}}
+        self.assertEqual(self.decorate('C:/Work/Project', 'ssh')['projectKey'], 'ssh|other-project')
+        row = {'id': 'fixture', 'cwd': 'C:/Work/Project', '_nativeProject': {'id': 'native', 'name': 'Native'}}
+        self.hosts.decorate([row], 'ssh', 'SSH')
+        self.assertEqual(row['projectKey'], 'ssh|native')
+
+    def test_removed_ssh_project_does_not_leave_a_cached_root_assignment(self):
+        self.assertEqual(self.decorate('C:/Work/Project', 'ssh')['projectKey'], 'ssh|remote')
+        self.saved['remote-projects'] = []
+        self.assertEqual(self.decorate('C:/Work/Project', 'ssh')['projectKey'], 'ssh|unassigned')
 
 
 if __name__ == '__main__':

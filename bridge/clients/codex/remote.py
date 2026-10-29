@@ -503,7 +503,8 @@ class AppHosts:
             projects = [{'id': p['id'], 'name': p['name']}
                         for p in state.get('local-projects', {}).values()]
         else:
-            projects = [{'id': p['id'], 'name': p.get('label') or project_path_name(p['remotePath'])}
+            projects = [{'id': p['id'], 'name': p.get('label') or project_path_name(p['remotePath']),
+                         'cwd': p['remotePath']}
                         for p in state.get('remote-projects', []) if p['hostId'] == host]
         assignments = state.get('thread-project-assignments', {})
         projectless = set(state.get('projectless-thread-ids', []))
@@ -518,6 +519,10 @@ class AppHosts:
             # Empty native metadata also occurs while Codex migrates memberships.
             if project is None and not explicitly_projectless and row['id'] not in native_memberships:
                 project = next((p for p in projects if p['id'] == assigned.get('projectId') and assigned.get('hostId', host) == host), None)
+                # The App also groups legacy SSH chats by their registered host/root,
+                # without persisting a thread projectId. Keep explicit removals authoritative.
+                if project is None and host != 'local' and not assigned and row.get('workspaceKind') != 'projectless':
+                    project = next((p for p in projects if p['cwd'] and p['cwd'] == row.get('cwd')), None)
             row.update(host=host, hostLabel=label,
                        projectKey=host + '|' + (legacy_ids.get(project['id'], project['id']) if project else 'unassigned'),
                        projectName=project['name'] if project else '未归类',
