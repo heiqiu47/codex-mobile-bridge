@@ -911,7 +911,7 @@ function renderState(view){
   $('reconnect').hidden=limited&&!access.canReconnect;
   $('reconnect').textContent=t(access.source==='cli'?'继续会话':'重新连接');
   $('history').hidden=view.historyComplete||!view.connected;
-  $('working').hidden=view.status!=='active';$('stop').hidden=view.status!=='active'||!view.connected||!access.canInterrupt;
+  renderChatProgress($('working'),{agentName:'Codex',active:view.status==='active',waiting:!!view.requests.length,connected:!!view.connected});if(!view.connected&&view.status!=='active')$('working').hidden=true;$('stop').hidden=view.status!=='active'||!view.connected||!access.canInterrupt;
   $('send').disabled=view.loadingHistory||view.activating||sending||!attachments.ready()||!access.canSend;
   $('message').disabled=limited&&!access.canSend;
   $('attach-button').disabled=limited&&!access.canSend;

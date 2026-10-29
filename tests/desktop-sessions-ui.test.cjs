@@ -51,6 +51,15 @@ function fixture({storage=new Map(),sessionStore=new Map()}={}){
  return {view,root,document,calls,notices,storage,sessionStore,setHandler:fn=>handler=fn,setUploadHandler:fn=>uploadHandler=fn,run:s=>vm.runInContext(s,context),text:n=>n.textContent};
 }
 async function opened(){const ui=fixture();await ui.view.choose('claude');await ui.view.open('a');return ui;}
+test('shared task indicator separates native work, approvals, stale reads and completion',async()=>{
+ const ui=await opened(),view=ui.view,apply=(status,requests=[])=>view.applyDetail({connected:true,session:{id:'a',title:'Chat',status,requests},messages:[]});
+ apply('active');assert.equal(view.progress.dataset.state,'working');assert.equal(view.progress.hidden,false);assert.ok(view.messages.children.includes(view.progress));
+ apply('active',[{id:'approval',tool:'Confirm',input:{}}]);assert.equal(view.progress.dataset.state,'waiting');
+ view.staleDetail();assert.equal(view.progress.dataset.state,'unknown');assert.doesNotMatch(view.progress.textContent,/正在工作/);
+ apply('blocked');assert.equal(view.progress.dataset.state,'blocked');apply('idle');assert.equal(view.progress.hidden,true);
+ view.provider='future-agent';apply('active');assert.equal(view.progress.dataset.state,'working');assert.match(view.progress.textContent,/future-agent/);
+ view.prepareChat('b');assert.equal(view.progress.hidden,true);
+});
 test('notification provider selection skips list loading and the previously open chat',async()=>{
  const ui=fixture(),prepared=[];ui.view.providerViews.set('claude',{rows:[],sid:'previous'});
  ui.view.prepareChat=id=>prepared.push(id);
