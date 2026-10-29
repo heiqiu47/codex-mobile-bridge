@@ -604,7 +604,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.output(200, self.server.notifications.policy(
                     sid, 'desktop:' + provider, self.read_json() if write else None))
             desktop_workspace = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/(workspace(?:/[a-z-]+)?|terminal)', path)
-            desktop_projects = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/projects/(browse|register)', path)
+            desktop_projects = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/projects/(browse|register|trust)', path)
             if desktop_projects:
                 if not write:
                     return self.output(405, {'error': '请通过目录选择器浏览'})
@@ -615,11 +615,14 @@ class Handler(BaseHTTPRequestHandler):
                 manager.require_enabled(provider)
                 body = self.read_json()
                 fields = ({'environment', 'path', 'hidden', 'name', 'identity'} if action == 'browse'
+                          else {'projectKey', 'confirmed'} if action == 'trust'
                           else {'environment', 'path', 'createDirectory'})
                 if not isinstance(body, dict) or set(body) != fields:
                     raise ValueError('项目目录请求无效')
                 if action == 'browse':
                     return self.output(200, manager.project_directories(provider, **body))
+                if action == 'trust':
+                    return self.output(200, manager.project_trust(provider, **body))
                 return self.output(200, {'project': manager.register_project(provider,
                     body['environment'], body['path'], body['createDirectory'])})
             if path.startswith('/api/desktop-sessions/') and not desktop_workspace:

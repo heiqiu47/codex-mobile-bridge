@@ -89,6 +89,28 @@ class ProjectDirectories(unittest.TestCase):
             self.manager.register_project('claude', environment, str(self.root/'never-created'), True)
         self.assertFalse((self.root/'never-created').exists())
 
+    def test_trust_requires_registered_unchanged_directory_and_environment(self):
+        environment = self.env()
+        project = self.manager.register_project('claude', environment, str(self.root))
+        self.adapter.call.reset_mock()
+        self.manager.project_trust('claude', project['key'], False)
+        args = self.adapter.call.call_args.args
+        self.assertEqual(args[:2], ('project-trust', None))
+        self.assertIs(args[2]['confirmed'], False)
+        self.assertEqual(args[2]['directoryProject']['cwd'], str(self.root))
+        self.adapter.call.reset_mock()
+        for key, confirmed in [('unknown', True), (project['key'], 'true')]:
+            with self.assertRaises(ValueError):
+                self.manager.project_trust('claude', key, confirmed)
+        self.environment['scope'] = 'changed-account'
+        with self.assertRaises(ValueError):
+            self.manager.project_trust('claude', project['key'], True)
+        self.environment['scope'] = 'original-account'
+        self.manager.directory_projects.rows[project['key']]['directoryIdentity']['inode'] += 1
+        with self.assertRaises(ValueError):
+            self.manager.project_trust('claude', project['key'], True)
+        self.adapter.call.assert_not_called()
+
     def test_remote_browse_stays_on_selected_alias_and_passes_paths_as_encoded_data(self):
         self.environment.update(host='ssh:one', alias='fixture-alias', scope='fixture-alias|original-account')
         hosts = Mock(); hosts.hosts.return_value = {'ssh:one': {'alias': 'fixture-alias'}}
@@ -121,6 +143,19 @@ class ProjectDirectories(unittest.TestCase):
 
 
 class ClaudeDirectoryCreation(unittest.IsolatedAsyncioTestCase):
+    async def test_trust_uses_native_api_without_starting_and_rejects_other_surfaces(self):
+        with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as temporary:
+            adapter = Claude(Path(temporary))
+            adapter.desktop = Mock(capabilities={'code': ['mobileProjectTrust']})
+            adapter.desktop.call = AsyncMock(return_value={'trusted': True})
+            with patch.object(adapter, 'status', return_value={'connected': True}):
+                project = {'surface': 'code', 'host': 'local', 'cwd': temporary}
+                await adapter.dispatch('project-trust', None, {'directoryProject': project, 'confirmed': True})
+                adapter.desktop.call.assert_awaited_once_with('code', 'mobileProjectTrust', temporary, True)
+                for change in [{'surface': 'cowork'}, {'surface': 'cli'}, {'host': 'ssh:one'}]:
+                    with self.assertRaises(BridgeUnavailable):
+                        await adapter.dispatch('project-trust', None, {'directoryProject': {**project, **change}, 'confirmed': True})
+
     async def test_new_directory_starts_selected_native_surface_without_listing_sessions(self):
         temporary = tempfile.TemporaryDirectory(dir=ROOT/'.tmp')
         self.addCleanup(temporary.cleanup)

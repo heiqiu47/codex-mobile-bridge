@@ -113,6 +113,7 @@
     capabilities[kind].push('mobileCatalog', 'mobileProgress', 'mobileAccount');
     if(['getSession','getTranscript'].every(method=>typeof api[surface]?.[method]==='function'))capabilities[kind].push('mobileImage');
     if(kind==='code')capabilities[kind].push('mobileList');
+    if(kind==='code'&&['checkTrust','saveTrust'].every(method=>typeof api[surface]?.[method]==='function'))capabilities[kind].push('mobileProjectTrust');
     if(kind==='code'&&['getAll','getSession','archive','unarchive'].every(method=>typeof api[surface]?.[method]==='function'))capabilities[kind].push('mobileArchiveState','mobileArchive');
     if(typeof api[surface]?.getSession==='function'&&typeof api[surface]?.getTranscript==='function')capabilities[kind].push('mobileDetail');
     if(kind==='code'&&typeof api[surface]?.getTranscriptTail==='function'&&typeof api[surface]?.getTranscriptPage==='function')capabilities[kind].push('mobileHistory');
@@ -348,6 +349,15 @@
     if(options.archived)await target.archive(id,{cleanupWorktree:false});else await target.unarchive(id);
     return {status:'accepted'};
   }
+  async function mobileProjectTrust(target,path,confirmed){
+    if(typeof path!=='string'||!path||path.length>4096||/[\0\r\n]/.test(path)||typeof confirmed!=='boolean')throw Error('工作区确认格式无效');
+    const before=await target.checkTrust(path);
+    if(typeof before?.trusted!=='boolean')throw Error('无法核验原生工作区信任状态');
+    if(!before.trusted&&confirmed)await target.saveTrust(path);
+    const state=confirmed?await target.checkTrust(path):before;
+    if(typeof state?.trusted!=='boolean'||confirmed&&!state.trusted)throw Error('工作区信任结果待核对，请在原客户端检查');
+    return {trusted:state.trusted,path};
+  }
   async function mobileImage(target,id,source){
     if(!source||typeof source.event!=='string'||!Number.isInteger(source.part)||source.part<0||source.part>=4096)throw Error('图片引用无效');
     const session=await target.getSession(id);if(session?.sessionId!==id)throw Error('会话标识已变化');
@@ -408,6 +418,7 @@
           if (!target || !Array.isArray(msg.args)) throw new Error('不支持的桌面操作');
           if (msg.method === 'mobileCatalog') return {result:await mobileCatalog(target,msg.surface,msg.args[0])};
           if (msg.method === 'mobileAccount') return {result:await mobileAccount()};
+          if (msg.method === 'mobileProjectTrust' && capabilities[msg.surface].includes('mobileProjectTrust')) return {result:await mobileProjectTrust(target,msg.args[0],msg.args[1])};
           if (msg.method === 'mobileImage' && capabilities[msg.surface].includes('mobileImage')) return {result:await mobileImage(target,msg.args[0],msg.args[1])};
           if (msg.method === 'mobileArchiveState' && capabilities[msg.surface].includes('mobileArchiveState')) return {result:await mobileArchiveState(target,msg.args[0])};
           if (msg.method === 'mobileArchive' && capabilities[msg.surface].includes('mobileArchive')) return {result:await mobileArchive(target,msg.args[0],msg.args[1])};
@@ -553,6 +564,7 @@
             const target = api[surfaces[msg.surface]];
             if (target && msg.method === 'mobileCatalog') return mobileCatalog(target,msg.surface,msg.args[0]);
             if (target && msg.method === 'mobileAccount') return mobileAccount();
+            if (target && msg.method === 'mobileProjectTrust' && capabilities[msg.surface].includes('mobileProjectTrust')) return mobileProjectTrust(target,msg.args[0],msg.args[1]);
             if (target && msg.method === 'mobileArchiveState' && capabilities[msg.surface].includes('mobileArchiveState')) return mobileArchiveState(target,msg.args[0]);
             if (target && msg.method === 'mobileArchive' && capabilities[msg.surface].includes('mobileArchive')) return mobileArchive(target,msg.args[0],msg.args[1]);
             if (target && msg.method === 'mobileList') return mobileList();

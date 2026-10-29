@@ -2,6 +2,13 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"确认工作区信任…":"Confirm workspace trust\u2026",
+"信任此工作区？":"Trust this workspace?",
+"确认信任":"Confirm trust",
+"信任此目录及原客户端识别的工作区，将允许加载其中的项目配置。仅信任你了解来源的项目。":"Trusting this directory and its workspace as identified by the original client allows project configuration to load. Only trust projects whose source you know.",
+"已信任工作区，请再次点击创建并发送。":"Workspace trusted. Click Create and send again to continue.",
+"当前客户端不支持远程确认工作区，请在原客户端确认":"This client does not support remote workspace confirmation. Confirm in the original client.",
+
 "手动输入":"Enter manually",
 "手动输入模型名称":"Enter a model name manually",
 "手动输入思考强度":"Enter reasoning effort manually",

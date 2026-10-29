@@ -868,6 +868,18 @@ class DesktopSessions:
                 'value': path, 'hidden': hidden, 'name': name, 'identity': identity}) + ')))\n'
             return self._project_read(selected, source)
 
+    def project_trust(self, provider, projectKey, confirmed):
+        if type(confirmed) is not bool or not isinstance(projectKey, str) or not projectKey:
+            raise ValueError('工作区确认格式无效')
+        with self._changing(provider, rebind=False):
+            project = self.directory_projects.get(projectKey)
+            if not project or project.get('provider') != provider:
+                raise ValueError('请重新选择项目目录')
+            environment = self._project_environment(provider, project['environment'])
+            self._project_directory(environment, project['cwd'], expected=project['directoryIdentity'])
+            return self._adapter_call(provider, 'project-trust', None,
+                {'directoryProject': {**environment, **project}, 'confirmed': confirmed})
+
     def _archive(self, provider, sid, body):
         if (set(body) not in ({'id', 'archived'}, {'id', 'archived', 'disconnect'}) or
                 not isinstance(body.get('archived'), bool) or not isinstance(body.get('id'), str) or

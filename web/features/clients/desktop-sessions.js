@@ -501,10 +501,28 @@ class DesktopSessionsView {
       for(const row of environments)surface.add(new Option(row.host==='local'?(row.name||row.hostLabel||row.key).replace('此电脑',BridgeI18n.t('此电脑')):row.name||row.hostLabel||row.key,row.key));
       const preferred=environments.find(row=>row.surface===this.state?.backend&&(!this.state?.host||row.host===this.state.host));if(preferred)surface.value=preferred.key;
       const environmentField=field('运行环境',surface);environmentField.hidden=environments.length<2;field('项目',project,workspace);workspace.append(location,browse);form.append(workspace);const titleField=field('聊天名称',title),messageField=field('首条消息',message),actions=this.node('div','project-picker-actions'),cancel=this.button('取消',()=>dialog.close()),create=this.button('创建并打开',()=>{});create.type='submit';create.className='primary';actions.append(cancel,create);form.append(error,actions);dialog.append(form);
-      let directory=null,saving=false;
+      let directory=null,saving=false,trustTarget=null;
+      const trust=this.button('确认工作区信任…',async()=>{
+        const target=trustTarget;if(!target||saving||!current())return;
+        saving=true;trust.disabled=true;create.disabled=true;
+        try{
+          const registered=await this.request(this.path('projects/register',null,provider),{environment:target.environment,path:target.path,createDirectory:false});
+          const active=()=>current()&&trustTarget===target&&environment()?.key===target.environment&&path()===target.path;
+          if(!active())return;
+          const row=registered.project,state=await this.request(this.path('projects/trust',null,provider),{projectKey:row.key,confirmed:false});
+          if(!active())return;
+          if(!state.trusted){
+            if(!await window.BridgeProjectPicker.confirmTrust({path:row.cwd,environment:environment()?.name,isCurrent:active})||!active())return;
+            await this.request(this.path('projects/trust',null,provider),{projectKey:row.key,confirmed:true});
+          }
+          if(active()){trustTarget=null;trust.hidden=true;error.textContent=BridgeI18n.t('已信任工作区，请再次点击创建并发送。');}
+        }catch(failure){if(current())error.textContent=BridgeI18n.t(failure.message);}
+        finally{saving=false;if(current()){trust.disabled=false;update();}}
+      });trust.className='plain';trust.hidden=true;error.after(trust);
       const environment=()=>environments.find(row=>row.key===surface.value),matches=row=>canBrowse?row.environment===surface.value||!row.environment&&row.surface===environment()?.surface&&(!row.host||row.host===environment()?.host):provider!=='claude'||row.surface===surface.value;
       const selected=()=>projects.find(row=>row.key===project.value),path=()=>project.value==='__directory__'?directory?.path:selected()?.cwd;
       const update=()=>{
+        if(trustTarget&&(trustTarget.environment!==environment()?.key||trustTarget.path!==path())){trustTarget=null;trust.hidden=true;}
         const env=environment(),cli=env?.surface==='cli',requiresMessage=env?.createRequiresMessage??(provider==='claude'||value.createRequiresMessage===true),cwd=path()||'';
         title.required=!cli;titleField.hidden=cli;message.required=requiresMessage;messageField.hidden=!requiresMessage;
         create.dataset.i18n=requiresMessage?'创建并发送':'创建并打开';create.textContent=BridgeI18n.t(create.dataset.i18n);create.disabled=saving||!env||!project.value||project.value==='__directory__'&&!directory;
@@ -532,6 +550,9 @@ class DesktopSessionsView {
           }
           const body={projectKey};if(!cli)body.title=title.value.trim();if(message.required)body.firstMessage=message.value.trim();
           const result=await this.mutate('create',body,null);
+          if(current()&&result?.code==='workspace-trust-required'&&result.canConfirmTrust&&canBrowse&&result.workspace===path()){
+            trustTarget={environment:env.key,path:result.workspace};trust.hidden=false;
+          }
           if(result?.result?.id&&current()){dialog.close();await this.open(result.result.id);}else if(current())error.textContent=BridgeI18n.t(result?.code==='workspace-trust-required'?result.message:'结果待核对，请检查原会话列表');
         }catch(failure){if(current())error.textContent=BridgeI18n.t(failure.message);}
         finally{saving=false;if(current()){form.querySelectorAll('input,textarea,select,button').forEach(node=>node.disabled=false);update();}}

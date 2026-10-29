@@ -683,10 +683,18 @@ class Claude:
                 raise
             return {'status': 'blocked', 'code': 'workspace-trust-required',
                     'workspace': project['cwd'],
+                    'canConfirmTrust': 'mobileProjectTrust' in self.desktop.capabilities.get('code', []),
                     'message': '请先在 Claude Desktop 的 Code 页面打开此目录并确认“信任工作区”，再返回重试。首条消息已保留。'}
         return {'status': 'ready', 'result': {'id': model.gateway_id(project['surface'], value['sessionId'])}}
 
     async def dispatch(self, action, sid, body):
+        if action == 'project-trust':
+            project = body['directoryProject']
+            if (project['surface'] != 'code' or project['host'] != 'local' or
+                    not self.status()['connected'] or
+                    'mobileProjectTrust' not in self.desktop.capabilities.get('code', [])):
+                raise BridgeUnavailable('当前客户端不支持远程确认工作区，请在原客户端确认')
+            return await self.desktop.call('code', 'mobileProjectTrust', project['cwd'], body['confirmed'])
         if action == 'create' and body.get('directoryProject'):
             project = body['directoryProject']
             if project['surface'] == 'cli':

@@ -1173,3 +1173,19 @@ test('model source notices are translated per line without hiding automatic or m
  await ui.view.models();const dialog=ui.document.querySelector('dialog');assert.match(dialog.textContent,/Configured models\nSources require verification/);assert.doesNotMatch(dialog.textContent,/历史模型仅供查看/);
  const choices=dialog.querySelector('.model-options').querySelectorAll('input').map(row=>row.value);assert.ok(choices.includes('current-model'));assert.ok(choices.includes('__custom__'));
 });
+
+test('project trust requires explicit confirmation and never replays the first message',async()=>{
+ const ui=await opened();ui.run('window.BridgeProjectPicker={confirmTrust:async()=>false}');
+ ui.setHandler(async(url,body)=>{
+  if(url.endsWith('/projects'))return {projects:[{key:'p',surface:'code',environment:'code',cwd:'/selected',name:'Project'}],environments:[{key:'code',surface:'code',createRequiresMessage:true}]};
+  if(url.endsWith('/create'))return {status:'blocked',code:'workspace-trust-required',workspace:'/selected',canConfirmTrust:true,message:'Native trust required'};
+  if(url.endsWith('/register'))return {project:{key:'registered',cwd:'/selected'}};
+  if(url.endsWith('/trust'))return {trusted:body.confirmed,path:'/selected'};
+  return {sessions:[]};
+ });
+ await ui.view.create();const dialog=ui.document.querySelector('dialog'),form=dialog.querySelector('form'),message=dialog.querySelector('textarea');message.value='Retain this instruction';
+ await form.onsubmit({preventDefault(){}});const trust=dialog.querySelectorAll('button').find(b=>b.textContent==='确认工作区信任…');assert.equal(trust.hidden,false);
+ await trust.onclick();assert.equal(ui.calls.filter(c=>c.url.endsWith('/trust')&&c.body.confirmed).length,0);assert.equal(message.value,'Retain this instruction');
+ ui.run('window.BridgeProjectPicker.confirmTrust=async options=>options.isCurrent()');await trust.onclick();
+ assert.equal(ui.calls.filter(c=>c.url.endsWith('/trust')&&c.body.confirmed).length,1);assert.equal(ui.calls.filter(c=>c.url.endsWith('/create')).length,1);assert.equal(message.value,'Retain this instruction');assert.equal(trust.hidden,true);
+});
