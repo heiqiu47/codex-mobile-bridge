@@ -1,5 +1,6 @@
 """Explicit native project consent, exact host identity and scoped App import."""
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class ProjectTrust(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(dir=ROOT/'.tmp'); self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name).resolve(); self.cwd = self.root/'a.b " project'; self.cwd.mkdir()
+        name = "a.b ' project" if os.name == 'nt' else 'a.b " project'
+        self.root = Path(tmp.name).resolve(); self.cwd = self.root/name; self.cwd.mkdir()
         self.identity = project_directory(str(self.cwd)); self.trusted = False; self.calls = []
         self.layers = [{'name': {'type': 'user', 'file': str(self.root/'config.toml')}, 'version': 'v1'}]
 

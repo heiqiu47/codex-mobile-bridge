@@ -49,10 +49,10 @@ class DirectoryReferenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=ROOT / '.tmp') as directory:
             base = Path(directory); root = base/'project'; root.mkdir()
             home = base/'home'; outside = home/'visualizations'; outside.mkdir(parents=True)
-            target = root/'a[b] #?.png'; target.write_bytes(b'fixture')
+            target = root/'a[b] #%.png'; target.write_bytes(b'fixture')
             (root/'src').mkdir(); (outside/'private.txt').write_text('private')
             (root/'escape').symlink_to(outside, target_is_directory=True)
-            text = '[a&#91;b&#93;](<./a%5Bb%5D%20%23%3F.png>) [src](<./src/>)'
+            text = '[a&#91;b&#93;](<./a%5Bb%5D%20%23%25.png>) [src](<./src/>)'
             text += ' [outside](<' + str(outside/'private.txt') + '>) [escape](<./escape/private.txt>)'
             state = {'cwd': str(root), 'turns': [{'items': [{'type': 'userMessage', 'content': [{'type': 'inputText', 'text': text}]}]}]}
             rows = artifact_paths(state, home)
