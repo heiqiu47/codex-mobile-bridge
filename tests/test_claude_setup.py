@@ -267,6 +267,23 @@ class ClaudeProfileEvidence(unittest.TestCase):
              patch('bridge.clients.claude.setup.subprocess.run', return_value=files):
             self.assertEqual(claude_setup.claude_data_home(self.executable, self.default), self.default)
 
+    @patch('bridge.clients.claude.setup.sys.platform', 'darwin')
+    def test_preview_partition_does_not_hide_observed_profile(self):
+        files = Mock(stdout=f'p42\nn{self.posix_third}/Session Storage/LOCK\n'
+                            f'n{self.posix_third}/Partitions/cowork-file-preview/Network/Cookies\n')
+        with patch('bridge.clients.claude.setup.DesktopApp.processes', return_value=[42]), \
+             patch('bridge.clients.claude.setup.subprocess.run', return_value=files):
+            self.assertEqual(claude_setup.claude_data_home(self.executable, self.default), self.third)
+
+    @patch('bridge.clients.claude.setup.sys.platform', 'darwin')
+    def test_preview_partition_does_not_resolve_conflicting_profiles(self):
+        files = Mock(stdout=f'p42\nn{self.posix_third}/Session Storage/LOCK\n'
+                            f'n{self.posix_third}/Partitions/cowork-file-preview/Network/Cookies\n'
+                            f'n{self.posix_default}/Session Storage/LOCK\n')
+        with patch('bridge.clients.claude.setup.DesktopApp.processes', return_value=[42]), \
+             patch('bridge.clients.claude.setup.subprocess.run', return_value=files):
+            self.assertEqual(claude_setup.claude_data_home(self.executable, self.default), self.default)
+
     def test_unavailable_process_inspection_retains_default(self):
         for error in (PermissionError('fixture'), subprocess.TimeoutExpired('lsof', 10)):
             with self.subTest(error=type(error).__name__), \
