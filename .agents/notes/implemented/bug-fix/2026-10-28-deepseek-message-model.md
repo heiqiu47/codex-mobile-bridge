@@ -38,3 +38,5 @@ DSH 插件在历史页内部顺序关联请求头；当首条相关事件已经�
 
 
 后续 [DSH 双路线接入](../feature/2026-10-29-dsh-mobile-and-plugin-compatibility.md) 增加独立 Mobile 浏览容器与插件协议校验；本篇 Bridge 路径的既有约束保持。
+
+[发送期间的即时反馈](2026-10-29-desktop-send-feedback.md)使用独立临时预览，不把尚未确认的发送插入本篇依赖的原生历史。

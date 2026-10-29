@@ -1078,3 +1078,38 @@ test('explicit Bridge project and section grouping preserves execution location'
  assert.match(ui.view.rowsRoot.textContent,/Engineering.*Todo/);assert.match(ui.view.rowsRoot.textContent,/Review/);
  assert.ok(ui.view.rows.every(row=>row.cwd==='/original'));
 });
+
+for(const [provider,backend,runtime] of [['claude','code','local'],['claude','cowork','local'],['claude','cli','local'],['claude','cli','wsl'],['deepseek','desktop','local']])test(`${provider} ${backend} ${runtime} send shows pending content synchronously and confirms only after acknowledgement`,async()=>{
+ const ui=fixture(),view=ui.view;await view.choose(provider);await view.open('a');view.state={...view.state,backend,runtime,connectionState:'ready'};
+ let finish;ui.setHandler((url,body)=>body?new Promise(resolve=>finish=resolve):Promise.resolve(url.includes('/detail')?{session:{id:'a',status:'idle',capabilities:{}},messages:[{id:'native',role:'user',text:'slow message'}]}:{sessions:[]}));
+ view.input.value='slow message';const sending=view.submit();
+ assert.equal(view.sendFeedback.hidden,false);assert.match(view.sendFeedback.textContent,/正在发送….*slow message/);assert.equal(view.send.textContent,'正在发送…');assert.equal(view.send.disabled,true);assert.equal(ui.notices.length,0);
+ await view.submit();assert.equal(ui.calls.filter(call=>call.body).length,1,'a second click does not submit twice');
+ view.applyDetail({session:{id:'a',status:'idle',capabilities:{}},messages:[{id:'native',role:'user',text:'slow message'}]});assert.equal(view.messages.querySelectorAll('.message').length,1,'pending preview is not a second native-history bubble');assert.equal(view.sendFeedback.hidden,false);
+ view.input.value='next draft';view.input.oninput();finish({status:'accepted'});await sending;
+ assert.equal(view.sendFeedback.hidden,true);assert.equal(view.send.textContent,'发送 ↑');assert.equal(view.input.value,'next draft');assert.deepEqual(ui.notices,['已发送到会话']);
+});
+
+test('queued send confirmation differs from delivery and failures keep the original draft and request id',async()=>{
+ const ui=await opened(),view=ui.view;let writes=0,first;ui.setHandler(async(url,body)=>{if(!body)return url.includes('/detail')?{session:{id:'a',status:'idle',capabilities:{}},messages:[]}:{sessions:[]};writes++;first??=body.id;assert.equal(body.id,first);return writes===1?{status:'unknown',message:'结果待核对'}:{status:'queued'};});
+ view.input.value='keep me';await view.submit();assert.equal(view.sendFeedback.hidden,true);assert.equal(view.input.value,'keep me');assert.deepEqual(ui.notices,['结果待核对']);assert.equal(writes,1);
+ view.freshDetail=true;await view.submit();assert.equal(writes,2);assert.equal(view.input.value,'');assert.equal(ui.notices.at(-1),'已加入待发送队列');
+});
+
+test('pending send feedback stays scoped across chat, provider and account changes',async()=>{
+ for(const change of ['chat','provider','account','gateway','logout']){
+  const ui=await opened(),view=ui.view;view.bindDraftGateway('gateway-a');view.bindDraftScope({draftAccountIdentity:'account-a'});let finish;
+  ui.setHandler((url,body)=>body?new Promise(resolve=>finish=resolve):Promise.resolve({sessions:[]}));view.input.value='private pending text';const sending=view.submit();assert.equal(view.sendFeedback.hidden,false);
+  if(change==='chat')view.sid='b';else if(change==='provider')view.provider='deepseek';else if(change==='account')view.bindDraftScope({draftAccountIdentity:'account-b'});else if(change==='gateway')view.bindDraftGateway('gateway-b');else view.clear();
+  view.updateComposer();assert.equal(view.sendFeedback.hidden,true,change);assert.equal(view.sendFeedback.textContent,'',change+' removes hidden private text');
+  finish({status:'accepted'});await sending;assert.equal(view.sendFeedback.hidden,true);assert.equal(ui.notices.length,0,change+' does not announce success in another context');
+ }
+});
+
+test('network failure clears only transient sending UI and never retries or clears the draft',async()=>{
+ const ui=await opened(),view=ui.view;ui.setHandler(async(url,body)=>{if(body)throw Error('connection lost');return {sessions:[]};});view.input.value='preserved after timeout';await view.submit();assert.equal(view.sendFeedback.hidden,true);assert.equal(view.input.value,'preserved after timeout');assert.equal(ui.calls.filter(call=>call.body).length,1);assert.deepEqual(ui.notices,['connection lost']);assert.equal(view.pending.size,1);
+});
+
+test('late send failure does not expose its message after leaving the original provider',async()=>{
+ const ui=await opened(),view=ui.view;let reject;ui.setHandler((url,body)=>body?new Promise((resolve,fail)=>reject=fail):Promise.resolve({sessions:[]}));view.input.value='private message';const sending=view.submit();view.provider='deepseek';view.updateComposer();reject(Error('private source error'));await sending;assert.equal(view.error.textContent,'');assert.equal(ui.notices.length,0);
+});
