@@ -226,18 +226,32 @@ class DeepSeekMigrationTests(unittest.TestCase):
                              {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before if p != source})
             self.assertFalse(self.new_path.exists())
 
+    def test_compatible_predecessors_remain_usable_without_silent_source_updates(self):
+        from bridge.clients.deepseek import setup
+        source = self.old.directory/'mobile-host.mjs'
+        content = b'// fixture for a verified compatible predecessor'
+        source.write_bytes(content)
+        original_sha = hashlib.sha256
+        for predecessor in setup.COMPATIBLE_OFFICIAL_SOURCES:
+            before = source.read_bytes()
+            def digest(value):
+                return Mock(hexdigest=lambda: predecessor) if value == content else original_sha(value)
+            with patch.object(setup.hashlib, 'sha256', side_effect=digest):
+                adapter = DeepSeek(self.new_path, self.home)
+                self.assertTrue(adapter.discover_existing()['reused'])
+                self.assertFalse(adapter.discover_existing()['updateRequired'])
+                self.assertEqual(source.read_bytes(), before)
+
     def test_current_source_lf_and_crlf_are_reused_as_current_without_writes(self):
         source = self.old.directory/'mobile-host.mjs'
         current = Path(__file__).resolve().parents[1]/'bridge/clients/deepseek/host.mjs'
         lf = current.read_bytes().replace(b'\r\n', b'\n')
         self.assertIn(b'\n', lf)
         self.assertEqual(hashlib.sha256(lf).hexdigest(),
-                         '14ca377eecc7b714e9c059b026181164c3cb21166d315a6d9ef9d16327bda815')
+                         '5479ae9f1e78bd7bf7ce61478a6427025b47964593dbc830b0845a1ef4f0da5a')
         self.assertEqual(hashlib.sha256(lf.replace(b'\n', b'\r\n')).hexdigest(),
-                         '9c8da5a761588f5f91d5696e938ff2bd927412a2e56367e08aeabeabc6a42ec2')
-        previous = lf.replace(b",...config.plugin?{plugin:config.plugin}:{}", b"")
-        self.assertEqual(hashlib.sha256(previous).hexdigest(), '80cc10b76e18621b90dbdd5675ce8dd3932eb381a3380f0a538a76b4bcc77ebf')
-        for content in (lf, lf.replace(b'\n', b'\r\n'), previous, previous.replace(b'\n', b'\r\n')):
+                         '32fd056cd0840884610a223a41bb690c4f3e244c3af7bdb7fc9c65c84d19b3db')
+        for content in (lf, lf.replace(b'\n', b'\r\n')):
             with self.subTest(line_ending='CRLF' if b'\r\n' in content else 'LF'):
                 source.write_bytes(content)
                 before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
