@@ -52,3 +52,5 @@ v2.1.7 Test 实机回归发现，初始化 `requests.sqlite` 后的 `with sqlite
 
 
 后续 [DSH 双路线接入](2026-10-29-dsh-mobile-and-plugin-compatibility.md) 对独立插件 `0.2.x` 改用显式版本及协议握手，部分替代本篇的逐字节版本同步决定；`0.1.0` 保留已知源文件核验，档案身份和原生生命周期约束继续成立。
+
+源码独立维护与网关固定副本规则见[插件源码边界](../architecture/2026-10-29-dsh-plugin-source-boundary.md)；本篇的实例绑定及运行时兼容规则继续有效。

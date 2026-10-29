@@ -69,3 +69,5 @@ Windows、Linux 各自的 DSH 后端 100 项通过，前端回归与冻结程序
 - [Android 后台通知](2026-10-27-android-background-notifications.md)
 - [共享菜单](2026-10-28-shared-session-menu.md)
 - [消息模型](../bug-fix/2026-10-28-deepseek-message-model.md)
+
+源码独立维护与网关固定副本规则见[插件源码边界](../architecture/2026-10-29-dsh-plugin-source-boundary.md)；本篇的实例绑定及运行时兼容规则继续有效。
