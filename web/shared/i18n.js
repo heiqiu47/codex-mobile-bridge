@@ -2,6 +2,12 @@
 // UI messages only. Never translate chat content, commands, model IDs or user input.
 const BridgeI18n=(()=>{
 const en={
+"添加附件":"Add attachment",
+"从本机上传":"Upload from this device",
+"引用宿主机项目文件":"Reference a host project file",
+"引用此文件夹":"Reference this folder",
+"文件不在当前项目中或已不可用":"The file is outside the current project or is no longer available",
+
 "引用到消息":"Reference in message",
 "已加入草稿，尚未发送":"Added to draft, not sent",
 "预览文件":"Preview file",

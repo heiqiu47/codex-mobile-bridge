@@ -93,6 +93,7 @@ for (const scenario of ['success', 'css-once', 'js-twice', 'js-fatal', 'runtime'
 }
 
 for (const [name, file, invoke] of [
+  ['paperclip host reference and native attachment actions', 'host-file-reference', 'runHostFileReferenceChecks'],
   ['agent manual model and reasoning settings', 'agent-model-settings', 'runAgentModelSettingsChecks'],
   ['chat history, list entry and scroll position', 'desktop-history', 'runDesktopHistoryBrowserChecks'],
   ['account-scoped drafts and late send acknowledgement', 'persistent-drafts', 'runPersistentDraftTests'],
@@ -272,3 +273,30 @@ for(const surface of ['code','cowork','deepseek']){
   for(const theme of ['light','dark']){await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);await page.screenshot({path:testInfo.outputPath(surface+'-'+theme+'-model-settings.png')});}
  });
 }
+
+test('Codex project trust cancellation prevents creation and confirmation stays scoped',async({page})=>{
+ await ready(page);
+ const result=await page.evaluate(async()=>{
+  const oldApi=api,calls=[],dialog=$('new-chat-dialog'),form=$('new-chat-form');
+  let confirmed=false;
+  api=async(url,body)=>{calls.push({url,body});if(url==='/api/projects/trust'){
+   if(body.confirmed){confirmed=true;return {trusted:true};}
+   return {required:true,path:'/synthetic/project',environment:'SSH fixture · Codex App',confirmation:'bound-to-selection'};
+  }if(url.startsWith('/api/sessions'))throw Error('synthetic creation boundary');throw Error('unexpected request '+url);};
+  try{
+   $('new-chat-type').replaceChildren(new Option('Codex App','desktop'));$('new-chat-project').replaceChildren(new Option('Project','synthetic-key'));$('new-chat-title').value='Synthetic';dialog.showModal();
+   const tick=()=>new Promise(r=>setTimeout(r,0));
+   let pending=form.onsubmit({preventDefault(){}});await tick();
+   let trust=[...document.querySelectorAll('dialog[open]')].find(d=>d!==dialog);
+   if(!trust?.textContent.includes('/synthetic/project')||!trust.textContent.includes('SSH fixture'))throw Error('Missing exact consent target');
+   [...trust.querySelectorAll('button')].find(b=>b.textContent==='取消').click();await pending;
+   const cancelled=calls.length===1&&!confirmed&&$('new-chat-title').value==='Synthetic';
+   calls.length=0;pending=form.onsubmit({preventDefault(){}});await tick();trust=[...document.querySelectorAll('dialog[open]')].find(d=>d!==dialog);
+   [...trust.querySelectorAll('button')].find(b=>b.textContent==='确认信任').click();await pending;
+   return {cancelled,calls,confirmed};
+  }finally{api=oldApi;dialog.close();sessionStorage.removeItem('new-chat-attempt');}
+ });
+ expect(result.cancelled).toBe(true);expect(result.confirmed).toBe(true);
+ expect(result.calls.map(c=>c.url)).toEqual(['/api/projects/trust','/api/projects/trust','/api/sessions']);
+ expect(result.calls[1].body).toEqual({key:'synthetic-key',confirmed:true,confirmation:'bound-to-selection'});
+});

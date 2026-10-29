@@ -911,7 +911,7 @@ class Handler(BaseHTTPRequestHandler):
                 if set(body) != {'action', 'id', 'enabled'} or body['action'] != 'configure':
                     raise ValueError('Codex 入口请求无效')
                 return self.output(200, entries.configure(body['id'], body['enabled']))
-            if path in ('/api/projects', '/api/projects/browse'):
+            if path in ('/api/projects', '/api/projects/browse', '/api/projects/trust'):
                 entry = query.get('entry', ['desktop'])[0]
                 if self.server.desktop_sessions:
                     self.server.desktop_sessions.require_enabled(entry if entry.startswith('wsl:') else 'codex')
@@ -919,6 +919,14 @@ class Handler(BaseHTTPRequestHandler):
                     target = self.server.bridge.entries.get(entry)
                 else:
                     target = self.server.bridge
+                if path.endswith('/trust'):
+                    if not write: return self.output(405, {'error': '请通过项目确认操作信任'})
+                    body = self.read_json()
+                    if (entry != 'desktop' or not isinstance(body, dict)
+                            or not {'key', 'confirmed'} <= set(body)
+                            or set(body) - {'key', 'confirmed', 'confirmation'}):
+                        raise ValueError('目录信任请求无效')
+                    return self.output(200, target.project_trust(**body))
                 if path.endswith('/browse'):
                     if not write: return self.output(405, {'error': '请通过目录选择器浏览'})
                     body = self.read_json()

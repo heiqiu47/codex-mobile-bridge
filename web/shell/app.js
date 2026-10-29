@@ -132,7 +132,7 @@ desktopSessions.onListEnter=()=>{clientNavigation.listReadDone=false;clientNavig
 desktopSessions.onListReady=(provider,value)=>{clientNavigation.acknowledgeList(provider,value);window.BridgeFeatures?.prefetchChat();};
 async function uploadAttachment(key,id,file){const separator=key.indexOf('|'),host=key.slice(0,separator),thread=key.slice(separator+1);const response=await fetch(sessionUrl(thread,'uploads',host)+'&id='+encodeURIComponent(id)+'&name='+encodeURIComponent(file.name),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/octet-stream','X-CSRF-Token':csrf},body:file});const result=await response.json();if(!response.ok){if(response.status===401)authLost();const error=Error(result.error||t('附件上传失败，请重试'));error.retryable=response.status>=500||response.status===429;throw error;}return result;}
 async function uploadAttachmentWithRetry(key,id,file){if(window.BridgeSharedRelay)return uploadAttachment(key,id,file);let last;for(let attempt=0;attempt<3;attempt++){try{return await uploadAttachment(key,id,file);}catch(error){last=error;if(error.name==='AbortError'||error.retryable===false||attempt===2)throw error;await new Promise(resolve=>setTimeout(resolve,400*(attempt+1)));}}if(last instanceof TypeError)last.message=t('附件上传中断，请重试');throw last;}
-const attachments=new ChatAttachments({root:$('attachment-list'),button:$('attach-button'),input:$('attachment-input'),paste:$('message'),drop:$('composer'),preview:(key,id)=>{const at=key.indexOf('|'),host=key.slice(0,at),thread=key.slice(at+1);return hostUrl(sessionUrl(thread,'uploads/'+encodeURIComponent(id)+'/preview',host));},onChange:()=>{if(currentId)$('send').disabled=sending||!attachments.ready()||!state||state.loadingHistory||state.activating||!currentAccess().canSend;},thumbnail:async(key,id,file)=>{
+const attachments=new ChatAttachments({root:$('attachment-list'),button:$('attach-button'),input:$('attachment-input'),chooseReference:()=>window.BridgeFileActions.pickReference(workbench),paste:$('message'),drop:$('composer'),preview:(key,id)=>{const at=key.indexOf('|'),host=key.slice(0,at),thread=key.slice(at+1);return hostUrl(sessionUrl(thread,'uploads/'+encodeURIComponent(id)+'/preview',host));},onChange:()=>{if(currentId)$('send').disabled=sending||!attachments.ready()||!state||state.loadingHistory||state.activating||!currentAccess().canSend;},thumbnail:async(key,id,file)=>{
   const separator=key.indexOf('|'),host=key.slice(0,separator),thread=key.slice(separator+1);
   const image=await attachments.thumbnailBlob(file);
   const response=await fetch(sessionUrl(thread,'uploads/'+encodeURIComponent(id)+'/thumb',host)+'&width='+image.width+'&height='+image.height,{method:'POST',credentials:'same-origin',headers:{'Content-Type':image.mime,'X-CSRF-Token':csrf},body:image.data});
@@ -639,6 +639,14 @@ $('new-chat-form').onsubmit=async event=>{
   document.querySelector('[data-close="new-chat-dialog"]').disabled=true;
   try{
     if(directory&&attempt.project==='__directory__'){attempt.project=(await api(newChatUrl('/api/projects'),directory)).project.key;sessionStorage.setItem('new-chat-attempt',JSON.stringify(attempt));}
+    if(kind==='desktop'&&attempt.project!=='local|independent'){
+      const trust=await api('/api/projects/trust',{key:attempt.project,confirmed:false});
+      if(trust.required){
+        const accepted=await BridgeProjectPicker.confirmTrust({path:trust.path,environment:trust.environment,isCurrent:()=>$('new-chat-dialog').open&&creatingChat});
+        if(!accepted)return;
+        await api('/api/projects/trust',{key:attempt.project,confirmed:true,confirmation:trust.confirmation});
+      }
+    }
     const result=await api(newChatUrl('/api/sessions'),{id:attempt.id,project:attempt.project,title:attempt.title,...(attempt.kind?{kind:attempt.kind}:{})});
     sessionStorage.removeItem('new-chat-attempt');$('new-chat-dialog').close();
     $('search').value='';$('archived').value='false';

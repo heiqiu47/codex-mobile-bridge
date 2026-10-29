@@ -157,6 +157,41 @@ def project_directory(value, create=False, expected=None):
         raise ValueError('项目目录不存在或不可访问；新目录请勾选创建，并确保父目录存在') from exc
 
 
+def project_trust(executable, codex_home, identity, confirmed=False):
+    """Trust only an explicitly selected, unchanged directory via native config RPC."""
+    if type(confirmed) is not bool:
+        raise ValueError('目录信任确认无效')
+    cwd = project_directory(identity['cwd'], expected=identity)['cwd']
+    def run(request):
+        def read():
+            return request('config/read', {'cwd': cwd, 'includeLayers': True})
+        def trusted(value):
+            return value.get('config', {}).get('projects', {}).get(cwd, {}).get('trust_level') == 'trusted'
+        value = read()
+        if confirmed and not trusted(value):
+            layers = [layer for layer in value.get('layers') or []
+                      if layer.get('name', {}).get('type') == 'user'
+                      and not layer['name'].get('profile') and not layer.get('disabledReason')]
+            if len(layers) != 1 or not layers[0].get('version'):
+                raise CreationUnavailable('无法确认 Codex 用户配置版本，请在电脑 App 中信任此项目')
+            project_directory(cwd, expected=identity)
+            result = request('config/batchWrite', {'edits': [{
+                'keyPath': 'projects.' + json.dumps(cwd, ensure_ascii=False) + '.trust_level',
+                'value': 'trusted', 'mergeStrategy': 'replace'}],
+                'filePath': None, 'expectedVersion': layers[0]['version'], 'reloadUserConfig': True})
+            if result.get('status') != 'ok' or not trusted(read()):
+                raise CreationError('目录信任结果尚未确认，请检查 Codex App 配置；不会自动重复提交')
+            value = {'config': {'projects': {cwd: {'trust_level': 'trusted'}}}}
+        return {'trusted': trusted(value), 'path': cwd}
+    # Do not launch the temporary reader in an as-yet untrusted project.
+    return _runtime_operation(executable, codex_home, str(codex_home), run,
+                              failure_message='目录信任结果尚未确认，请检查 Codex App 配置；不会自动重复提交')
+
+
+def apply_desktop_config():
+    _open_desktop_url('codex://codex-app/apply-config')
+
+
 def project_directory_listing(value=None, hidden=False, name=None, identity=None):
     """Explicit filesystem picker; only directories, never file contents."""
     if type(hidden) is not bool: raise ValueError('目录显示选项无效')

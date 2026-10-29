@@ -7,7 +7,7 @@ from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
 
-from bridge.features.sessions.model import ordered_turns, items_array
+from bridge.features.sessions.model import ordered_turns, items_array, desktop_file_attachments
 
 MARKDOWN_PATH = re.compile(r'!?\[[^\]\n]*\]\((?:<([^>]+)>|([^\n)]+))\)')
 IMAGE_MARKDOWN_PATH = re.compile(r'!\[[^\]\n]*\]\((?:<([^>]+)>|([^\n)]+))\)')
@@ -265,6 +265,7 @@ def artifact_paths(state, codex_home):
                         text += '\n' + str(block.get('text', ''))
                 for match in MARKDOWN_PATH.finditer(text):
                     user_candidates.add(match[1] or match[2])
+                user_candidates.update(file['path'] for file in desktop_file_attachments(text))
             if item.get('type') in ('agentMessage', 'assistantMessage'):
                 for match in MARKDOWN_PATH.finditer(item.get('text', '')):
                     candidates.add(match[1] or match[2])

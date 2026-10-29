@@ -244,7 +244,10 @@ class ChatTimeline {
       const copy=document.createElement('button');copy.type='button';copy.className='plain message-copy';copy.textContent=timelineText('复制');copy.onclick=()=>window.BridgeClipboard?.copy(()=>this.fullText(row),copy);actions.append(copy);node.append(actions);
       const quote=document.createElement('button');quote.type='button';quote.className='plain message-quote';quote.textContent=timelineText('引用');quote.onclick=()=>node.dispatchEvent(new CustomEvent('bridge-compose-quote',{bubbles:true,detail:{getText:()=>this.fullText(row),source:row.key}}));actions.append(quote);
     }
-    renderChatAttachments(node,row.attachments,{showToolImages:this.showToolImages,url:item=>{
+    renderChatAttachments(node,row.attachments,{showToolImages:this.showToolImages,fileUrl:item=>{
+      const file=[...this.files.values()].find(file=>file.reference===item.path||file.references?.includes(item.path));
+      return file?this.url('files/'+file.id):null;
+    },url:item=>{
       if(!item.uploadId&&!item.desktopId)return null;
       const source=item.uploadId?this.url('uploads/'+encodeURIComponent(item.uploadId)+'/preview'):this.url('desktop-images/'+encodeURIComponent(item.desktopId));
       return {preview:source,original:item.uploadId?source+'&variant=original':source};

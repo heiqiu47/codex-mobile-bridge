@@ -11,6 +11,47 @@ window.BridgeFileActions = (() => {
     const path='./'+info.path.split('/').map(encodeURIComponent).join('/')+(info.kind==='directory'?'/':'');
     return '['+name+'](<'+path+'>)';
   }
+  function attach(upload,reference){
+    const box=dialog(t('添加附件'));
+    for(const [label,action] of [['从本机上传',upload],['引用宿主机项目文件',reference]]){
+      const button=node('button',t(label),'plain');button.type='button';button.onclick=()=>{box.close();action();};box.append(button);
+    }
+    box.showModal();
+  }
+  function pickReference(workbench){
+    const session=workbench.current,input=workbench.composer;
+    if(!session||!input||input.disabled||input.readOnly)return;
+    const box=dialog(t('引用宿主机项目文件')),toolbar=node('div',undefined,'wb-toolbar'),up=node('button',t('上一级'),'plain'),folder=node('button',t('引用此文件夹'),'plain'),location=node('p','','wb-path'),form=node('form',undefined,'wb-search'),search=node('input'),submit=node('button',t('搜索'),'plain'),status=node('p','','muted'),list=node('div',undefined,'wb-file-list'),more=node('button',t('加载更多'),'plain');
+    up.type=folder.type=more.type='button';search.type='search';search.placeholder=t('搜索当前目录');search.setAttribute('aria-label',t('搜索当前目录'));submit.type='submit';form.append(search,submit);toolbar.append(up,folder);box.append(location,toolbar,form,status,list,more);
+    let path='',ticket=0,busy=false,next=null;
+    const current=()=>box.open&&session===workbench.current&&!input.disabled&&!input.readOnly;
+    const controls=()=>{up.disabled=busy||!path;folder.disabled=busy||!path;more.disabled=busy;submit.disabled=busy;};
+    async function select(entry){
+      if(busy||!current())return;busy=true;controls();
+      try{const info=await workbench.request(workbench.url(session,'info',entry.path));
+        if(current()&&workbench.referenceFile(session,info)){box.close();workbench.notify(t('已加入草稿，尚未发送'));}
+      }catch(error){if(current())status.textContent=t(error.message);}
+      finally{busy=false;controls();}
+    }
+    async function navigate(target,append=false){
+      if(busy||!current())return;
+      const generation=++ticket;busy=true;path=target;controls();status.textContent=t('正在读取目录…');if(!append)list.replaceChildren();
+      try{
+        const result=await workbench.request(workbench.url(session,'',path)+'&hidden=false&search='+encodeURIComponent(search.value||'')+'&offset='+(append?next:0));
+        if(!current()||generation!==ticket)return;
+        location.textContent=result.project+(path?' / '+path:'');status.textContent=result.entries.length?'':t('当前目录没有匹配的文件');
+        for(const entry of result.entries){
+          const row=node('button',undefined,'wb-file');row.type='button';row.disabled=entry.kind==='blocked';row.dataset.path=entry.path;
+          row.append(workbench.fileIcon(entry),node('span',entry.name,'wb-file-name'),node('span',entry.kind==='directory'?t('文件夹'):workbench.size(entry.size||0),'wb-file-meta'));
+          row.onclick=()=>{if(entry.kind==='directory'){search.value='';navigate(entry.path);}else select(entry);};list.append(row);
+        }
+        next=result.nextOffset;more.hidden=next===null;
+      }catch(error){if(current())status.textContent=t(error.message);}
+      finally{busy=false;controls();}
+    }
+    up.onclick=()=>{search.value='';navigate(path.split('/').slice(0,-1).join('/'));};folder.onclick=()=>select({path});more.onclick=()=>navigate(path,true);form.onsubmit=event=>{event.preventDefault();navigate(path);};
+    box.addEventListener('close',()=>ticket++);box.showModal();navigate('');
+  }
   function menu(workbench,session,entry){
     if(session!==workbench.current)return;
     const box=dialog(entry.name),url=workbench.url(session,'download',entry.path)+'&explicit=1'+(entry.kind==='directory'?'&archive=1':'');
@@ -70,6 +111,8 @@ window.BridgeFileActions = (() => {
     }catch(error){status.textContent=t(error.message);status.className='error';}
   }
   document.addEventListener('click',event=>{
+    const unavailable=event.target.closest?.('[data-unavailable-file]');
+    if(unavailable){const workbench=workbenches.get(unavailable.closest('.chat'));if(workbench){event.preventDefault();workbench.notify(t('文件不在当前项目中或已不可用'));}return;}
     const anchor=event.target.closest?.('a[href]');
     if(!anchor||event.defaultPrevented||event.button!==0||anchor.dataset.directDownload||anchor.hasAttribute('data-image-preview')||typeof BridgeDownload==='undefined'||!BridgeDownload.eligible(anchor.href,location.href))return;
     const chat=anchor.closest('.chat'),workbench=chat&&workbenches.get(chat);if(!workbench)return;
@@ -88,5 +131,5 @@ window.BridgeFileActions = (() => {
     new MutationObserver(()=>{if(!container.hidden&&(!('open' in container)||container.open))read();}).observe(container,{attributes:true,attributeFilter:['hidden','open']});
     window.addEventListener('focus',read);document.addEventListener('bridge-authenticated',read);return field;
   }
-  return {register:(chat,workbench)=>workbenches.set(chat,workbench),bindRow,menu,mountSettings,reference};
+  return {register:(chat,workbench)=>workbenches.set(chat,workbench),bindRow,menu,mountSettings,reference,attach,pickReference};
 })();

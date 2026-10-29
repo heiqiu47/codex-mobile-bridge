@@ -419,6 +419,66 @@ class AppHosts:
         relevant.update(state.get('thread-project-membership-host-ids', {}).values())
         return {host_id: host for host_id, host in self.hosts().items() if host_id in relevant}
 
+    def project_import(self, project):
+        """Prepare the native App import, never edit its live global state.
+
+        Applying this file also applies connection settings. Refuse an existing
+        multi-host/pending import rather than connecting unrelated hosts.
+        """
+        host = self.hosts().get(project['host'])
+        if not host or host['alias'] != project.get('hostIdentity'):
+            raise ValueError('原 SSH 主机配置已变化，请重新选择项目')
+        path = self.home / 'codex-app' / 'config.json'
+        if path.is_symlink() or path.parent.is_symlink():
+            raise ValueError('Codex App 项目配置路径不可用，请在电脑 App 添加项目')
+        original = path.read_bytes() if path.exists() else None
+        try:
+            config = json.loads(original) if original is not None else {'version': 1}
+            if not isinstance(config, dict) or config.get('version', 1) != 1 or set(config) - {
+                    'version', 'remoteConnections', 'remoteConnectionMaxRetryAttempts', 'sshConnectTimeoutSeconds'}:
+                raise ValueError()
+            rows = config.setdefault('remoteConnections', [])
+            if not isinstance(rows, list) or len(rows) > 1:
+                raise ValueError()
+            if rows and (not isinstance(rows[0], dict) or set(rows[0]) - {'sshAlias', 'projects'} or rows[0].get('sshAlias') != host['alias']):
+                raise ValueError()
+            saved = {(row['host'], row['cwd']): row for row in self.projects()}
+            for row in rows:
+                if not isinstance(row.get('projects', []), list):
+                    raise ValueError()
+                for item in row.get('projects', []):
+                    if not isinstance(item, dict):
+                        raise ValueError()
+                    native = saved.get((project['host'], item.get('remotePath')))
+                    if (set(item) - {'remotePath', 'label'} or not native
+                            or item.get('label', native['name']) != native['name']):
+                        raise ValueError()
+            # The App keeps this timeout only in memory; do not apply an
+            # unverified global timeout while registering a single project.
+            if 'sshConnectTimeoutSeconds' in config:
+                raise ValueError()
+            state = self.state()
+            retry = state.get('remote-connection-max-retry-attempts')
+            if 'remoteConnectionMaxRetryAttempts' in config and config['remoteConnectionMaxRetryAttempts'] != retry:
+                raise ValueError()
+            if retry is not None:
+                config['remoteConnectionMaxRetryAttempts'] = retry
+            if not rows:
+                rows.append({'sshAlias': host['alias'], 'projects': []})
+            projects = rows[0].setdefault('projects', [])
+            if not any(item['remotePath'] == project['cwd'] for item in projects):
+                projects.append({'remotePath': project['cwd'], 'label': project['name']})
+        except (TypeError, KeyError, ValueError) as exc:
+            raise ValueError('Codex App 存在其他待应用的远程配置，请先在电脑 App 添加此 SSH 项目，避免影响其他连接') from exc
+        return path, original, config
+
+    def write_project_import(self, prepared, write):
+        path, original, config = prepared
+        if path.is_symlink() or path.parent.is_symlink() or (path.read_bytes() if path.exists() else None) != original:
+            raise ValueError('Codex App 配置已变化，请重新选择项目')
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        write(path, config)
+
     def projects(self):
         state = self.state()
         rows = []

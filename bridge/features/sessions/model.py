@@ -92,7 +92,7 @@ def _desktop_wrapper_bounds(text):
 
 
 def desktop_file_attachments(text):
-    """Extract non-image names from native desktop attachment prompt wrappers."""
+    """Extract native file references; serving still enforces workspace roots."""
     if not isinstance(text, str):
         return []
     bounds = _desktop_wrapper_bounds(text)
@@ -115,7 +115,7 @@ def desktop_file_attachments(text):
         is_pasted = header_marker == "# Files pasted by the user:"
         name = ntpath.basename(path) if is_pasted else spec[:separator].strip()
         if name:
-            attachments.append({"type": "file", "name": name})
+            attachments.append({"type": "file", "name": name, "path": path})
     return attachments
 
 

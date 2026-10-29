@@ -82,7 +82,7 @@ class Timeline:
                 if message.get('output'):
                     text += '\n\n' + message['output']
                 activity = message['role'] in ('activity', 'fileChanges')
-                attachments = [{k: str(a[k])[:300] for k in ('type', 'name', 'path', 'desktopId') if k in a}
+                attachments = [{k: str(a[k])[:4096 if k == 'path' else 300] for k in ('type', 'name', 'path', 'desktopId') if k in a}
                                for a in (message.get('attachments') or [])[:20]]
                 version = hashlib.sha256(encoded([text, turn.get('model'), turn.get('effort'), attachments, message.get('fileSummary')])).hexdigest()[:24]
                 row = {k: message[k] for k in ('role', 'kind', 'status', 'title', 'phase', 'requestId') if k in message}

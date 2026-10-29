@@ -1,7 +1,7 @@
 'use strict';
 // Native adapters supply identifiers; each chat surface supplies its authorized
 // preview route. Keep attachment markup and the existing image viewer shared.
-function renderChatAttachments(node,items,{url,showToolImages=true}={}){
+function renderChatAttachments(node,items,{url,fileUrl,showToolImages=true}={}){
   if(!items?.length)return;
   const t=value=>BridgeI18n.t(value),attachments=document.createElement('div');attachments.className='timeline-attachments';
   for(const item of items){
@@ -14,13 +14,22 @@ function renderChatAttachments(node,items,{url,showToolImages=true}={}){
     image.loading='lazy';image.decoding='async';image.src=source.preview;
     image.onerror=()=>link.remove();link.append(image);attachments.append(link);
   }
-  const label=document.createElement('small');label.className='muted';label.textContent=t('附件：')+items.map(item=>item.name||item.type).join('、');
+  const label=document.createElement('small');label.className='muted';label.append(document.createTextNode(t('附件：')));
+  items.forEach((item,index)=>{
+    if(index)label.append(document.createTextNode('、'));
+    const name=item.name||item.type;
+    if(item.type!=='file'||!item.path){label.append(document.createTextNode(name));return;}
+    const href=fileUrl?.(item),link=document.createElement(href?'a':'button');link.textContent=name;
+    if(href)link.href=href;
+    else{link.type='button';link.className='plain';link.dataset.unavailableFile='true';}
+    label.append(link);
+  });
   attachments.append(label);node.append(attachments);
 }
 class ChatAttachments {
-  constructor({root,button,input,upload,onChange,preview,paste,drop,thumbnail}){
+  constructor({root,button,input,upload,onChange,preview,paste,drop,thumbnail,chooseReference}){
     Object.assign(this,{root,button,input,upload,onChange,preview,thumbnail});this.key=null;this.rows=[];this.drafts=new Map();this.locked=false;
-    button.onclick=()=>input.click();input.onchange=()=>{this.add([...input.files]);input.value='';};
+    button.onclick=()=>{if(!this.key||this.locked)return;const key=this.key,valid=action=>()=>{if(this.key===key&&!this.locked)action();};if(chooseReference&&window.BridgeFileActions)window.BridgeFileActions.attach(valid(()=>input.click()),valid(chooseReference));else input.click();};input.onchange=()=>{this.add([...input.files]);input.value='';};
     paste?.addEventListener('paste',event=>{
       const files=[...event.clipboardData?.files||[]];
       if(files.length){event.preventDefault();this.add(files);}

@@ -37,7 +37,7 @@ from bridge.clients.codex.remote import AppHosts, RemoteStore, RemoteCatalog, Re
 from bridge.features.sessions.create import (
     archive_thread, rename_thread, independent_directory, create_empty, fork_copy, open_in_desktop, open_project_in_desktop,
     CreationError, CreationUnavailable, ForkUnavailable, project_directory,
-    project_directory_listing,
+    project_directory_listing, project_trust, apply_desktop_config,
 )
 from bridge.features.sessions.archive import ArchiveCommands
 from bridge.features.sessions.organization_commands import OrganizationCommands
@@ -679,27 +679,77 @@ class Bridge:
         source += '\nprint(json.dumps(project_directory_listing(**' + payload({'value':path,'hidden':hidden,'name':name,'identity':identity}) + ')))\n'
         return ssh_read(info['alias'], source)
 
-    def _saved_desktop_project(self, cwd):
+    @operation
+    def project_trust(self, key, confirmed=False, confirmation=None):
+        if type(confirmed) is not bool or not isinstance(key, str):
+            raise ValueError('目录信任请求无效')
+        project = self.directory_projects.get(key)
+        if not project:
+            if not confirmed and any(row['key'] == key for row in self.hosts.projects()):
+                return {'required': False}
+            raise ValueError('请重新选择项目目录')
+        if project.get('type') != 'desktop':
+            raise ValueError('请选择 Codex App 项目')
+        token = hashlib.sha256(json.dumps(project, sort_keys=True).encode()).hexdigest()
+        if confirmed and confirmation != token:
+            raise ValueError('所选项目已变化，请重新确认')
+        if project['host'] == 'local':
+            result = project_trust(self.catalog_reader.executable, self.codex_home,
+                                   project['directoryIdentity'], confirmed)
+        else:
+            info = self.hosts.hosts().get(project['host'])
+            if not info or info['alias'] != project.get('hostIdentity'):
+                raise ValueError('原 SSH 主机配置已变化，请重新选择项目')
+            source = source_text('features/sessions/create.py')
+            source += '\nimport shutil\nhome=Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex")))\n'
+            source += 'runtime=shutil.which("codex") or str(Path.home()/".local/bin/codex")\n'
+            source += 'print(json.dumps(project_trust(runtime, home, **' + payload({
+                'identity': project['directoryIdentity'], 'confirmed': confirmed}) + ')))\n'
+            result = ssh_read(info['alias'], source, timeout=90)
+        return dict(result, required=not result['trusted'], confirmation=token,
+                    environment=project['hostLabel'] + ' · Codex App')
+
+    def _saved_desktop_project(self, cwd, host='local'):
+        if host != 'local':
+            return next((row for row in self.hosts.projects() if row['host'] == host and
+                         row['cwd'].rstrip('/') == cwd.rstrip('/')), None)
         canonical = os.path.normcase(os.path.realpath(cwd))
         return next((row for row in self.hosts.projects() if row['host'] == 'local' and
                      os.path.normcase(os.path.realpath(row['cwd'])) == canonical), None)
 
     def _confirm_desktop_project(self, project, entry):
-        cwd = project_directory(project['cwd'], expected=project['directoryIdentity'])['cwd']
-        native = self._saved_desktop_project(cwd)
+        host = project['host']
+        cwd = project['cwd']
+        if host == 'local':
+            cwd = project_directory(cwd, expected=project['directoryIdentity'])['cwd']
+        else:
+            info = self.hosts.hosts().get(host)
+            if not info or info['alias'] != project.get('hostIdentity'):
+                raise ValueError('原 SSH 主机配置已变化，请重新选择项目')
+            source = source_text('features/sessions/create.py')
+            source += '\nprint(json.dumps(project_directory(**' + payload({
+                'value': cwd, 'expected': project['directoryIdentity']}) + ')))\n'
+            ssh_read(info['alias'], source)
+        native = self._saved_desktop_project(cwd, host)
         if native is None:
             if entry.get('phase') in ('registering-project', 'project-ready'):
                 raise CreationError('原生项目登记结果尚未确认，请在电脑 App 完成目录确认后重试同一请求；尚未创建聊天')
+            # Validate and prepare only this host's import before recording a launch.
+            config = self.hosts.project_import(project) if host != 'local' else None
             entry['phase'] = 'registering-project'
             self._save_creations()
             try:
-                open_project_in_desktop(cwd)
+                if config is None:
+                    open_project_in_desktop(cwd)
+                else:
+                    self.hosts.write_project_import(config, private_json)
+                    apply_desktop_config()
             except (OSError, CreationError, subprocess.SubprocessError) as exc:
                 raise CreationError('原生项目打开结果尚未确认，请检查电脑 App；尚未创建聊天，不会重复登记') from exc
             deadline = time.monotonic() + 12
             while native is None and time.monotonic() < deadline:
                 time.sleep(.25)
-                native = self._saved_desktop_project(cwd)
+                native = self._saved_desktop_project(cwd, host)
             if native is None:
                 raise CreationError('请在电脑 App 完成项目目录确认后重试同一请求；尚未创建聊天，不会重复登记')
         entry['phase'] = 'project-ready'
@@ -740,8 +790,6 @@ class Bridge:
                             cli_bridge.cli_sessions.alias != self.hosts.hosts()[project['host']]['alias']):
                         raise ValueError('原 SSH 主机配置已变化，请重启网关后重新选择项目')
                 if kind == 'desktop':
-                    if project['host'] != 'local' and project.get('directoryIdentity') and not project.get('nativeProject'):
-                        raise CreationUnavailable('请先在电脑 Codex App 添加此 SSH 项目，再重新选择；当前接入尚不支持远程侧栏项目登记')
                     self.ipc.connect()
                 entry = {'project': project_key, 'title': title, 'kind': kind,
                          'cwd': project['cwd'], 'host': project['host'],
@@ -809,6 +857,9 @@ class Bridge:
                     if project.get('directoryIdentity'):
                         source += 'project_directory(**' + payload({'value': project['cwd'], 'expected': project['directoryIdentity']}) + ')\n'
                     source += 'print(json.dumps({"id":create_empty(runtime, home, **' + payload({'cwd': project['cwd'], 'title': title}) + ')}))\n'
+                    if entry.get('phase') == 'project-ready':
+                        entry['phase'] = 'creating-thread'
+                        self._save_creations()
                     thread_id = ssh_read(host['alias'], source, timeout=90)['id']
                 uuid.UUID(thread_id)
                 entry['id'] = thread_id

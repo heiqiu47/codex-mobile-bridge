@@ -19,6 +19,21 @@ class ArtifactCompatibilityTests(unittest.TestCase):
         return artifact_paths({'cwd': str(self.project), 'turns': [{'items': [{
             'type': 'agentMessage', 'text': '\n'.join('[file](<' + ref + '>)' for ref in references)}]}]}, None)
 
+    def test_native_user_attachment_uses_exact_path_and_never_grants_outside_file(self):
+        inside = self.project / '志愿者信息统计.xlsx'
+        inside.write_bytes(b'synthetic sheet')
+        outside = self.root / inside.name
+        outside.write_bytes(b'outside project')
+        wrapper = ('# Files mentioned by the user:\n\n## sheet: ' + str(inside) +
+                   '\n## same name: ' + str(outside) + '\n\n## My request:\nTest')
+        state = {'cwd': str(self.project), 'turns': [{'items': [{'type': 'userMessage',
+                 'content': [{'type': 'text', 'text': wrapper}]}]}]}
+        files = artifact_paths(state, None)
+        self.assertEqual(len(files), 1)
+        self.assertEqual(next(iter(files.values()))['references'], [str(inside)])
+        inside.unlink()
+        self.assertEqual(artifact_paths(state, None), {})
+
     def test_file_aliases_share_one_id_without_granting_external_files(self):
         file = self.project / 'report space.pdf'
         file.write_bytes(b'pdf fixture')
