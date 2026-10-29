@@ -39,5 +39,16 @@ for(const [provider,backend] of [['claude','code'],['claude','cowork'],['deepsee
  await expect(feedback).toBeHidden();await expect(input).toHaveValue('下一条草稿');await expect(composer.locator('.error')).toContainText('发送结果待核对');
  expect(await page.evaluate(()=>sendFeedbackFixture.writes.length)).toBe(2);
  expect(await page.evaluate(()=>sendFeedbackFixture.notices.filter(value=>value==='已发送到会话').length)).toBe(1);
+ // A successful submission is distinct from ongoing native work. The indicator
+ // remains in the real chat timeline and never reuses the send acknowledgement.
+ await page.evaluate(()=>{const v=sendFeedbackFixture.view;v.applyDetail({connected:true,session:{...v.state,status:'active',requests:[]},messages:v.historyMessages});});
+ const progress=page.locator('#send-feedback-root .ds-messages .working');
+ await expect(progress).toBeVisible();await expect(progress).toContainText('正在工作…');
+ expect(await progress.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);
+ await page.screenshot({path:testInfo.outputPath(`${provider}-${backend}-native-working.png`)});
+ await page.evaluate(()=>sendFeedbackFixture.view.staleDetail());
+ await expect(progress).toContainText('运行状态暂不可用');
+ await page.evaluate(()=>{const v=sendFeedbackFixture.view;v.applyDetail({connected:true,session:{...v.state,status:'idle',requests:[]},messages:v.historyMessages});});
+ await expect(progress).toBeHidden();
  await page.evaluate(()=>sendFeedbackFixture.view.clear());
 });
