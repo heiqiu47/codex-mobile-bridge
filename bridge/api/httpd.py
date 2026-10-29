@@ -539,6 +539,16 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError('应用开关无效')
                     return self.output(200, manager.toggle_client(value))
                 return self.output(200, manager.clients_status())
+            desktop_image = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/images/([0-9a-f]{64})', path)
+            if desktop_image:
+                if write:
+                    return self.output(405, {'error': '请求方式无效'})
+                manager = self.server.desktop_sessions
+                if manager is None:
+                    return self.output(503, {'error': '桌面会话接入不可用'})
+                provider, identifier = desktop_image.groups()
+                artifact, variant = manager.image_preview(provider, query.get('sessionId', [None])[0], identifier)
+                return self.attachment_preview(artifact, variant, private=True)
             desktop_upload = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/uploads(?:/([0-9a-f-]{36})/(thumb|preview))?', path)
             if desktop_upload:
                 manager, uploads = self.server.desktop_sessions, self.server.desktop_uploads
@@ -1353,7 +1363,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.attachment_preview(artifact, served_variant, private=side is not None)
 
     def attachment_preview(self, artifact, served_variant, private=False):
-        data = Path(artifact["previewPath"]).read_bytes()
+        data = artifact['previewBytes'] if 'previewBytes' in artifact else Path(artifact["previewPath"]).read_bytes()
         etag = '"' + artifact["previewSha256"] + '"'
         cache_control = 'private, no-store' if private or served_variant == 'fallback-original' else 'private, max-age=31536000, immutable'
         if self.headers.get("If-None-Match") == etag:

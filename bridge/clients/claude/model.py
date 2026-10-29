@@ -157,13 +157,44 @@ def transcript(value):
                         if key:tasks[key]=tasks.pop(created)
                 if content:result.append({'id':str(event_id)+':result:'+str(part),'role':'activity','kind':'step','title':'执行结果','text':str(content)[:30000],**({'tasks':task_snapshot()} if created else {})})
             elif block.get('type') in ('image', 'input_image'):
-                texts.append('[图片]')
+                flush()
+                source = block.get('imageRef') or ({'event': event.get('uuid') or message.get('id'), 'part': part}
+                    if event.get('uuid') or message.get('id') else None)
+                result.append({'id':str(event_id)+':image:'+str(part),'role':role,'text':'',
+                    'attachments':[{'type':'image','name':'图片', **({'_nativeImage':source} if source else {})}]})
             elif block.get('type') == 'thinking_summary':
                 flush()
                 summary=block.get('text') or block.get('summary')
                 if summary:result.append({'id':str(event_id)+':thinking:'+str(part),'role':'reasoning','kind':'reasoning','title':'思考摘要','text':str(summary)})
         flush()
     return result
+
+
+def history_image(value, source):
+    if (not isinstance(source, dict) or not isinstance(source.get('event'), str)
+            or type(source.get('part')) is not int or not 0 <= source['part'] < 4096):
+        raise ValueError('图片引用无效')
+    for event in rows(value):
+        message = event.get('message') if isinstance(event.get('message'), dict) else event
+        if (event.get('uuid') or message.get('id')) != source['event']:
+            continue
+        content = message.get('content')
+        if not isinstance(content, list) or source['part'] >= len(content):
+            break
+        block = content[source['part']]
+        if not isinstance(block, dict) or block.get('type') not in ('image', 'input_image'):
+            break
+        image = block.get('source') or {}
+        if isinstance(image, dict) and image.get('type') == 'base64':
+            return {'mediaType': image.get('media_type'), 'data': image.get('data')}
+        url = block.get('image_url') or block.get('url')
+        if isinstance(url, dict):
+            url = url.get('url')
+        match = re.fullmatch(r'data:(image/(?:png|jpeg|gif|webp));base64,(.*)', url) if isinstance(url, str) else None
+        if match:
+            return {'mediaType': match[1], 'data': match[2]}
+        break
+    raise ValueError('原生历史中未找到可预览图片')
 
 
 def transcript_notice(value):

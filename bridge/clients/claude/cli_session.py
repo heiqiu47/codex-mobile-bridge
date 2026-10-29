@@ -14,7 +14,7 @@ from collections import deque
 from pathlib import Path
 
 from bridge.clients.claude import model, file_archive
-from bridge.clients.claude.history import file_stamp, page as history_page
+from bridge.clients.claude.history import file_stamp, page as history_page, image_event
 from bridge.clients.claude.context import context_fields
 from bridge.clients.claude.session_registry import assert_session_closed
 from bridge.clients.errors import BridgeUnavailable
@@ -776,6 +776,8 @@ class ClaudeCli:
                 raise ResumePreflightBlocked(str(exc)) from exc
             raise
         native = row['nativeId']
+        if action == 'image':
+            return model.history_image([image_event(row['path'], body.get('source'))], body.get('source'))
         with self.lock:
             owned = self.owned.get(native)
             if owned and owned.error and owned.process.poll() is None:

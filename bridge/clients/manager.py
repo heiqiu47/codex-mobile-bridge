@@ -109,6 +109,8 @@ class DesktopSessions:
         self.deepseek_recovery = None
         self.claude_quit = None
         self.directory = Path(directory)/'desktop-sessions'
+        from bridge.features.workspace.history_images import HistoryImages
+        self.history_images = HistoryImages()
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         from bridge.features.sessions.pins import SessionPins
         self.session_pins = {provider: SessionPins(self.directory/provider, provider) for provider in ('claude', 'deepseek')}
@@ -224,6 +226,7 @@ class DesktopSessions:
             try:
                 value = self._adapter_call(provider, action, sid, body)
                 if action == 'detail' and isinstance(value, dict):
+                    self.history_images.bind(provider, sid, value.get('messages', []))
                     from bridge.features.workspace.files import workspace_references
                     value['files'] = workspace_references(value.get('messages', []), value.get('session', {}).get('cwd'))
                     # A truncated tail or any older page can start or end in
@@ -1061,6 +1064,11 @@ class DesktopSessions:
             return False
         with self.claude_wsl.lock:
             return any(row.get('enabled', True) for row in self.claude_wsl.entries)
+
+    def image_preview(self, provider, sid, identifier):
+        self.require_enabled(provider)
+        return self.history_images.preview(provider, sid, identifier,
+            lambda source: self._adapter_call(provider, 'image', sid, {'source': source}))
 
     def _adapter_call(self, provider, action, sid, body):
         adapter = self.adapters[provider]

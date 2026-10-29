@@ -37,6 +37,7 @@ PUBLIC_URLS = set('''
 '''.split())
 
 SSH_SOURCES = {
+    'bridge/clients/claude/history.py': ['image_event'],
     'bridge/clients/claude/remote_worker.py': ['profile', 'command', 'resume'],
     'bridge/clients/claude/file_archive.py': ['archive_paths', 'state', 'change', 'supported'],
     'bridge/features/sessions/store.py': ['SessionStore'],

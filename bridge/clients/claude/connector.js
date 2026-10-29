@@ -111,6 +111,7 @@
   const restore = [];
   for (const [kind, surface] of Object.entries(surfaces)) {
     capabilities[kind].push('mobileCatalog', 'mobileProgress', 'mobileAccount');
+    if(['getSession','getTranscript'].every(method=>typeof api[surface]?.[method]==='function'))capabilities[kind].push('mobileImage');
     if(kind==='code')capabilities[kind].push('mobileList');
     if(kind==='code'&&['getAll','getSession','archive','unarchive'].every(method=>typeof api[surface]?.[method]==='function'))capabilities[kind].push('mobileArchiveState','mobileArchive');
     if(typeof api[surface]?.getSession==='function'&&typeof api[surface]?.getTranscript==='function')capabilities[kind].push('mobileDetail');
@@ -243,7 +244,7 @@
             ['text','input_text','output_text','tool_use','tool_result','image','input_image','thinking_summary'].includes(b.type))
           .map(b => b.type === 'tool_use' ? {type:b.type,name:b.name,input:b.input,id:b.id} :
             b.type === 'tool_result' ? {type:b.type,content:b.content,tool_use_id:b.tool_use_id} :
-            ['image','input_image'].includes(b.type) ? {type:b.type} : b.type === 'thinking_summary' ? {type:b.type,text:b.text || b.summary} : {type:b.type,text:b.text});
+            ['image','input_image'].includes(b.type) ? {type:b.type,imageRef:{event:row.uuid||source.id,part:source.content.indexOf(b)}} : b.type === 'thinking_summary' ? {type:b.type,text:b.text || b.summary} : {type:b.type,text:b.text});
         const result = row.toolUseResult;
         if (result && typeof result === 'object') {
           const detail = ['stdout','stderr','output','content'].filter(k => typeof result[k] === 'string' && result[k]).map(k => result[k]).join('\n');
@@ -347,6 +348,18 @@
     if(options.archived)await target.archive(id,{cleanupWorktree:false});else await target.unarchive(id);
     return {status:'accepted'};
   }
+  async function mobileImage(target,id,source){
+    if(!source||typeof source.event!=='string'||!Number.isInteger(source.part)||source.part<0||source.part>=4096)throw Error('图片引用无效');
+    const session=await target.getSession(id);if(session?.sessionId!==id)throw Error('会话标识已变化');
+    const raw=await target.getTranscript(id),rows=Array.isArray(raw)?raw:raw?.messages||raw?.transcript||[];
+    const event=rows.find(row=>(row.uuid||row.message?.id)===source.event),block=event?.message?.content?.[source.part]||event?.content?.[source.part];
+    if(!block||!['image','input_image'].includes(block.type))throw Error('原生历史中未找到可预览图片');
+    if(block.source?.type==='base64')return {mediaType:block.source.media_type,data:block.source.data};
+    const url=typeof block.image_url==='object'?block.image_url?.url:block.image_url||block.url;
+    const match=typeof url==='string'&&/^data:(image\/(?:png|jpeg|gif|webp));base64,(.*)$/.exec(url);
+    if(!match)throw Error('原生图片格式不支持预览');
+    return {mediaType:match[1],data:match[2]};
+  }
   async function mobileDetail(target,id,options={}){
     const paged=target===api.LocalSessions&&capabilities.code.includes('mobileHistory');
     const limit=Number.isInteger(options.historyLimit)&&options.historyLimit>=1&&options.historyLimit<=100?options.historyLimit:40;
@@ -395,6 +408,7 @@
           if (!target || !Array.isArray(msg.args)) throw new Error('不支持的桌面操作');
           if (msg.method === 'mobileCatalog') return {result:await mobileCatalog(target,msg.surface,msg.args[0])};
           if (msg.method === 'mobileAccount') return {result:await mobileAccount()};
+          if (msg.method === 'mobileImage' && capabilities[msg.surface].includes('mobileImage')) return {result:await mobileImage(target,msg.args[0],msg.args[1])};
           if (msg.method === 'mobileArchiveState' && capabilities[msg.surface].includes('mobileArchiveState')) return {result:await mobileArchiveState(target,msg.args[0])};
           if (msg.method === 'mobileArchive' && capabilities[msg.surface].includes('mobileArchive')) return {result:await mobileArchive(target,msg.args[0],msg.args[1])};
           if (msg.method === 'mobileList') return {result:await bounded(mobileList(),30000,'读取会话超时')};
@@ -545,6 +559,7 @@
             if (target && msg.method === 'mobileDetail' && capabilities[msg.surface].includes('mobileDetail')) return mobileDetail(target,msg.args[0],msg.args[1]);
             if (target && msg.method === 'mobileFork' && capabilities[msg.surface].includes('mobileFork')) return mobileFork(target,msg.args[0],msg.args[1]);
             if (target && msg.method === 'mobileRename' && capabilities[msg.surface].includes('mobileRename')) return mobileRename(target,msg.args[0],msg.args[1]);
+            if (target && msg.method === 'mobileImage' && capabilities[msg.surface].includes('mobileImage')) return mobileImage(target,msg.args[0],msg.args[1]);
             if (target && msg.method === 'mobileProgress') { const page=msg.surface==='code'&&capabilities.code.includes('mobileHistory')?await target.getTranscriptTail(msg.args[0],24):await target.getTranscript(msg.args[0]); const rows=Array.isArray(page)?page:page?.messages; return sanitize('getTranscript',Array.isArray(rows)?rows.slice(-24):[]); }
             if (!target || !allowed.has(msg.method) || typeof target[msg.method] !== 'function' || !Array.isArray(msg.args)) {
               throw new Error('不支持的桌面操作');

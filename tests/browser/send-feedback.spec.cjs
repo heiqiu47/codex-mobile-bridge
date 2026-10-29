@@ -50,5 +50,13 @@ for(const [provider,backend] of [['claude','code'],['claude','cowork'],['deepsee
  await expect(progress).toContainText('运行状态暂不可用');
  await page.evaluate(()=>{const v=sendFeedbackFixture.view;v.applyDetail({connected:true,session:{...v.state,status:'idle',requests:[]},messages:v.historyMessages});});
  await expect(progress).toBeHidden();
+ const imageId='a'.repeat(64),png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8XcAAAAASUVORK5CYII=','base64');
+ await page.route('**/api/desktop-sessions/*/images/*',route=>route.fulfill({status:200,contentType:'image/png',body:png}));
+ await page.evaluate(imageId=>{const v=sendFeedbackFixture.view;v.applyDetail({connected:true,session:v.state,messages:[{id:'history-image',role:'user',text:'',attachments:[{type:'image',name:'photo.png',desktopId:imageId}]}]});},imageId);
+ const image=page.locator('#send-feedback-root .attachment-image');await expect(image).toBeVisible();
+ await expect.poll(()=>image.evaluate(node=>node.naturalWidth)).toBe(1);
+ await image.click();await expect(page.locator('#image-preview-dialog')).toBeVisible();
+ await page.screenshot({path:testInfo.outputPath(`${provider}-${backend}-history-image.png`)});
+ await page.keyboard.press('Escape');await expect(page.locator('#image-preview-dialog')).toBeHidden();
  await page.evaluate(()=>sendFeedbackFixture.view.clear());
 });

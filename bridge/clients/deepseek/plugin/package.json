@@ -1,6 +1,6 @@
 {
   "name": "dsh-codex-mobile-bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Connect an existing DeepSeek Harness profile to Codex Mobile Bridge",
   "type": "module",
   "main": "index.mjs",

@@ -295,7 +295,12 @@ def messages(records):
             if isinstance(content, str):
                 content = [{'type': 'text', 'text': content}]
             for i, block in enumerate(content):
-                text = block.get('text') or block.get('thinking') or ('[图片]' if block.get('type') == 'image' else '')
+                if block.get('type') == 'image':
+                    result.append({'id': str(event.get('seq'))+':'+str(i), 'role': kind.split('/')[0], 'text':'',
+                        'attachments':[{'type':'image','name':(block.get('attachment') or {}).get('name') or '图片',
+                                        '_nativeImage':{'seq':event.get('seq'),'part':i}}]})
+                    continue
+                text = block.get('text') or block.get('thinking') or ''
                 if text:
                     result.append({'id': str(event.get('seq'))+':'+str(i), 'role': 'reasoning' if block.get('type') in ('thinking', 'reasoning') else kind.split('/')[0], 'text': text, **metadata})
                     if kind == 'assistant/message' and result[-1]['role'] == 'assistant':

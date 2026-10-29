@@ -9,6 +9,31 @@ from pathlib import Path
 MAX_PAGE_BYTES = 4 * 1024 * 1024
 
 
+def image_event(path, source):
+    """Read only an evidenced event; never resolve an image's arbitrary path."""
+    if not isinstance(source, dict) or not isinstance(source.get('event'), str):
+        raise ValueError('图片引用无效')
+    with Path(path).open('rb') as stream:
+        while True:
+            offset = stream.tell()
+            line = stream.readline(32 * 1024 * 1024 + 1)
+            if not line:
+                break
+            if len(line) > 32 * 1024 * 1024:
+                raise ValueError('原生图片记录超出预览大小限制')
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            message = event.get('message') if isinstance(event.get('message'), dict) else event
+            identity = event.get('uuid') or message.get('id') or 'file:' + str(offset)
+            if identity == source['event'] and event.get('type') in ('user', 'assistant'):
+                return {**event, 'uuid': identity}
+    raise ValueError('原生历史中未找到可预览图片')
+
+
 def _stamp(stat, fd=None):
     changed = stat.st_ctime_ns
     if os.name == 'nt':

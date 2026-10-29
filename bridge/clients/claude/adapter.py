@@ -771,6 +771,10 @@ class Claude:
         if not saved:
             raise ValueError('找不到 Claude 会话')
         kind, native = saved['backend'], saved['nativeId']
+        if action == 'image':
+            if 'mobileImage' not in self.desktop.capabilities.get(kind, []):
+                raise ValueError('请更新 Claude 接入后预览历史图片')
+            return await self.desktop.call(kind, 'mobileImage', native, body.get('source'))
         if action == 'rename':
             if not self.session_capabilities(kind)['rename']:
                 raise ValueError('当前 Claude 接入未提供已确认的原生改名接口')

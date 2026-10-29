@@ -244,28 +244,11 @@ class ChatTimeline {
       const copy=document.createElement('button');copy.type='button';copy.className='plain message-copy';copy.textContent=timelineText('复制');copy.onclick=()=>window.BridgeClipboard?.copy(()=>this.fullText(row),copy);actions.append(copy);node.append(actions);
       const quote=document.createElement('button');quote.type='button';quote.className='plain message-quote';quote.textContent=timelineText('引用');quote.onclick=()=>node.dispatchEvent(new CustomEvent('bridge-compose-quote',{bubbles:true,detail:{getText:()=>this.fullText(row),source:row.key}}));actions.append(quote);
     }
-    if(row.attachments?.length){
-      const attachments=document.createElement('div');attachments.className='timeline-attachments';
-      for(const item of row.attachments){
-        if(item.type==='toolImage'&&!this.showToolImages)continue;
-        if(['localImage','image','toolImage'].includes(item.type)&&(item.uploadId||item.desktopId)){
-          const source=item.uploadId
-            ?this.url('uploads/'+encodeURIComponent(item.uploadId)+'/preview')
-            :this.url('desktop-images/'+encodeURIComponent(item.desktopId));
-          const original=item.uploadId
-            ?source+'&variant=original'
-            :source;
-          const link=document.createElement('a');link.href=original;link.target='_blank';link.rel='noopener';
-          link.dataset.imagePreview=original;link.dataset.imageName=item.name||timelineText('图片附件');
-          const image=document.createElement('img');image.className='attachment-image';image.alt=item.name||timelineText('图片附件');
-          image.loading='lazy';image.decoding='async';image.src=source;
-          image.onerror=()=>link.remove();link.append(image);attachments.append(link);
-        }
-      }
-      const attachment=document.createElement('small');attachment.className='muted';
-      attachment.textContent=timelineText('附件：')+row.attachments.map(a=>a.name||a.type).join('、');
-      attachments.append(attachment);node.append(attachments);
-    }
+    renderChatAttachments(node,row.attachments,{showToolImages:this.showToolImages,url:item=>{
+      if(!item.uploadId&&!item.desktopId)return null;
+      const source=item.uploadId?this.url('uploads/'+encodeURIComponent(item.uploadId)+'/preview'):this.url('desktop-images/'+encodeURIComponent(item.desktopId));
+      return {preview:source,original:item.uploadId?source+'&variant=original':source};
+    }});
     if(activity){content.open=!!open;content.ontoggle=()=>{if(content.open&&!this.details.has(row.key))load();};}
     return node;
   }

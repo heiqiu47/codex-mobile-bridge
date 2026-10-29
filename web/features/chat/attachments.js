@@ -1,4 +1,22 @@
 'use strict';
+// Native adapters supply identifiers; each chat surface supplies its authorized
+// preview route. Keep attachment markup and the existing image viewer shared.
+function renderChatAttachments(node,items,{url,showToolImages=true}={}){
+  if(!items?.length)return;
+  const t=value=>BridgeI18n.t(value),attachments=document.createElement('div');attachments.className='timeline-attachments';
+  for(const item of items){
+    if(item.type==='toolImage'&&!showToolImages)continue;
+    if(!['localImage','image','toolImage'].includes(item.type))continue;
+    const source=url(item);if(!source)continue;
+    const link=document.createElement('a');link.href=source.original;link.target='_blank';link.rel='noopener';
+    link.dataset.imagePreview=source.original;link.dataset.imageName=item.name||t('图片附件');
+    const image=document.createElement('img');image.className='attachment-image';image.alt=item.name||t('图片附件');
+    image.loading='lazy';image.decoding='async';image.src=source.preview;
+    image.onerror=()=>link.remove();link.append(image);attachments.append(link);
+  }
+  const label=document.createElement('small');label.className='muted';label.textContent=t('附件：')+items.map(item=>item.name||item.type).join('、');
+  attachments.append(label);node.append(attachments);
+}
 class ChatAttachments {
   constructor({root,button,input,upload,onChange,preview,paste,drop,thumbnail}){
     Object.assign(this,{root,button,input,upload,onChange,preview,thumbnail});this.key=null;this.rows=[];this.drafts=new Map();this.locked=false;

@@ -51,6 +51,16 @@ function fixture({storage=new Map(),sessionStore=new Map()}={}){
  return {view,root,document,calls,notices,storage,sessionStore,setHandler:fn=>handler=fn,setUploadHandler:fn=>uploadHandler=fn,run:s=>vm.runInContext(s,context),text:n=>n.textContent};
 }
 async function opened(){const ui=fixture();await ui.view.choose('claude');await ui.view.open('a');return ui;}
+test('native history images use the shared preview markup and survive unchanged refreshes',async()=>{
+ const ui=await opened(),view=ui.view,id='a'.repeat(64),message={id:'image',role:'user',text:'',attachments:[{type:'image',name:'photo.png',desktopId:id}]};
+ const detail={connected:true,session:{id:'a',title:'Chat',status:'idle'},messages:[message]};
+ view.applyDetail(detail);const node=view.messageNodes.get('image').node;
+ assert.equal(node.querySelector('.attachment-image').src,view.path('images/'+id,'a','claude'));
+ assert.equal(node.querySelector('.timeline-attachments').children.length,2);
+ view.applyDetail(detail);assert.equal(view.messageNodes.get('image').node,node);
+ view.provider='deepseek';view.messageNodes.clear();view.applyDetail(detail);
+ assert.match(view.messageNodes.get('image').node.querySelector('.attachment-image').src,/deepseek/);
+});
 test('shared task indicator separates native work, approvals, stale reads and completion',async()=>{
  const ui=await opened(),view=ui.view,apply=(status,requests=[])=>view.applyDetail({connected:true,session:{id:'a',title:'Chat',status,requests},messages:[]});
  apply('active');assert.equal(view.progress.dataset.state,'working');assert.equal(view.progress.hidden,false);assert.ok(view.messages.children.includes(view.progress));

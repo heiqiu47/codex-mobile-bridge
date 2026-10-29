@@ -20,6 +20,7 @@ from bridge.clients.codex.remote import ssh_command
 from bridge.clients.errors import BridgeUnavailable
 from bridge.clients.uploads import DesktopUploads
 from bridge.resources import source_text
+import ast
 
 
 def worker_source():
@@ -28,7 +29,10 @@ def worker_source():
     if source.count(marker) != 1:
         raise ValueError('Claude Code 远端归档模块无法加载')
     helper = source_text('clients/claude/file_archive.py')
-    return source.replace(marker, helper + '\narchive_file_state = state\narchive_file_change = change\narchive_supported = supported\narchive_assert_no_cli = assert_no_cli\n')
+    source = source.replace(marker, helper + '\narchive_file_state = state\narchive_file_change = change\narchive_supported = supported\narchive_assert_no_cli = assert_no_cli\n')
+    history = source_text('clients/claude/history.py')
+    reader = next(node for node in ast.parse(history).body if isinstance(node, ast.FunctionDef) and node.name == 'image_event')
+    return source.replace('from bridge.clients.claude.history import image_event', ast.get_source_segment(history, reader))
 
 
 def _command(alias):
@@ -456,6 +460,11 @@ class RemoteClaudeCli:
                         page = self.history.get(page_key)
                     if page is None or page.get('stamp') != row.get('stamp'):
                         raise
+            elif action == 'image':
+                row = self._get(sid)
+                event = self._remote(row['alias'], {'operation':'image','native':row['nativeId'],
+                    'origin':row['origin'],'source':body.get('source')})
+                return model.history_image([event], body.get('source'))
             elif live_cached and action != 'resume':
                 row = cached
             else:

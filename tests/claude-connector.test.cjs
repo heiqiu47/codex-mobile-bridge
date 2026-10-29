@@ -138,6 +138,18 @@ const waitFor = async predicate => {
   request=pack({generation:'next',type:'request',seq:++seq,surface:'cowork',method:'mobileDetail',args:['local_test'],expires:Date.now()/1000+10});
   await waitFor(()=>response.seq===seq&&response.done);
   assert.equal(response.result.contextUsage,null);assert.equal(response.result.contextUsageStatus,'unsupported');
+  const imageData='iVBORw0KGgo=',originalTranscript=api.getTranscript;
+  api.getTranscript=async()=>[{type:'user',uuid:'native-image',message:{role:'user',content:[{type:'unknown',secret:'PRIVATE'},
+    {type:'image',source:{type:'base64',media_type:'image/png',data:imageData}}]}}];
+  request=pack({generation:'next',type:'request',seq:++seq,surface:'code',method:'getTranscript',args:['local_test'],expires:Date.now()/1000+10});
+  await waitFor(()=>response.seq===seq&&response.done);
+  assert.deepEqual(response.result[0].message.content,[{type:'image',imageRef:{event:'native-image',part:1}}]);
+  assert.ok(!JSON.stringify(response).includes(imageData));
+  request=pack({generation:'next',type:'request',seq:++seq,surface:'code',method:'mobileImage',args:['local_test',{event:'native-image',part:1}],expires:Date.now()/1000+10});
+  await waitFor(()=>response.seq===seq&&response.done);assert.deepEqual(response.result,{mediaType:'image/png',data:imageData});
+  request=pack({generation:'next',type:'request',seq:++seq,surface:'code',method:'mobileImage',args:['local_test',{event:'other-image',part:1}],expires:Date.now()/1000+10});
+  await waitFor(()=>response.seq===seq&&response.done);assert.ok(response.error);
+  api.getTranscript=originalTranscript;
   window.__claudeMobileBridge.stop(); await running;
   assert.equal(window.__claudeMobileBridge.status().stopped,true);
   console.log('Desktop file connector: handshake, original session dispatch, deduplication, same-generation reinjection without replay, expiry, allowlist, redaction, restart, replay rejection, stop passed.');

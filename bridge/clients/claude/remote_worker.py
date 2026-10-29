@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 
 from bridge.clients.claude.file_archive import archive_paths, state as archive_file_state, change as archive_file_change, supported as archive_supported, assert_no_cli as archive_assert_no_cli
+from bridge.clients.claude.history import image_event
 
 MODES = {'default', 'acceptEdits', 'plan', 'dontAsk', 'auto', 'bypassPermissions'}
 
@@ -587,6 +588,8 @@ def command(request):
         return {**row, 'archiveSafe': safe, 'runtimeKnown': True, 'status': 'idle', 'requests': []}
     if operation == 'detail':
         return session(found, request['native'])
+    if operation == 'image':
+        return image_event(session_path(found, request['native']), request.get('source'))
     if operation == 'history':
         path = session_path(found, request['native'])
         scope = request.get('scope')

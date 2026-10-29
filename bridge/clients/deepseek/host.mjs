@@ -44,6 +44,21 @@ export async function historyRecords(ctx,rows,signal=new AbortController().signa
   }
   return result;
 }
+export async function readHistoryImage(ctx,sid,source,signal=new AbortController().signal){
+  if(!Number.isSafeInteger(source?.seq)||source.seq<0||!Number.isSafeInteger(source?.part)||source.part<0||source.part>=4096)throw Error('图片引用无效');
+  const query=ctx.get?.('sessionQuery'),attachments=ctx.get?.('attachments');
+  if(typeof query?.observeSession!=='function'||typeof attachments?.readImage!=='function')throw Error('当前 Harness 未提供历史图片读取接口');
+  const observation=await query.observeSession(sid,{signal,projectionMode:'none'});
+  try{
+    const event=observation.events.find(event=>event.seq===source.seq);
+    if(!event||!['user/message','assistant/message'].includes(event.type))throw Error('原生历史中未找到可预览图片');
+    const message=event.data?.message||event.data,block=message?.content?.[source.part],ref=block?.attachment;
+    if(block?.type!=='image'||!ref||!Number.isSafeInteger(ref.bytes)||ref.bytes<=0||ref.bytes>20*1024*1024)throw Error('原生图片格式或大小不支持预览');
+    const stored=await attachments.readImage(ref,signal);
+    if(!stored?.data||stored.data.byteLength!==ref.bytes||stored.ref?.attachmentId!==ref.attachmentId)throw Error('原生图片标识已变化');
+    return {mediaType:stored.ref.mediaType,data:Buffer.from(stored.data).toString('base64')};
+  }finally{observation[Symbol.dispose]();}
+}
 export async function apply(ctx,config){
   const {token,endpoint}=JSON.parse(await readFile(config.configPath,'utf8'));
   // The gateway accepts at most 100 MiB of decoded images plus small JSON fields.
@@ -262,6 +277,7 @@ export async function apply(ctx,config){
       return {status:'accepted'};
     }
     if(action==='open')return {ok:true};
+    if(action==='image')return readHistoryImage(ctx,sid,body.source,signal());
     if(action==='detail'){const page=await readHistoryPage(ctx.sessionController,row,body,signal());return {session:normalize(row),capabilities:capabilities(row),records:await historyRecords({sessionId:sid,get:name=>ctx.get?.(name)},page.rows,signal()),history:page.history,steps:values(row).todos||[],connected:true};}
     if(action==='catalog')return catalog(sid,body.section||'all');
     if(action==='access'){const presets=ctx.permissionPresets.catalog(),options=presets.options;if(body.mode){if(!options.some(o=>o.value===body.mode))throw Error('权限选项无效');await ctx.sessionController.create({sessionId:sid,cwd:row.cwd});const agent=ctx.agents.get(sid);if(!agent)throw Error('当前会话没有活动智能体');ctx.permissionPresets.set(agent.session,body.mode);}return {status:'accepted',mode:body.mode||values(row).permissions?.currentValue||presets.defaultPreset,modes:options.map(o=>o.value),options};}
