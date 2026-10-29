@@ -61,7 +61,9 @@ PREVIOUS_SESSION_METADATA_SOURCES = ('78b87c8f6f5b4633067d4c75fd50b8f006042bc1dc
                                      '87ab2a8dedbde1661c1f325b9371711704caaa140e3e4209ae71801d1c78bf6d')
 
 # Revision 9 predecessors remain usable; history-image reads require the newer host.
-COMPATIBLE_OFFICIAL_SOURCES = ('14ca377eecc7b714e9c059b026181164c3cb21166d315a6d9ef9d16327bda815',
+COMPATIBLE_OFFICIAL_SOURCES = ('31ee82718e131d43c60202261d531195af9257e9a375ce0c6b9ff4edf5de8d5a',
+                               'f3ce3350a32ece209415418e798e2a5d348276081bd15c671552456c18576bb5',
+                               '14ca377eecc7b714e9c059b026181164c3cb21166d315a6d9ef9d16327bda815',
                                '9c8da5a761588f5f91d5696e938ff2bd927412a2e56367e08aeabeabc6a42ec2',
                                '80cc10b76e18621b90dbdd5675ce8dd3932eb381a3380f0a538a76b4bcc77ebf',
                                '2ffbe404b5251cd5fb26da5ffa44a8f3ba4ed2c3c91f80c57ad9f299d62c0741')
