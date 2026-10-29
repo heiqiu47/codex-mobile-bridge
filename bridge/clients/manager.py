@@ -40,6 +40,46 @@ class TaskStateUnavailable(ValueError):
     """No task evidence; distinct from known busy tasks or ambiguous processes."""
 
 
+CLAUDE_HISTORY_NOTICE = '客户端尚未提供当前可选模型，历史模型仅供查看'
+
+
+def _claude_catalog_sources(value, account=None, *, legacy=False):
+    """Keep model provenance separate from native setting capabilities."""
+    account = account or {}
+    groups = [group for group in account.get('groups', []) if isinstance(group, dict)]
+    sources = {row['id']: group.get('source', 'account-catalog') for group in groups
+               for row in group.get('models', []) if isinstance(row, dict) and isinstance(row.get('id'), str)}
+    offered = {row['id']: {**row, 'source': sources.get(row['id'], 'account-catalog')}
+               for row in account.get('models', []) if isinstance(row, dict) and isinstance(row.get('id'), str)}
+    native_source = value.get('source') or ('cached-unverified' if legacy else 'desktop-catalog')
+    for row in value.get('models', []):
+        if not isinstance(row, dict) or not isinstance(row.get('id'), str):
+            continue
+        source = row.get('source', native_source)
+        prior = offered.get(row['id'], {})
+        # Preserve native reasoning metadata, but history cannot override a known provider source.
+        if prior and source in ('session-history', 'cached-unverified'):
+            source = prior['source']
+        offered[row['id']] = {**prior, **row, 'source': source}
+    result = {**value, 'models': list(offered.values()), 'modelSourcesVersion': 1}
+    origins = {row['source'] for row in result['models']}
+    result['source'] = next(iter(origins)) if len(origins) == 1 else 'mixed' if origins else native_source
+    notices = [value['notice']] if value.get('notice') and value['notice'] != CLAUDE_HISTORY_NOTICE else []
+    for group in groups:
+        if group.get('notice') and group['notice'] not in notices:
+            notices.append(group['notice'])
+    if 'cached-unverified' in origins:
+        notices.append('列表包含来源尚未核验的旧缓存条目，可刷新模型列表或手动输入。')
+    elif 'session-history' in origins:
+        notices.append(CLAUDE_HISTORY_NOTICE if origins == {'session-history'} else
+                       '列表包含当前接入模型及历史模型，历史模型的可用性需由客户端确认。')
+    if notices:
+        result['notice'] = '\n'.join(notices)
+    else:
+        result.pop('notice', None)
+    return result
+
+
 def _copy_read(value):
     # Native responses are JSON; only containers need copying, not large strings.
     if isinstance(value, dict):
@@ -354,10 +394,34 @@ class DesktopSessions:
                      adapter.remote_cli.owned.get(sid))
         return bool(owned and getattr(owned, 'model_list_unsupported', False))
 
+    def _claude_model_account(self, *, refresh=False, cached_only=False):
+        store = self._account_store('claude')
+        with store.lock:
+            if store._current()[0] != 'api':
+                return None
+        if not cached_only:
+            try:
+                return self._account_models('claude', refresh=refresh)
+            except (OSError, sqlite3.DatabaseError, ValueError, BridgeUnavailable):
+                return None
+        identity = self._account_model_identity('claude')
+        try:
+            persisted = self.model_store.read(identity)
+        except (OSError, sqlite3.DatabaseError, ValueError):
+            persisted = None
+        if self._account_model_identity('claude') != identity:
+            raise BridgeUnavailable('客户端账号或配置已变化，请重试')
+        return persisted[1] if persisted else None
+
     def _cached_model_result(self, provider, sid, identity, persisted, *, error=None, unavailable=False):
         if self._model_identity(provider, sid) != identity:
             raise BridgeUnavailable('客户端账号或配置已变化，请重试')
         result = _copy_read(persisted[1])
+        if (provider == 'claude' and sid in self.adapters[provider].index
+                and result.get('modelSourcesVersion') != 1):
+            # Old caches dropped provenance, including whether API models were merged.
+            # Repair the response using only this account's cache; retain its original age.
+            result = _claude_catalog_sources(result, self._claude_model_account(cached_only=True), legacy=True)
         live = self._model_live(provider, sid)
         if not live or unavailable:
             result['capabilities'] = {**result.get('capabilities', {}), 'models': False, 'effort': False}
@@ -406,18 +470,7 @@ class DesktopSessions:
                     return self._cached_model_result(provider, sid, identity, persisted, error=error)
                 raise
             if provider == 'claude' and sid in self.adapters[provider].index:
-                store = self._account_store(provider)
-                with store.lock:
-                    account_kind = store._current()[0]
-                if account_kind == 'api':
-                    try:
-                        account = self._account_models(provider, refresh=refresh)
-                        offered = {row['id']: row for row in account.get('models', []) if isinstance(row, dict) and isinstance(row.get('id'), str)}
-                        offered.update({row['id']: row for row in value.get('models', []) if isinstance(row, dict) and isinstance(row.get('id'), str)})
-                        value = {**value, 'models': list(offered.values())}
-                    except (OSError, ValueError, BridgeUnavailable):
-                        # Native choices and manual input remain usable when discovery fails.
-                        pass
+                value = _claude_catalog_sources(value, self._claude_model_account(refresh=refresh))
             if self._model_identity(provider, sid) != identity:
                 raise BridgeUnavailable('客户端账号或配置已变化，请重试')
             value['cache'] = {'state': 'unavailable', 'updatedAt': None, 'identity': identity}
@@ -426,7 +479,8 @@ class DesktopSessions:
                     error=value.get('modelError') or '模型目录刷新失败，已保留上次结果',
                     unavailable=value.get('capabilities', {}).get('models') is False)
             if isinstance(value.get('models'), list) and value.get('capabilities', {}).get('models') is not False:
-                stable = {key: _copy_read(value[key]) for key in ('models', 'capabilities', 'notice') if key in value}
+                stable = {key: _copy_read(value[key]) for key in
+                          ('models', 'capabilities', 'notice', 'source', 'modelSourcesVersion') if key in value}
                 try:
                     updated_at = self.model_store.write(identity, stable)
                     self._schedule_model_refresh(provider, sid, identity, updated_at, replace=True)

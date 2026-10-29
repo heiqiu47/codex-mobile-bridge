@@ -1138,3 +1138,11 @@ test('manual settings while catalog is pending carry the captured account and st
  const ui=await opened();ui.view.state.modelCatalogIdentity='account-a';ui.view.state.capabilities={models:true,manualModels:true,manualEffort:true};let finish;
  ui.setHandler(async(url,body)=>body?{status:'unknown',message:'账号已切换，请重新打开模型设置'}:url.includes('/catalog')?new Promise(resolve=>finish=resolve):{sessions:[]});const opening=ui.view.models();const dialog=ui.document.querySelector('dialog'),input=dialog.querySelector('.ds-manual-model');input.value='manual-model';input.oninput();assert.equal(dialog.querySelector('.primary').disabled,false);await dialog.querySelector('form').onsubmit({preventDefault(){}});const write=ui.calls.find(call=>call.body);assert.equal(write.body.modelCatalogIdentity,'account-a');finish({models:[{id:'private-b'}],cache:{identity:'account-b'}});await opening;assert.doesNotMatch(dialog.textContent,/private-b/);assert.equal(dialog.querySelector('.primary').disabled,true);
 });
+
+test('model source notices are translated per line without hiding automatic or manual choices',async()=>{
+ const ui=await opened();ui.view.state.modelCatalogIdentity='account';ui.view.state.capabilities={models:true,manualModels:true,manualEffort:true};
+ ui.run("BridgeI18n.t=text=>({'配置来源提示':'Configured models','来源尚待核验':'Sources require verification'}[text]||text)");
+ ui.setHandler(async()=>({models:[{id:'current-model',source:'upstream-api',efforts:['high']}],source:'mixed',modelSourcesVersion:1,capabilities:{models:true,manualModels:true,manualEffort:true},cache:{identity:'account'},notice:'配置来源提示\n来源尚待核验'}));
+ await ui.view.models();const dialog=ui.document.querySelector('dialog');assert.match(dialog.textContent,/Configured models\nSources require verification/);assert.doesNotMatch(dialog.textContent,/历史模型仅供查看/);
+ const choices=dialog.querySelector('.model-options').querySelectorAll('input').map(row=>row.value);assert.ok(choices.includes('current-model'));assert.ok(choices.includes('__custom__'));
+});

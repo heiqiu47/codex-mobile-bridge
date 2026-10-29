@@ -1182,6 +1182,8 @@ const en={
 "不支持的 Claude 操作":"Unsupported Claude operation",
 "桌面未接受操作，请检查原会话":"The desktop app did not accept the operation. Check the original conversation.",
 
+"列表包含来源尚未核验的旧缓存条目，可刷新模型列表或手动输入。":"The list includes older cached entries with unverified sources. Refresh the model list or enter a model manually.",
+"列表包含当前接入模型及历史模型，历史模型的可用性需由客户端确认。":"The list includes models from the current connection and historical models. Historical model availability must be confirmed by the client.",
 "客户端尚未提供当前可选模型，历史模型仅供查看":"The client has not provided its selectable models. Historical models are shown for reference only.",
 "接入信息读取超时":"Connection details timed out",
 "请输入首条消息，Claude 将创建会话并发送此消息":"Enter the first message. Claude will create the conversation and send it.",
