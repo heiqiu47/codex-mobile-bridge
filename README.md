@@ -42,9 +42,7 @@
 - **导航与性能**：修复浏览器返回（#67）及 Windows / UNC 项目分组；可选文件和图表资源按需加载，改善缓存、弱网恢复、原生输出与手机连接生命周期。
 - **WSL 账号管理为实验性**：支持的 API 配置按环境导入、切换和恢复，保留外部工具与任务保护；不保证所有配置可用，尚未完成真实多账号全流程验证。[实验性说明](docs/wsl-accounts.md)
 
-桌面与手机 App 为 **2.1.5**，Android/iOS 构建号 **38**。感谢 [@heiqiu47](https://github.com/heiqiu47) 的 PR [#85](https://github.com/try2love/codex-mobile-bridge/pull/85)、[#86](https://github.com/try2love/codex-mobile-bridge/pull/86)、[#92](https://github.com/try2love/codex-mobile-bridge/pull/92)、[#95](https://github.com/try2love/codex-mobile-bridge/pull/95)，[@mc373906408（waken）](https://github.com/mc373906408) 的 [#88](https://github.com/try2love/codex-mobile-bridge/pull/88)，以及 [@littltstream](https://github.com/littltstream) 的 [#96](https://github.com/try2love/codex-mobile-bridge/pull/96)。原作者提交完整保留，各项贡献见 [v2.1.7 发布说明](RELEASE_NOTES.md#v217)。
-
-感谢 [@we-worker](https://github.com/we-worker) 的 [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64)（8 个原始提交保留），以及 [@lanchengjiu](https://github.com/lanchengjiu) 的 [PR #70](https://github.com/try2love/codex-mobile-bridge/pull/70)（原始提交 `d62002b` 保留）。[完整说明与升级边界](RELEASE_NOTES.md#v215)
+桌面与手机 App 为 **2.1.5**，Android/iOS 构建号 **38**。感谢 [@we-worker](https://github.com/we-worker) 的 [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64)（8 个原始提交保留），以及 [@lanchengjiu](https://github.com/lanchengjiu) 的 [PR #70](https://github.com/try2love/codex-mobile-bridge/pull/70)（原始提交 `d62002b` 保留）。[完整说明与升级边界](RELEASE_NOTES.md#v215)
 
 ## v2.1.4 更新
 
@@ -900,6 +898,8 @@ python3 -B -m unittest discover -s tests -v
 ## 致谢
 
 感谢 [LINUX DO](https://linux.do/) 社区及各位佬友的支持。
+
+感谢 [@heiqiu47](https://github.com/heiqiu47) 的 PR [#85](https://github.com/try2love/codex-mobile-bridge/pull/85)、[#86](https://github.com/try2love/codex-mobile-bridge/pull/86)、[#92](https://github.com/try2love/codex-mobile-bridge/pull/92)、[#95](https://github.com/try2love/codex-mobile-bridge/pull/95)，[@mc373906408（waken）](https://github.com/mc373906408) 的 [#88](https://github.com/try2love/codex-mobile-bridge/pull/88)，以及 [@littltstream](https://github.com/littltstream) 的 [#96](https://github.com/try2love/codex-mobile-bridge/pull/96)。原作者提交完整保留，各项贡献见 [v2.1.7 发布说明](RELEASE_NOTES.md#v217)。
 
 感谢 [@we-worker](https://github.com/we-worker) 在 [PR #64](https://github.com/try2love/codex-mobile-bridge/pull/64) 中贡献 Windows WSL Codex 接入、Magpie 兼容与项目目录能力。v2.1.5 保留全部 8 个原始提交，统一界面及跨接入新建项目的调整另行提交。
 
