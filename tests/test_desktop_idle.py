@@ -80,6 +80,8 @@ class DesktopIdle(unittest.TestCase):
         self.bridge.live['a-unavailable'] = SimpleNamespace(owner='previous-owner', connected=False)
         self.states[('local', 'z-busy')] = {'id': 'z-busy', 'threadRuntimeStatus': {'type': 'active'}}
         clock = [0.0]
+        metadata = Mock(result=Mock(return_value=self.bridge.store.lifecycle_threads.return_value))
+        executor = Mock(submit=Mock(return_value=metadata))
         class SnapshotCondition(threading.Condition):
             def wait_for(self, predicate, timeout=None):
                 if predicate(): return True
@@ -93,9 +95,10 @@ class DesktopIdle(unittest.TestCase):
                 self.owners[('local', 'a-unavailable')] = owner
                 self.states[('local', 'a-unavailable')] = state
                 with patch('bridge.app.service.time', SimpleNamespace(monotonic=lambda: clock[0])), \
+                     patch('bridge.app.service.ThreadPoolExecutor', return_value=executor), \
                      patch('bridge.app.service.threading', SimpleNamespace(Condition=SnapshotCondition)), \
                      self.assertRaisesRegex(ValueError, '任务运行') as failure:
-                    self.bridge.assert_desktop_idle(timeout=20)
+                    self.bridge.assert_desktop_idle(timeout=.2)
                 self.assertNotIsInstance(failure.exception, TaskStateUnavailable)
                 self.assertIn(('follow', 'local', 'z-busy', 'owner'), self.calls)
 
