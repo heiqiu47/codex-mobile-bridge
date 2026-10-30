@@ -1,3 +1,13 @@
+<a id="v217"></a>
+
+## v2.1.7 发布验收 / Release verification
+
+本节记录以 `25bd5c48e1b6a8b1d54e416457a131dbd62b3b3c` 为功能基线的最终发布候选。最终 CI、平台构建与覆盖升级验收进行中；既有 Test 验收不替代最终正式产物验收。证据完成后在此记录具体提交、工作流与平台边界。
+
+Final release CI, platform packages and upgrade-preservation checks are pending. Earlier Test acceptance does not establish acceptance of the final release artifacts.
+
+---
+
 <a id="v216"></a>
 
 # v2.1.6 发布前验收（2026-10-27）

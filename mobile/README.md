@@ -2,7 +2,15 @@
 
 手机扫描网关二维码后连接 Codex、Claude Desktop 和 DeepSeek Harness，电脑继续执行任务。手机 App 保存多台电脑，提供原生扫码、剪贴板、文件下载和通知；浏览器入口同时保留。
 
-**[v2.1.6 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.6)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
+**[v2.1.7 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.7)** · [完整更新说明](../RELEASE_NOTES.md) · [桌面客户端接入](../docs/deepseek-harness.md)
+
+## v2.1.7：通知与聊天恢复 / Notifications and chat recovery
+
+网关与手机版本为 **2.1.7**，Android/iOS 构建号 **40**。新增 Android 可选后台任务通知与按连接选择通知来源，统一两端主题，改善 iOS 前台提醒、通知返回聊天和附件选择器恢复。共享页面提供统一会话菜单、项目引用、历史图片与代码高亮。功能和关联 Issue/PR 见 [完整更新说明](../RELEASE_NOTES.md#v217)。
+
+Android 后台接收默认关闭，启用后有常驻通知，仍受系统权限与省电策略影响。iOS 未新增 APNs 后台推送。覆盖安装应保留原签名、应用标识和数据；请勿先卸载或清空数据。
+
+**English:** v2.1.7/build 40 adds optional Android background reception and per-connection notification choices, consistent Android/iOS themes, improved iOS foreground reminders, notification navigation and attachment picker recovery. Shared pages add session organization, project references, history image previews and code highlighting. Android background reception is opt-in and subject to OS policies; no new iOS APNs background push is included. Preserve matching identifiers, signing and app data when upgrading. See the [release notes and credits](../RELEASE_NOTES.md#v217).
 
 ## v2.1.6：会话整理、复制与阅读 / Chat organization, copying and reading
 
