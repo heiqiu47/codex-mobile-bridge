@@ -91,17 +91,26 @@ class DesktopIdle(unittest.TestCase):
                 self.assertIn(('follow', 'local', 'z-busy', 'owner'), self.calls)
 
     def test_slow_remote_metadata_reserves_time_for_local_busy_check(self):
-        release = threading.Event()
-        remote = SimpleNamespace(store=SimpleNamespace(lifecycle_threads=lambda: release.wait(2) or []))
+        clock = [0.0]
+        remote = SimpleNamespace(store=SimpleNamespace(lifecycle_threads=Mock()))
         self.bridge.hosts.lifecycle_hosts.return_value = {'remote:test': {'alias': 'test'}}
         self.bridge.remote_bridges['remote:test'] = remote
         self.states[('local', 'desktop-only')] = {'id': 'desktop-only', 'threadRuntimeStatus': {'type': 'active'}}
-        try:
+        local_read = Mock(result=Mock(return_value=[{'id': 'desktop-only'}]))
+        def time_out(*, timeout):
+            clock[0] += timeout
+            raise TimeoutError('remote metadata did not arrive')
+        remote_read = Mock(result=Mock(side_effect=time_out))
+        executor = Mock(submit=Mock(side_effect=[local_read, remote_read]))
+        # Advance the operation's clock at the remote timeout rather than
+        # depending on a loaded CI runner scheduling threads within 200 ms.
+        with patch('bridge.app.service.ThreadPoolExecutor', return_value=executor), \
+             patch('bridge.app.service.time', SimpleNamespace(monotonic=lambda: clock[0])):
             with self.assertRaisesRegex(ValueError, '任务运行') as failure:
-                self.bridge.assert_desktop_idle(timeout=.2)
+                self.bridge.assert_desktop_idle(timeout=20)
             self.assertNotIsInstance(failure.exception, TaskStateUnavailable)
-        finally:
-            release.set()
+        self.assertEqual(clock[0], 10)
+        self.assertIn(('follow', 'local', 'desktop-only', 'owner'), self.calls)
 
     def test_failed_metadata_still_checks_known_live_ids_with_fresh_state(self):
         self.bridge.store.lifecycle_threads.side_effect = OSError('temporary database failure')
