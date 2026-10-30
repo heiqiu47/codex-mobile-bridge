@@ -79,14 +79,23 @@ class DesktopIdle(unittest.TestCase):
         self.bridge.store.lifecycle_threads.return_value = [{'id': 'a-unavailable'}, {'id': 'z-busy'}]
         self.bridge.live['a-unavailable'] = SimpleNamespace(owner='previous-owner', connected=False)
         self.states[('local', 'z-busy')] = {'id': 'z-busy', 'threadRuntimeStatus': {'type': 'active'}}
+        clock = [0.0]
+        class SnapshotCondition(threading.Condition):
+            def wait_for(self, predicate, timeout=None):
+                if predicate(): return True
+                clock[0] += timeout
+                return False
         for owner, state in ((IPCError('no-client-found'), None), (IPCError('timed out'), None),
                              ('', None), ('owner', None), ('owner', {'id': 'a-unavailable'})):
             with self.subTest(owner=str(owner), state=state):
+                clock[0] = 0.0
                 self.calls.clear()
                 self.owners[('local', 'a-unavailable')] = owner
                 self.states[('local', 'a-unavailable')] = state
-                with self.assertRaisesRegex(ValueError, '任务运行') as failure:
-                    self.bridge.assert_desktop_idle(timeout=.2)
+                with patch('bridge.app.service.time', SimpleNamespace(monotonic=lambda: clock[0])), \
+                     patch('bridge.app.service.threading', SimpleNamespace(Condition=SnapshotCondition)), \
+                     self.assertRaisesRegex(ValueError, '任务运行') as failure:
+                    self.bridge.assert_desktop_idle(timeout=20)
                 self.assertNotIsInstance(failure.exception, TaskStateUnavailable)
                 self.assertIn(('follow', 'local', 'z-busy', 'owner'), self.calls)
 
