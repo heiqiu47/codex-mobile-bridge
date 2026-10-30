@@ -1,17 +1,25 @@
-# Agent Note: Local Claude Code CLI attachments
+# Agent Note: 本地 Claude Code CLI 附件
 
 Status: implemented
 
-## Problem
+## 问题
 
-The Claude Code CLI conversation had no attachment capability, although the shared composer and private upload ledger already supported image uploads for Claude Desktop. File uploads could not be sent with a CLI message.
+共享输入框和私有上传台账已支持 Claude Desktop 图片上传，但 Claude Code CLI 聊天尚无附件能力，上传文件无法随 CLI 消息发送。
 
-## Decision
+## 决策
 
-Keep the existing authenticated, conversation-scoped upload ledger. The HTTP send route resolves upload IDs after reading the selected session. Only a Claude CLI session explicitly identified as local may receive a nonimage file path; Desktop, DeepSeek and future remote CLI sessions retain their existing image-only boundary until a remote transport is implemented. Clients cannot submit resolved bytes or local paths directly.
+保留现有已认证、以聊天为作用域的上传台账。HTTP 发送路由读取选定会话后解析上传 ID。只有明确识别为本地的 Claude CLI 会话能接收非图片文件路径；Desktop、DeepSeek 和未来远程 CLI 会话在实现远程传输前，保持现有仅图片边界。客户端不能直接提交已解析字节或本地路径。
 
-The owned local CLI receives images as native stream-json image content blocks. At explicit resume, `--add-dir` grants its native Read tool access only to this conversation's private upload directory. The selected session keeps its existing cwd and profile. For nonimage files, the message includes the ledger-verified absolute path and asks Claude to read it. Textless attachment messages are valid. The UUID receipt ledger still prevents replay after an unknown write outcome. Saved histories continue through the existing transcript reader, which renders native image blocks as image markers and file references as text.
+Bridge 持有的本地 CLI 通过原生 stream-json 图片内容块接收图片。显式恢复时，`--add-dir` 仅授予原生 Read 工具访问该聊天私有上传目录的权限。选定会话保留原 cwd 和配置。非图片文件的消息包含经过台账校验的绝对路径，并要求 Claude 读取。允许没有文字的附件消息。UUID 回执台账继续阻止结果未知写入的重放。保存历史继续使用现有记录读取器，将原生图片块渲染为图片标记，文件引用渲染为文本。
 
-## Verification and limits
+## 备选方案
 
-Claude Code 2.1.287 against an isolated loopback mock received the exact valid PNG bytes in its model request. Its Read tool denied an upload path outside the cwd without `--add-dir`, then returned the uploaded test file's bytes with the scoped directory added. No user profile, chats or paid model endpoint were used. Python contract and HTTP upload tests, plus shared attachment UI tests, passed. The native check verifies local macOS behavior; SSH file transport and other operating systems remain separate work.
+现有记录记载了复用上传台账、原生图片块和限定目录 Read 的实现，以及不授予目录访问时读取被拒的实测；没有记载独立附件传输方案的比较过程。此处保留这一记录缺口，不将尚未实现的远程传输写成当时被否决的方案。
+
+## 影响
+
+本地 CLI 可发送图片和文件引用，包括无文字附件消息。能力依赖原生 Read 对该聊天私有上传目录的授权；不会扩大其他客户端或远程会话的文件路径权限。历史继续显示图片标记和文件文本引用，结果未知的写入仍受回执台账保护。下述原生验证只覆盖本地 macOS，其他系统和 SSH 传输不能继承该证据。
+
+## 验证与限制
+
+Claude Code 2.1.287 对接隔离回环模拟服务时，其模型请求收到完全一致的有效 PNG 字节。没有 `--add-dir` 时，Read 工具拒绝 cwd 外的上传路径；加入限定目录后，返回上传测试文件的字节。未使用用户配置、聊天或付费模型端点。Python 契约和 HTTP 上传测试、共享附件 UI 测试均通过。原生检查验证的是本地 macOS 行为；SSH 文件传输和其他操作系统仍需单独处理。

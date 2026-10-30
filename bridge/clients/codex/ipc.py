@@ -47,6 +47,13 @@ class DesktopIPC:
         self.lock = threading.RLock()
         self.write_lock = threading.Lock()
         self.connect_lock = threading.Lock()
+        self.event_lock = threading.RLock()
+
+    def reconnect(self):
+        """Replace only this follower's transport; never stop the native owner."""
+        with self.connect_lock:
+            self.close()
+        self.connect()
 
     def connect(self):
         with self.connect_lock:
@@ -144,23 +151,43 @@ class DesktopIPC:
                 message = json.loads(self._exact(sock, length))
                 if message.get("type") == "response":
                     with self.lock:
+                        if self.socket is not sock:
+                            return
                         future = self.pending.get(message.get("requestId"))
                         if future and not future.done():
                             future.set_result(message)
                 elif message.get("type") == "client-discovery-request":
-                    self._send({"type": "client-discovery-response",
-                                "requestId": message["requestId"], "response": {"canHandle": False}})
+                    with self.event_lock:
+                        if self.socket is sock:
+                            self._send({"type": "client-discovery-response",
+                                        "requestId": message["requestId"], "response": {"canHandle": False}})
                 elif message.get("type") == "broadcast":
-                    targets = message.get("targetClientIds")
-                    if not targets or self.client_id in targets:
-                        self.on_event(message)
+                    with self.event_lock:
+                        targets = message.get("targetClientIds")
+                        if self.socket is sock and (not targets or self.client_id in targets):
+                            self.on_event(message)
         except (OSError, EOFError, ValueError, IPCError):
             pass
         finally:
-            disconnected = False
+            self._disconnect(sock)
+
+    def close(self):
+        self._disconnect(self.socket)
+
+    def _disconnect(self, sock):
+        if sock is None:
+            return
+        # Interrupt sendall before taking locks a blocked writer may hold.
+        # Socket identity below still prevents an old reader clearing a replacement.
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        sock.close()
+        with self.event_lock:
             with self.lock:
-                if self.socket is sock:
-                    disconnected = True
+                disconnected = self.socket is sock
+                if disconnected:
                     self.socket = None
                     self.client_id = None
                     for future in self.pending.values():
@@ -168,13 +195,3 @@ class DesktopIPC:
                             future.set_exception(IPCError("桌面连接已断开"))
             if disconnected:
                 self.on_disconnect()
-            sock.close()
-
-    def close(self):
-        sock = self.socket
-        if sock:
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            sock.close()

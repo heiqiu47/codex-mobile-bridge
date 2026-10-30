@@ -51,6 +51,29 @@ class UploadActivityTests(unittest.TestCase):
     def calls(self, method='thread-follower-start-turn'):
         return [r for r in self.fixture.requests if r['method'] == method]
 
+    def test_project_references_use_native_context_without_upload_and_bind_retries(self):
+        project = self.root / 'project'; project.mkdir()
+        file = project / '中文 file.txt'; file.write_text('fixture')
+        directory = project / 'folder'; directory.mkdir()
+        refs = [{'path': p.name, 'absolutePath': str(p)} for p in [file, directory]]
+        original = self.bridge.store.get
+        with patch.object(self.bridge.store, 'get', side_effect=lambda tid: {**original(tid), 'cwd': str(project)}):
+            identifier = str(uuid.uuid4())
+            result = self.bridge.send(THREAD, 'read references', identifier, references=refs)
+            self.assertEqual(result['status'], 'accepted')
+            self.bridge.send(THREAD, 'read references', identifier, references=refs)
+            self.assertEqual(len(self.calls()), 1)
+            context = self.calls()[0]['params']['turnStart']['context']
+            self.assertEqual(context['fileAttachments'], [{'path': str(p), 'label': p.name} for p in [file, directory]])
+            self.assertEqual(context['attachments'], [{'path': str(p), 'fsPath': str(p), 'label': p.name} for p in [file, directory]])
+            self.assertEqual(context['localTurnMetadata'], {'fileAttachmentCount': 2})
+            prompt = self.calls()[0]['params']['turnStart']['request']['input'][0]['text']
+            self.assertIn(str(file), prompt)
+            self.assertNotIn('[中文 file.txt]', prompt)
+            with self.assertRaises(ValueError):
+                self.bridge.send(THREAD, 'read references', identifier, references=refs[:1])
+            self.assertFalse(self.bridge.uploads.root.exists())
+
     def test_multiple_files_and_image_only_use_original_owner_and_native_image_input(self):
         file, image = self.upload(), self.upload('photo.png', PNG)
         identifier = str(uuid.uuid4())
@@ -70,6 +93,8 @@ class UploadActivityTests(unittest.TestCase):
             {'path': self.bridge.uploads.get(THREAD, image['id'])['path'], 'label': 'photo.png'},
         ])
         self.assertTrue(turn['context']['inheritThreadSettings'])
+        self.assertEqual(turn['context']['attachments'][1]['isImageAttachment'], True)
+        self.assertEqual(turn['context']['localTurnMetadata']['fileAttachmentCount'], 1)
         self.bridge.send(THREAD, '', identifier, attachments=[file['id'], image['id']])
         self.assertEqual(len(self.calls()), 1)
         with self.assertRaises(ValueError): self.bridge.send(THREAD, '', identifier, attachments=[file['id']])
@@ -86,6 +111,7 @@ class UploadActivityTests(unittest.TestCase):
         self.assertTrue(steer_text.endswith('steer'))
         self.assertIn('## 报告.txt: ', steer_text)
         self.assertIn('报告.txt', json.dumps(self.calls('thread-follower-steer-turn')[0]['params']['restoreMessage']['context'], ensure_ascii=False))
+        self.assertEqual(self.calls('thread-follower-steer-turn')[0]['params']['attachments'][0]['label'], '报告.txt')
         session.state['threadRuntimeStatus']['type'] = 'idle'
         key = THREAD+':'+identifier
         self.bridge._send_queued(session, key, self.bridge.submissions[key])

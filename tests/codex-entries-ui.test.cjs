@@ -13,9 +13,9 @@ function fixture(){
  return {nav,choices,calls,switches,context,node,stored,notices,all};
 }
 test('WSL choices use the single Codex provider and keep the selected environment in the host',async()=>{
- const {nav,switches,context,stored}=fixture();await nav.choose(wsl);assert.equal(nav.provider,'codex');assert.equal(nav.view.provider,'codex');assert.deepEqual(switches,[['codex','codex',{activate:true,host:wsl}]]);
+ const {nav,switches,context,stored}=fixture();await nav.choose(wsl);assert.equal(nav.provider,'codex');assert.equal(nav.view.provider,'codex');assert.deepEqual(switches,[['codex','codex',{activate:true,host:wsl,loadList:true}]]);
  assert.equal(vm.runInContext('isCodexClient("wsl:untrusted")',context),false);
- await nav.choose('claude');await nav.choose(otherWsl,{activate:false});assert.equal(nav.provider,'codex');assert.equal(stored.get('bridge-client'),'codex');assert.deepEqual(switches.at(-1),['claude','codex',{activate:false,host:otherWsl}]);
+ await nav.choose('claude');await nav.choose(otherWsl,{activate:false});assert.equal(nav.provider,'codex');assert.equal(stored.get('bridge-client'),'codex');assert.deepEqual(switches.at(-1),['claude','codex',{activate:false,host:otherWsl,loadList:true}]);
 });
 test('legacy WSL selections migrate to Codex while retaining their environment',()=>{
  const {nav,stored,context}=fixture();stored.set('bridge-client',wsl);nav.restoreClientSelection();assert.equal(nav.provider,'codex');assert.equal(nav.initialHost,wsl);assert.equal(stored.get('bridge-client'),'codex');

@@ -25,7 +25,7 @@
 
 .account-reset-time{grid-column:1/-1;color:var(--muted,#65705d);font-size:11px;line-height:1.6}.account-query{font-size:12px;color:var(--accent,#526c39)}.account-subscription,.account-updated{flex-basis:100%;margin:2px 0;font-size:12px}.accounts-plan{font-size:11px;font-weight:650;text-transform:uppercase;border:1px solid var(--line,#dfe3eb);border-radius:12px;padding:2px 8px}.accounts-usage .account-muted{flex-basis:100%;margin:2px 0}
 
-.accounts-panel .account-reminder{display:flex;align-items:center;gap:9px;font-size:13px}.accounts-panel .account-reminder input{width:16px;height:16px;flex:none}.accounts-panel>details>section{margin-top:20px;border-top:1px solid var(--line,#dfe3eb);padding-top:10px}.accounts-panel>details>section button{margin:10px 8px 0 0}
+.accounts-panel .account-reminder{display:flex;align-items:center;gap:9px;font-size:13px}.accounts-panel .account-reminder input{width:16px;height:16px;flex:none;margin:0;padding:0}.accounts-panel>details>section{margin-top:20px;border-top:1px solid var(--line,#dfe3eb);padding-top:10px}.accounts-panel>details>section button{margin:10px 8px 0 0}
 
 @media(max-width:640px){.accounts-window{width:100%;max-width:none}.accounts-identity .accounts-usage{min-width:0;flex-basis:100%}}
 
@@ -35,11 +35,11 @@
 .accounts-dialog-heading h2{min-width:0;white-space:nowrap;flex:none}.accounts-refresh{flex:none;border:1px solid var(--line,#dfe3eb);border-radius:8px;padding:6px 10px;background:transparent;color:inherit;font:inherit;font-size:13px;cursor:pointer}.accounts-refresh:disabled{opacity:.5;cursor:default}
 .accounts-current{margin:18px 0 12px;color:var(--text,#24262b)}
 .accounts-list{display:grid;gap:14px;margin:18px 0 24px}
-.accounts-panel .account-bucket{padding:18px;border:1px solid var(--line,#dfe3eb);border-radius:12px;margin:0;background:var(--raised,#fff)}
+.accounts-panel .account-bucket{padding:18px 18px 8px;border:1px solid var(--line,#dfe3eb);border-radius:12px;margin:0;background:var(--raised,#fff)}
 .accounts-panel .account-bucket.is-current{border-color:var(--accent,#4664ed);background:var(--soft,#f3f6ff)}
 .accounts-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;border-top:1px solid var(--line,#dfe3eb);padding-top:10px;margin-top:12px}
 .accounts-panel .accounts-actions button{font-size:12px;margin:0}.accounts-actions .accounts-models{flex-basis:100%}
-.accounts-card-footer{display:flex;align-items:center;gap:12px;margin-top:12px;min-width:0}.accounts-panel .accounts-card-footer>button{flex:none;margin:0;font-size:12px;padding:8px}.accounts-card-footer>.accounts-usage-controls{flex:1;justify-content:flex-end}.accounts-card-footer .account-updated{flex:1;text-align:center}.accounts-model-fallback:empty{display:none}.accounts-usage-controls{display:flex;align-items:center;gap:10px;min-width:0;max-width:100%;margin-left:auto}
+.accounts-card-footer{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;border-top:1px solid var(--line,#dfe3eb);padding-top:4px;margin-top:12px;min-width:0}.accounts-panel .accounts-card-footer>button{flex:none;margin:0;font-size:12px;padding:8px}.accounts-card-footer>.accounts-usage-controls{flex:1;justify-content:flex-end}.accounts-card-footer .account-updated{flex:1;text-align:center}.accounts-model-fallback:empty{display:none}.accounts-usage-controls{display:flex;align-items:center;gap:10px;min-width:0;max-width:100%;margin-left:auto}
 .accounts-panel .accounts-usage-controls .accounts-usage-refresh{display:grid;place-items:center;flex:none;width:32px;height:32px;margin:0;padding:0;border:0;border-radius:8px;cursor:pointer}
 .accounts-usage-refresh svg{display:block;width:18px;height:18px}
 .accounts-usage-refresh:hover{background:var(--line,#e3e6df)}
@@ -157,3 +157,19 @@
 /* Native selects must not contribute long option text to a narrow dialog's width. */
 .accounts-runtime-controls select,.wsl-account-editor select{overflow:hidden;text-overflow:ellipsis}
 @media(max-width:600px){.accounts-runtime-controls select,.wsl-account-editor input,.wsl-account-editor select{font-size:16px}}
+
+.accounts-global-reset{padding:12px 16px;margin:12px 0 16px;border:1px solid var(--line,#dfe3eb);border-radius:12px;background:var(--raised,#fff)}
+.accounts-global-heading{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px}.accounts-global-heading h3{margin:0;font-size:13px;font-weight:600}
+.accounts-panel .accounts-global-reminder{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:none;min-height:32px;padding:4px 6px;font-size:12px;white-space:nowrap;border:0;border-radius:8px;color:var(--muted,#777d88);background:transparent;cursor:pointer}.accounts-global-reminder svg{display:block;width:17px;height:17px}.accounts-panel .accounts-global-reminder:hover{background:var(--soft,#f3f6ff)}.accounts-global-reminder[data-enabled="true"] .accounts-global-bell{fill:currentColor}
+.accounts-global-state{display:flex;align-items:center;gap:8px;margin:8px 0 0;font-size:14px;line-height:1.5}.accounts-global-state::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--muted,#777d88)}
+.accounts-global-state[data-state="confirmed"]::before{background:var(--success,#5c8750)}.accounts-global-state[data-state="signal"]::before{background:var(--accent,#4664ed)}.accounts-global-state[data-state="delayed"]::before{background:var(--warning,#b78536)}
+.accounts-global-odds{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 24px;padding-left:14px;margin-top:10px}.accounts-global-odds>span{display:flex;align-items:baseline;gap:8px;font-size:12px;color:var(--muted,#777d88)}.accounts-global-odds strong{font-size:18px;font-weight:600;color:var(--text,#24262b);font-variant-numeric:tabular-nums}
+.accounts-global-confidence{padding-left:14px;margin:3px 0 0;font-size:11px;color:var(--muted,#777d88)}.accounts-global-source{display:flex;align-items:center;gap:6px;margin-top:12px;min-width:0;font-size:11px;line-height:28px;color:var(--muted,#777d88)}.accounts-global-source a{display:block;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:inherit;text-decoration:none}.accounts-global-source a:hover{text-decoration:underline}
+@media(pointer:coarse){.accounts-panel .accounts-global-reminder{min-height:44px}}
+.accounts-global-footer-actions{display:flex;align-items:center;flex:none;gap:4px;margin-left:auto;white-space:nowrap}.accounts-panel .accounts-global-refresh{position:relative;display:grid;place-items:center;flex:none;width:28px;height:28px;margin:0;padding:0;border:0;border-radius:8px;background:transparent;color:var(--muted,#777d88);cursor:pointer}.accounts-global-refresh svg{display:block;width:18px;height:18px}.accounts-panel .accounts-global-refresh:hover{background:var(--soft,#f3f6ff)}.accounts-global-refresh:disabled{opacity:.45;cursor:default}.accounts-global-refresh[aria-busy="true"] svg{animation:accounts-global-spin 1s linear infinite}@keyframes accounts-global-spin{to{transform:rotate(360deg)}}
+@media(pointer:coarse){.accounts-global-refresh::after{content:"";position:absolute;inset:-8px}}
+@media(prefers-reduced-motion:reduce){.accounts-global-refresh[aria-busy="true"] svg{animation:none}}
+.accounts-global-announcement{margin:12px 0 0;padding:10px 12px;border-radius:8px;background:var(--soft,#f3f6ff);min-width:0}.accounts-global-announcement-meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;color:var(--muted,#777d88);font-size:11px;line-height:1.5}.accounts-panel .accounts-global-announcement-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0;font-size:13px;line-height:1.6;color:var(--text,#24262b)}.accounts-panel .accounts-global-announcement-text[data-expanded="true"]{display:block}.accounts-panel .accounts-global-expand,.accounts-panel .accounts-global-language{margin:0 10px 0 0;padding:3px 0;border:0;background:transparent;color:var(--accent,#4664ed);font-size:11px}.accounts-global-announcement>a{display:inline-block;color:var(--accent,#4664ed);font-size:11px;text-decoration:none}.accounts-global-announcement>a:hover{text-decoration:underline}
+@media(pointer:coarse){.accounts-panel .accounts-global-expand,.accounts-panel .accounts-global-language,.accounts-global-announcement>a{min-height:44px;align-content:center}}
+
+.accounts-global-feedback{margin:8px 0 0;color:var(--muted,#777d88);font-size:12px}

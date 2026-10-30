@@ -6,7 +6,6 @@ source bundle. The response contains only public model metadata and digests.
 import hashlib
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -16,23 +15,9 @@ REMOTE_MODEL_CHANGED = 'SSH 原生 CLI 守护进程已变化，请重新连接�
 
 
 def _remote_executable(home):
-    home = Path(home)
-    state = home / 'app-server-daemon'
-    dedicated = home / 'packages/app-server-daemon'
-    if os.path.lexists(dedicated / 'current') or any(os.path.lexists(state / name) for name in
-            ('daemon.pid', 'daemon.stderr.log', 'daemon-updater.pid', 'daemon-updater.stderr.log')):
-        root = dedicated
-    elif any(os.path.lexists(state / name) for name in
-             ('app-server.pid', 'app-server.stderr.log', 'app-server-updater.pid', 'app-server-updater.stderr.log')):
-        root = home / 'packages/standalone'
-    else:
-        root = dedicated
-    for candidate in (root / 'current/bin/codex', root / 'current/codex'):
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    fallback = shutil.which('codex') or str(Path.home() / '.local/bin/codex')
-    if Path(fallback).is_file() and os.access(fallback, os.X_OK):
-        return fallback
+    executable = Catalog.find_ssh_runtime(home)
+    if executable:
+        return executable
     raise ValueError(REMOTE_MODEL_ERROR)
 
 

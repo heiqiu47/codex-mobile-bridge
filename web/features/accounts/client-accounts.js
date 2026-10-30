@@ -19,7 +19,7 @@ class DesktopClientAccountsPanel {
     this.status=this.node('p',undefined,'account-muted');this.status.setAttribute('role','status');this.errorNode=this.node('p',undefined,'error');this.errorNode.setAttribute('role','alert');
     this.current=this.node('p',undefined,'accounts-current');this.modelsButton=this.button('查看可用模型',()=>this.toggleModels());this.modelsBox=this.node('div',undefined,'accounts-models');this.modelsBox.ontouchstart=()=>{this.modelsTouching=true;};this.modelsBox.ontouchend=this.modelsBox.ontouchcancel=()=>{this.modelsTouching=false;};this.modelsControls=this.node('div',undefined,'accounts-model-controls');this.modelsRefreshButton=this.button('刷新模型',()=>this.loadModels(true));this.modelsUpdated=this.node('small',undefined,'account-muted');this.modelsContent=this.node('div');this.modelsControls.append(this.modelsRefreshButton,this.modelsUpdated);this.modelsBox.append(this.modelsControls,this.modelsContent);this.rows=this.node('div',undefined,'accounts-list');this.modelFallback=this.node('div',undefined,'accounts-model-fallback');this.modelFallback.append(this.modelsButton,this.modelsBox);this.root.append(this.status,this.errorNode,this.current,this.rows,this.modelFallback);
     this.hint=this.node('p',undefined,'account-muted');this.root.append(this.hint);
-    if(this.desktop){const name=this.node('label',undefined,'accounts-import-name');this.nameInput=this.node('input');this.nameInput.type='text';this.nameInput.maxLength=80;name.append(this.node('span','接入名称（可选）'),this.nameInput);this.root.append(name);this.importButton=this.button(this.provider==='deepseek'?'保存当前账号':'保存当前接入',()=>this.importCurrent());this.root.append(this.importButton);if(this.provider==='deepseek'){this.importApiButton=this.button('保存当前 API',()=>this.importCurrent('api'));this.root.append(this.importApiButton);}}
+    if(this.desktop){const name=this.node('label',undefined,'accounts-import-name');this.importName=name;this.nameInput=this.node('input');this.nameInput.type='text';this.nameInput.maxLength=80;name.append(this.node('span','接入名称（可选）'),this.nameInput);this.root.append(name);this.importButton=this.button(this.provider==='deepseek'?'保存当前账号':'保存当前接入',()=>this.importCurrent());this.root.append(this.importButton);if(this.provider==='deepseek'){this.importApiButton=this.button('保存当前 API',()=>this.importCurrent('api'));this.root.append(this.importApiButton);}}
     if(this.desktop)this.buildEditor();
   }
   buildEditor(){
@@ -64,6 +64,7 @@ class DesktopClientAccountsPanel {
   activeIds(value=this.value){return new Set(value?.activeIds||[value?.activeId].filter(Boolean));}
   accept(value,notifyChange=true){
     if(!value||!Array.isArray(value.accounts))throw Error(this.text('账号信息暂不可用'));
+    if(value.readOnly===true)this.closeEditor();
     const previous=this.value,changed=this.value&&(JSON.stringify([...this.activeIds()].sort())!==JSON.stringify([...this.activeIds(value)].sort())||(this.value.modelCatalogIdentity||'')!==(value.modelCatalogIdentity||''));this.value=value;
     if(changed){this.modelsRevision++;this.modelsLoading=false;this.models=null;this.modelsOpen=false;if(notifyChange)this.onChanged(value,previous);}this.onUpdate(value);this.render();
   }
@@ -178,11 +179,12 @@ class DesktopClientAccountsPanel {
   }
   render(){
     const value=this.value;this.refreshButton.disabled=this.busy||this.loading;
+    for(const control of [this.addApiButton,this.importButton,this.importApiButton,this.importName])if(control)control.hidden=value?.readOnly===true;
     this.status.textContent=this.text(this.busy?'正在处理…':this.loading?'正在读取…':value?.message||(value?.gatewayRunning===false?'网关未启动':''));this.errorNode.textContent=this.text(this.error||'');
     this.current.textContent=this.text('当前接入：')+(value?.current?.name||value?.current?.label||value?.accounts.find(row=>row.id===value.activeId)?.name||this.text('暂未识别'))+(value?.current?.routes?.length?' · '+this.text('已配置接入：')+value.current.routes.map(route=>this.text(({'deepseek-account':'官方账号','deepseek-official':'API 接入'})[route]||route)).join(' / '):'');
     if(value?.cliSync?.status==='verified')this.current.textContent+=' · '+this.text('本机 CLI 已核验');
     else if(value?.cliSync?.status==='failed')this.current.textContent+=' · '+this.text('本机 CLI 同步失败：')+this.text(value.cliSync.error||'请检查接入');
-    this.hint.textContent=this.text(this.desktop?'官方账号请先在对应桌面应用登录，再保存当前接入。API 可在此添加；保存后选择切换才会应用。':'添加账号或 API，请在电脑端完成。')+(this.provider==='deepseek'?' '+this.text('现有会话继续使用各自选择的模型接入。'):'');
+    this.hint.textContent=this.text(value?.readOnly?'账号和 API 请在已绑定的第三方客户端中管理':this.desktop?'官方账号请先在对应桌面应用登录，再保存当前接入。API 可在此添加；保存后选择切换才会应用。':'添加账号或 API，请在电脑端完成。')+(this.provider==='deepseek'?' '+this.text('现有会话继续使用各自选择的模型接入。'):'');
     this.modelsButton.hidden=!this.readModels;this.modelsButton.textContent=this.text(this.modelsOpen?'收起模型':'查看可用模型');this.modelsButton.disabled=this.busy||this.modelsLoading;this.modelsBox.hidden=!this.modelsOpen;
     if(this.modelsOpen){
       const key=JSON.stringify([this.models,this.modelsError,this.modelsLoading&&!this.models,BridgeI18n.locale()]);

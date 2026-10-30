@@ -160,6 +160,47 @@ class IntegrationTests(unittest.TestCase):
         self.assertNotIn('modelProvider', request)
         self.assertTrue(call['params']['turnStart']['context']['inheritThreadSettings'])
 
+    def test_desktop_router_restart_rediscovers_owner_without_restarting_gateway(self):
+        session = self.bridge.session(THREAD)
+        self.assertTrue(session.connected)
+        original_socket = self.bridge.ipc.socket
+        self.fixture.close()
+        with session.condition:
+            self.assertTrue(session.condition.wait_for(lambda: not session.connected, timeout=3))
+        if os.name != 'nt':
+            Path(self.fixture.path).unlink()
+        (self.root / 'ipc').rmdir()
+
+        class RestartedDesktop(DesktopFixture):
+            def send(self, message):
+                message = copy.deepcopy(message)
+                if message.get('sourceClientId') == 'owner':
+                    message['sourceClientId'] = 'new-owner'
+                if message.get('handledByClientId') == 'owner':
+                    message['handledByClientId'] = 'new-owner'
+                if message.get('method') == 'initialize':
+                    message['result']['clientId'] = 'new-gateway'
+                super().send(message)
+
+        self.fixture = RestartedDesktop(self.root)
+        self.bridge.ipc.path = self.fixture.path
+        self.fixture.state['title'] = 'After desktop restart'
+        with patch('bridge.app.service.open_in_desktop') as activate:
+            self.bridge._refresh_async(session)
+            with session.condition:
+                self.assertTrue(session.condition.wait_for(lambda: session.connected, timeout=5))
+            activate.assert_not_called()
+        self.assertIsNot(self.bridge.ipc.socket, original_socket)
+        self.assertEqual(self.bridge.ipc.client_id, 'new-gateway')
+        self.assertEqual(session.owner, 'new-owner')
+        self.assertEqual(session.state['title'], 'After desktop restart')
+        self.assertEqual(session.state['modelProvider'], 'custom-api')
+        self.bridge.send(THREAD, 'after restart', str(uuid.uuid4()))
+        sends = [r for r in self.fixture.requests if r['method'] == 'thread-follower-start-turn']
+        self.assertEqual(len(sends), 1)
+        self.assertEqual(sends[0]['targetClientId'], 'new-owner')
+        self.assertEqual(sends[0]['params']['conversationId'], THREAD)
+
     def test_external_provider_change_does_not_use_stale_managed_account_to_block_send(self):
         from bridge.features.accounts.accounts import Accounts
         manager = Accounts(self.bridge)
@@ -185,6 +226,7 @@ class IntegrationTests(unittest.TestCase):
         self.bridge.store.list = unavailable
         remote = SimpleNamespace(host='remote:test', lock=threading.RLock(), live={}, listed=set(), origins={}, _access=self.bridge._access,
                                  session_pins=SimpleNamespace(identifiers=lambda: ()),
+                                 organization_commands=SimpleNamespace(native_memberships=lambda: set()),
                                  store=SimpleNamespace(list=lambda **kw: [{'id': THREAD, 'title': 'Remote chat', 'cwd': '/remote', 'updated_at': 1}]))
         self.bridge.hosts.hosts = lambda: {'remote:test': {'alias': 'test'}}
         self.bridge.for_host = lambda host: remote
@@ -200,6 +242,40 @@ class IntegrationTests(unittest.TestCase):
         rows, sources = self.bridge.list(include_sources=True, local_only=True)
         self.assertEqual([row['id'] for row in rows], [THREAD])
         self.assertEqual(sources, ['desktop'])
+
+    def test_local_native_reconnect_completes_while_ssh_activation_is_blocked(self):
+        from concurrent.futures import Future
+        from unittest.mock import patch
+        from bridge.clients.codex.remote import RemoteUnavailable
+        entered, release = threading.Event(), threading.Event()
+        self.bridge.hosts.hosts = lambda **kw: {'remote:offline': {'alias': 'fixture-offline'}}
+        remote = self.bridge.for_host('remote:offline')
+        result = Future()
+        def offline(*args):
+            entered.set(); release.wait(5)
+            raise RemoteUnavailable('offline')
+        def reconnect_remote():
+            try:
+                remote.activate(THREAD)
+            except RemoteUnavailable:
+                pass
+        def reconnect_local():
+            try:
+                result.set_result(self.bridge.activate(THREAD).connected)
+            except BaseException as exc:
+                result.set_exception(exc)
+        with patch.object(remote.store, 'get', side_effect=offline):
+            worker = threading.Thread(target=reconnect_remote);worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                reader = threading.Thread(target=reconnect_local);reader.start()
+                self.assertTrue(result.result(timeout=2))
+                self.assertFalse(release.is_set())
+                self.assertEqual(self.bridge.live[THREAD].owner, 'owner')
+                self.assertFalse(any(row['method']=='thread-follower-start-turn' for row in self.fixture.requests))
+            finally:
+                release.set();worker.join(2)
+                if 'reader' in locals():reader.join(2)
 
     def test_unified_codex_list_separates_wsl_category_from_cli_source(self):
         from types import SimpleNamespace
@@ -570,6 +646,29 @@ class IntegrationTests(unittest.TestCase):
         self.bridge.respond(THREAD, pending['id'], {'answers': {question['id']: ['Yes']}})
         self.assertEqual(self.fixture.requests[-1]['method'], 'thread-follower-start-turn')
 
+    def test_reply_to_one_async_card_keeps_other_card_across_turns(self):
+        self.fixture.state['turns'] = [{'turnId': 'questions', 'status': 'completed', 'items': [
+            {'id': name, 'type': 'agentMessage', 'questions': [{'title': name, 'options': ['Yes', 'No']}]}
+            for name in ('first', 'second')]}]
+        first, second = self.bridge.view(THREAD)['requests']
+        self.bridge.respond(THREAD, first['id'], {'answers': {first['params']['questions'][0]['id']: ['Yes']}})
+        call = next(r for r in self.fixture.requests if r['method'] == 'thread-follower-start-turn')
+        reply = call['params']['turnStart']['request']['input']
+        self.fixture.state['turns'].append({'turnId': 'reply', 'status': 'inProgress', 'items': [
+            {'id': 'reply-first', 'type': 'userMessage', 'content': reply}]})
+        self.fixture.state['threadRuntimeStatus'] = {'type': 'active'}
+        self.fixture.revision += 1
+        self.fixture.snapshot()
+        session = self.bridge.session(THREAD)
+        with session.condition:
+            self.assertTrue(session.condition.wait_for(lambda: session.revision == 2, timeout=2))
+        self.assertEqual(self.bridge.view(THREAD)['requests'], [second])
+        self.bridge.respond(THREAD, second['id'], {'answers': {second['params']['questions'][0]['id']: ['No']}})
+        call = self.fixture.requests[-1]
+        self.assertEqual(call['method'], 'thread-follower-steer-turn')
+        self.assertIn(second['params']['questions'][0]['id'],
+                      [r['questionItemId'] for r in json.loads(call['params']['input'][0]['text'].split('\n')[1])])
+
     def test_model_settings_use_native_owner_without_turn_or_policy_change(self):
         self.bridge.catalog_reader.get_kind = lambda *a, **k: {'models': [{'id': 'model-b', 'efforts': ['low', 'high']}], 'skills': []}
         result = self.bridge.settings(THREAD, 'model-b', 'high')
@@ -701,11 +800,17 @@ class IntegrationTests(unittest.TestCase):
     def test_project_grouping_recency_and_host_identity(self):
         from bridge.clients.codex.remote import AppHosts
         hosts = AppHosts(self.root)
-        hosts.state = lambda: {'remote-projects': [{'id': 'p', 'hostId': 'remote', 'label': 'Work', 'remotePath': '/work'}]}
+        hosts.state = lambda: {
+            'remote-projects': [{'id': 'p', 'hostId': 'remote', 'label': 'Work', 'remotePath': '/work'}],
+            'thread-project-assignments': {THREAD: {'projectId': 'p', 'hostId': 'remote'}},
+        }
         rows = hosts.decorate([{'id': THREAD, 'cwd': '/work/sub', 'recency_at': 5, 'updated_at': 20}], 'remote', 'Server')
         self.assertEqual(rows[0]['recency'], 5000)
         self.assertEqual(rows[0]['projectKey'], 'remote|p')
         self.assertEqual(rows[0]['projectName'], 'Work')
+        unassigned = hosts.decorate([{'id': 'unassigned', 'cwd': '/work/sub'}], 'remote', 'Server')[0]
+        self.assertEqual(unassigned['projectKey'], 'remote|unassigned')
+        self.assertEqual(unassigned['projectName'], '未归类')
         with self.assertRaises(KeyError):
             self.bridge.for_host('unconfigured-host')
 
@@ -719,6 +824,7 @@ class IntegrationTests(unittest.TestCase):
         remote.origins = {}
         remote._access = self.bridge._access
         remote.session_pins.identifiers.return_value = ()
+        remote.organization_commands.native_memberships.return_value = set()
         remote.store.list.return_value = [{'id': 'remote-thread', 'cwd': '/work', 'updated_at': 50}]
         self.bridge.hosts.hosts = lambda: {'remote': {'alias': 'server'}}
         self.bridge.for_host = lambda host: remote
@@ -787,6 +893,28 @@ class IntegrationTests(unittest.TestCase):
 
 
 class ModelTests(unittest.TestCase):
+    def test_async_answers_match_question_ids_across_canonical_turns(self):
+        questions = {'turnId': 'questions', 'status': 'completed', 'items': [
+            {'id': 'card', 'type': 'agentMessage', 'questions': [{'title': 'One'}, {'title': 'Two'}]}]}
+        value = state()
+        value['turns'] = [questions]
+        first, second = normalize_state(value)['requests'][0]['params']['questions']
+        def reply(question):
+            return '<send_user_message_question_reply>\n' + json.dumps([
+                {'questionItemId': question['id'], 'question': question['question'], 'answer': 'Yes'}
+            ]) + '\n</send_user_message_question_reply>'
+        answer = {'turnId': 'answer', 'status': 'completed', 'params': {'input': [
+            {'type': 'text', 'text': reply(first)}]}, 'items': [
+            {'id': 'rejected', 'type': 'steeringUserMessage', 'status': 'rejected', 'input': reply(second)}]}
+        value['turnHistory'] = {'kind': 'canonical', 'history': {
+            'entitiesByKey': {'q': questions, 'a': answer},
+            'islands': [{'entries': [{'value': 'q'}, {'value': 'a'}]}]}}
+        pending = normalize_state(value)['requests']
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]['params']['questions'], [second])
+        answer['items'][0]['status'] = 'accepted'
+        self.assertEqual(normalize_state(value)['requests'], [])
+
     def test_canonical_history(self):
         value = state()
         value['turnHistory'] = {'kind': 'canonical', 'history': {'isComplete': True, 'entitiesByKey': {
@@ -1234,6 +1362,24 @@ class HttpTests(unittest.TestCase):
             self.assertIn(private['computer']['platform'], ['Darwin', 'Linux', 'Windows'])
             self.assertEqual(private['loginStatus'], before)
 
+    def test_authenticated_navigation_targets_use_configuration_without_runtime_probes(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from bridge.clients.manager import DesktopSessions
+        entry = 'wsl:' + 'a' * 32
+        manager = DesktopSessions.__new__(DesktopSessions)
+        manager.read_lock = threading.Lock()
+        manager.config = {'enabled': {'codex': False, 'claude': True, 'deepseek': False}}
+        manager.bridge = SimpleNamespace(entries=SimpleNamespace(hosts=lambda: {entry: {}}))
+        manager.applications = Mock(side_effect=AssertionError('runtime scan during authentication'))
+        self.server.desktop_sessions = manager
+        self.assertNotIn('enabledClients', self.request('GET', '/api/auth')[2])
+        auth = self.login()
+        self.assertEqual(self.request('GET', '/api/auth', headers=auth)[2]['enabledClients'], ['claude', entry])
+        manager.config['enabled']['claude'] = False
+        self.assertEqual(self.request('GET', '/api/auth', headers=auth)[2]['enabledClients'], [entry])
+        manager.applications.assert_not_called()
+
     def test_ignore_submission_route_requires_login_csrf_and_exact_payload(self):
         from types import SimpleNamespace
         from unittest.mock import Mock
@@ -1621,6 +1767,14 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(result['id'],THREAD)
         self.assertEqual(calls,[(body['project'],body['title'],body['id'])])
 
+    def test_selected_project_host_is_forwarded_only_after_authentication(self):
+        calls = []
+        self.server.bridge.projects = lambda **options: calls.append(options) or []
+        self.assertEqual(self.request('GET', '/api/projects?host=ssh')[0], 401)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.request('GET', '/api/projects?host=ssh', headers=self.login())[0], 200)
+        self.assertEqual(calls, [{'host': 'ssh'}])
+
     def test_explicit_reconnect_requires_auth_csrf_and_activation_flag(self):
         from types import SimpleNamespace
         calls = []
@@ -1646,6 +1800,21 @@ class HttpTests(unittest.TestCase):
         self.assertIn('retry', body['error'])
         self.assertNotIn('日志', body['error'])
 
+    def test_remote_transport_rebuild_requires_auth_csrf_and_explicit_flags(self):
+        from types import SimpleNamespace
+        calls = []
+        self.server.bridge.rebuild_connection = lambda tid: calls.append(tid) or SimpleNamespace(connected=True)
+        path = '/api/sessions/' + THREAD + '/reconnect'
+        body = {'activate': True, 'rebuild': True}
+        self.assertEqual(self.request('POST', path, body)[0], 401)
+        headers = self.login()
+        self.assertEqual(self.request('POST', path, body, {'Cookie': headers['Cookie']})[0], 403)
+        for invalid in ({'rebuild': True}, {'activate': True, 'rebuild': 1}, {**body, 'force': True}):
+            self.assertEqual(self.request('POST', path, invalid, headers)[0], 400)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.request('POST', path, body, headers)[0], 200)
+        self.assertEqual(calls, [THREAD])
+
     def test_reverse_proxy_preserved_host_keeps_secure_login(self):
         origin='https://codex.example.test:9443'
         host='codex.example.test:9443'
@@ -1667,7 +1836,7 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             scripts = re.findall(r'<script (?:src|data-bridge-src)="([^"]+)"', response.read().decode())
             self.assertEqual([script.split('?', 1)[0] for script in scripts], ['/bootstrap.js', '/host.js', '/layout.js', '/vendor/markdown-it.min.js', '/vendor/katex/katex.min.js',
-                                       '/vendor/texmath.js', '/message-actions.js', '/markdown.js', '/i18n.js', '/downloads.js', '/image-viewer.js', '/timeline.js', '/account.js', '/modes.js', '/attachments.js', '/activity.js', '/fast-mode.js', '/accounts.js', '/client-accounts.js', '/cli-access.js', '/wsl-accounts.js', '/floating-panel.js', '/git-panel.js', '/vendor/xterm/xterm.js', '/vendor/xterm/addon-fit.js', '/command-terminal-panel.js', '/terminal-panel.js', '/permissions.js', '/side-chat.js', '/agents-panel.js', '/file-actions.js', '/vendor/prism/source-view.min.js', '/source-view.js', '/pdf-preview.js', '/html-preview.js', '/workbench.js', '/list-sync.js', '/client-lifecycle.js', '/project-picker.js', '/desktop-sessions.js', '/client-navigation.js', '/app.js', '/presentation.js'])
+                                       '/vendor/texmath.js', '/message-actions.js', '/markdown.js', '/i18n.js', '/downloads.js', '/image-viewer.js', '/timeline.js', '/account.js', '/modes.js', '/attachments.js', '/activity.js', '/fast-mode.js', '/accounts.js', '/client-accounts.js', '/cli-access.js', '/wsl-accounts.js', '/floating-panel.js', '/git-panel.js', '/vendor/xterm/xterm.js', '/vendor/xterm/addon-fit.js', '/command-terminal-panel.js', '/terminal-panel.js', '/permissions.js', '/side-chat.js', '/agents-panel.js', '/file-actions.js', '/code-syntax.js', '/vendor/prism/source-view.min.js', '/source-view.js', '/pdf-preview.js', '/html-preview.js', '/workbench.js', '/list-sync.js', '/client-lifecycle.js', '/project-picker.js', '/desktop-sessions.js', '/client-navigation.js', '/app.js', '/presentation.js'])
             for script in scripts:
                 conn.request('GET', script)
                 response = conn.getresponse()

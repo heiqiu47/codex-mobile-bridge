@@ -1,23 +1,23 @@
-# Agent Note: Attribute CLI replies to their recorded turn model
+# Agent Note: 按轮次记录的模型标注 CLI 回复
 
 Status: implemented
 
-## Problem
+## 问题
 
-Native CLI `thread/read` exposes the current thread model but may omit per-turn model attribution. Historical replies could therefore show only `CODEX` after an explicit native connection. Assigning the current model to all turns would mislabel conversations where the model changed.
+原生 CLI `thread/read` 提供当前线程模型，但可能不提供各轮次的模型归属。因此，显式建立原生连接后，历史回复可能只显示 `CODEX`。若把当前模型分配给所有轮次，会错误标注中途切换过模型的聊天。
 
-## Decision
+## 决策
 
-The live-session view joins native turns by ID to its already loaded saved rollout `turn_context`. The saved context overrides only when it has an actual model. Native per-turn model fields, when provided, are retained. At the start of a new native turn, capture the then-current model for that turn; a subsequent settings change does not relabel it. Later native snapshots that omit per-turn model fields retain captured settings by matching turn ID; an explicit native turn model takes priority. Turns with no model evidence retain no model label. No added SSH or rollout read occurs in a native callback or refresh.
+实时会话视图按 ID 将原生轮次与已加载的保存记录 `turn_context` 关联。保存上下文仅在包含真实模型时才覆盖模型信息。原生提供的逐轮次模型字段会保留。新原生轮次开始时，捕获当时模型并绑定该轮次；之后设置变化不重新标注该轮次。后续原生快照若省略逐轮次模型字段，则按轮次 ID 保留已捕获设置；明确提供的原生轮次模型优先。缺少模型证据的轮次仍不显示模型标签。原生回调或刷新不会新增 SSH 或保存记录读取。
 
-## Verification
+## 验证
 
-A regression fixture with two recorded models and two later live turns passes. The current thread model differs from both historical models, changes between live turns, and changes again after the second starts. Repeated native snapshots without per-turn models retain both captured labels; an explicit native turn model supersedes the captured label.
+包含两个已记录模型和两个后续实时轮次的回归夹具通过。当前线程模型不同于两个历史模型，在两个实时轮次之间变化，并在第二轮开始后再次变化。重复接收不含逐轮次模型的原生快照时，两个捕获标签都保留；明确的原生轮次模型会替代捕获标签。
 
-## Alternatives considered
+## 备选方案
 
-Using the current model for every reply is simple but invents historical attribution. Reading every rollout again during native callbacks provides more metadata at the cost of local/SSH latency. Reuse loaded history and native per-turn evidence instead.
+给所有回复使用当前模型很简单，但会捏造历史归属。在原生回调期间重新读取全部保存记录能补充元数据，却增加本地/SSH 延迟。因此复用已加载历史和原生逐轮次证据。
 
-## Consequences
+## 影响
 
-Unknown Desktop historical labels remain unknown because Desktop hydration may substitute the current model. Only native CLI per-turn evidence can fill missing saved attribution. The existing timeline regression and native mixed-model fixture verify this distinction.
+未知的 Desktop 历史标签仍保持未知，因为 Desktop 历史补全可能用当前模型替代。只有原生 CLI 的逐轮次证据可以补齐保存记录缺失的归属。现有时间线回归与原生混合模型夹具验证了该区别。

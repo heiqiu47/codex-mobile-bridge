@@ -1,21 +1,21 @@
-# Agent Note: Hide the mobile native menu while web dialogs are open
+# Agent Note: 网页对话框打开期间隐藏手机原生菜单
 
 Status: implemented
 
-## Problem
+## 问题
 
-The mobile hosts draw their native more menu above the WebView. A long Webhook settings dialog can scroll beneath it, leaving the background menu visible and tappable while the dialog is open. The host cannot infer HTML dialog state from the native view hierarchy.
+手机宿主将原生“更多”菜单绘制在 WebView 上方。较长的 Webhook 设置对话框可能滚动到菜单下方，导致对话框打开时背景菜单仍可见且可点击。宿主无法从原生视图层级推断 HTML 对话框状态。
 
-## Decision
+## 决策
 
-The shared mobile script observes the document for any `dialog[open]`. It sends a token-scoped `codexbridge-modal:` prompt with `open` when at least one dialog is open and `closed` when none remain. It sends only state transitions during normal DOM changes and resends current state when the page regains focus or visibility. The contract is based on dialog state, so dynamically inserted and future dialogs participate without host-side dialog IDs.
+共享手机脚本观察文档中是否存在 `dialog[open]`。只要至少一个对话框打开，就发送带令牌作用域的 `codexbridge-modal:` 提示，值为 `open`；全部关闭时发送 `closed`。普通 DOM 变化只在状态转换时发送；页面重新获得焦点或可见时重新发送当前状态。该契约依据对话框状态，因此动态插入和未来新增的对话框无需宿主维护其 ID 即可参与。
 
-Android and iOS accept this signal only from the current WebView, the expected origin and the current token. The hosts hide and disable their native menu for `open`, then restore it for `closed`; navigation resets the menu state. The signal is transient UI state, not a setting. The [dialog backdrop dismissal note](../feature/2026-10-16-dialog-backdrop-dismissal.md) governs how a backdrop gesture closes an HTML dialog; this note governs the native overlay while any dialog remains open.
+Android 和 iOS 只接受来自当前 WebView、预期 origin 和当前令牌的信号。收到 `open` 时，宿主隐藏并禁用原生菜单；收到 `closed` 时恢复菜单，导航则重置菜单状态。该信号是临时 UI 状态，不是设置。[对话框背景关闭笔记](../feature/2026-10-16-dialog-backdrop-dismissal.md)约定背景手势如何关闭 HTML 对话框；本笔记约定任意对话框仍打开时的原生覆盖层行为。
 
-## Alternatives considered
+## 备选方案
 
-Adding menu toggles to each Webhook dialog handler would be direct, but other and future dialogs would leave the same overlay bug. CSS cannot hide a native Android or iOS control outside the WebView. Observing the shared HTML dialog state keeps the boundary at the WebView-host contract.
+在每个 Webhook 对话框处理器中切换菜单很直接，但其他及未来对话框仍会出现同样的覆盖问题。CSS 无法隐藏 WebView 之外的 Android 或 iOS 原生控件。观察共享 HTML 对话框状态，可以将边界保持在 WebView 与宿主的契约处。
 
-## Consequences
+## 影响
 
-Opening one or several dialogs makes the native menu unavailable until the last closes. Scrolling and internal DOM changes do not restore it. A focus return reconciles state if a prior signal was missed. The cross-process prompt adds a small amount of host handling; browser and source tests cover state transitions, but native device rendering requires a rebuilt app for verification.
+打开一个或多个对话框后，原生菜单保持不可用，直到最后一个对话框关闭。滚动和内部 DOM 变化不会恢复菜单。重新获得焦点时会校准状态，补偿可能丢失的先前信号。跨进程提示增加少量宿主处理；浏览器和源码测试覆盖状态转换，原生设备渲染仍需重新构建 App 验证。

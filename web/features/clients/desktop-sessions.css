@@ -5,3 +5,5 @@
 .ds-model-dialog .picker-head-actions{display:flex;align-items:center;gap:8px}
 .ds-model-form .ds-model-actions{display:flex;justify-content:flex-end;gap:8px}.ds-model-form .ds-model-actions button{min-height:44px;border-radius:11px;white-space:nowrap}.ds-model-form .ds-model-actions .plain{flex:none}.ds-model-form .ds-model-actions .primary{flex:1;min-width:0;width:auto}
 .ds-model-form .error:empty,.ds-model-form .muted:empty{display:none}
+
+.ds-send-feedback{margin:8px 0;font-size:12px}.ds-send-feedback p{max-height:4.5em;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:5px 0 0}

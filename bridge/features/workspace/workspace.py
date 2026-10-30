@@ -217,6 +217,24 @@ class Workspace:
                 return {'name': parts[-1], 'path': path, 'size': info.st_size, 'kind': 'file',
                         'absolutePath': display_absolute_path(str(self.root.joinpath(*parts)))}
 
+    def references(self, references):
+        """Resolve metadata only, against this session's current project boundary."""
+        if not isinstance(references, list) or len(references) > 10:
+            raise ValueError('每条消息最多添加 10 个不同附件')
+        result, seen = [], set()
+        for reference in references:
+            if not isinstance(reference, dict) or set(reference) != {'path', 'absolutePath'}:
+                raise ValueError('项目文件引用无效，请重新选择')
+            info = self.info(reference['path'])
+            if info['absolutePath'] != reference['absolutePath']:
+                raise ValueError('项目目录已变化，请重新选择引用文件')
+            if info['absolutePath'] in seen:
+                raise ValueError('不能重复引用同一文件或目录')
+            seen.add(info['absolutePath'])
+            result.append({'name': info['name'], 'path': info['absolutePath'],
+                           'kind': info['kind'], 'size': info['size'], 'image': None})
+        return result
+
     @contextmanager
     def archive(self, path, range_header='', if_range='', limit=None):
         parts = self.parts(path)
@@ -701,6 +719,7 @@ def operate(root, action, params):
         if action == 'git-action': return GitWorkspace(workspace).mutate(**params)
         if action == 'list': return workspace.listing(**params)
         if action == 'info': return workspace.info(params['path'])
+        if action == 'references': return workspace.references(params['references'])
         if action == 'archive-stream': return workspace.archive(**params)
         if action == 'preview': return workspace.read(params['path'])
         if action == 'download': return workspace.read(params['path'], download=True)

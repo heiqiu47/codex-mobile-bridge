@@ -8,13 +8,11 @@ enum NotificationSource {
         // iOS retains the sending App's system icon; source artwork is an
         // attachment. It is bundled, never fetched from an arbitrary push URL.
         guard let source = Bundle.main.url(forResource: provider, withExtension: "png") else { return }
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let copy = directory.appendingPathComponent(provider + ".png")
-            try FileManager.default.copyItem(at: source, to: copy)
-            content.attachments = [try UNNotificationAttachment(identifier: provider, url: copy)]
+            // Scheduling (or extension completion) validates the file later.
+            // Bundle resources are copied by iOS; a deleted temporary copy
+            // invalidates the entire notification before it can be delivered.
+            content.attachments = [try UNNotificationAttachment(identifier: provider, url: source)]
         } catch { /* Keep the original notification if the attachment is unavailable. */ }
     }
 }

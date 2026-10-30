@@ -1,19 +1,19 @@
-# Agent Note: Read native Windows Codex history by directory identity
+# Agent Note: 按目录身份读取 Windows 原生 Codex 历史
 
 Status: implemented
 
-## Problem
+## 问题
 
-Native Codex on Windows can store a rollout path such as `\\?\C:\...\sessions\...jsonl` in SQLite while the gateway receives the same `CODEX_HOME` as an ordinary `C:\...` path. `Path.resolve()` preserves those different representations. A lexical parent check then labels an existing rollout outside the Codex home: the chat remains in the list, but its saved history is unavailable after gateway restart. The isolated installed-gateway run had the expected reply in its JSONL; the read was rejected before parsing it.
+Windows 原生 Codex 可能在 SQLite 中保存 `\\?\C:\...\sessions\...jsonl` 形式的记录路径，而网关接收的同一 `CODEX_HOME` 是普通的 `C:\...` 路径。`Path.resolve()` 保留这两种不同表示。此时按路径文本进行父级检查会将真实存在的记录判定为位于 Codex 主目录之外：聊天仍在列表中，但网关重启后无法读取保存历史。隔离的已安装网关测试中，JSONL 内存在预期回复，但读取在解析前就被拒绝。
 
-## Decision
+## 决策
 
-`SessionStore` uses one rollout containment check for discovery diagnostics and history reads. Ordinary resolved paths keep the existing parent check. When that check does not match on Windows, the store compares the actual identity of each existing rollout ancestor with the resolved `sessions` or `archived_sessions` directory using `Path.samefile()`. Inaccessible ancestors do not grant access. The rollout itself is resolved before this check, so a child symlink that leads outside the home remains outside. CLI and Desktop origins, providers, and runtime ownership rules are unchanged.
+`SessionStore` 对发现诊断和历史读取使用同一个记录路径包含关系检查。普通解析路径继续使用既有父级检查。Windows 上该检查不匹配时，使用 `Path.samefile()`，将每个已存在的记录祖先目录的实际身份与解析后的 `sessions` 或 `archived_sessions` 目录比较。不可访问的祖先目录不能授权访问。记录文件本身在检查前已解析，因此指向主目录之外的子符号链接仍被视为越界。CLI 和 Desktop 来源、provider 及运行时归属规则不变。
 
-## Alternatives considered
+## 备选方案
 
-Waiting longer for the HTTP detail response cannot make this path pass the permanent containment check. Removing the extended-path prefix or accepting a string prefix would treat path spelling as authority and risks confusing nearby directories or other Windows path forms. Running identity checks for every ordinary path would add unnecessary filesystem work, including to SSH history reads; the fallback is limited to Windows paths whose normal parent check fails.
+延长 HTTP 详情响应等待无法通过这一永久的包含关系检查。去掉扩展路径前缀，或接受字符串前缀，会把路径拼写当成授权依据，可能混淆相邻目录或其他 Windows 路径形式。对所有普通路径都做身份检查会增加不必要的文件系统工作，包括 SSH 历史读取；因此回退仅限 Windows 上普通父级检查失败的路径。
 
-## Consequences
+## 影响
 
-The original isolated Windows rollout becomes readable after restart without activating a native writer. Regression fixtures retain rejection for an outside directory, a prefix-similar sibling, and a symlink that escapes the home; ordinary paths do not use the identity fallback. Windows fallback reads a bounded number of directory identities, and an inaccessible directory still fails closed. The original isolated SQLite, WAL, and JSONL hashes stayed unchanged during the successful read.
+原隔离 Windows 保存记录在重启后可以读取，无需激活原生写入者。回归夹具继续拒绝外部目录、前缀相似的同级目录及逃逸主目录的符号链接；普通路径不使用身份回退。Windows 回退只读取有限数量的目录身份，不可访问的目录仍拒绝访问。成功读取期间，原隔离 SQLite、WAL 和 JSONL 的哈希保持不变。

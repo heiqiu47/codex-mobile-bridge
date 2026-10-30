@@ -13,6 +13,7 @@ import bridge.clients.claude.model as model
 from bridge.clients.claude.context import context_fields
 from bridge.clients.claude.setup import inspect_installation, console_source, developer_mode_enabled, native_action, running_app, claude_data_home, background_running_app
 from bridge.clients.errors import BridgeUnavailable
+from bridge.clients.file_mentions import file_mentions
 from bridge.features.sessions.create import ArchiveNotSent
 from bridge.clients.claude.mailbox import FileDesktop, MAX_REQUEST, CONNECTOR_REVISION, workspace_trust_rejection
 from bridge.clients.claude.cli_session import ClaudeCli, project_account_identity
@@ -613,9 +614,11 @@ class Claude:
     def session_capabilities(self, kind):
         methods = self.desktop.capabilities.get(kind, [])
         return {'models': 'setModel' in methods, 'effort': 'setEffort' in methods,
+                'manualModels': 'setModel' in methods, 'manualEffort': 'setEffort' in methods,
                 'permissions': 'setPermissionMode' in methods, 'attachments': 'sendMessage' in methods,
                 'skills': 'getSupportedCommands' in methods, 'queue': kind == 'code', 'steer': kind == 'code',
                 'fork': kind == 'code' and 'mobileFork' in methods,
+                'rename': 'mobileRename' in methods,
                 'archive': kind == 'code' and 'mobileArchive' in methods,
                 'unarchive': kind == 'code' and 'mobileArchive' in methods,
                 'contextUsage': any(method in methods for method in ('getContextUsageSummary', 'getContextUsage'))}
@@ -681,10 +684,18 @@ class Claude:
                 raise
             return {'status': 'blocked', 'code': 'workspace-trust-required',
                     'workspace': project['cwd'],
+                    'canConfirmTrust': 'mobileProjectTrust' in self.desktop.capabilities.get('code', []),
                     'message': '请先在 Claude Desktop 的 Code 页面打开此目录并确认“信任工作区”，再返回重试。首条消息已保留。'}
         return {'status': 'ready', 'result': {'id': model.gateway_id(project['surface'], value['sessionId'])}}
 
     async def dispatch(self, action, sid, body):
+        if action == 'project-trust':
+            project = body['directoryProject']
+            if (project['surface'] != 'code' or project['host'] != 'local' or
+                    not self.status()['connected'] or
+                    'mobileProjectTrust' not in self.desktop.capabilities.get('code', [])):
+                raise BridgeUnavailable('当前客户端不支持远程确认工作区，请在原客户端确认')
+            return await self.desktop.call('code', 'mobileProjectTrust', project['cwd'], body['confirmed'])
         if action == 'create' and body.get('directoryProject'):
             project = body['directoryProject']
             if project['surface'] == 'cli':
@@ -769,6 +780,20 @@ class Claude:
         if not saved:
             raise ValueError('找不到 Claude 会话')
         kind, native = saved['backend'], saved['nativeId']
+        if action == 'image':
+            if 'mobileImage' not in self.desktop.capabilities.get(kind, []):
+                raise ValueError('请更新 Claude 接入后预览历史图片')
+            return await self.desktop.call(kind, 'mobileImage', native, body.get('source'))
+        if action == 'rename':
+            if not self.session_capabilities(kind)['rename']:
+                raise ValueError('当前 Claude 接入未提供已确认的原生改名接口')
+            title = body.get('title')
+            if not isinstance(title, str) or not 1 <= len(title.strip()) <= 120 or re.search(r'[\x00-\x1f\x7f]', title):
+                raise ValueError('标题为 1–120 字，不能包含控制字符')
+            reply = await self.desktop.call(kind, 'mobileRename', native, {'title': title.strip()})
+            if reply.get('status') != 'confirmed' or reply.get('result') != {'id': native, 'title': title.strip()}:
+                raise BridgeUnavailable('改名结果待核对，请检查原客户端；不会重复提交')
+            return {**reply, 'result': {'id': sid, 'title': title.strip()}}
         if action in ('archive-state', 'archive'):
             if kind != 'code' or not self.session_capabilities(kind)['archive']:
                 raise ValueError('当前接入尚未确认原生归档和恢复能力')
@@ -857,9 +882,14 @@ class Claude:
                 return {'currentModel': row.get('model'), 'currentEffort': row.get('effort')}
             value = await self.desktop.call(kind, 'mobileCatalog', native)
             value.update(currentModel=row.get('model'), currentEffort=row.get('effort'))
+            native = self.session_capabilities(kind)
+            value['capabilities'] = {**value.get('capabilities', {}), 'models': native['models'],
+                                     'manualModels': native['models'], 'manualEffort': native['effort']}
             return value
         if action == 'send':
-            text = body.get('text', '')
+            # Cowork maps @host paths through its existing selected-folder mounts.
+            # Code uses the CLI's quoted @file grammar for whitespace paths.
+            text = file_mentions(body.get('text', ''), body.get('resolvedReferences', []), quote=kind != 'cowork')
             if body.get('plugins'):
                 catalog = await self.desktop.call(kind, 'mobileCatalog', native)
                 offered = {skill['id'] for skill in catalog.get('skills', []) if skill.get('selectable') is not False}
@@ -884,11 +914,18 @@ class Claude:
         elif action == 'stop':
             result = await self.desktop.call(kind, 'interrupt' if kind == 'code' else 'stop', native)
         elif action == 'settings':
-            catalog = await self.desktop.call(kind, 'mobileCatalog', native)
+            catalog = {'models': []} if body.get('manualModel') is True else await self.desktop.call(kind, 'mobileCatalog', native)
             selected = next((m for m in catalog['models'] if m['id'] == body.get('model', row.get('model'))), None)
-            if not selected or catalog.get('capabilities', {}).get('models') is not True:
-                raise ValueError('请选择桌面提供的模型')
-            if body.get('effort') and body['effort'] not in selected.get('efforts', []):
+            identifier = body.get('model', row.get('model'))
+            if not isinstance(identifier, str) or not re.fullmatch(r'[^\s\x00-\x1f\x7f]{1,256}', identifier):
+                raise ValueError('请输入有效的模型名称')
+            if not self.session_capabilities(kind)['models']:
+                raise ValueError('当前客户端未提供模型设置接口')
+            if selected is None:
+                selected = {'id': identifier, 'efforts': []}
+            if body.get('manualEffort') is True and (not isinstance(body.get('effort'), str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', body['effort'])):
+                raise ValueError('请输入有效的思考强度')
+            if body.get('effort') and body.get('manualEffort') is not True and body['effort'] not in selected.get('efforts', []):
                 raise ValueError('该模型不支持此思考强度')
             effort = body.get('effort') or (selected.get('defaultEffort') if kind == 'cowork' else None)
             if 'effort' in body and (not self.session_capabilities(kind)['effort'] or kind == 'cowork' and not effort):

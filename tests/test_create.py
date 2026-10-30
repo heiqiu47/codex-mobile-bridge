@@ -17,6 +17,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class CreationTests(unittest.TestCase):
+    def test_local_creation_never_reads_unrelated_ssh_projects(self):
+        self.bridge.hosts.hosts = lambda: {'ssh:offline': {'alias': 'fixture-offline'}}
+        original = self.bridge.for_host
+        def selected(host):
+            self.assertEqual(host, 'local', 'Local creation must not access SSH')
+            return original(host)
+        with patch.object(self.bridge, 'for_host', side_effect=selected), \
+             patch('bridge.app.service.create_empty', return_value=self.tid):
+            self.bridge.create_chat('local|p', 'Local', str(uuid.uuid4()))
+
     def test_new_directory_can_create_cli_without_existing_cli_history(self):
         self.bridge.store.list = lambda **kwargs: []
         root = str(self.root.resolve())
@@ -291,7 +301,9 @@ class CreationTests(unittest.TestCase):
         host='remote-ssh-discovered:test'
         self.bridge.hosts.state=lambda:{'remote-projects':[{'id':'r','hostId':host,'remotePath':'/remote/project'}],
                                       'codex-managed-remote-connections':[{'hostId':host,'alias':'test'}]}
-        with patch('bridge.app.service.ssh_read', return_value={'id':self.tid}) as remote, patch('bridge.app.service.open_in_desktop') as opened:
+        with patch('bridge.clients.codex.remote.RemoteStore.list', return_value=[]), \
+             patch('bridge.app.service.ssh_read', return_value={'id':self.tid}) as remote, \
+             patch('bridge.app.service.open_in_desktop') as opened:
             result=self.bridge.create_chat(host+'|r', 'quoted " title $()', str(uuid.uuid4()))
             self.assertEqual(result['host'],host)
             self.assertEqual(remote.call_args.args[0],'test')

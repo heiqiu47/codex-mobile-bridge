@@ -1,5 +1,6 @@
 """Read-only discovery and history for existing Codex chats."""
 import copy
+import uuid
 import re
 import os
 import threading
@@ -22,6 +23,29 @@ def items_array(items):
             return [entities[e["value"]] for island in items.get("islands", []) for e in island.get("entries", []) if e.get("value") in entities]
         return list(items.get("items", []))
     return []
+
+
+def persisted_submission_ids(state, thread_id):
+    """Positive receipt evidence from saved native history, never prepared UI turns."""
+    if not state or state.get('id') != thread_id:
+        return set()
+    identifiers = list(state.get('persistedUserMessageIds', []))
+    for turn in state.get('turns', []):
+        if not turn.get('turnId'):
+            continue
+        for item in items_array(turn.get('items')):
+            if item.get('type') == 'userMessage':
+                identifiers.append(item.get('clientId') or item.get('client_id'))
+    result = set()
+    for identifier in identifiers:
+        if not isinstance(identifier, str):
+            continue
+        try:
+            if str(uuid.UUID(identifier)) == identifier:
+                result.add(identifier)
+        except ValueError:
+            pass
+    return result
 
 
 def native_patch_counts(diff):
@@ -215,7 +239,7 @@ class SessionStore:
         labels, matches = self._cli_inputs(query)
         with self._connect() as conn:
             columns = {r[1] for r in conn.execute("PRAGMA table_info(threads)")}
-            fields = [name for name in ("id", "name", "title", "cwd", "updated_at", "updated_at_ms", "recency_at", "recency_at_ms", "model_provider", "model", "originator", "source", "archived", "is_pinned") if name in columns]
+            fields = [name for name in ("id", "name", "title", "cwd", "updated_at", "updated_at_ms", "recency_at", "recency_at_ms", "model_provider", "model", "originator", "source", "archived", "is_pinned", "project_id") if name in columns]
             where = ["archived = ?"]
             params = [int(archived)]
             where.append(self._user_origin_filter(columns))
@@ -242,8 +266,15 @@ class SessionStore:
             priority = 'bridge_session_pinned(id) DESC, ' if pinned else ''
             rows = conn.execute("SELECT " + ",".join(fields) + " FROM threads WHERE " + " AND ".join(where) + " ORDER BY " + priority + recency + " DESC, id DESC LIMIT ? OFFSET ?", params + [limit, offset]).fetchall()
             result = []
+            native_projects = None
+            if 'project_id' in columns and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects'").fetchone():
+                identifiers = list({row['project_id'] for row in rows if row['project_id']})
+                native_projects = {row['id']: dict(row) for row in conn.execute(
+                    'SELECT id,name FROM projects WHERE id IN (' + ','.join('?' for _ in identifiers) + ')', identifiers)} if identifiers else {}
             for row in rows:
                 item = dict(row)
+                if native_projects is not None:
+                    item['_nativeProject'] = native_projects.get(item.get('project_id'))
                 origin = self._origin(item)
                 if self.source == 'cli' and self._matches(item):
                     origin = 'cli'
@@ -618,6 +649,7 @@ class SessionStore:
                 return result
         raw, complete = self._recent_lines(resolved, turn_limit)
         items, turns, current = [], [], None
+        persisted_user_ids = []
         token_usage = None
         for line in raw.splitlines():
             try:
@@ -643,6 +675,11 @@ class SessionStore:
                     current["status"] = "completed" if payload["type"] == "task_complete" else "interrupted"
             elif record.get("type") == "event_msg" and payload.get("type") == "item_completed":
                 item = payload.get("item", {})
+                if (isinstance(item, dict) and item.get('type') == 'UserMessage' and current is not None and
+                        payload.get('thread_id') == thread_id and payload.get('turn_id') == current.get('turnId')):
+                    # The response_item supplies display text; this separate
+                    # persisted event supplies the native acceptance identity.
+                    persisted_user_ids.append(item.get('client_id'))
                 if isinstance(item, dict) and item.get("type") in ("ImageView", "imageView"):
                     # ImageView evidence only exists in event records. Preserve it
                     # so saved history can still render the image after restart.
@@ -678,6 +715,7 @@ class SessionStore:
                 "latestReasoningEffort": next((t['params']['effort'] for t in reversed(turns) if (t.get('params') or {}).get('effort')), None),
                 "modelProvider": meta.get("model_provider"),
                 "latestTokenUsageInfo": token_usage, "tokenUsageFromHistory": True,
+                "persistedUserMessageIds": persisted_user_ids,
                 "turns": turns, "turnsPagination": {"hasLoadedOldest": complete}, "requests": [], "threadRuntimeStatus": {"type": "notLoaded"}}
         with self.history_lock:
             if len(raw) <= 4 * 1024 * 1024:

@@ -19,7 +19,8 @@ async function runBootstrapBrowserChecks(){
   }else{
     check(root.hidden&&!document.getElementById('login').hidden,'Expected recovered login');
     check(!probe.titles.some(title=>title.includes('尚未加载完成')),'Transient failure exposed the terminal page');
-    check(probe.errors.length===0,'Unexpected runtime exception');
+    check(probe.errors.length===(['opaque-error','external-runtime'].includes(state.case)?1:0),'Unexpected runtime exception count');
+    check(probe.rejections.length===(state.case==='external-rejection'?1:0),'Unexpected unhandled rejection count');
     check(probe.loadClipboard===true,'Native load hook ran before the clipboard definition');
     const scripts=[...document.scripts].filter(s=>s.bridgeStartupResource).map(s=>new URL(s.src).pathname).filter(p=>p!=='/message-actions.js');
     check(new Set(probe.executed).size===probe.executed.length,'A script executed more than once');
@@ -38,6 +39,11 @@ async function runBootstrapBrowserChecks(){
   if(state.case==='pair-unknown')check(state.writes.length===1&&state.writes[0]==='/api/pair','Pairing write was replayed');
   else check(state.writes.length===0,'Startup unexpectedly submitted a write');
   if(state.case==='external-script')check(probe.blockedScripts.includes('https://static.cloudflareinsights.com/beacon.min.js'),'Injected analytics was not blocked by CSP');
+  if(state.case==='app-cached-failure'){
+    const app=[...document.scripts].find(s=>s.bridgeStartupResource&&new URL(s.src).pathname==='/app.js');
+    check(app&&new URL(app.src).searchParams.has('bridge_retry'),'Failed script must retry with a fresh cache key');
+    check(probe.executed.filter(path=>path==='/app.js').length===1,'Recovered app executed more than once');
+  }
   return {case:state.case,passed:true,reducedMotion,shellLoads:probe.shellLoads,readyMs:Math.round(probe.readyAt||0),scriptsExecuted:probe.executed.length,
     requests:state.requests,writes:state.writes,firstVisibleMs:Math.round(probe.visibilitySamples.find(s=>s.visible)?.at||0)};
 }

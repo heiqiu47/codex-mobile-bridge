@@ -1,10 +1,33 @@
 """Remotely managed Cloudflare connector, with token kept out of argv and logs."""
 import os
+import logging
+import re
 import subprocess
 import threading
 from pathlib import Path
 
 from bridge.features.notifications.channels import write_json
+
+
+LOG = logging.getLogger(__name__)
+
+
+def transport_failure(line):
+    """Return only finite diagnostic labels, never provider text or config."""
+    if 'ERR' not in line or 'Failed to send ICMP reply' in line:
+        return None
+    cause = 'other'
+    for marker, label in (('connection refused', 'origin_refused'),
+                          ('Unable to reach the origin service', 'origin_unreachable'),
+                          ('timeout', 'timeout'), ('context canceled', 'cancelled'),
+                          ('stream error', 'stream_error'), ('EOF', 'eof')):
+        if marker in line:
+            cause = label
+            break
+    connection = re.search(r'\bconnIndex=(\d{1,2})\b', line)
+    ray = re.search(r'\bcfRay=([a-fA-F0-9]{16,32}(?:-[A-Z]{3})?)\b', line)
+    return {'cause': cause, 'connection': connection[1] if connection else '-',
+            'ray': ray[1] if ray else '-'}
 
 
 class NamedTunnel:
@@ -49,6 +72,10 @@ class NamedTunnel:
                     # their failure alone does not report loss of HTTP ingress.
                     if 'Failed to send ICMP reply' in line:
                         continue
+                    failure = transport_failure(line)
+                    if failure:
+                        LOG.warning('Tunnel transport cause=%s connection=%s ray=%s',
+                                    failure['cause'], failure['connection'], failure['ray'])
                     if 'Registered tunnel connection' in line:
                         delay = 2
                         self.status('connected', '固定隧道已连接；请检测域名是否指向当前网关。')

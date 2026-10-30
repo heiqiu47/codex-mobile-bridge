@@ -20,6 +20,45 @@ export async function readHistoryPage(controller,row,body={},signal=new AbortCon
   if(!Array.isArray(rows)||typeof page.hasMore!=='boolean'||page.hasMore&&(!Number.isSafeInteger(boundary)||cursor&&boundary>=cursor.before))throw Error('历史分页响应无效');
   return {rows,history:{before:page.hasMore?Buffer.from(JSON.stringify({sid:row.sessionId,seq,before:boundary})).toString('base64url'):null,hasMore:page.hasMore}};
 }
+// Retain only display metadata from request headers; never forward the header itself.
+export async function historyRecords(ctx,rows,signal=new AbortController().signal){
+  let selection;
+  const first=rows[0]?.event?.seq,query=ctx.get?.('sessionQuery');
+  const firstRelevant=rows.find(r=>['request/header','assistant/message'].includes(r.event.type));
+  if(first>0&&firstRelevant?.event.type==='assistant/message'&&typeof query?.observeSession==='function'){
+    // The native pager returns a contiguous suffix. Its preceding request may be
+    // outside that page; a cold observation reads it without activating an agent.
+    const observation=await query.observeSession(ctx.sessionId,{signal,projectionMode:'none'});
+    try{for(const event of observation.events){if(event.seq>=first)break;if(event.type==='request/header')selection=event.data?.header?.config;}}
+    finally{observation[Symbol.dispose]();}
+  }
+  const result=[];
+  for(const row of rows){
+    const event=row.event;
+    if(event.type==='request/header'){selection=event.data?.header?.config;continue;}
+    if(!['user/message','assistant/message','tool/call','tool/result','todo/write','turn/start','turn/end'].includes(event.type))continue;
+    if(event.type==='assistant/message'&&selection){
+      const modelSelection={};for(const key of ['provider','model','reasoningEffort'])if(typeof selection[key]==='string')modelSelection[key]=selection[key];
+      result.push({...row,event:{...event,data:{...event.data,modelSelection}}});
+    }else result.push(row);
+  }
+  return result;
+}
+export async function readHistoryImage(ctx,sid,source,signal=new AbortController().signal){
+  if(!Number.isSafeInteger(source?.seq)||source.seq<0||!Number.isSafeInteger(source?.part)||source.part<0||source.part>=4096)throw Error('图片引用无效');
+  const query=ctx.get?.('sessionQuery'),attachments=ctx.get?.('attachments');
+  if(typeof query?.observeSession!=='function'||typeof attachments?.readImage!=='function')throw Error('当前 Harness 未提供历史图片读取接口');
+  const observation=await query.observeSession(sid,{signal,projectionMode:'none'});
+  try{
+    const event=observation.events.find(event=>event.seq===source.seq);
+    if(!event||!['user/message','assistant/message'].includes(event.type))throw Error('原生历史中未找到可预览图片');
+    const message=event.data?.message||event.data,block=message?.content?.[source.part],ref=block?.attachment;
+    if(block?.type!=='image'||!ref||!Number.isSafeInteger(ref.bytes)||ref.bytes<=0||ref.bytes>20*1024*1024)throw Error('原生图片格式或大小不支持预览');
+    const stored=await attachments.readImage(ref,signal);
+    if(!stored?.data||stored.data.byteLength!==ref.bytes||stored.ref?.attachmentId!==ref.attachmentId)throw Error('原生图片标识已变化');
+    return {mediaType:stored.ref.mediaType,data:Buffer.from(stored.data).toString('base64')};
+  }finally{observation[Symbol.dispose]();}
+}
 export async function apply(ctx,config){
   const {token,endpoint}=JSON.parse(await readFile(config.configPath,'utf8'));
   // The gateway accepts at most 100 MiB of decoded images plus small JSON fields.
@@ -30,18 +69,35 @@ export async function apply(ctx,config){
   const list=async()=> (await ctx.sessionController.list({},signal())).items;
   const find=async id=>{const row=(await list()).find(r=>r.sessionId===id);if(!row)throw Error('DeepSeek 会话不存在');return row;};
   const values=row=>row.projections?.values||{};
-  const capabilities=()=>({models:typeof ctx.sessionController.selectModel==='function',effort:typeof ctx.sessionController.selectModel==='function',permissions:typeof ctx.permissionPresets?.set==='function',attachments:typeof ctx.sessionController.prompt==='function',skills:typeof ctx.sessionSkillCatalog?.list==='function',queue:typeof ctx.sessionController.prompt==='function',steer:typeof ctx.sessionController.prompt==='function',fork:typeof ctx.sessionController.fork==='function',archive:typeof ctx.workspaceRegistry.archiveSession==='function'&&typeof ctx.workspaceRegistry.unarchiveSession==='function',unarchive:typeof ctx.workspaceRegistry.archiveSession==='function'&&typeof ctx.workspaceRegistry.unarchiveSession==='function'});
+  const workspaceCapable=()=>typeof ctx.workspaceRegistry.get==='function'&&typeof ctx.workspaceRegistry.list==='function'&&ctx.workspaceRegistry.list().every(w=>Array.isArray(w.sessionIds)&&typeof w.attachSession==='function'&&typeof w.detachSession==='function');
+  const capabilities=row=>({models:typeof ctx.sessionController.selectModel==='function',manualModels:typeof ctx.sessionController.selectModel==='function',manualEffort:typeof ctx.sessionController.selectModel==='function',effort:typeof ctx.sessionController.selectModel==='function',permissions:typeof ctx.permissionPresets?.set==='function',attachments:typeof ctx.sessionController.prompt==='function',skills:typeof ctx.sessionSkillCatalog?.list==='function',queue:typeof ctx.sessionController.prompt==='function',steer:typeof ctx.sessionController.prompt==='function',fork:typeof ctx.sessionController.fork==='function',rename:!!row&&!!ctx.agents?.get?.(row.sessionId)?.session&&typeof ctx.get?.('sessionTitle')?.rename==='function',organization:workspaceCapable(),archive:typeof ctx.workspaceRegistry.archiveSession==='function'&&typeof ctx.workspaceRegistry.unarchiveSession==='function',unarchive:typeof ctx.workspaceRegistry.archiveSession==='function'&&typeof ctx.workspaceRegistry.unarchiveSession==='function'});
+  const membership=row=>{
+    if(!workspaceCapable())return {};
+    const members=ctx.workspaceRegistry.list().filter(w=>w.sessionIds.includes(row.sessionId));
+    return members.length<=1?{projectId:members[0]?.id||null,projectName:members[0]?.title||''}:{};
+  };
   const contextUsage=row=>{
     const pressure=values(row).contextPressure||{},used=pressure.projectedTokens??pressure.pressureTokens,limit=pressure.contextWindow;
     return Number.isFinite(used)&&used>=0&&Number.isFinite(limit)&&limit>0
       ? {usedTokens:used,contextWindow:limit,estimated:Number.isFinite(pressure.projectedTokens)&&pressure.projectedTokens!==pressure.pressureTokens} : null;
   };
   const permissionState=row=>{const catalog=ctx.permissionPresets.catalog(),mode=values(row).permissions?.currentValue||catalog.defaultPreset,option=catalog.options.find(o=>o.value===mode);return {permissionMode:mode,permissionLabel:localized(option?.label||option?.name)||mode};};
-  const normalize=row=>{const v=values(row),m=v.modelSelection?.next||v.modelSelection?.lastUsed||ctx.get?.('agentDefaultModel')?.currentSelection()||{};return {id:row.sessionId,capabilities:capabilities(),title:v.title||'新会话',cwd:row.cwd||'',backend:'deepseek',mode:'desktop',status:typeof row.running==='boolean'?(row.running?'active':'idle'):'unknown',runtimeKnown:typeof row.running==='boolean',updatedAt:row.updatedAt,model:m.provider&&m.model?m.provider+'/'+m.model:'',effort:m.reasoningEffort||'',...permissionState(row),contextUsage:contextUsage(row),requests:[...questions.values()].filter(q=>q.sid===row.sessionId).map(q=>q.public)};};
+  const normalize=row=>{const v=values(row),m=v.modelSelection?.next||v.modelSelection?.lastUsed||ctx.get?.('agentDefaultModel')?.currentSelection()||{};return {id:row.sessionId,capabilities:capabilities(row),title:v.title||'新会话',cwd:row.cwd||'',backend:'deepseek',mode:'desktop',status:typeof row.running==='boolean'?(row.running?'active':'idle'):'unknown',runtimeKnown:typeof row.running==='boolean',updatedAt:row.updatedAt,model:m.provider&&m.model?m.provider+'/'+m.model:'',effort:m.reasoningEffort||'',...membership(row),...permissionState(row),contextUsage:contextUsage(row),requests:[...questions.values()].filter(q=>q.sid===row.sessionId).map(q=>q.public)};};
+  const organization=async row=>{
+    if(!workspaceCapable())throw Error('当前 Harness 未提供已确认的原生项目接口');
+    const cwd=await realpath(row.cwd),projects=[],members=[];
+    for(const workspace of ctx.workspaceRegistry.list()){
+      if(workspace.sessionIds.includes(row.sessionId))members.push(workspace.id);
+      let path;try{path=await realpath(workspace.path);}catch{continue;}
+      if(path===cwd)projects.push({id:workspace.id,title:workspace.title||workspace.path});
+    }
+    if(members.length>1)throw Error('原生项目成员关系不唯一，请先在原客户端核对');
+    return {projectId:members[0]||null,projects,scope:'native',identity:{id:row.sessionId,cwd:row.cwd}};
+  };
   const bounded=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('插件目录读取超时，请重试')),6000);})]);}finally{clearTimeout(timer);}};
   const localized=value=>typeof value==='string'?value:value?.['zh-CN']||value?.zh||value?.en||'';
   const catalog=async(sid,section='all')=>{
-    const row=normalize(await find(sid)),result={currentModel:row.model,currentEffort:row.effort,capabilities:capabilities()};
+    const row=normalize(await find(sid)),result={currentModel:row.model,currentEffort:row.effort,capabilities:row.capabilities};
     if(section!=='plugins'){
       const raw=await bounded(ctx.sessionController.modelCatalog());
       result.models=raw.groups.flatMap(g=>g.models.map(m=>({id:g.id+'/'+m.id,name:m.name,efforts:(m.reasoning?.efforts||[]).map(e=>e.id),defaultEffort:m.reasoning?.defaultEffort})));
@@ -107,12 +163,12 @@ export async function apply(ctx,config){
   function lifecycle(){
       // The runtime registry includes child agents omitted from the chat list.
       // This snapshot is requested only before a native quit/restart.
-      if(typeof ctx.agents.list!=='function')return {connected:true,bridgeRevision:7,complete:false,sessions:[]};
+      if(typeof ctx.agents.list!=='function')return {connected:true,bridgeRevision:8,complete:false,sessions:[]};
       const agents=ctx.agents.list();
-      if(!Array.isArray(agents))return {connected:true,bridgeRevision:7,complete:false,sessions:[]};
+      if(!Array.isArray(agents))return {connected:true,bridgeRevision:8,complete:false,sessions:[]};
       const sessions=agents.map(agent=>({id:agent.id,status:agent.status==='running'?'active':agent.status==='idle'?'idle':'unknown',runtimeKnown:['idle','running'].includes(agent.status),requests:[...questions.values()].filter(q=>q.sid===agent.id).map(q=>q.public)}));
       for(const question of questions.values())if(!sessions.some(s=>s.id===question.sid))sessions.push({id:question.sid,status:'waiting',runtimeKnown:true,requests:[question.public]});
-      return {connected:true,bridgeRevision:7,complete:sessions.every(s=>typeof s.id==='string'&&s.id.length>0),sessions};
+      return {connected:true,bridgeRevision:8,complete:sessions.every(s=>typeof s.id==='string'&&s.id.length>0),sessions};
   }
   const idle=runtime=>runtime.complete&&runtime.sessions.every(s=>s.runtimeKnown&&s.status==='idle'&&!s.requests.length);
   const quitFailed=error=>{quitting=false;ctx.logger?.error?.('Harness native quit failed: '+String(error.message||error));};
@@ -135,7 +191,7 @@ export async function apply(ctx,config){
       quitting=true;
       return {status:'accepted',pid:process.pid,generation};
     }
-    if(action==='status')return {connected:true,bridgeRevision:7,projectDirectories:true,nativeQuit:typeof ctx.get?.('appExit')==='function',configured:(await account()).status==='configured'};
+    if(action==='status')return {connected:true,bridgeRevision:9,...config.plugin?{plugin:config.plugin}:{},projectDirectories:true,nativeQuit:typeof ctx.get?.('appExit')==='function',configured:(await account()).status==='configured'};
     if(action==='account')return account(sid);
     if(action==='list')return {connected:true,sessions:(await list()).filter(r=>r.origin!=='subagent').map(r=>({...normalize(r),archived:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(r.sessionId)})).sort((a,b)=>Number(a.archived)-Number(b.archived))};
     if(action==='projects'){const seen=new Map();for(const row of await list())if(row.cwd)seen.set(row.cwd,{key:row.cwd,cwd:row.cwd,name:row.cwd.replaceAll('\\','/').split('/').pop()});for(const w of ctx.workspaceRegistry.list())seen.set(w.path,{key:w.path,cwd:w.path,name:w.title||w.name||w.path,workspaceId:w.id});return {projects:[...seen.values()]};}
@@ -169,7 +225,35 @@ export async function apply(ctx,config){
       if(typeof child?.sessionId!=='string'||!child.sessionId||child.sessionId===sid)throw Error('Harness 尚未确认分支结果，请在桌面核对');
       return {status:'ready',result:{id:child.sessionId}};
     }
-    if(action==='rename'){const title=String(body.title||'').trim();if(!title||title.length>120)throw Error('标题为 1–120 字');await ctx.sessionController.rename({sessionId:sid,title});return {status:'accepted'};}
+    if(action==='rename'){
+      const title=typeof body.title==='string'?body.title.trim():'';
+      if(!title||[...title].length>120||/[\u0000-\u001f\u007f]/u.test(body.title))throw Error('标题为 1–120 字，不能包含控制字符');
+      // sessionController.rename resumes cold sessions. Rename only the exact
+      // already-live native session through the title service instead.
+      const agent=ctx.agents?.get?.(sid),titles=ctx.get?.('sessionTitle');
+      if(!agent?.session||agent.session.id!==sid||typeof titles?.rename!=='function')return {notSent:true,message:'当前会话未加载，未执行原生改名'};
+      const accepted=titles.rename(agent.session,title),fresh=await find(sid);
+      if(accepted?.title!==title||values(fresh).title!==title||fresh.cwd!==row.cwd)throw Error('改名结果待核对，请检查原客户端；不会重复提交');
+      return {status:'confirmed',scope:'native',result:{id:sid,title}};
+    }
+    if(action==='organization'){
+      const before=await organization(row);
+      if(!body.operation||body.operation==='read')return before;
+      if(body.operation!=='set-project'||body.projectId!==null&&typeof body.projectId!=='string')throw Error('项目设置无效');
+      if(body.projectId!==null&&!before.projects.some(w=>w.id===body.projectId))return {notSent:true,message:'项目必须与会话原工作目录一致'};
+      if(before.projectId!==body.projectId){
+        // Tauri variants can relax attachSession's cwd check. Enforce the
+        // original directory here even when the native registry accepts more.
+        const target=body.projectId===null?null:ctx.workspaceRegistry.get(body.projectId);
+        if(target&&await realpath(target.path)!==await realpath(row.cwd))return {notSent:true,message:'项目目录已变化，未执行修改'};
+        if(body.projectId!==null&&!target)return {notSent:true,message:'项目已不存在，未执行修改'};
+        if(target)await target.attachSession(sid);
+        if(before.projectId)await ctx.workspaceRegistry.get(before.projectId).detachSession(sid);
+      }
+      const fresh=await organization(await find(sid));
+      if(fresh.projectId!==body.projectId||fresh.identity.cwd!==row.cwd)throw Error('项目修改结果待核对，请检查原客户端；不会重复提交');
+      return {...fresh,status:'confirmed'};
+    }
     if(action==='archive-state')return {...normalize(row),archived:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(sid),_archiveFlags:{[sid]:(ctx.workspaceRegistry.archivedSessionIds||[]).includes(sid)},archiveSafe:row.running===false&&![...questions.values()].some(q=>q.sid===sid)};
     if(action==='archive'){
       if(typeof body.archived!=='boolean'||!capabilities().archive)throw Error('当前接入尚未确认原生归档和恢复能力');
@@ -193,10 +277,11 @@ export async function apply(ctx,config){
       return {status:'accepted'};
     }
     if(action==='open')return {ok:true};
-    if(action==='detail'){const page=await readHistoryPage(ctx.sessionController,row,body,signal());return {session:normalize(row),capabilities:capabilities(),records:page.rows.filter(r=>['user/message','assistant/message','tool/call','tool/result','todo/write','turn/start','turn/end'].includes(r.event.type)),history:page.history,steps:values(row).todos||[],connected:true};}
+    if(action==='image')return readHistoryImage(ctx,sid,body.source,signal());
+    if(action==='detail'){const page=await readHistoryPage(ctx.sessionController,row,body,signal());return {session:normalize(row),capabilities:capabilities(row),records:await historyRecords({sessionId:sid,get:name=>ctx.get?.(name)},page.rows,signal()),history:page.history,steps:values(row).todos||[],connected:true};}
     if(action==='catalog')return catalog(sid,body.section||'all');
     if(action==='access'){const presets=ctx.permissionPresets.catalog(),options=presets.options;if(body.mode){if(!options.some(o=>o.value===body.mode))throw Error('权限选项无效');await ctx.sessionController.create({sessionId:sid,cwd:row.cwd});const agent=ctx.agents.get(sid);if(!agent)throw Error('当前会话没有活动智能体');ctx.permissionPresets.set(agent.session,body.mode);}return {status:'accepted',mode:body.mode||values(row).permissions?.currentValue||presets.defaultPreset,modes:options.map(o=>o.value),options};}
-    if(action==='settings'){const c=await catalog(sid,'models'),selected=body.model||c.currentModel,m=c.models.find(m=>m.id===selected);if(!m)throw Error('请选择可用模型');const effort=body.effort??(selected===c.currentModel?c.currentEffort:m.defaultEffort);if(effort&&!m.efforts.includes(effort))throw Error('该模型不支持所选思考强度');const slash=selected.indexOf('/'),result=await ctx.sessionController.selectModel({sessionId:sid,provider:selected.slice(0,slash),model:selected.slice(slash+1),reasoningEffort:effort||undefined}),actual=result.selected;return {status:'accepted',model:actual.provider+'/'+actual.model,effort:actual.reasoningEffort||''};}
+    if(action==='settings'){const c=body.manualModel===true?{models:[],currentModel:'',currentEffort:''}:await catalog(sid,'models'),selected=body.model||c.currentModel,m=c.models.find(m=>m.id===selected);if(typeof selected!=='string'||!/^([^\s/\x00-\x1f\x7f]{1,128})\/([^\s\x00-\x1f\x7f]{1,256})$/.test(selected))throw Error('请输入 provider/model 格式的模型名称');const effort=body.effort??(selected===c.currentModel?c.currentEffort:m?.defaultEffort);if(effort&&(typeof effort!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(effort)))throw Error('请输入有效的思考强度');if(effort&&body.manualEffort!==true&&m&&!m.efforts.includes(effort))throw Error('该模型不支持所选思考强度');const slash=selected.indexOf('/'),result=await ctx.sessionController.selectModel({sessionId:sid,provider:selected.slice(0,slash),model:selected.slice(slash+1),reasoningEffort:effort||undefined}),actual=result.selected;if(!actual||actual.provider+'/'+actual.model!==selected||(body.effort&&actual.reasoningEffort!==body.effort))throw Error('Harness 未确认模型或思考强度设置，请刷新检查');return {status:'accepted',model:actual.provider+'/'+actual.model,effort:actual.reasoningEffort||''};}
     if(action==='stop'){await ctx.sessionController.cancel({sessionId:sid});return {status:'accepted'};}
     if(action==='send'){
       if(body.attachments?.length||body.resolvedFiles?.length)throw Error('此应用的消息附件仅支持图片；其他文件请使用文件传输。');
@@ -215,7 +300,7 @@ export async function apply(ctx,config){
     const credential=String(req.headers.authorization||'').replace(/^Bearer /,'');const a=Buffer.from(credential),b=Buffer.from(token);
     if(req.method!=='POST'||req.url!=='/mobile'||req.headers.origin||a.length!==b.length||!timingSafeEqual(a,b)){res.writeHead(403);res.end();return;}
     let size=0,chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxRequestBytes)throw Error('请求过大');chunks.push(chunk);}const {action,sid,body={}}=JSON.parse(Buffer.concat(chunks));
-    const mutating=['create','fork','rename','archive','stop','send','respond','settings'].includes(action)||(action==='access'&&Boolean(body?.mode));
+    const mutating=['create','fork','rename','archive','stop','send','respond','settings'].includes(action)||(action==='access'&&Boolean(body?.mode))||(action==='organization'&&body?.operation==='set-project');
     if(mutating&&quitting)throw Error('Harness 正在退出，请稍后重试');
     let result;
     if(mutating)activeMutations++;

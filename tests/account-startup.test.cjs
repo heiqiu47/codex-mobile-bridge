@@ -15,7 +15,7 @@ async function fixture(read,kind='chatgpt',catalog=null,gatewayLanguage,accountS
   }
   const storage=()=>({getItem(){return null;},setItem(){},clear(){}});
   const response=(data,status=200)=>({ok:status===200,status,json:async()=>data});
-  const context=vm.createContext({ClientNavigation:class{constructor(){this.provider="codex";this.clients=[];}async refresh(){}async openChatLink(hash){assert.equal(hash,'','This fixture enters without a chat deep link');return false;}},DesktopSessionsView:class{bindListCache(){}previewCachedList(){return false;}clear(){}},Workbench:class{open(){}reset(){}setThumbnails(){}relabel(){}},Event:class{constructor(type){this.type=type;}},navigator:{userAgent:'test'},Date,Option:function(text,value){return {...node('option'),textContent:text,value};},document:{addEventListener(){},dispatchEvent(){},documentElement:{classList:{contains(){return false;}}},getElementById:id=>nodes.get(id),querySelector:()=>({classList:{toggle(){}}}),querySelectorAll:()=>[],createElement:node},
+  const context=vm.createContext({ClientNavigation:class{constructor(){this.provider="codex";this.clients=[];}async refresh(){}async openChatLink(hash){assert.equal(hash,'','This fixture enters without a chat deep link');return false;}},DesktopSessionsView:class{bindListCache(){}previewCachedList(){return false;}clear(){}},Workbench:class{open(){}reset(){}setThumbnails(){}relabel(){}},AbortController,Event:class{constructor(type){this.type=type;}},navigator:{userAgent:'test'},Date,Option:function(text,value){return {...node('option'),textContent:text,value};},document:{addEventListener(){},dispatchEvent(){},documentElement:{classList:{contains(){return false;}}},getElementById:id=>nodes.get(id),querySelector:()=>({classList:{toggle(){}}}),querySelectorAll:()=>[],createElement:node},
     window:{addEventListener:(name,fn)=>events[name]=fn},localStorage:storage(),sessionStorage:storage(),
     location:{hash:'',pathname:'/',search:''},history:{state:null,replaceState(state){this.state=state;},pushState(state){this.state=state;},back(){}},
     setTimeout(fn,delay){timers.set(++timerId,{fn,delay});return timerId;},clearTimeout(id){timers.delete(id);},setInterval(fn,delay){intervals.push({fn,delay});},
@@ -406,4 +406,85 @@ test('large model lists resolve display metadata with linear work',async()=>{
  const reads=ui.run("var idReads=0;for(const row of catalogData.models){const id=row.id;Object.defineProperty(row,'id',{get(){idReads++;return id;}});}renderModelChoices();idReads");
  assert.ok(reads<=catalog.models.length*3,'rendering should scale with the model count');
  assert.equal(ui.nodes.get('model-options').children.length,1001);
+});
+
+test('authenticated notification renders its target before client scans and account refreshes',async()=>{
+ const ui=await fixture(r=>r(official));
+ const opening=ui.run(`
+  window.routeOrder=[];
+  location.hash='#target';
+  clientNavigation.chatTarget=hash=>hash==='#target'?{id:'target',host:'local',provider:'codex'}:null;
+  clientNavigation.openChatLink=()=>{window.routeOrder.push('chat');return new Promise(resolve=>window.finishRoute=resolve);};
+  clientNavigation.refresh=async()=>{window.routeOrder.push('clients');};
+  accountsPanel.refresh=async()=>{window.routeOrder.push('accounts');};
+  enter({authenticated:true,csrf:'fixture',enabledClients:['codex']});
+ `);
+ await new Promise(setImmediate);
+ assert.deepEqual(Array.from(ui.run('window.routeOrder')),['chat']);
+ ui.run('window.finishRoute()');await opening;
+ assert.deepEqual(Array.from(ui.run('window.routeOrder')),['chat']);
+ const entry=[...ui.timers.entries()].find(([,timer])=>timer.delay===0);assert.ok(entry);
+ await entry[1].fn();await new Promise(setImmediate);
+ assert.deepEqual(Array.from(ui.run('window.routeOrder')).slice(0,3),['chat','clients','accounts']);
+});
+
+test('a notification for the current Codex chat retains its timeline and draft',async()=>{
+ const ui=await fixture(r=>r(official));
+ ui.run(`currentId='11111111-1111-4111-8111-111111111111';currentHost='local';state={connected:true};
+  window.selections=[];workbench.select=value=>window.selections.push(value);
+  chatTimeline={abort:new AbortController(),dispose(){throw Error('timeline disposed');}};`);
+ ui.nodes.get('message').value='unsent draft';
+ ui.nodes.get('chat').hidden=true;
+ await ui.run(`openChat('11111111-1111-4111-8111-111111111111','local')`);
+
+ assert.equal(ui.nodes.get('message').value,'unsent draft');
+ assert.deepEqual(Array.from(ui.run('window.selections')),['chat']);
+});
+
+test('native chat routing rejects login screens and malformed targets',async()=>{
+ const ui=await fixture(r=>r(official));
+ ui.run(`clientNavigation.chatTarget=hash=>hash==='#target'?{id:'target',host:'local'}:null;
+  window.nativeRoutes=[];clientNavigation.openChatLink=async hash=>window.nativeRoutes.push(hash);`);
+ assert.equal(ui.run(`window.BridgeOpenChatLink('#invalid')`),false);
+ ui.nodes.get('app').hidden=true;
+ assert.equal(ui.run(`window.BridgeOpenChatLink('#target')`),false);
+ ui.nodes.get('app').hidden=false;
+ assert.equal(ui.run(`window.BridgeOpenChatLink('#target')`),true);
+ assert.deepEqual(Array.from(ui.run('window.nativeRoutes')),['#target']);
+});
+
+test('opening a chat reads its timeline before starting model or skill catalogs',async()=>{
+ const ui=await fixture(r=>r(official),'chatgpt',{models:[],skills:[]});
+ ui.nodes.get('app').classList.contains=()=>true;
+ const opening=ui.run(`
+  workbench.open=(id,host)=>workbench.current={id,host,active:'chat'};
+  workModes.open=()=>{};attachments.open=()=>{};
+  listRows=[{id:'11111111-1111-4111-8111-111111111111',host:'local',access:{source:'desktop',canChangeModel:true,canSelectSkills:true}}];
+  globalThis.ChatTimeline=class{
+   constructor(){this.abort=new AbortController();}
+   start(){window.timelineStarted=true;return new Promise(resolve=>window.rendered=resolve);}
+  };
+  openChat('11111111-1111-4111-8111-111111111111','local');
+ `);
+ if(!ui.run('window.timelineStarted'))await opening;
+ assert.equal(ui.run('window.timelineStarted'),true);
+ assert.equal(ui.requests.some(url=>url.includes('/catalog')),false);
+ assert.equal([...ui.timers.values()].some(timer=>timer.delay===0),false);
+ ui.run('window.rendered()');await opening;
+ assert.equal(ui.requests.some(url=>url.includes('/catalog')),false);
+ ui.run('scheduleCatalog();scheduleCatalog()');
+ const scheduled=[...ui.timers.values()].filter(timer=>timer.delay===0);assert.equal(scheduled.length,1);
+ await scheduled[0].fn();await new Promise(setImmediate);
+ assert.equal(ui.requests.filter(url=>url.includes('/catalog?kind=models')).length,1);
+ assert.equal(ui.requests.filter(url=>url.includes('/catalog?kind=skills')).length,1);
+ ui.run('catalogStarted=false;scheduleCatalog();chatOpenGeneration++');
+ const stale=[...ui.timers.values()].filter(timer=>timer.delay===0).at(-1);await stale.fn();
+ assert.equal(ui.requests.filter(url=>url.includes('/catalog?')).length,2);
+});
+
+test('deferred startup refresh is discarded after leaving the authenticated page',async()=>{
+ const ui=await fixture(r=>r(official));
+ await ui.run("location.hash='#target';clientNavigation.chatTarget=()=>({id:'target'});clientNavigation.openChatLink=async()=>true;enter({authenticated:true,enabledClients:['codex']})");
+ ui.run("clientNavigation.refresh=()=>{throw Error('stale refresh')};csrf='';");
+ const timer=[...ui.timers.values()].find(timer=>timer.delay===0);assert.ok(timer);await timer.fn();
 });

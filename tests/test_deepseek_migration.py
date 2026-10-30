@@ -208,7 +208,8 @@ class DeepSeekMigrationTests(unittest.TestCase):
         source.write_bytes(content)
         original_sha = hashlib.sha256
         for predecessor in (*setup.PREVIOUS_WORKSPACE_SOURCES, *setup.PREVIOUS_ARCHIVE_SOURCES,
-                            *setup.PREVIOUS_DISCONNECT_SOURCES):
+                            *setup.PREVIOUS_DISCONNECT_SOURCES, *setup.PREVIOUS_MESSAGE_MODEL_SOURCES,
+                            *setup.PREVIOUS_SESSION_METADATA_SOURCES):
             source.write_bytes(content)
             before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
                       for path in (*self.old.directory.iterdir(), self.profile)}
@@ -225,15 +226,31 @@ class DeepSeekMigrationTests(unittest.TestCase):
                              {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before if p != source})
             self.assertFalse(self.new_path.exists())
 
+    def test_compatible_predecessors_remain_usable_without_silent_source_updates(self):
+        from bridge.clients.deepseek import setup
+        source = self.old.directory/'mobile-host.mjs'
+        content = b'// fixture for a verified compatible predecessor'
+        source.write_bytes(content)
+        original_sha = hashlib.sha256
+        for predecessor in setup.COMPATIBLE_OFFICIAL_SOURCES:
+            before = source.read_bytes()
+            def digest(value):
+                return Mock(hexdigest=lambda: predecessor) if value == content else original_sha(value)
+            with patch.object(setup.hashlib, 'sha256', side_effect=digest):
+                adapter = DeepSeek(self.new_path, self.home)
+                self.assertTrue(adapter.discover_existing()['reused'])
+                self.assertFalse(adapter.discover_existing()['updateRequired'])
+                self.assertEqual(source.read_bytes(), before)
+
     def test_current_source_lf_and_crlf_are_reused_as_current_without_writes(self):
         source = self.old.directory/'mobile-host.mjs'
         current = Path(__file__).resolve().parents[1]/'bridge/clients/deepseek/host.mjs'
         lf = current.read_bytes().replace(b'\r\n', b'\n')
         self.assertIn(b'\n', lf)
         self.assertEqual(hashlib.sha256(lf).hexdigest(),
-                         '74c6a26a7a8eca9a6dfe5e6256f595a174c58b3645d3bd15497c9877d1422938')
+                         '5479ae9f1e78bd7bf7ce61478a6427025b47964593dbc830b0845a1ef4f0da5a')
         self.assertEqual(hashlib.sha256(lf.replace(b'\n', b'\r\n')).hexdigest(),
-                         '740533827d3817803605c490bd95f3ffbff1bc841cf14f99820ebcf0db14ab4b')
+                         '32fd056cd0840884610a223a41bb690c4f3e244c3af7bdb7fc9c65c84d19b3db')
         for content in (lf, lf.replace(b'\n', b'\r\n')):
             with self.subTest(line_ending='CRLF' if b'\r\n' in content else 'LF'):
                 source.write_bytes(content)

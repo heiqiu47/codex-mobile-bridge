@@ -1,0 +1,24 @@
+{
+  "repositoryName": "dsh-codex-mobile-bridge",
+  "remotePublished": false,
+  "commit": "a9c8e28f59c2ad7c7f83560034a44156bb7e14a6",
+  "files": {
+    "host.mjs": "bridge/clients/deepseek/host.mjs",
+    "index.mjs": "bridge/clients/deepseek/plugin/index.mjs",
+    "cordis.patch.yml": "bridge/clients/deepseek/plugin/cordis.patch.yml",
+    "LICENSE": "LICENSE",
+    "LICENSE.coding-mobile": "bridge/clients/LICENSE.coding-mobile"
+  },
+  "manifestFields": [
+    "name",
+    "version",
+    "type",
+    "main",
+    "license",
+    "files",
+    "dsh",
+    "engines",
+    "dshBridge"
+  ],
+  "repository": "https://github.com/try2love/dsh-codex-mobile-bridge"
+}

@@ -138,7 +138,10 @@ class LocalAccessTests(unittest.TestCase):
                     probe.bind(('0.0.0.0', 0));port = probe.getsockname()[1]
                 (data/'desktop.json').write_text(json.dumps({'port': port}), encoding='utf8')
                 with (data/'log').open('wb') as log:
-                    child = subprocess.Popen([sys.executable, '-B', str(ROOT/'run.py'), '--lan', '--config', str(config), '--codex-home', folder, '--port', str(port)], stdout=log, stderr=log)
+                    # Listener lifecycle does not need a discovered native account runtime.
+                    child = subprocess.Popen([sys.executable, '-B', str(ROOT/'run.py'), '--lan', '--config', str(config),
+                                              '--codex-home', folder, '--codex-bin', str(data/'absent-codex'),
+                                              '--port', str(port)], stdout=log, stderr=log)
                     try:
                         desktop = Desktop(data)
                         end = time.monotonic() + 15
@@ -162,6 +165,7 @@ class LocalAccessTests(unittest.TestCase):
                         request_stop(data)
                         child.wait(timeout=10)
                         self.assertEqual(child.returncode, 0)
+                        self.assertFalse((data/'state_5.sqlite').exists())
                         for address in ['127.0.0.1'] + selected:
                             with socket.socket() as probe:
                                 probe.settimeout(1)

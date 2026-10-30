@@ -34,6 +34,7 @@ public final class GatewayURL {
         if(query!=null&&!query.matches("client=(codex|claude|deepseek)"))throw new Exception("聊天链接无效");
         String raw=value.split("[?#]",2)[0];return origin(raw);
     }
+    public static boolean isChatPage(String url,String base){try{return base.equals(targetBase(url));}catch(Exception invalid){return false;}}
     public static String chat(String origin,String thread,String host)throws Exception {
         boolean desktop="desktop:claude".equals(host)||"desktop:deepseek".equals(host);
         if(thread==null||host==null||thread.isEmpty()||thread.length()>512||host.length()>256||(thread+host).matches("(?s).*[\\x00-\\x1f\\x7f].*")||(!desktop&&(host.startsWith("desktop:")||!thread.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))))throw new Exception("聊天链接无效");

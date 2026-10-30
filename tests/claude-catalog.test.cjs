@@ -50,11 +50,11 @@ const source=fs.readFileSync('bridge/clients/claude/connector.js','utf8').replac
   window['claude.settings'].Custom3pSetup.bootstrapStateStore.getState=async()=>({modelSelectorCatalog:[{id:'code',models:[]}]});
   const empty=await invoke('code','mobileCatalog',['code']);
   assert.equal(empty.result.source,'desktop-catalog');assert.equal(empty.result.models.length,0);
-  assert.equal(empty.result.capabilities.models,false);
+  assert.equal(empty.result.capabilities.models,true);assert.equal(empty.result.capabilities.manualEffort,true);
   assert.equal(empty.result.maxRequestBytes,10485760);
   delete window['claude.settings'];
   const fallback=await invoke('code','mobileCatalog',['code']);
-  assert.equal(fallback.result.source,'session-history');assert.equal(fallback.result.capabilities.models,false);
+  assert.equal(fallback.result.source,'session-history');assert.equal(fallback.result.capabilities.models,true);
   const unknownAccount=await invoke('code','mobileAccount');
   assert.equal(unknownAccount.result.status,'unknown');assert.equal(unknownAccount.result.current,null);
   assert.equal(unknownAccount.result.groups[0].source,'session-history');

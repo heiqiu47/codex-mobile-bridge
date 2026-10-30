@@ -13,6 +13,10 @@ async function fixture({missing='',auth='anonymous',hash='',language='zh',pairPe
     const n=node(match[1]);n.hidden=/\bhidden\b/.test(match[2]);nodes.set(match[3],n);
   }
   nodes.get('bridge-shell-style').sheet={cssRules:[{}]};
+  const startupScripts=[...html.matchAll(/<script\b([^>]*)>/g)].map(([,attrs])=>{
+    const attributes=Object.fromEntries([...attrs.matchAll(/([\w-]+)="([^"]*)"/g)].map(([,key,value])=>[key,value]));
+    return {src:attributes.src,dataset:{bridgeFeature:attributes['data-bridge-feature']},getAttribute:key=>attributes[key]};
+  });
   let current=new URL('https://gateway.test/?view=phone'+hash);
   const location={get href(){return current.href;},get hash(){return current.hash;},get pathname(){return current.pathname;},get search(){return current.search;},host:current.host,reload(){reloads++;}};
   const cacheIdentity='a'.repeat(64),cachedRow={id:'cached',title:'Cached chat',backend:'code',cwd:'/work',updatedAt:9};
@@ -21,8 +25,8 @@ async function fixture({missing='',auth='anonymous',hash='',language='zh',pairPe
   const dispatch=(name,event)=>{for(const fn of listeners.get(name)||[])fn(event);};
   const response=data=>({ok:true,status:200,json:async()=>data});
   const context=vm.createContext({window,location,history:{replaceState(_a,_b,url){current=new URL(url,current);}},localStorage:storage,sessionStorage:storage,navigator:{userAgent:'fixture'},
-    document:{readyState:'complete',documentElement:{classList:node().classList,dataset:{}},getElementById:id=>nodes.get(id),addEventListener(){},dispatchEvent(){},querySelectorAll(){return [];},querySelector(){return {classList:{toggle(){}}};},createElement:node},
-    AbortController,Event:class{},CustomEvent:class{},Option:function(text,value){return {...node('option'),textContent:text,value};},
+    document:{currentScript:{src:'/bootstrap.js'},readyState:'complete',documentElement:{classList:node().classList,dataset:{}},getElementById:id=>nodes.get(id),addEventListener(){},dispatchEvent(){},querySelectorAll(selector){return selector==='script[data-bridge-src], #bridge-clipboard-script'?startupScripts:[];},querySelector(){return {classList:{toggle(){}}};},createElement:node},
+    AbortController,URL,Event:class{},CustomEvent:class{},Option:function(text,value){return {...node('option'),textContent:text,value};},
     Workbench:class{constructor(){this.current=null;this.panel={querySelector(){return null;}};this.backCalls=0;this.locateCancels=0;}get splitMode(){return false;}get isFileVisible(){return !!this.current&&this.current.active!=='chat';}back(){this.backCalls++;return workbenchBack.call(this);}cancelLocate(){this.locateCancels++;}directory(session,_tab,dir){session.directory=dir;}select(id){this.current.active=id;}rememberScroll(){}stopThumbnails(){}reset(){}relabel(){}},DesktopSessionsView:class{bindListCache(identity,host){this.snapshot=storage.getItem(`desktop-list-v1:${identity}:${host}:${cachedProvider}`);}previewCachedList(provider){if(provider!==cachedProvider||!this.snapshot)return false;const row=node('button');row.textContent=JSON.parse(this.snapshot).rows[0].title;row.disabled=true;row.dataset.provider=provider;nodes.get('app').append(row);navigation.push('preview');return true;}refresh(){}clear(){}},ClientNavigation:class{constructor(){this.provider=storage.getItem('bridge-client')||'codex';}paint(){navigation.push('paint');}refresh(){navigation.push('refresh');if(navigationPending)return new Promise(resolve=>{releaseNavigation=()=>{if(allDisabled)this.provider=null;resolve();};});if(allDisabled)this.provider=null;}async openChatLink(){navigation.push('open');}acknowledgeList(){}},
     setTimeout(fn,delay){timers.set(++clock,{fn,delay});return clock;},clearTimeout(id){timers.delete(id);},setInterval(){},clearInterval(){},
     fetch:async(url,options={})=>{
@@ -42,7 +46,7 @@ async function fixture({missing='',auth='anonymous',hash='',language='zh',pairPe
   if(missing!=='bootstrap')run('web/shared/bootstrap.js');
   const dependencies=['web/hosts/environment.js','web/hosts/browser-navigation.js','web/shared/i18n.js','web/features/chat/list-sync.js','web/features/accounts/account.js','web/features/accounts/accounts.js','web/features/chat/modes.js','web/features/chat/attachments.js','web/features/chat/activity.js','web/features/chat/fast-mode.js','web/features/chat/message-actions.js','web/features/chat/permissions.js'];
   for(const file of dependencies){if(file.endsWith('/'+missing+'.js'))continue;run(file);}
-  try{run('web/shell/app.js');}catch(e){error=e;dispatch('error',{target:window,message:e.message});}
+  try{run('web/shell/app.js');}catch(e){error=e;dispatch('error',{target:window,filename:'https://gateway.test/app.js',error:e,message:e.message});}
   await new Promise(setImmediate);
   return {nodes,requests,writes,location,error,timers,listeners,dispatch,window,navigation,releaseNavigation(){releaseNavigation?.();},
     get reloads(){return reloads;},timeout(){for(const [id,timer] of timers)if(timer.delay===30000){timers.delete(id);timer.fn();break;}}};
@@ -92,7 +96,7 @@ test('unmanaged resource failures are ignored and rejection diagnostics redact u
   const ui=await fixture({auth:'pending'});
   ui.dispatch('error',{target:{tagName:'SCRIPT',src:'https://gateway.test/i18n.js?private-query'}});
   assert.equal(ui.nodes.get('bootstrap-diagnostics').textContent,'');
-  ui.dispatch('unhandledrejection',{reason:{name:'private-error-name',message:'private-rejection'}});
+  ui.dispatch('unhandledrejection',{reason:{name:'private-error-name',message:'private-rejection',sourceURL:'https://gateway.test/app.js?private-query'}});
   assert.match(ui.nodes.get('bootstrap-diagnostics').textContent,/Error/);
   assert.doesNotMatch(ui.nodes.get('bootstrap-message').textContent,/private-/);
   assert.doesNotMatch(ui.nodes.get('bootstrap-diagnostics').textContent,/private-/);

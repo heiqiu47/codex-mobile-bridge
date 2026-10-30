@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from bridge.clients.codex.ipc import IPCError
+from bridge.clients.errors import TaskStateUnavailable
 from bridge.app.service import Bridge
 from bridge.features.sessions.store import SessionStore, StoreUnavailable
 
@@ -68,6 +69,70 @@ class DesktopIdle(unittest.TestCase):
         self.assertFalse(any(call[0] == 'follow' for call in self.calls))
         self.bridge.store.history.assert_not_called()
 
+    def test_previous_owner_missing_is_unknown_not_an_unloaded_historical_chat(self):
+        self.owners[('local', 'desktop-only')] = IPCError('no-client-found')
+        self.bridge.live['desktop-only'] = SimpleNamespace(owner='previous-owner', connected=False)
+        with self.assertRaises(TaskStateUnavailable):
+            self.bridge.assert_desktop_idle()
+
+    def test_unavailable_owner_or_snapshot_does_not_hide_later_busy_owner(self):
+        self.bridge.store.lifecycle_threads.return_value = [{'id': 'a-unavailable'}, {'id': 'z-busy'}]
+        self.bridge.live['a-unavailable'] = SimpleNamespace(owner='previous-owner', connected=False)
+        self.states[('local', 'z-busy')] = {'id': 'z-busy', 'threadRuntimeStatus': {'type': 'active'}}
+        clock = [0.0]
+        metadata = Mock(result=Mock(return_value=self.bridge.store.lifecycle_threads.return_value))
+        executor = Mock(submit=Mock(return_value=metadata))
+        class SnapshotCondition(threading.Condition):
+            def wait_for(self, predicate, timeout=None):
+                if predicate(): return True
+                clock[0] += timeout
+                return False
+        for owner, state in ((IPCError('no-client-found'), None), (IPCError('timed out'), None),
+                             ('', None), ('owner', None), ('owner', {'id': 'a-unavailable'})):
+            with self.subTest(owner=str(owner), state=state):
+                clock[0] = 0.0
+                self.calls.clear()
+                self.owners[('local', 'a-unavailable')] = owner
+                self.states[('local', 'a-unavailable')] = state
+                with patch('bridge.app.service.time', SimpleNamespace(monotonic=lambda: clock[0])), \
+                     patch('bridge.app.service.ThreadPoolExecutor', return_value=executor), \
+                     patch('bridge.app.service.threading', SimpleNamespace(Condition=SnapshotCondition)), \
+                     self.assertRaisesRegex(ValueError, '任务运行') as failure:
+                    self.bridge.assert_desktop_idle(timeout=.2)
+                self.assertNotIsInstance(failure.exception, TaskStateUnavailable)
+                self.assertIn(('follow', 'local', 'z-busy', 'owner'), self.calls)
+
+    def test_slow_remote_metadata_reserves_time_for_local_busy_check(self):
+        clock = [0.0]
+        remote = SimpleNamespace(store=SimpleNamespace(lifecycle_threads=Mock()))
+        self.bridge.hosts.lifecycle_hosts.return_value = {'remote:test': {'alias': 'test'}}
+        self.bridge.remote_bridges['remote:test'] = remote
+        self.states[('local', 'desktop-only')] = {'id': 'desktop-only', 'threadRuntimeStatus': {'type': 'active'}}
+        local_read = Mock(result=Mock(return_value=[{'id': 'desktop-only'}]))
+        def time_out(*, timeout):
+            clock[0] += timeout
+            raise TimeoutError('remote metadata did not arrive')
+        remote_read = Mock(result=Mock(side_effect=time_out))
+        executor = Mock(submit=Mock(side_effect=[local_read, remote_read]))
+        # Advance the operation's clock at the remote timeout rather than
+        # depending on a loaded CI runner scheduling threads within 200 ms.
+        with patch('bridge.app.service.ThreadPoolExecutor', return_value=executor), \
+             patch('bridge.app.service.time', SimpleNamespace(monotonic=lambda: clock[0])):
+            with self.assertRaisesRegex(ValueError, '任务运行') as failure:
+                self.bridge.assert_desktop_idle(timeout=20)
+            self.assertNotIsInstance(failure.exception, TaskStateUnavailable)
+        self.assertEqual(clock[0], 10)
+        self.assertIn(('follow', 'local', 'desktop-only', 'owner'), self.calls)
+
+    def test_failed_metadata_still_checks_known_live_ids_with_fresh_state(self):
+        self.bridge.store.lifecycle_threads.side_effect = OSError('temporary database failure')
+        self.bridge.live['known-session'] = SimpleNamespace(owner='previous-owner', connected=False)
+        self.states[('local', 'known-session')] = {'id': 'known-session', 'threadRuntimeStatus': {'type': 'active'}}
+        with self.assertRaisesRegex(ValueError, '任务运行') as failure:
+            self.bridge.assert_desktop_idle()
+        self.assertNotIsInstance(failure.exception, TaskStateUnavailable)
+        self.assertIn(('follow', 'local', 'known-session', 'owner'), self.calls)
+
     def test_other_owner_errors_or_missing_identity_never_mean_idle(self):
         for value in (IPCError('timed out'), IPCError('no-client-found: unavailable'), None, ''):
             with self.subTest(value=str(value)):
@@ -104,6 +169,16 @@ class DesktopIdle(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '任务运行'): self.bridge.assert_desktop_idle()
         self.assertIn(('follow', 'remote:test', 'remote-live', 'owner'), self.calls)
         self.assertIn(('thread-owner-discovery', 'remote:test', 'remote-history'), self.calls)
+
+    def test_offline_ssh_does_not_hide_fresh_local_busy_evidence_before_recovery_exit(self):
+        remote = SimpleNamespace(store=SimpleNamespace(lifecycle_threads=Mock(side_effect=OSError('offline'))))
+        self.bridge.hosts.lifecycle_hosts.return_value = {'remote:test': {'alias': 'test'}}
+        self.bridge.remote_bridges['remote:test'] = remote
+        self.states[('local', 'desktop-only')] = {'id': 'desktop-only', 'threadRuntimeStatus': {'type': 'active'}}
+        with self.assertRaisesRegex(ValueError, '任务运行') as failure:
+            self.bridge.assert_desktop_idle()
+        self.assertNotIsInstance(failure.exception, TaskStateUnavailable)
+        self.assertIn(('follow', 'local', 'desktop-only', 'owner'), self.calls)
 
     def test_all_fresh_idle_snapshots_allow_shutdown_without_activating(self):
         self.bridge.assert_desktop_idle()

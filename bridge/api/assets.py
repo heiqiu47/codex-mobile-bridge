@@ -39,6 +39,7 @@ STATIC = {"/file-actions.js": ("file-actions.js", "text/javascript; charset=utf-
           "/git-panel.js": ("git-panel.js", "text/javascript; charset=utf-8"),
           "/workbench.js": ("workbench.js", "text/javascript; charset=utf-8"),
           "/source-view.js": ("source-view.js", "text/javascript; charset=utf-8"),
+          "/code-syntax.js": ("code-syntax.js", "text/javascript; charset=utf-8"),
           "/pdf-preview.js": ("pdf-preview.js", "text/javascript; charset=utf-8"),
           "/html-preview.js": ("html-preview.js", "text/javascript; charset=utf-8"),
           "/vendor/pdfjs/pdf.min.mjs": ("vendor/pdfjs/pdf.min.mjs", "text/javascript; charset=utf-8"),

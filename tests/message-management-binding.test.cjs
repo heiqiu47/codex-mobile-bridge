@@ -161,3 +161,39 @@ test('scope change during a readonly identity retry wait prevents the next reque
  const ui=fixture({request:()=>({draftAccountIdentity:'',identityPending:true})}),old={...ui.scope};const task=ui.binding.load(old);
  await tick();ui.target={...ui.target,scope:{...old,account:'other'}};await assert.rejects(task,/切换/);assert.equal(ui.calls.length,1);
 });
+
+test('accepted lost response clears only the recorded submitted draft revision',async()=>{
+ const ui=fixture();ui.drafts.save(ui.scope,{text:body.text});await ui.drafts.beginSend(ui.scope,body,'lost-response','attempt');
+ ui.response.receipts=[{id:'lost-response',status:'accepted',body}];await ui.binding.reconcile();
+ assert.equal(ui.drafts.pendingSend(ui.scope),null);assert.equal(ui.drafts.load(ui.scope),null);
+ assert.ok(ui.calls.every(call=>call.value===undefined),'Receipt recovery never replays the POST');
+});
+test('accepted lost response preserves edits made after submission',async()=>{
+ const ui=fixture();ui.drafts.save(ui.scope,{text:body.text});await ui.drafts.beginSend(ui.scope,body,'lost-response','attempt');
+ ui.drafts.save(ui.scope,{text:'new work',quotes:[{text:'new quote'}]});
+ ui.response.receipts=[{id:'lost-response',status:'accepted',body}];await ui.binding.reconcile();
+ assert.equal(ui.drafts.pendingSend(ui.scope),null);assert.equal(ui.drafts.load(ui.scope).text,'new work');
+});
+
+test('unconfirmed receipt reads back off while a new request remains eligible immediately',async()=>{
+ const ui=fixture();ui.drafts.begin(ui.scope,body,'id');ui.response.receipts=[{id:'id',status:'unknown'}];
+ const now=Date.now;let clock=1000;Date.now=()=>clock;
+ try{
+  await ui.binding.reconcile();await ui.binding.reconcile();assert.equal(ui.calls.length,1);
+  clock+=1000;await ui.binding.reconcile();assert.equal(ui.calls.length,2);
+  clock+=1000;await ui.binding.reconcile();assert.equal(ui.calls.length,2);
+  clock+=1000;await ui.binding.reconcile();assert.equal(ui.calls.length,3);
+  ui.drafts.begin(ui.scope,{text:'different message'},'next');await ui.binding.reconcile();assert.equal(ui.calls.length,4);
+  assert.ok(ui.calls.every(call=>call.value===undefined));
+ }finally{Date.now=now;}
+});
+
+test('receipt cannot clear an edit made while the send waits for storage coordination',async()=>{
+ const ui=fixture(),coordinate=ui.drafts.coordinate;let release;
+ ui.drafts.save(ui.scope,{text:body.text});
+ ui.drafts.coordinate=update=>new Promise(resolve=>{release=()=>resolve(update(true));});
+ const start=ui.drafts.beginSend(ui.scope,body,'id','attempt');
+ ui.drafts.save(ui.scope,{text:'edited before storage lock'});release();await start;
+ ui.drafts.coordinate=coordinate;ui.response.receipts=[{id:'id',status:'accepted'}];await ui.binding.reconcile();
+ assert.equal(ui.drafts.load(ui.scope)?.text,'edited before storage lock');assert.equal(ui.drafts.pendingSend(ui.scope),null);
+});

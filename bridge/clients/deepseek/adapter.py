@@ -10,14 +10,15 @@ from pathlib import Path
 from bridge.features.accounts.models import NoRedirect
 from bridge.app.lifecycle import private_json
 from bridge.clients.errors import BridgeUnavailable
+from bridge.clients.file_mentions import file_mentions, display_file_mentions
 from bridge.features.sessions.create import ArchiveNotSent
 from bridge.clients.deepseek.setup import MARKER, insertion, verified_directory, legacy_account_configured
 
 PLUGIN_ID = re.compile(r'''["']?id["']?\s*:\s*["']?codex-mobile-desktop(?:["'\s,}]|$)''')
-BRIDGE_REVISION = 7
-# Revisions 3–6 share the complete native-agent lifecycle schema; presentation
+BRIDGE_REVISION = 9
+# Revisions 3–8 share the complete native-agent lifecycle schema; presentation
 # and fork capability additions do not invalidate an older idle snapshot.
-LIFECYCLE_REVISIONS = (3, 4, 5, 6, BRIDGE_REVISION)
+LIFECYCLE_REVISIONS = (3, 4, 5, 6, 7, 8, BRIDGE_REVISION)
 UPDATE_REASON = 'Harness 接入需要更新，请结束任务后点击“重启并接入”'
 
 
@@ -174,6 +175,9 @@ class DeepSeek:
         return {'installed': False, 'restartRequired': True}
 
     def call(self, action, sid=None, body=None):
+        if action == 'send' and body and body.get('resolvedReferences'):
+            body = {**body, 'text': file_mentions(body.get('text', ''), body['resolvedReferences'])}
+            body.pop('resolvedReferences')
         if action == 'create' and body and body.get('directoryProject'):
             project = body['directoryProject']
             body = {**body, 'projectDirectory': project['directoryIdentity']}
@@ -280,15 +284,36 @@ def messages(records):
                 final_assistant['forkMessageId'] = str(event['seq'])
             final_assistant = None
         if kind in ('user/message', 'assistant/message'):
-            content = data.get('message', data).get('content', [])
+            message = data.get('message', data)
+            metadata = {}
+            source_kind = (message.get('source') or {}).get('kind')
+            if kind == 'user/message' and isinstance(source_kind, str) and source_kind and source_kind != 'user':
+                metadata.update(role='activity', kind='context', title='上下文')
+            if kind == 'assistant/message':
+                selection = data.get('modelSelection') or {}
+                source = message.get('source') or {}
+                provider, model = source.get('provider'), source.get('model')
+                if isinstance(provider, str) and isinstance(model, str) and model:
+                    metadata['model'] = provider+'/'+model if provider else model
+                    if (selection.get('provider') == provider and selection.get('model') == model
+                            and isinstance(selection.get('reasoningEffort'), str)):
+                        metadata['effort'] = selection['reasoningEffort']
+            content = message.get('content', [])
             if isinstance(content, str):
                 content = [{'type': 'text', 'text': content}]
             for i, block in enumerate(content):
-                text = block.get('text') or block.get('thinking') or ('[图片]' if block.get('type') == 'image' else '')
+                if block.get('type') == 'image':
+                    result.append({'id': str(event.get('seq'))+':'+str(i), 'role': kind.split('/')[0], 'text':'',
+                        'attachments':[{'type':'image','name':(block.get('attachment') or {}).get('name') or '图片',
+                                        '_nativeImage':{'seq':event.get('seq'),'part':i}}], **metadata})
+                    continue
+                text = block.get('text') or block.get('thinking') or ''
                 if text:
-                    result.append({'id': str(event.get('seq'))+':'+str(i), 'role': 'reasoning' if block.get('type') in ('thinking', 'reasoning') else kind.split('/')[0], 'text': text})
+                    result.append({'id': str(event.get('seq'))+':'+str(i), 'role': 'reasoning' if block.get('type') in ('thinking', 'reasoning') else kind.split('/')[0], 'text': text, **metadata})
                     if kind == 'assistant/message' and result[-1]['role'] == 'assistant':
                         final_assistant = result[-1]
         elif kind in ('tool/call', 'tool/result', 'todo/write'):
             result.append({'id': str(event.get('seq')), 'role': 'activity', 'title': data.get('name') or data.get('toolName') or kind, 'text': json.dumps(data, ensure_ascii=False, indent=2)})
+    for message in result:
+        display_file_mentions(message)
     return result

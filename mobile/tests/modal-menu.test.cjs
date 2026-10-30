@@ -3,9 +3,9 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const root=path.resolve(__dirname,'../..');
 const source=fs.readFileSync(path.join(root,'mobile/shared/web/mobile-ui.js'),'utf8');
 
-function fixture(){
+function fixture(initialDialogs=[],frame=false){
   const prompts=[],observers=[],windowEvents={},documentEvents={};
-  const dialogs=[];
+  const dialogs=[...initialDialogs];
   const app={hidden:false};
   const document={
     hidden:false,
@@ -19,6 +19,7 @@ function fixture(){
     prompt:(name,value)=>{prompts.push({name,value});return 'saved';},
     addEventListener:(name,listener)=>{windowEvents[name]=listener;}
   };
+  window.top=frame?{}:window;
   class MutationObserver{
     constructor(callback){this.callback=callback;observers.push(this);}
     observe(target,options){this.target=target;this.options=options;}
@@ -58,6 +59,19 @@ test('foreground return resends the current modal state to both native shells',(
   f.document.hidden=false;f.documentEvents.visibilitychange();
   assert.equal(f.prompts.length,before+1);
   modal.open=false;f.changed();assert.equal(f.prompts.at(-1).value,'closed');
+});
+test('an already open modal is reported on initial injection',()=>{
+  const f=fixture([{open:true}]);assert.deepEqual(f.prompts.map(call=>call.value),['open']);
+});
+
+test('both mobile apps forward only supported theme preferences from the main frame',()=>{
+  const f=fixture();
+  for(const theme of ['dark','light','system'])f.documentEvents['bridge-theme-change']({detail:{theme,private:'ignored'}});
+  const calls=f.prompts.filter(call=>call.name.startsWith('codexbridge-theme:'));
+  assert.deepEqual(calls.map(call=>call.value),['dark','light','system']);
+  for(const theme of ['',null,'auto','dark\n'])f.documentEvents['bridge-theme-change']({detail:{theme}});
+  assert.equal(f.prompts.filter(call=>call.name.startsWith('codexbridge-theme:')).length,3);
+  assert.equal(fixture([],true).documentEvents['bridge-theme-change'],undefined);
 });
 
 test('both native shells accept only a validated current-page modal signal',()=>{

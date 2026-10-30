@@ -4,7 +4,13 @@
 
 仅使用合成会话和测试工作区。不要在真实用户会话中运行会发送消息、修改文件或操作 Git 的夹具。
 
+会话菜单检查：在只加载生产 `session-menu.js`、`session-menu.css` 和基础样式的隔离页面加载 `session-menu.browser.js`，调用并等待 `runSessionMenuBrowserChecks()`。它以合成回调验证置顶、名称转义、详情复制、原生项目与分区选择、当前归属标记、读取错误与迟到响应隔离、归档确认和取消、恢复、认证变化阻断、长按及滚动取消。分别在宽屏、390 px 与 320 px 检查边界和底部面板；合成检查与真实 Android WebView 验收分别记录。
+
 这些脚本不会由 `npm run test:desktop` 执行。该命令只发现 `tests/` 和 `mobile/tests/` 下的 `*.test.js`、`*.test.cjs`、`*.test.mjs`；浏览器检查应单独记录实际执行与未执行情况。
+
+`npm run test:browser` 自动启动隔离服务，在 Chromium/WebKit 的 1280 px 与 390 px 视口执行 `critical.spec.cjs` 指定的检查。它调用并等待实际检查函数，不把页面加载计作通过。准备方式及失败证据见 [验证入口](../README.md#node-与浏览器)。其他专项夹具仍按下面各节单独执行；这套通过不代表所有浏览器功能均已覆盖。
+
+Markdown 与公式检查也由此入口执行：先加载生产聊天与公式资源，再运行 `markdown.browser.js` 的 15 项检查和 `math.browser.js` 的 13 项检查，覆盖无空行块公式、TeX 原文、代码、链接安全、流式片段及窄屏滚动。可用 `npm run test:browser -- --grep 'Markdown, literal code and math rendering'` 单独运行这四组浏览器与视口组合；不代表手机 WebView 真机验收。
 
 ## 启动恢复检查
 
@@ -18,7 +24,13 @@
 
 `external-script` 场景模拟 Cloudflare 注入的外部统计脚本，断言 CSP 确实阻止它且工作台仍成功加载。资源下载与执行分开后仍须验证脚本顺序、运行时错误和依赖失败屏障。
 
-夹具资源响应使用 `no-store`，这些故障测试不证明生产缓存命中或真实 BFCache 冻结恢复。需要分别记录浏览器模拟弱网、手机 WebView 实机和生产缓存的验证范围。
+`opaque-error` 在 DOMContentLoaded 前注入没有来源的全局错误，覆盖 Safari 截图中 `loading / 0s` 的误中止路径；`external-runtime` 与 `external-rejection` 分别覆盖非启动依赖脚本的异常和未处理 Promise 拒绝。三者都应继续显示登录，不提前进入失败页。它们是合成故障，不证明真实手机上的错误由扩展引起；`runtime` 与 `js-fatal` 仍须中止依赖链，Node 用例还验证来源不明的错误不会延长启动超时，也不会在诊断中暴露异常正文或 URL 参数。
+
+`app-cached-failure` 为原始 `/app.js` 版本 URL 返回可缓存、被 nosniff 拒绝的非脚本响应，模拟失败预加载被后续 script 复用。恢复必须产生带新缓存标识的同路径请求，且真正的 `/app.js` 只能执行一次；仅重复插入相同 URL 时仍失败。此场景验证缓存恢复机制，不代表已经定位或验证真实 Safari 的内容拦截、隐私设置或网络请求。
+
+除 `app-cached-failure` 的故障响应外，夹具资源响应使用 `no-store`；这些故障测试不证明生产缓存命中或真实 BFCache 冻结恢复。需要分别记录浏览器模拟弱网、手机 WebView 实机和生产缓存的验证范围。
+
+[PR #88](https://github.com/try2love/codex-mobile-bridge/pull/88) 作者记录的 2026-10-27 验证：1213 项 Node 测试、8 项 Web 资源测试及 17 个 Chromium 启动场景通过；修复同步至正在运行的 Windows 网关后，用户确认 iPhone Safari 已恢复。此实机反馈确认访问恢复，不据此断言最初故障来自某个扩展或缓存来源。本地集成时的独立复验见[决策记录](../../.agents/notes/implemented/bug-fix/2026-10-27-startup-error-attribution-and-cache-retry.md)，不把作者的实机反馈当作本轮重复完成的验收。
 
 <a id="mermaid-checks"></a>
 

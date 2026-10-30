@@ -59,7 +59,7 @@ def _prepared_static(data, content_type, use_gzip):
     etag = '"sha256-' + hashlib.sha256(data).hexdigest() + '"'
     return digest, data, compressed, etag
 
-THREAD_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})(?:/(events|send|stop|history|respond|reconnect|queue|catalog|settings|permissions|poll|timeline|changes|detail|notifications|uploads|message-action|message-management|rename|pin|archive))?$")
+THREAD_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})(?:/(events|send|stop|history|respond|reconnect|queue|catalog|settings|permissions|poll|timeline|changes|detail|notifications|uploads|message-action|message-management|rename|pin|archive|organization))?$")
 UPLOAD_PREVIEW_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/uploads/([0-9a-f-]{36})/preview$")
 UPLOAD_THUMB_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/uploads/([0-9a-f-]{36})/thumb$")
 DESKTOP_IMAGE_ROUTE = re.compile(r"^/api/sessions/([0-9a-f-]{36})/desktop-images/([0-9a-f]{64})$")
@@ -131,6 +131,7 @@ class GatewayServer(ThreadingHTTPServer):
 
     def process_request(self, request, client_address):
         if not self.slots.acquire(blocking=False):
+            LOG.warning("HTTP transport stage=admission outcome=capacity_rejected")
             request.close()
             return
         try:
@@ -148,6 +149,25 @@ class GatewayServer(ThreadingHTTPServer):
     def handle_error(self, request, client_address):
         LOG.warning("HTTP connection failed")
 
+    def shutdown_request(self, request):
+        # A rejected POST can still have unread body bytes. Closing immediately
+        # can reset the connection on Windows before the client receives 401/403.
+        # Half-close first, then discard a bounded tail without handling requests.
+        try:
+            request.shutdown(socket.SHUT_WR)
+            deadline = time.monotonic() + .2
+            remaining = 65536
+            while remaining and time.monotonic() < deadline:
+                request.settimeout(max(.001, deadline - time.monotonic()))
+                chunk = request.recv(min(8192, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
+            pass
+        finally:
+            super().shutdown_request(request)
+
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -163,6 +183,8 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def headers_common(self, cache_control="no-store", preview_shell=False, style_nonce=None, mermaid_shell=False):
+        if getattr(self, '_transport_trace', None):
+            self.send_header('X-Bridge-Request-Id', self._transport_trace['id'])
         self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -192,6 +214,7 @@ class Handler(BaseHTTPRequestHandler):
             candidate = gzip.compress(body, compresslevel=5, mtime=0)
             if len(candidate) < len(body):
                 body, compressed = candidate, True
+        self._transport_status = status
         self.send_response(status)
         self.headers_common(preview_shell=preview_shell, style_nonce=style_nonce, mermaid_shell=mermaid_shell)
         self.send_header("Content-Type", content_type)
@@ -207,6 +230,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(body)
+        self._transport_written = True
 
     def static_output(self, path, content_type):
         data = served_asset_bytes(self.server.web_dir, path)
@@ -224,6 +248,7 @@ class Handler(BaseHTTPRequestHandler):
         validators = self.headers.get('If-None-Match', '')
         matches = any(tag.strip() == '*' or tag.strip().removeprefix('W/') == etag
                       for tag in validators.split(','))
+        self._transport_status = 304 if matches else 200
         self.send_response(304 if matches else 200)
         self.headers_common(cache_control=cache_control)
         self.send_header('Content-Type', content_type)
@@ -238,6 +263,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if not matches:
             self.wfile.write(data)
+        self._transport_written = True
 
     def cookie(self, token, clear=False):
         secure = "; Secure" if self.headers.get("Host") in self.server.secure_hosts else ""
@@ -341,6 +367,29 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(405)
 
     def handle_method(self, write):
+        # Correlate transport boundaries without recording identities, URLs,
+        # credentials or message contents. Reset for each keep-alive request.
+        path = urlsplit(self.path).path
+        route = THREAD_ROUTE.fullmatch(path)
+        operation = route[2] if route else None
+        ray = self.headers.get('CF-Ray', '')
+        ray = ray if re.fullmatch(r'[a-fA-F0-9]{16,32}(?:-[A-Z]{3})?', ray) else '-'
+        traced = operation in ('send', 'reconnect', 'message-management') or ray != '-' and path in STATIC
+        self._transport_trace = {'id': secrets.token_hex(8), 'ray': ray} if traced else None
+        self._transport_status, self._transport_written = 0, False
+        started = time.monotonic()
+        if traced:
+            LOG.info('HTTP transport id=%s ray=%s route=%s stage=received',
+                     self._transport_trace['id'], ray, operation or 'static')
+        try:
+            return self._handle_method(write)
+        finally:
+            if traced:
+                LOG.info('HTTP transport id=%s ray=%s stage=response status=%d written=%s elapsed_ms=%.1f',
+                         self._transport_trace['id'], ray, self._transport_status,
+                         self._transport_written, (time.monotonic() - started) * 1000)
+
+    def _handle_method(self, write):
         try:
             if urlsplit(self.path).path == '/harness' or urlsplit(self.path).path.startswith('/harness/'):
                 return harness_proxy(self)
@@ -380,6 +429,7 @@ class Handler(BaseHTTPRequestHandler):
                                          "loginStatus": self.server.auth.login_status(self.client()["ip"]),
                                          "instanceId": self.server.instance_id, "cookieName": self.server.auth.cookie_name,
                                          **({'draftIdentity': self.server.auth.draft_identity} if session else {}),
+                                         **({'enabledClients': self.server.desktop_sessions.navigation_clients() if self.server.desktop_sessions else ['codex']} if session else {}),
                                          **({'listCacheIdentity': hashlib.sha256((self.server.instance_id + '\0' + session['csrf']).encode()).hexdigest()} if session else {}),
                                          **({"computer": {"name": socket.gethostname(), "platform": platform.system()}} if session else {}),
                                          **({'connection': discovery.descriptor(self.token())} if session and discovery else {}),
@@ -515,10 +565,20 @@ class Handler(BaseHTTPRequestHandler):
                     value = self.read_json()
                     if value == {'action': 'scan-wsl'}:
                         return self.output(200, manager.scan_wsl())
-                    if not isinstance(value, dict) or not {'provider', 'enabled'} <= set(value) or set(value) - {'provider', 'enabled', 'quitDesktop', 'initializeDesktop', 'forceDesktop', 'forceConfirmed'}:
+                    if not isinstance(value, dict) or not {'provider', 'enabled'} <= set(value) or set(value) - {'provider', 'enabled', 'quitDesktop', 'initializeDesktop', 'forceDesktop', 'forceConfirmed', 'acknowledgeUnavailable'}:
                         raise ValueError('应用开关无效')
                     return self.output(200, manager.toggle_client(value))
                 return self.output(200, manager.clients_status())
+            desktop_image = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/images/([0-9a-f]{64})', path)
+            if desktop_image:
+                if write:
+                    return self.output(405, {'error': '请求方式无效'})
+                manager = self.server.desktop_sessions
+                if manager is None:
+                    return self.output(503, {'error': '桌面会话接入不可用'})
+                provider, identifier = desktop_image.groups()
+                artifact, variant = manager.image_preview(provider, query.get('sessionId', [None])[0], identifier)
+                return self.attachment_preview(artifact, variant, private=True)
             desktop_upload = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/uploads(?:/([0-9a-f-]{36})/(thumb|preview))?', path)
             if desktop_upload:
                 manager, uploads = self.server.desktop_sessions, self.server.desktop_uploads
@@ -574,7 +634,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.output(200, self.server.notifications.policy(
                     sid, 'desktop:' + provider, self.read_json() if write else None))
             desktop_workspace = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/(workspace(?:/[a-z-]+)?|terminal)', path)
-            desktop_projects = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/projects/(browse|register)', path)
+            desktop_projects = re.fullmatch(r'/api/desktop-sessions/(deepseek|claude)/projects/(browse|register|trust)', path)
             if desktop_projects:
                 if not write:
                     return self.output(405, {'error': '请通过目录选择器浏览'})
@@ -585,11 +645,14 @@ class Handler(BaseHTTPRequestHandler):
                 manager.require_enabled(provider)
                 body = self.read_json()
                 fields = ({'environment', 'path', 'hidden', 'name', 'identity'} if action == 'browse'
+                          else {'projectKey', 'confirmed'} if action == 'trust'
                           else {'environment', 'path', 'createDirectory'})
                 if not isinstance(body, dict) or set(body) != fields:
                     raise ValueError('项目目录请求无效')
                 if action == 'browse':
                     return self.output(200, manager.project_directories(provider, **body))
+                if action == 'trust':
+                    return self.output(200, manager.project_trust(provider, **body))
                 return self.output(200, {'project': manager.register_project(provider,
                     body['environment'], body['path'], body['createDirectory'])})
             if path.startswith('/api/desktop-sessions/') and not desktop_workspace:
@@ -612,7 +675,7 @@ class Handler(BaseHTTPRequestHandler):
                         if len(before) > 16384:
                             raise ValueError('历史游标过长')
                         body['historyBefore'] = before
-                if write and any(key in body for key in ('resolvedImages', 'resolvedFiles')):
+                if write and any(key in body for key in ('resolvedImages', 'resolvedFiles', 'resolvedReferences')):
                     raise ValueError('附件格式无效')
                 if write and parts[3] == 'send' and 'attachments' in body:
                     if self.server.desktop_uploads is None:
@@ -654,13 +717,24 @@ class Handler(BaseHTTPRequestHandler):
                 manager.mobile.acknowledge(body['provider'], body['streamId'], body['through'])
                 return self.output(200, manager.mobile_snapshot(manager.mobile.checkpoint()['cursor']))
             if not write and path == '/api/mobile/events':
+                query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
                 manager = self.server.notifications
                 if manager is None:
                     return self.output(503, {'error': '手机通知暂不可用'})
                 value = query.get('after', ['0'])[0]
                 if not value.isdigit() or len(value) > 16:
                     raise ValueError('通知游标格式不正确')
-                return self.output(200, manager.mobile_snapshot(int(value)))
+                wait = query.get('wait', ['0'])[0]
+                stream = query.get('streamId', [None])[0]
+                revision = query.get('revision', [None])[0]
+                if (not wait.isascii() or not wait.isdigit() or len(wait) > 2 or int(wait) > 60
+                        or (stream is not None and (not 1 <= len(stream) <= 128 or any(ord(c) < 32 for c in stream)))
+                        or (revision is not None and not re.fullmatch('[a-f0-9]{32}', revision))):
+                    raise ValueError('通知等待参数无效')
+                result = manager.mobile_snapshot(int(value), wait=int(wait), stream=stream, revision=revision)
+                if self.authorized():
+                    return self.output(200, result)
+                return
             if write and path == "/api/logout":
                 self.read_json()
                 self.server.auth.logout(self.token())
@@ -716,16 +790,30 @@ class Handler(BaseHTTPRequestHandler):
                 return self.output(200, manager.public())
             if write and path.startswith('/api/account') and query.get('entry', ['desktop'])[0] != 'desktop':
                 raise ValueError('WSL 接入由原环境管理，不能对它执行桌面账号操作')
+            if write and path == '/api/accounts/ssh-retry':
+                body = self.read_json()
+                if not isinstance(body, dict) or set(body) != {'host'}:
+                    raise ValueError('SSH 重试请求包含不支持的字段')
+                self.server.bridge.retry_ssh(body['host'])
+                return self.output(202, self.server.bridge.accounts.public())
             if not write and path == '/api/accounts':
                 entry = query.get('entry', ['desktop'])[0]
                 if entry != 'desktop':
                     if not entry.startswith('wsl:'):
                         raise ValueError('未知 Codex 入口')
                     return self.output(200, self.server.bridge.for_host(entry).access_summary())
+                if query.get('resetForecast') in (['1'], ['refresh']) and self.server.bridge.accounts.reset_dynamic_enabled:
+                    self.server.bridge.accounts.reset_forecast.request(refresh=query['resetForecast'] == ['refresh'])
                 result = self.server.bridge.accounts.public()
                 result['canSwitch'] = result.get('canSwitch', True) and self.server.auth.config.get('mode') != 'none'
                 result['canManageDesktop'] = self.server.auth.config.get('mode') != 'none'
                 return self.output(200, result)
+            if write and path == '/api/accounts/reset-dynamic':
+                body = self.read_json()
+                if set(body) != {'enabled'}:
+                    raise ValueError('重置动态设置无效')
+                self.server.bridge.accounts.set_reset_dynamic(body['enabled'])
+                return self.output(200, self.server.bridge.accounts.public())
             if write and path == '/api/accounts/reminders':
                 body = self.read_json()
                 if set(body) != {'preferences'}:
@@ -859,7 +947,7 @@ class Handler(BaseHTTPRequestHandler):
                 if set(body) != {'action', 'id', 'enabled'} or body['action'] != 'configure':
                     raise ValueError('Codex 入口请求无效')
                 return self.output(200, entries.configure(body['id'], body['enabled']))
-            if path in ('/api/projects', '/api/projects/browse'):
+            if path in ('/api/projects', '/api/projects/browse', '/api/projects/trust'):
                 entry = query.get('entry', ['desktop'])[0]
                 if self.server.desktop_sessions:
                     self.server.desktop_sessions.require_enabled(entry if entry.startswith('wsl:') else 'codex')
@@ -867,6 +955,14 @@ class Handler(BaseHTTPRequestHandler):
                     target = self.server.bridge.entries.get(entry)
                 else:
                     target = self.server.bridge
+                if path.endswith('/trust'):
+                    if not write: return self.output(405, {'error': '请通过项目确认操作信任'})
+                    body = self.read_json()
+                    if (entry != 'desktop' or not isinstance(body, dict)
+                            or not {'key', 'confirmed'} <= set(body)
+                            or set(body) - {'key', 'confirmed', 'confirmation'}):
+                        raise ValueError('目录信任请求无效')
+                    return self.output(200, target.project_trust(**body))
                 if path.endswith('/browse'):
                     if not write: return self.output(405, {'error': '请通过目录选择器浏览'})
                     body = self.read_json()
@@ -880,7 +976,10 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError('项目目录请求无效')
                     options = {'kind': body['kind']} if 'kind' in body else {}
                     return self.output(200, {'project': target.register_project(body['path'], body['createDirectory'], body['host'], **options)})
-                return self.output(200, {'projects': target.projects(),
+                project_host = query.get('host', [None])[0]
+                if project_host is not None and entry != 'desktop':
+                    raise ValueError('项目环境请求无效')
+                return self.output(200, {'projects': target.projects(host=project_host) if project_host is not None else target.projects(),
                     'environments': target.project_environments() if hasattr(target, 'project_environments') else []})
             if write and path == '/api/activity':
                 groups = self.read_json().get('hosts')
@@ -1122,6 +1221,10 @@ class Handler(BaseHTTPRequestHandler):
             if not match:
                 return self.output(404, {"error": "页面不存在"})
             thread_id, action = match.groups()
+            if action == 'organization':
+                if not hasattr(bridge, 'organization'):
+                    raise ValueError('此客户端暂未提供原生项目与分区')
+                return self.output(200, bridge.organization(thread_id, self.read_json() if write else None))
             if write and action == 'uploads':
                 sizes = self.headers.get_all('Content-Length', [])
                 if self.headers.get('Transfer-Encoding') or len(sizes) != 1 or not sizes[0].isdigit() or not 0 < int(sizes[0]) <= MAX_FILE:
@@ -1182,7 +1285,7 @@ class Handler(BaseHTTPRequestHandler):
             elif action == "send":
                 result = bridge.send(thread_id, body.get("text"), body.get("id", ""), body.get("mode", "send"),
                                      body.get("skills", []), work_mode=body.get("workMode"),
-                                     attachments=body.get('attachments'), ui_locale=body.get("uiLocale"))
+                                     attachments=body.get('attachments'), references=body.get('references'), ui_locale=body.get("uiLocale"))
             elif action == "archive":
                 if set(body) not in ({'archived', 'id'}, {'archived', 'id', 'disconnect'}):
                     raise ValueError('聊天归档设置无效')
@@ -1212,8 +1315,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("请求回应格式不正确")
                 result = bridge.respond(thread_id, body.get("requestId"), response)
             elif action == "reconnect":
+                if 'rebuild' in body and (body.get('rebuild') is not True or body.get('activate') is not True or set(body) != {'activate', 'rebuild'}):
+                    raise ValueError('重建连接请求无效')
                 if body.get('activate') is True:
-                    session = bridge.activate(thread_id)
+                    session = bridge.rebuild_connection(thread_id) if body.get('rebuild') else bridge.activate(thread_id)
                     result = {'ok': True, 'connected': session.connected}
                 elif body.get('progressive'):
                     bridge.session(thread_id, background=True, force=True)
@@ -1310,7 +1415,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.attachment_preview(artifact, served_variant, private=side is not None)
 
     def attachment_preview(self, artifact, served_variant, private=False):
-        data = Path(artifact["previewPath"]).read_bytes()
+        data = artifact['previewBytes'] if 'previewBytes' in artifact else Path(artifact["previewPath"]).read_bytes()
         etag = '"' + artifact["previewSha256"] + '"'
         cache_control = 'private, no-store' if private or served_variant == 'fallback-original' else 'private, max-age=31536000, immutable'
         if self.headers.get("If-None-Match") == etag:

@@ -23,8 +23,10 @@ from bridge.features.sessions.model import normalize_state, normalize_request, c
 from bridge.features.sessions.timeline import Timeline
 from bridge.features.sessions.store import StoreUnavailable
 from bridge.features.sessions.archive import ArchiveCommands
+from bridge.features.sessions.organization_commands import OrganizationCommands
 from bridge.features.sessions.create import check_archive_runtime
 from bridge.features.sessions.pins import SessionPins
+from bridge.features.sessions.organization import organization as native_organization
 from bridge.features.sessions.projects import Projects
 from bridge.features.endpoints.wsl_features import WslFeatures
 from bridge.features.endpoints.wsl_models import WslModelCatalog
@@ -100,6 +102,7 @@ class WslEntry(WslFeatures):
         self.data_dir = Path(directory)
         self.session_pins = SessionPins(directory, self.host + ":" + row["user"] + ":" + row["home"])
         self.archive_commands = ArchiveCommands(directory)
+        self.organization_commands = OrganizationCommands(directory, private_json)
         self.lock = threading.RLock()
         self.connection_lock = threading.RLock()
         self.closed = threading.Event()
@@ -518,8 +521,12 @@ class WslEntry(WslFeatures):
             with session.action_lock:
                 session.history_limit += 50
             self._refresh(session)
+        # view() reads write receipts; do not take the entry write gate while
+        # holding the session condition (writers acquire them in reverse order).
+        snapshot = self.view(identifier, attach=False)
         with session.condition:
-            session.timeline.update(self.view(identifier, attach=False))
+            if snapshot['sequence'] >= session.timeline.sequence:
+                session.timeline.update(snapshot)
             if mode == 'detail':
                 return session.timeline.detail(**options)
             result = session.timeline.changes(**options) if mode == 'changes' else session.timeline.page(**options)
@@ -825,11 +832,13 @@ class WslEntry(WslFeatures):
     @_entry_write
     def send(self, identifier, text, submission_id, mode='send', skills=None, work_mode=None, attachments=None, **options):
         if work_mode == 'goal':
+            if options.get('references'):
+                raise ValueError('目标模式暂不支持附件')
             return self.send_goal(identifier, text, submission_id, mode=mode, skills=skills,
                                   attachments=attachments, ui_locale=options.get('ui_locale'))
-        return self._send(identifier, text, submission_id, mode, skills, work_mode, attachments)
+        return self._send(identifier, text, submission_id, mode, skills, work_mode, attachments, references=options.get('references'))
 
-    def _send(self, identifier, text, submission_id, mode='send', skills=None, work_mode=None, attachments=None, *, queued=False, goal_activation=None):
+    def _send(self, identifier, text, submission_id, mode='send', skills=None, work_mode=None, attachments=None, *, references=None, queued=False, goal_activation=None):
         uuid.UUID(identifier); uuid.UUID(submission_id)
         skills = skills or []
         if not isinstance(skills, list) or len(skills) > 8 or any(not isinstance(s, str) for s in skills):
@@ -839,10 +848,16 @@ class WslEntry(WslFeatures):
         if mode not in ('send', 'steer', 'queue'):
             raise ValueError('发送方式无效')
         files = self.uploads.resolve(identifier, attachments or [])
+        if references is not None:
+            files += self.workspace(identifier, 'references', {'references': references})
+        if len(files) > 10:
+            raise ValueError('每条消息最多添加 10 个不同附件')
         if not isinstance(text, str) or (not text.strip() and not files) or len(text) > 100000:
             raise ValueError('请输入 1–100000 字的消息')
         with self.session(identifier, attach=False).action_lock:
             value = {'text': text, 'mode': mode, 'attachments': attachments or []}
+            if references:
+                value['references'] = references
             if skills:
                 value['skills'] = sorted(set(skills))
             if work_mode is not None:
@@ -871,11 +886,12 @@ class WslEntry(WslFeatures):
                 private_json(self.receipts_path, self.receipts)
                 return result
             self._subscribe(identifier, runtime, thread)
-            items = [{'type': 'text', 'text': text}]
+            from bridge.features.sessions.model import attachment_prompt
+            items = [{'type': 'text', 'text': attachment_prompt(text, files) if references else text}]
             for file in files:
                 if file.get('image'):
                     items.append({'type': 'localImage', 'path': file['path']})
-                else:
+                elif not references:
                     items[0]['text'] += '\n\n用户提供的文件：' + file['path']
             items.extend({'type': 'skill', 'name': s['name'], 'path': s['path']} for s in selected)
             collaboration = None
@@ -1052,7 +1068,7 @@ class WslEntry(WslFeatures):
                 if any(thread.get(k) != v for k, v in row.get('target', {}).items()):
                     return
                 self._send(identifier, row['text'], row['id'], mode='queue', skills=row.get('skills'),
-                           work_mode=row.get('workMode'), attachments=row.get('attachments'), queued=True,
+                           work_mode=row.get('workMode'), attachments=row.get('attachments'), references=row.get('references'), queued=True,
                            goal_activation=row.get('goalActivation'))
             except (IPCError, RemoteUnavailable, ValueError):
                 # A queued operation may wait for the original target to return.
@@ -1286,6 +1302,17 @@ class WslEntry(WslFeatures):
         self.store.get(identifier)
         self.runtime().request('thread/name/set', {'threadId': identifier, 'name': title.strip()})
         return {'id': identifier, 'title': title.strip(), 'host': self.host}
+
+    @_entry_write
+    def organization(self, identifier, change=None):
+        uuid.UUID(identifier)
+        metadata = self.store.get(identifier)
+        runtime = self.runtime(allow_start=False)
+        def execute(change):
+            return native_organization(runtime.request, identifier, change, expected_cwd=metadata.get('cwd'))
+        result = execute(None) if change is None else self.organization_commands.perform(
+            identifier, change, lambda: execute(None), execute)
+        return {**result, 'host': self.host}
 
     @_entry_write
     def workspace(self, identifier, action, params):

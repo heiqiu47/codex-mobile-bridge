@@ -57,6 +57,22 @@ class DesktopUploadHTTP(unittest.TestCase):
         self.assertEqual(args[3]['resolvedImages'], [{'url': 'data:image/png;base64,'+base64.b64encode(PNG).decode(), 'name': 'photo.png'}])
         self.assertNotIn('attachments', args[3])
 
+    def test_native_history_preview_remains_authenticated_and_read_only(self):
+        from bridge.features.workspace.history_images import HistoryImages
+        images = HistoryImages()
+        rows = [{'attachments':[{'_nativeImage':{'event':'e','part':0}}]}]
+        images.bind('claude','code:native',rows)
+        identifier = rows[0]['attachments'][0]['desktopId']
+        self.manager.image_preview.side_effect = lambda provider, sid, image: images.preview(provider,sid,image,
+            lambda _: {'mediaType':'image/png','data':base64.b64encode(PNG).decode()})
+        route = '/api/desktop-sessions/claude/images/'+identifier+'?sessionId='
+        self.assertEqual(self.binary('GET',route+'code%3Anative')[0],401)
+        headers = self.login()
+        status, _, raw = self.binary('GET',route+'code%3Anative',headers=headers)
+        self.assertEqual(status,200);self.assertEqual(raw,PNG)
+        self.assertEqual(self.binary('GET',route+'other',headers=headers)[0],400)
+        self.assertEqual(self.request('POST',route+'code%3Anative',{},headers)[0],405)
+
     def test_clients_cannot_inject_local_paths_or_resolved_content(self):
         headers = self.login()
         for key in ('resolvedImages', 'resolvedFiles'):

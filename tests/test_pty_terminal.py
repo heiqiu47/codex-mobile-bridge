@@ -176,8 +176,13 @@ class PtyTests(unittest.TestCase):
         deadline=time.monotonic()+5
         while (not (self.root/'child.pid').exists() or not (self.root/'child.pid').read_text().strip()) and time.monotonic()<deadline:time.sleep(.02)
         child=int((self.root/'child.pid').read_text());s.stop();self.assertTrue(s.done.wait(5))
-        # The child may briefly be a zombie while reaped by the OS, but cannot run.
-        result=subprocess.run(['ps','-p',str(child),'-o','stat='],capture_output=True,text=True)
+        # Shell/PTY completion can precede the child's signal handling. Wait
+        # separately for the child to exit; a persistent live child still fails.
+        deadline=time.monotonic()+5
+        while True:
+            result=subprocess.run(['ps','-p',str(child),'-o','stat='],capture_output=True,text=True)
+            if not result.stdout.strip() or result.stdout.strip().startswith('Z') or time.monotonic()>=deadline:break
+            time.sleep(.02)
         self.assertTrue(not result.stdout.strip() or result.stdout.strip().startswith('Z'))
     def test_remote_protocol_persists_state_and_acknowledges_input(self):
         original=subprocess.Popen

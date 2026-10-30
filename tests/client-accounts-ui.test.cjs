@@ -13,6 +13,13 @@ function fixture({desktop=false,provider='deepseek',toolbar=false}={}){
 }
 const row=(id,kind='account',usage)=>({id,name:id,kind,usage});
 const snapshot=(accounts,activeIds=['current'])=>({accounts,activeId:activeIds[0],activeIds,current:{name:'Current desktop access'},canSwitch:true});
+test('manual DSH account state hides editing and restores official controls after unbinding',()=>{
+ const ui=fixture({desktop:true});ui.panel.openEditor({api:{}});
+ ui.panel.accept({...snapshot([]),readOnly:true,canImport:false,canSwitch:false});
+ assert.equal(ui.panel.editor.hidden,true);assert.equal(ui.panel.addApiButton.hidden,true);assert.equal(ui.panel.importName.hidden,true);
+ assert.match(ui.panel.hint.textContent,/第三方客户端/);assert.equal(ui.panel.modelsButton.hidden,false);
+ ui.panel.accept(snapshot([]));assert.equal(ui.panel.addApiButton.hidden,false);assert.equal(ui.panel.importName.hidden,false);
+});
 test('multiple native active connections are first and cannot be switched again',()=>{
   const ui=fixture();ui.panel.accept(snapshot([row('other'),row('api','api'),row('current')],['current','api']));
   assert.deepEqual(ui.panel.rows.children.map(card=>card.children[0].children[0].children[0].children[0].textContent),['api','current','other']);

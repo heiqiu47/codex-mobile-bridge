@@ -503,7 +503,7 @@ $('device-policy').onsubmit=event=>{event.preventDefault();return changeDevices(
 
 const claudeCliAccessPanel=typeof CliAccessPanel==='undefined'?null:new CliAccessPanel({root:$('cli-access-claude-content'),provider:'claude',read:()=>api.cliAccess({action:'list'}),request:value=>api.cliAccess(value)});
 document.addEventListener('bridge-client-config',event=>{claudeCliAccessPanel?.clear();if(event.detail==='claude'&&!$('cli-access-claude-content').hidden)claudeCliAccessPanel?.refresh();});
-const accountsPanel=typeof AccountsPanel==='undefined'?null:new AccountsPanel({root:$('accounts-content'),desktop:true,read:()=>api.accounts({action:'list'}),request:value=>api.accounts(value),onUpdate:value=>desktopConnections?.renderAccount(value)});
+const accountsPanel=typeof AccountsPanel==='undefined'?null:new AccountsPanel({root:$('accounts-content'),desktop:true,read:force=>api.accounts({action:'list',resetForecast:accountsPanel?.visible()&&accountsPanel?.value?.resetDynamicEnabled?(force?'refresh':true):false}),request:value=>api.accounts(value),onUpdate:value=>desktopConnections?.renderAccount(value)});
 if(accountsPanel){
   const visible=accountsPanel.visible.bind(accountsPanel);
   accountsPanel.visible=()=>visible()||(!document.hidden&&!$('clients-page').hidden&&!$('clients-page').classList.contains('configuration-open'));

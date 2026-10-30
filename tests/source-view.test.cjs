@@ -15,7 +15,7 @@ class Element {
 const elements = [], events = new Map();
 const context = {window:{}, BridgeI18n:{language:()=> 'zh', t:text=>text}, AbortController, document:{createElement:tag=>{const element=new Element(tag);elements.push(element);return element;},createTextNode:text=>({textContent:text}),addEventListener:(name,fn)=>events.set(name,fn),querySelectorAll:selector=>elements.filter(element=>selector==='.wb-source-wrap'&&element.className==='wb-source-wrap')}};
 vm.createContext(context);
-for (const file of ['web/vendor/prism/source-view.min.js', 'web/features/workspace/source-view.js']) {
+for (const file of ['web/vendor/prism/source-view.min.js', 'web/shared/code-syntax.js', 'web/features/workspace/source-view.js']) {
   vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), context, {filename:file});
 }
 const sourceView = vm.runInContext('BridgeSourceView', context);

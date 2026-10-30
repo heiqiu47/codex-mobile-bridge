@@ -1,4 +1,7 @@
 import unittest
+import json
+import tempfile
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -6,6 +9,73 @@ from bridge.clients.codex.remote import AppHosts, RemoteStore, RemoteUnavailable
 
 
 class RemoteDiscoveryTests(unittest.TestCase):
+    def test_passive_hosts_cache_invalidates_and_keeps_live_reads_independent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            path = home / '.codex-global-state.json'
+            def save(alias):
+                path.write_text(json.dumps({'codex-managed-remote-connections': [
+                    {'hostId': 'remote:one', 'alias': alias, 'nested': {'name': 'original'}}]}), encoding='utf-8')
+            save('first')
+            hosts = AppHosts(home)
+            with patch.object(hosts, 'state', wraps=hosts.state) as read:
+                for _ in range(5):
+                    value = hosts.hosts(cached=True)
+                    self.assertEqual(value['remote:one']['alias'], 'first')
+                    value['remote:one']['nested']['name'] = 'mutated'
+                self.assertEqual(read.call_count, 1)
+                self.assertEqual(hosts.hosts(cached=True)['remote:one']['nested']['name'], 'original')
+                save('second-alias')
+                self.assertEqual(hosts.hosts(cached=True)['remote:one']['alias'], 'second-alias')
+                self.assertEqual(read.call_count, 2)
+                hosts.hosts()
+                hosts.hosts()
+                self.assertEqual(read.call_count, 4)
+                path.unlink()
+                self.assertEqual(hosts.hosts(cached=True), {})
+                save('replacement')
+                self.assertEqual(hosts.hosts(cached=True)['remote:one']['alias'], 'replacement')
+
+    def test_passive_hosts_cache_discards_a_file_replaced_while_reading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            path = home / '.codex-global-state.json'
+            def state(alias):
+                return json.dumps({'codex-managed-remote-connections': [
+                    {'hostId': 'remote:one', 'alias': alias}]})
+            path.write_text(state('old'), encoding='utf-8')
+            replacement = home / 'replacement.json'
+            replacement.write_text(state('replacement'), encoding='utf-8')
+            hosts = AppHosts(home)
+            read = hosts.state
+            def replace_after_read():
+                value = read()
+                replacement.replace(path)
+                return value
+            with patch.object(hosts, 'state', side_effect=replace_after_read):
+                self.assertEqual(hosts.hosts(cached=True), {})
+            self.assertEqual(hosts.hosts(cached=True)['remote:one']['alias'], 'replacement')
+
+    def test_passive_host_resolution_reuses_parse_but_regular_resolution_reads_fresh(self):
+        from bridge.app.service import Bridge
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / '.codex-global-state.json').write_text(json.dumps({
+                'codex-managed-remote-connections': [{'hostId': 'remote:one', 'alias': 'server'}]}), encoding='utf-8')
+            bridge = Bridge.__new__(Bridge)
+            bridge.host = 'local'
+            bridge.entries = None
+            bridge.lock = threading.Lock()
+            bridge.hosts = AppHosts(home)
+            source = bridge.remote_bridges = {'remote:one': object()}
+            with patch.object(bridge.hosts, 'state', wraps=bridge.hosts.state) as read:
+                for _ in range(5):
+                    self.assertIs(bridge.for_host('remote:one', cached=True), source['remote:one'])
+                self.assertEqual(read.call_count, 1)
+                for _ in range(3):
+                    bridge.for_host('remote:one')
+                self.assertEqual(read.call_count, 4)
+
     def test_managed_aliases_do_not_require_project_references(self):
         hosts = AppHosts(Path('/unused'))
         hosts.state = lambda: {'remote-projects': [{'hostId': 'remote:project'}],

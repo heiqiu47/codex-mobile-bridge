@@ -1,27 +1,27 @@
-# Agent Note: Successful client lists failed during pin synchronization
+# Agent Note: 客户端列表成功响应在置顶同步时失败
 
 Status: implemented
 
-## Problem
+## 问题
 
-DSH and Claude successful nonempty list responses threw `ReferenceError: pinRead is not defined` when local pin preferences were enabled. The token was declared in `refresh()` but consumed inside the separate `refreshList()` method. Tests without a pin preference object bypassed argument evaluation through optional chaining, missing this production path. Repeated automatic failures exposed the retry banner even though the connector returned a connected list.
+启用本地置顶偏好后，DSH 和 Claude 成功返回的非空列表会抛出 `ReferenceError: pinRead is not defined`。该令牌在 `refresh()` 中声明，却在独立的 `refreshList()` 方法中使用。不带置顶偏好对象的测试通过可选链跳过了参数求值，遗漏了这条生产路径。虽然连接器返回已连接列表，重复自动失败仍触发了重试提示。
 
-## Decision
+## 决策
 
-Capture the pin read token on the shared list task when the request starts, and consume that same token while observing rows. Polling, manual refresh and prefetched reads share the request token. A local pin change after prefetch must not make the earlier response look newer.
+请求开始时，在共享列表任务上捕获置顶读取令牌；观察行数据时消费同一令牌。轮询、手动刷新与预取读取共享请求令牌。预取后的本地置顶变化不能让较早响应被误判为更新响应。
 
-## Existing-note audit
+## 既有笔记审计
 
-[Local first pins](../feature/2026-10-26-local-first-session-pins.md) defines the token and stale-read contract; this repairs its cross-method integration. [Shared list refresh](../feature/2026-10-12-shared-client-list-refresh.md) defines request sharing and failure feedback; its genuine disconnect/error behavior is retained. Neither existing note describes this missing variable integration failure.
+[本地优先置顶](../feature/2026-10-26-local-first-session-pins.md)定义令牌和过期读取契约；本决定修复其跨方法集成。[共享列表刷新](../feature/2026-10-12-shared-client-list-refresh.md)定义请求共享及失败反馈，其真实断开/错误行为保留。两篇既有笔记都未描述此次变量缺失的集成错误。
 
-## Alternatives considered
+## 备选方案
 
-Suppressing the retry banner would conceal genuine network failures. Capturing the token only when a view joins an existing request would misdate prefetched responses. Replacing connector polling does not address the reproduced frontend exception.
+隐藏重试提示会掩盖真实网络故障。仅在视图加入既有请求时捕获令牌，会错误标记预取响应的时间。替换连接器轮询不能解决已复现的前端异常。
 
-## Testing
+## 测试
 
-Before the fix, connected list fixtures with pin preferences reproduced the exact ReferenceError for both providers. Four regression cases cover normal and prefetched requests for both providers. Related UI tests: 220 passed. Full frontend: 1204 passed, one skipped. No real session, pin, message or archive mutation was used.
+修复前，带置顶偏好的已连接列表夹具在两个 provider 上均复现了相同 ReferenceError。四个回归用例覆盖两个 provider 的普通与预取请求。相关 UI 测试：220 通过。完整前端：1204 通过，1 跳过。未使用真实会话、置顶、消息或归档修改。
 
-## Consequences
+## 影响
 
-Successful reads update the list and clear failure state normally. Genuine connector errors continue to produce retry feedback. The reproduction establishes a concrete frontend cause; it does not rule out separate network failures.
+成功读取正常更新列表并清除失败状态。真实连接器错误继续显示重试反馈。复现明确了一个具体前端原因，但不能排除独立的网络故障。

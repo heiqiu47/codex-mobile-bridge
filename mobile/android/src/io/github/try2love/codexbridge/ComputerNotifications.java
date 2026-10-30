@@ -5,7 +5,7 @@ import android.webkit.CookieManager;
 import org.json.*;
 import java.util.*;
 
-/** Small foreground-only inbox snapshots. Never persist account data or open chats. */
+/** In-memory inbox summaries for computer cards; the receiver owns durable event positions. */
 final class ComputerNotifications {
  private static final class Snapshot {final String binding;final JSONArray clients;boolean fresh=true;Snapshot(String binding,JSONObject data){this.binding=binding;clients=data.optJSONArray("clients");}}
  private static final Map<String,Snapshot> snapshots=new HashMap<>();

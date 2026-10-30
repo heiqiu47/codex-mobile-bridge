@@ -43,6 +43,29 @@ class ClaudeContract(unittest.IsolatedAsyncioTestCase):
 
     def sid(self, kind='code'): return claude_model.gateway_id(kind, self.rows[kind]['sessionId'])
 
+    async def test_manual_model_and_effort_use_native_setters_and_readback_on_both_surfaces(self):
+        original = self.call
+        async def call(kind, method, *args, **kwargs):
+            if method == 'mobileCatalog':
+                return {'models': [], 'capabilities': {'models': False, 'effort': False}}
+            return await original(kind, method, *args, **kwargs)
+        self.adapter.desktop.call.side_effect = call
+        for kind in ('code', 'cowork'):
+            result = await self.adapter.dispatch('catalog', self.sid(kind), {'section': 'models'})
+            self.assertTrue(result['capabilities']['models'])
+            self.assertTrue(result['capabilities']['manualEffort'])
+            await self.adapter.dispatch('settings', self.sid(kind), {'model': 'new-model', 'effort': 'high', 'manualEffort': True})
+            self.assertEqual(self.rows[kind]['model'], 'new-model')
+            self.assertEqual(self.rows[kind]['effort'], 'high')
+
+    async def test_unconfirmed_manual_selection_never_claims_success(self):
+        async def call(kind, method, *args, **kwargs):
+            if method == 'setModel': return False
+            return await self.call(kind, method, *args, **kwargs)
+        self.adapter.desktop.call.side_effect = call
+        with self.assertRaisesRegex(BridgeUnavailable, '未确认模型设置'):
+            await self.adapter.dispatch('settings', self.sid(), {'model': 'unconfirmed-model'})
+
     async def test_effort_only_update_does_not_require_resubmitting_model(self):
         await self.adapter.dispatch('settings', self.sid(), {'effort': 'low'})
         self.assertEqual(self.rows['code']['effort'], 'low')
@@ -65,6 +88,18 @@ class ClaudeContract(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, 'Cowork'):
             await self.adapter.dispatch('send', self.sid('cowork'), {**body, 'mode': 'steer'})
         self.assertFalse(any(method == 'sendMessage' for _, method, _ in self.calls))
+
+    async def test_project_references_use_native_mentions_without_upload_bytes(self):
+        for kind in ('code', 'cowork'):
+            self.calls.clear()
+            body = {'text': '检查文件', 'id': str(uuid.uuid4()), 'resolvedReferences': [
+                {'path': '/host/project/中文 文件.md', 'name': '中文 文件.md', 'kind': 'file'}]}
+            await self.adapter.dispatch('send', self.sid(kind), body)
+            args = next(args for _, method, args in self.calls if method == 'sendMessage')
+            mention = '@"/host/project/中文 文件.md"' if kind == 'code' else '@/host/project/中文 文件.md'
+            self.assertEqual(args[1], '检查文件\n\n' + mention)
+            self.assertIsNone(args[2]); self.assertIsNone(args[4] if kind == 'code' else args[3])
+            self.assertEqual(body['text'], '检查文件')
 
     async def test_invalid_effort_cannot_partially_change_model(self):
         async def call(kind, method, *args, **kwargs):

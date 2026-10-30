@@ -1,25 +1,25 @@
-# Agent Note: Keep a joined CLI writer after a transient read timeout
+# Agent Note: 短暂读取超时后保留已加入的 CLI 写入者
 
 Status: implemented
 
-## Problem
+## 问题
 
-The native Goal completion event can arrive while a background `thread/read` refresh is pending. The refresh worker treated every app-server read failure as proof that the joined writer was gone. A timed-out read therefore cleared the CLI join and made the phone history-only even when the proxy and daemon connection remained live.
+原生 Goal 完成事件可能在后台 `thread/read` 刷新尚未结束时到达。刷新工作线程曾把所有 app-server 读取失败都视为已加入写入者消失的证据。因此，即使代理和守护进程连接仍然存活，一次读取超时也会清除 CLI 加入状态，让手机退回仅历史模式。
 
-## Decision
+## 决策
 
-Preserve the joined session on `AppServerUnavailable` from a background refresh. Retry that replay-safe read in one worker with bounded backoff so the final turn can converge without another native event, including after more than one timeout. Each worker is tied to its original joined process and has a cancellation event. Closing or revoking that join wakes a sleeping worker and prevents it from reading a later connection. The proxy's actual disconnect callback still clears all joins; an explicit `notLoaded` or identity mismatch still invalidates the affected thread. No write is replayed.
+后台刷新发生 `AppServerUnavailable` 时保留已加入会话。由单个工作线程以有界退避重试这一可安全重放的读取，使最终轮次无需等待后续原生事件即可收敛，包括连续多次超时的情况。每个工作线程绑定其原始加入进程，并带取消事件。关闭或撤销该加入状态会唤醒正在休眠的工作线程，阻止它读取后续连接。代理的真实断开回调仍会清除全部加入状态；明确的 `notLoaded` 或身份不匹配仍会使相应线程失效。写入不重放。
 
-## Evidence and limits
+## 证据与限制
 
-An isolated native Codex 0.162.1 loopback Goal turn and explicit `complete` transition stayed connected and editable. Completion alone did not reproduce the user's disconnect. A deterministic adapter test reproduced the reported history-only state when `thread/read` timed out after a completed Goal event; the change keeps the live writer and converges the completed turn after two timeouts without any later event.
+隔离的原生 Codex 0.162.1 回环 Goal 轮次及显式 `complete` 转换始终保持连接且可编辑。单独完成 Goal 未复现用户的断开。确定性适配器测试在 Goal 完成事件后让 `thread/read` 超时，复现了报告中的仅历史状态；修改后保留存活写入者，并在两次超时后、没有任何后续事件的情况下收敛到已完成轮次。
 
-The reported chat is CLI-origin but Desktop-owned in the latest read-only snapshot. A dual-process isolated fixture showed the Goal sidecar set and clear a Goal without stealing the owning process's writer. A service fixture reproduced a history-only window followed by automatic Desktop reattachment after an owner-disconnect event; it does not prove that such an event caused the user's incident. Connection-transition logs now record only the opaque thread ID and a fixed reason category, distinguishing Desktop client/IPC loss, snapshot validation, and native thread/proxy loss without logging chat text, prompts, credentials, or provider details.
+最新只读快照显示，用户报告的聊天源自 CLI，但归 Desktop 所有。双进程隔离夹具证明 Goal 辅助进程能够设置和清除 Goal，而不夺取归属进程的写入者。服务夹具复现了归属进程断开事件后的短暂仅历史状态及自动重新附加 Desktop；这不能证明用户的问题由该事件引起。连接转换日志只记录不透明线程 ID 和固定原因类别，用于区分 Desktop 客户端/IPC 丢失、快照校验、原生线程/代理丢失，不记录聊天正文、提示词、凭据或 provider 详情。
 
-## Alternatives considered
+## 备选方案
 
-Invalidating on every refresh failure simplifies recovery but abandons a writer that remains alive. Retaining every failed connection would hide real disconnects; only read failures retry while the same joined process remains valid.
+每次刷新失败都使连接失效，恢复逻辑较简单，但会放弃仍然存活的写入者。保留所有失败连接则会掩盖真实断开；因此只在同一个已加入进程仍然有效时重试读取失败。
 
-## Consequences
+## 影响
 
-A stale read cannot overwrite a replacement connection or a newer turn event. Backoff bounds repeated read work. The original production trigger remains unproven; the fix covers reproduced timeout and ordering races.
+过期读取不能覆盖替代连接或较新的轮次事件。退避限制重复读取工作量。原始生产问题的触发原因仍未证实；修复范围是已复现的超时与时序竞争。

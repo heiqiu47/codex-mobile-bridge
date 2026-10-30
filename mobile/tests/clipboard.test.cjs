@@ -7,10 +7,10 @@ const root = path.resolve(__dirname, '../..');
 const script = fs.readFileSync(path.join(root, 'mobile/shared/web/mobile-clipboard.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'web/index.html'), 'utf8');
 function fixture({ reply = 'copied', late = false, frame = false, domReadyBeforeNative = false } = {}) {
-  const events = {}, writes = [], errors = [], timers = [];
+  const events = {}, listeners = {}, writes = [], errors = [], timers = [];
   const context = { navigator: {}, setTimeout: fn => timers.push(fn),
     CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init.detail; } },
-    document: { readyState: 'loading', addEventListener: (name, fn) => { events[name] = fn; }, dispatchEvent: e => errors.push(e.detail) },
+    document: { readyState: 'loading', addEventListener: (name, fn) => { events[name] = fn; listeners[name] = (listeners[name] || 0) + 1; }, dispatchEvent: e => errors.push(e.detail) },
     prompt: (command, text) => { writes.push({ command, text }); return reply; }
   };
   context.window = context; context.top = frame ? {} : context;
@@ -22,8 +22,31 @@ function fixture({ reply = 'copied', late = false, frame = false, domReadyBefore
   if (late) { loadWeb(); events.DOMContentLoaded(); }
   const button = { disabled: false, textContent: '复制' };
   const click = (trusted = true) => events.click({ isTrusted: trusted, target: { closest: () => button } });
-  return { context, events, button, click, writes, errors, timers };
+  return { context, events, listeners, button, click, writes, errors, timers };
 }
+test('repeated native injection retains one set of handlers and one-click authorization', async () => {
+  const f = fixture(); f.click();
+  vm.runInContext(script.replaceAll('__BRIDGE_CLIPBOARD_TOKEN__', 'test-token'), f.context);
+  assert.deepEqual(f.listeners, { 'bridge-language': 1, click: 1, DOMContentLoaded: 1 });
+  await f.context.BridgeClipboard.copy(() => 'once', f.button);
+  await f.context.BridgeClipboard.copy(() => 'twice', f.button);
+  assert.equal(f.writes.length, 1);
+});
+test('language sync skips unchanged values and retries a rejected native save', () => {
+  let language = 'zh', accepted = false;
+  const events = {}, writes = [], context = { BridgeI18n: { language: () => language },
+    prompt: (command, value) => { writes.push(value); return accepted ? 'saved' : null; },
+    document: { addEventListener: (name, fn) => events[name] = fn } };
+  context.window = context; context.top = context;
+  vm.createContext(context);
+  vm.runInContext(script.replace("'__BRIDGE_NATIVE_LANGUAGE__'", "'zh'"), context);
+  assert.deepEqual(writes, []);
+  events['bridge-language'](); assert.deepEqual(writes, []);
+  language = 'en'; events['bridge-language'](); accepted = true; events['bridge-language'](); events['bridge-language']();
+  assert.deepEqual(writes, ['en', 'en']);
+  language = 'zh'; events['bridge-language'](); events['bridge-language']();
+  assert.deepEqual(writes, ['en', 'en', 'zh']);
+});
 test('copies async full message exactly without browser clipboard or manual dialog', async () => {
   const f = fixture(); f.click();
   const text = '中文🙂\n```js\nconst value = "quotes\\slashes";\n```\n';

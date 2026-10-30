@@ -195,6 +195,51 @@ test('notification links select the owning provider instead of the last selected
   await nav.openChatLink('#claude-chat~desktop%3Aclaude',codex);assert.deepEqual(opened.pop(),['claude','claude-chat']);
   await nav.openChatLink('#aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee~my%20server%2F%7E',codex);assert.deepEqual(opened.pop(),['codex','aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee','my server/~']);
 });
+test('notification waits through pending status and opens after a complete read without a list fetch',async()=>{
+  const {nav}=fixture(),opened=[],notices=[],options=[];let reads=0;
+  nav.clients=[];nav.provider=nav.view.provider='codex';nav.notify=value=>notices.push(value);
+  nav.view.open=async id=>opened.push([nav.provider,id]);
+  nav.view.choose=function(id,value){this.provider=id;options.push(value);};
+  nav.onApplicationChange=async(previous,id,value)=>options.push(value);
+  nav.request=async()=>++reads===1?{pending:true,clients:[]}:{clients:[{id:'claude',enabled:true}]};
+  await nav.openChatLink('#target~desktop%3Aclaude',()=>{});
+  await nav.refresh();assert.equal(nav.statusPending,true);assert.deepEqual(opened,[]);assert.deepEqual(notices,[]);
+  await nav.poll(true);assert.deepEqual(opened,[['claude','target']]);assert.deepEqual(notices,[]);
+  assert.equal(nav.pendingChatLink,null);assert.ok(options.length);assert.ok(options.every(value=>value.loadList===false));
+  await nav.refresh();assert.equal(opened.length,1);
+});
+test('failed status reads retain only the latest pending notification',async()=>{
+  const {nav}=fixture(),opened=[],notices=[];nav.clients=[];nav.notify=value=>notices.push(value);nav.view.open=async id=>opened.push(id);
+  nav.request=async()=>{throw Error('offline');};
+  await nav.openChatLink('#first~desktop%3Aclaude',()=>{});await nav.refresh();
+  await nav.openChatLink('#latest~desktop%3Aclaude',()=>{});
+  nav.request=async()=>({clients:[{id:'claude',enabled:true}]});await nav.refresh();
+  assert.deepEqual(opened,['latest']);assert.deepEqual(notices,['offline']);
+});
+test('complete empty client status rejects the queued target instead of waiting forever',async()=>{
+  const {nav}=fixture(),notices=[];nav.clients=[];nav.notify=value=>notices.push(value);
+  nav.request=async()=>({clients:[]});
+  await nav.openChatLink('#chat~desktop%3Aclaude',()=>{});await nav.refresh();
+  assert.equal(nav.clientsKnown,true);assert.equal(nav.pendingChatLink,null);assert.equal(notices.length,1);
+});
+test('manual application selection cancels a queued notification',async()=>{
+  const {nav}=fixture();nav.clients=[];
+  await nav.openChatLink('#chat~desktop%3Aclaude',()=>{});await nav.choose('deepseek');
+  assert.equal(nav.pendingChatLink,null);assert.equal(nav.provider,'deepseek');
+});
+test('logout clears the queued notification and ignores the old status reply',async()=>{
+  const {nav}=fixture();nav.clients=[];nav.swipeSnapshots=new Map();let finish;
+  nav.request=()=>new Promise(resolve=>finish=resolve);
+  await nav.openChatLink('#chat~desktop%3Aclaude',()=>{throw Error('stale login');});
+  const reading=nav.refresh();nav.clear();finish({clients:[{id:'claude',enabled:true}]});await reading;
+  assert.equal(nav.pendingChatLink,null);assert.equal(nav.clientsKnown,false);assert.equal(nav.clients.length,0);
+});
+test('queued WSL notifications validate the exact entry and preserve its host',async()=>{
+  const {nav}=fixture(),opened=[],host='wsl:'+'a'.repeat(32),id='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';nav.clients=[];
+  nav.request=async()=>({clients:[{id:'codex',enabled:true,entries:[{id:'desktop',enabled:false},{id:host,enabled:true}]}]});
+  await nav.openChatLink('#'+id+'~'+encodeURIComponent(host),(...args)=>opened.push(args));await nav.refresh();
+  assert.deepEqual(opened,[[id,host]]);
+});
 test('notification routing rejects malformed targets and never enables a disabled client',async()=>{
   const {nav}=fixture(),notices=[];nav.notify=value=>notices.push(value);nav.view.open=async()=>{throw Error('must not open');};
   for(const hash of ['#pair=secret','#not-a-uuid~local','#id~desktop%3Aother','#%zz~desktop%3Aclaude','#x%0A~desktop%3Aclaude','#'+('x'.repeat(513))+'~desktop%3Adeepseek'])assert.equal(await nav.openChatLink(hash,()=>{throw Error('must not open Codex');}),false);
@@ -423,4 +468,17 @@ test('Claude WSL entries stay under Claude and can be enabled independently of n
 
 test('Claude WSL management uses the packaged Claude icon',()=>{
  const {nav,document}=fixture();document.createElement=tag=>({tag,setAttribute(){},append(child){this.child=child;}});const icon=nav.icon('wsl-claude:'+'a'.repeat(32));assert.equal(icon.child.src,'/client-icons/claude.png');
+});
+test('authenticated startup opens only the configured native or WSL entry before status arrives',async()=>{
+ const {nav}=fixture(),opened=[],notices=[];
+ const host='wsl:'+'a'.repeat(32),id='11111111-1111-4111-8111-111111111111';
+ nav.clients=[];nav.clientsKnown=false;nav.enabledClients=[host];nav.provider=nav.view.provider='codex';
+ nav.notify=text=>notices.push(text);nav.choose=async()=>{};
+ await nav.openChatLink('#'+id+'~local',(...args)=>opened.push(args));
+ assert.equal(opened.length,0);assert.equal(notices.length,1);
+ await nav.openChatLink('#'+id+'~'+encodeURIComponent(host),(...args)=>opened.push(args));
+ assert.deepEqual(opened,[[id,host]]);assert.equal(nav.pendingChatLink,null);
+ nav.clientsKnown=true;
+ await nav.openChatLink('#'+id+'~'+encodeURIComponent(host),(...args)=>opened.push(args));
+ assert.equal(opened.length,1);assert.equal(notices.length,2);
 });

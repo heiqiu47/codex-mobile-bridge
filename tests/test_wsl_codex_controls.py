@@ -59,6 +59,22 @@ class WslControlsTests(unittest.TestCase):
         self.assertFalse(self.entry._queue(self.identifier))
         self.assertEqual(self.entry.send(self.identifier, 'queued', submission, mode='queue')['status'], 'accepted')
 
+    def test_queued_project_reference_keeps_identity_and_checks_target_at_dispatch(self):
+        refs = [{'path': 'file.txt', 'absolutePath': '/home/fixture/project/file.txt'}]
+        files = [{'path': refs[0]['absolutePath'], 'name': 'file.txt', 'image': None}]
+        self.entry.server.thread['status'] = {'type': 'active'}
+        identifier = str(uuid.uuid4())
+        with patch.object(self.entry, 'workspace', return_value=files) as workspace:
+            self.assertEqual(self.entry.send(self.identifier, '', identifier, mode='queue', references=refs)['status'], 'queued')
+            self.entry.server.thread['status'] = {'type': 'idle'}
+            self.entry._dispatch_queued(self.identifier)
+            self.entry._dispatch_queued(self.identifier)
+            self.assertGreaterEqual(workspace.call_count, 2)
+            self.assertTrue(all(call.args[2] == {'references': refs} for call in workspace.call_args_list))
+        sent = [params for method, params in self.entry.server.calls if method == 'turn/start']
+        self.assertEqual(len(sent), 1)
+        self.assertIn('## file.txt: /home/fixture/project/file.txt', sent[0]['input'][0]['text'])
+
     def test_queue_unknown_write_is_never_replayed_after_restart(self):
         submission = str(uuid.uuid4())
         self.entry.send(self.identifier, 'queued', submission, mode='queue')

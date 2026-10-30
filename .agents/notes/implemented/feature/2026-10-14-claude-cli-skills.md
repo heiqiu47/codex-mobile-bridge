@@ -1,13 +1,25 @@
-# Agent Note: Installed Claude Code CLI Skills
+# Agent Note: 已安装的 Claude Code CLI Skills
 
 Status: implemented
 
-## Decision
+## 问题
 
-The resumed CLI retains its original configuration directory, working directory and user/project/local setting sources. The Skill picker uses the commands actually loaded by native initialization, excluding built-in commands. Native plugin enablement, project scope and user-invocable restrictions determine the available choices; the gateway does not maintain a second filesystem parser.
+手机端的 Claude CLI Skill 选择需要与选定原生进程实际加载的命令一致，并保留插件启用、项目作用域和用户可调用限制。仅知道某个 Skill 文件存在，不能替代该进程的可用命令目录。
 
-A selected CLI Skill is sent as its native `/name` invocation in the owned process. CLI messages allow one Skill selection, matching the native invocation form. The server validates the selection against that owned process catalog before sending. Closed history remains passive and offers no Skill selection.
+## 决策
 
-## Verification
+恢复的 CLI 保留原配置目录、工作目录及用户/项目/本地设置来源。Skill 选择器使用原生初始化实际加载的命令，并排除内置命令。原生插件启用状态、项目作用域和用户可调用限制决定可选项；网关不维护第二套文件系统解析器。
 
-Fixture tests cover loaded user/project/plugin command filtering and native slash-command input. Root acceptance with installed Claude 2.1.287, an isolated config and a loopback mock API verified native Skill expansion; for image-bearing input the native Skill tool delivered the selected instructions, alongside exact image bytes and uploaded-file Read results. No paid API was used.
+选定的 CLI Skill 在 Bridge 持有进程中以原生 `/name` 形式调用。CLI 消息只允许选择一个 Skill，与原生调用形式一致。服务端发送前会依据该持有进程的目录校验选择。已关闭历史保持被动读取，不提供 Skill 选择。
+
+## 备选方案
+
+原记录明确选择原生初始化目录，并明确不维护第二套文件系统解析器：可选项由原生插件、作用域和可调用限制决定。记录未提供第二套解析器的试验或其他候选比较，不能将这一边界扩写为已完成的方案评估。
+
+## 影响
+
+可选 Skill 与当前持有进程保持一致，服务端在发送前再次校验。代价是能力依赖原生初始化目录，且每条 CLI 消息只支持一个原生 Skill 调用。关闭历史仍保持被动读取，不为显示选择器启动进程。
+
+## 验证
+
+夹具测试覆盖已加载用户/项目/插件命令过滤和原生斜杠命令输入。主智能体使用已安装 Claude 2.1.287、隔离配置及回环模拟 API 验收，验证了原生 Skill 展开；对于带图片的输入，原生 Skill 工具传递了选定指令、完全一致的图片字节和上传文件的 Read 结果。未使用付费 API。

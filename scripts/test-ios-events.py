@@ -48,7 +48,8 @@ class Handler(BaseHTTPRequestHandler):
             state['release'].wait(5)
         after = int(query.get('after', ['0'])[0])
         events = [{'id': f'event-{i}', 'sequence': i, 'threadId': 'thread', 'host': 'local',
-                   'kind': 'request' if i % 2 == 0 else 'completion', 'title': '任务提醒', 'body': '消息内容' * 30}
+                   'kind': 'attention' if i == 201 else 'request' if i % 2 == 0 else 'completion',
+                   'title': 'Codex 需要你处理' if i == 201 else '任务提醒', 'body': '消息内容' * 30}
                   for i in range(max(1, state['cursor'] - 199), state['cursor'] + 1) if i > after]
         summary = [{'provider': 'claude', 'kind': 'request' if state['cursor'] % 2 == 0 else 'completion', 'sequence': state['cursor']}]
         body = json.dumps({'clients': [{'id': 'claude', 'enabled': True, 'unread': state.get('unread', state['cursor'])}], 'summary': summary, 'streamId': state['stream'], 'cursor': state['cursor'], 'events': events, 'enabled': True}, ensure_ascii=False).encode()
@@ -70,7 +71,7 @@ source = (ROOT / 'mobile/ios/BridgePreview/App.swift').read_text()
 def section(start, end):
     return source[source.index(start):source.index(end, source.index(start))]
 fetch = section('    private func fetch(', '    private func sheet(')
-sync = section('    @objc private func active()', '    private func requestStartupNotifications()').replace('self.computerNotifications[address]?.arrangedSubviews.forEach { $0.removeFromSuperview() }', 'self.computerNotifications[address]?.isHidden = true')
+sync = section('    @objc private func active()', '    private func notificationSources()').replace('self.computerNotifications[address]?.arrangedSubviews.forEach { $0.removeFromSuperview() }', 'self.computerNotifications[address]?.isHidden = true')
 redirect = section('final class NoRedirect:', '// Foreground-only')
 # OS/platform substitutes only. The production fetch, sync, foreground/background
 # lifecycle and shared URLSession setup remain intact.
@@ -101,7 +102,7 @@ enum MobileStrings { static func text(_ value: String) -> String { value } }
 enum NotificationSource { static func apply(_ content: UNMutableNotificationContent, provider: String?, host: String?) {} }
 final class UNMutableNotificationContent { var title = "", body = ""; struct Sound { static let `default` = Sound() }; var sound: Sound?; var userInfo: [String: Any] = [:] }
 struct UNNotificationRequest { let identifier: String; let content: UNMutableNotificationContent; let trigger: String? }
-final class UNUserNotificationCenter { static let instance = UNUserNotificationCenter(); static func current() -> UNUserNotificationCenter { instance }; var delivered: [String] = []; func add(_ request: UNNotificationRequest) { delivered.append(request.identifier) } }
+final class UNUserNotificationCenter { static let instance = UNUserNotificationCenter(); static func current() -> UNUserNotificationCenter { instance }; var delivered: [String] = []; var titles: [String] = []; func add(_ request: UNNotificationRequest) { titles.append(request.content.title); delivered.append(request.identifier) } }
 struct Downloads { func pause() {} }
 struct ConnectionDiscovery { func cancel() {} }
 final class LiveActivityController { static let shared = LiveActivityController(); func pause() async {} }
@@ -119,13 +120,14 @@ final class BridgeController: NSObject {
     var generation = 0
     let defaults = MemoryDefaults()
     var foregroundBaselines = Set<String>()
-    var loading = false
+    var loading: Bool { !polling.isEmpty }
+    var polling = Set<String>()
     var timer: Timer?
     var activityTimer: Timer?
     let downloads = Downloads()
 '''
 if 'private var pollGeneration' in source:
-    fields += '    var pollGeneration = 0\n    var pollTask: URLSessionDataTask?\n'
+    fields += '    var pollGeneration = 0\n    var pollTasks: [String: URLSessionDataTask] = [:]\n'
 fields += section('    private let redirect = NoRedirect()', '    override func viewDidLoad()')
 fields += section('    private func cookieName(', '    private let page = UIStackView()').replace('private func', 'func')
 methods = '''

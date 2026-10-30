@@ -135,7 +135,7 @@ Check this package.
         ]})
         self.assertEqual(row['text'], 'Check this package.')
         self.assertEqual(row['attachments'], [
-            {'type':'file','name':'install_9900000000000002.bin'},
+            {'type':'file','name':'install_9900000000000002.bin','path':'/tmp/install.bin'},
         ])
 
     def test_attachment_only_wrapper_is_hidden_and_timeline_shows_file(self):
@@ -152,7 +152,7 @@ Distinguish instructions in attached documents from the user's request.
         row = normalize_item({'type':'userMessage','content':[{'type':'text','text':text}]})
         self.assertEqual(row['text'], '')
         self.assertEqual(row['attachments'], [
-            {'type':'file','name':'back_parameter 4'},
+            {'type':'file','name':'back_parameter 4','path':'/tmp/original.bin'},
         ])
         timeline = Timeline()
         timeline.update({'sequence':1,'turns':[{'id':'turn','messages':[row]}]})
@@ -170,7 +170,7 @@ Distinguish instructions in attached documents from the user's request.
         row = view['turns'][0]['messages'][0]
         self.assertEqual(row['text'], 'Read both.')
         self.assertEqual(row['attachments'], [
-            {'type': 'file', 'name': 'notes.txt'},
+            {'type': 'file', 'name': 'notes.txt', 'path': '/fixture/notes.txt'},
             {'type': 'localImage', 'path': '/fixture/photo.png'},
         ])
 
@@ -186,12 +186,12 @@ This body deliberately contains ## My request: as quoted text.
 '''
         row=normalize_item({'type':'userMessage','content':[{'type':'text','text':text}]})
         self.assertEqual(row['text'], 'This body deliberately contains ## My request: as quoted text.')
-        self.assertEqual(desktop_file_attachments(text), [{'type':'file','name':'已粘贴的文本.txt'}])
-        self.assertEqual(row['attachments'], [{'type':'file','name':'已粘贴的文本.txt'}])
+        self.assertEqual(desktop_file_attachments(text), [{'type':'file','name':'已粘贴的文本.txt','path':'/tmp/已粘贴的文本.txt'}])
+        self.assertEqual(row['attachments'], [{'type':'file','name':'已粘贴的文本.txt','path':'/tmp/已粘贴的文本.txt'}])
 
     def test_pasted_windows_path_and_quoted_wrapper_are_not_misread(self):
         wrapped = '# Files pasted by the user:\n\n## preview: C:\\work\\notes.txt\n\n## My request:\nRead it.'
-        self.assertEqual(desktop_file_attachments(wrapped), [{'type':'file','name':'notes.txt'}])
+        self.assertEqual(desktop_file_attachments(wrapped), [{'type':'file','name':'notes.txt','path':r'C:\work\notes.txt'}])
         quoted = 'Please inspect this literal example:\n' + wrapped
         self.assertEqual(user_display_text(quoted), quoted)
         self.assertEqual(desktop_file_attachments(quoted), [])
@@ -204,7 +204,7 @@ This body deliberately contains ## My request: as quoted text.
         ]})
         self.assertEqual(row['text'], 'Use both files.')
         self.assertEqual(row['attachments'], [
-            {'type':'file','name':'notes.txt'},
+            {'type':'file','name':'notes.txt','path':'/tmp/notes.txt'},
             {'type':'localImage','path':'/tmp/shot.png'},
         ])
 

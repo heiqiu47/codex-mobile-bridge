@@ -12,6 +12,16 @@ v2.0.0 在同一个网关提供三个应用各自的会话列表、配置和工�
 
 只有配置就绪的客户端可以启用。单纯打开网关控制面板或扫描不会自动启动所有应用；启动网关后才按启用状态接入。Web/手机只显示已启用的客户端，只有一个应用时隐藏底部切换栏。创建会话归属当前应用，Claude Code/Cowork 分组可以折叠。
 
+## DSH 通用插件与自定义接入
+
+网关列表只展示已安装、已配置或仍启用的接入。没有扫描结果时，仍可从 **添加接入 → DSH / 自定义 Harness** 安装并绑定，不要求第三方应用使用特定名称。官方 DSH Desktop 保留原有的一键安装方式。
+
+在“第三方客户端：手动安装与绑定”导出插件 ZIP，解压后通过客户端插件管理安装完整目录并重新加载。然后选择该核心生成的 `binding.json`，或选择 **扫描 Harness 数据目录**，从该目录的 `profiles` 中选择已安装插件的档案。扫描读取插件身份文件；绑定时进行版本和回环认证握手，不枚举应用名称，不扫描任意网络端口，也不自动启动会话。安装方式、文件位置和移除说明见[插件使用说明](../bridge/clients/deepseek/plugin/README.md)。
+
+每个网关同时绑定一个 DSH 档案。切换或解除绑定前，先仅停用 DSH 手机接入。绑定失效时不会回退到另一客户端；第三方的启动、退出、账号和 API 由原客户端管理，网关只读其账号状态与模型。插件沿用现有聊天、审批、通知与归档协议，保留原会话 ID、工作目录和权限。
+
+当前实机验证为 **macOS arm64、DSH Tauri v0.25.0、Harness 核心 0.2.1-rc.2**：真实插件管理器本地安装、绑定、重启恢复、聊天、原生权限审批、手机通知收件箱和本地 Webhook、活跃会话停止归档及原 ID 恢复。模型响应来自隔离的回环测试服务，未调用付费上游；本轮没有重新验证手机操作系统通知展示。其他第三方客户端只要提供所需核心服务即可尝试该通用包，但尚未实测的版本不列为已确认兼容。Issue #59 的 DSH Desktop 0.12.1 / Windows 环境不计入本轮实机结果。
+
 ## 连接恢复与退出
 
 Web、手机和桌面网关的应用管理提供状态、重新连接与启停。运行中、等待授权、排队和结果未确认的操作会限制退出/切换；操作前重新核验任务与进程，不使用展示缓存作为安全判断。
@@ -97,3 +107,14 @@ npm run test:desktop
 协议测试使用本地模拟运行时，不调用模型，覆盖认证隔离、二进制上传下载、实时连接和进程关闭。真实桌面冒烟脚本为 `scripts/smoke-harness.cjs`，需用 Electron 运行，并设置全新的隔离 `CMB_DATA_DIR` 与已安装程序的 `CMB_HARNESS_EXECUTABLE`；禁止指向正在使用的数据目录。
 
 上游协议参考：[Web 包](https://github.com/deepseek-ai/deepseek-harness/tree/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/bundle/web-app)、[公开部署说明](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/docs/user/guide/public-deployments.md)。仓库版本的 `--public-url` 尚未出现在上述 npm 版本中，因此本实现使用共同支持的 `--profile web --no-open --port` 与官方前端的相对路径。
+
+
+## DSH 自带的 Mobile 连接
+
+Android / iOS 的电脑连接页增加 **DSH Mobile**。粘贴客户端 Mobile 功能生成的完整链接，或扫码后选择 DSH Mobile；确认目标后，App 打开该客户端原有的手机界面，保留路径、查询参数及片段。链接中的认证信息保存在设备加密存储中，电脑列表只显示地址来源，不显示认证参数。
+
+这类连接独立于 Bridge 网关连接，不调用 Bridge 专属账号、通知、探测和下载 API，也不注入 Bridge 聊天脚本。通知及网页主题由原 DSH Mobile 页面支持的能力决定；需要 Bridge 通知和统一聊天界面时，使用通用插件路线。原 Bridge 的主题、返回键和通知来源开关保持原行为。
+
+Android 9 及以上使用独立进程的 WebView 数据目录；Android 8 保留原 Bridge 功能，DSH Mobile 经确认后在系统浏览器中打开。iOS 使用独立临时网站数据存储，关闭后不保留网页 Cookie；重新打开时使用加密保存的原 Mobile 链接。如果客户端发的是一次性链接，需要在客户端重新生成。移除连接不修改原客户端账号或聊天。
+
+通用插件安装、配对、核心范围与更新规则参见 [插件说明](../bridge/clients/deepseek/plugin/README.md)。官方一键接入入口保留；导出的 ZIP 和 npm 格式 `.tgz` 均可用于本地安装，不代表已发布插件市场。

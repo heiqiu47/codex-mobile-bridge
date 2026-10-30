@@ -18,8 +18,11 @@ from bridge.clients.claude.cli_session import (_Owned, _message_content, _skill_
                                                 PERMISSION_OPTIONS, ResumePreflightBlocked)
 from bridge.clients.codex.remote import ssh_command
 from bridge.clients.errors import BridgeUnavailable
+from bridge.features.network.retry import ConnectionUnavailable, TransportUnavailable, ssh_connection
+from bridge.features.network.stdio import run_with_input
 from bridge.clients.uploads import DesktopUploads
 from bridge.resources import source_text
+import ast
 
 
 def worker_source():
@@ -28,7 +31,10 @@ def worker_source():
     if source.count(marker) != 1:
         raise ValueError('Claude Code 远端归档模块无法加载')
     helper = source_text('clients/claude/file_archive.py')
-    return source.replace(marker, helper + '\narchive_file_state = state\narchive_file_change = change\narchive_supported = supported\narchive_assert_no_cli = assert_no_cli\n')
+    source = source.replace(marker, helper + '\narchive_file_state = state\narchive_file_change = change\narchive_supported = supported\narchive_assert_no_cli = assert_no_cli\n')
+    history = source_text('clients/claude/history.py')
+    reader = next(node for node in ast.parse(history).body if isinstance(node, ast.FunctionDef) and node.name == 'image_event')
+    return source.replace('from bridge.clients.claude.history import image_event', ast.get_source_segment(history, reader))
 
 
 def _command(alias):
@@ -39,15 +45,21 @@ def _command(alias):
 
 def _remote(alias, request, timeout=30):
     try:
-        result = subprocess.run(_command(alias), input=json.dumps(request, ensure_ascii=False)+'\n',
-                                capture_output=True, text=True, encoding='utf-8', timeout=timeout)
+        with ssh_connection(alias).attempt():
+            try:
+                result = run_with_input(_command(alias), json.dumps(request, ensure_ascii=False)+'\n',
+                                        capture_output=True, text=True, encoding='utf-8', timeout=timeout)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise TransportUnavailable('SSH Claude Code 主机不可用，请检查连接') from exc
+            if result.returncode == 255:
+                raise TransportUnavailable('SSH Claude Code 主机不可用，请检查连接')
         if result.returncode != 0:
             raise BridgeUnavailable('SSH Claude Code 主机不可用，请检查连接')
         value = json.loads(result.stdout.strip())
         if value.get('ok') is not True:
             raise BridgeUnavailable(value.get('message') or 'SSH Claude Code 读取失败')
         return value['value']
-    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError) as exc:
+    except (ConnectionUnavailable, OSError, subprocess.TimeoutExpired, ValueError, KeyError) as exc:
         raise BridgeUnavailable('SSH Claude Code 主机不可用，请检查连接') from exc
 
 
@@ -456,6 +468,11 @@ class RemoteClaudeCli:
                         page = self.history.get(page_key)
                     if page is None or page.get('stamp') != row.get('stamp'):
                         raise
+            elif action == 'image':
+                row = self._get(sid)
+                event = self._remote(row['alias'], {'operation':'image','native':row['nativeId'],
+                    'origin':row['origin'],'source':body.get('source')})
+                return model.history_image([event], body.get('source'))
             elif live_cached and action != 'resume':
                 row = cached
             else:

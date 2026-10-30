@@ -1,37 +1,46 @@
-# Agent Note: Proxy HTTP startup backlog and GET framing
+# Agent Note: 代理 HTTP 启动积压队列与 GET 消息定界
 
 Status: implemented
 
-## Problem
+## 问题
 
-A reverse proxy can open many upstream HTTP/1.1 sockets while loading a cold page. A small listen backlog rejects connections before handlers run. Separately, an empty chunked GET leaves framing bytes unread; persistent request parsing can interpret those bytes as the next request. These are different transport failures and require separate checks.
+反向代理加载冷页面时可能打开大量上游 HTTP/1.1 套接字。过小的监听积压队列会在处理器运行前拒绝连接。另外，空的分块编码 GET 会留下未读取的消息定界字节，持久连接请求解析可能将其当成下一请求。这是两种不同的传输故障，需要分别检查。
 
-## Decision
+## 决策
 
-`GatewayServer.request_queue_size` is explicitly 128. This is the pending TCP listen backlog, subject to operating-system limits, and does not increase accepted handler concurrency. All listeners retain the existing shared 48-slot semaphore and 20-second connection timeout. Local CPython 3.12 uses a default backlog of 5; newer CPython defaults can differ, so 128 is an explicit target rather than a universal increase over every Python release.
+`GatewayServer.request_queue_size` 明确设为 128。它是受操作系统限制的待处理 TCP 监听积压队列，不增加已接受处理器的并发数。所有监听器保留现有共享 48 槽信号量和 20 秒连接超时。本地 CPython 3.12 默认积压队列为 5；更新版本可能不同，因此 128 是明确目标，不是相对每个 Python 版本都必然增大。
 
-GET processing does not consume request bodies. Before dispatch, the handler marks the connection for closure if any `Transfer-Encoding` header exists, even when empty, or any `Content-Length` value after whitespace trimming is not exactly `0`. The normal resource/API response still follows the existing route checks. The handler then closes without parsing residual body/framing bytes as another request. Ordinary bodyless GETs and canonical zero-length GETs keep connection reuse.
+GET 处理不消费请求体。派发前，只要存在任意 `Transfer-Encoding` 头，即使其值为空，或者任意 `Content-Length` 值去除首尾空白后不恰为 `0`，处理器就将连接标记为关闭。正常资源/API 响应仍遵循现有路由检查。随后关闭连接，不将残留请求体/定界字节解析成另一请求。普通无请求体 GET 和规范零长度 GET 保留连接复用。
 
-Authentication, exact Host/Origin pairing, CSRF checks, active-connection admission, session mutation routing and JSON/upload framing validation are unchanged. POST still rejects chunked JSON bodies, duplicate lengths and invalid lengths. A GET body containing a syntactically valid, authenticated pin/archive POST cannot dispatch that mutation on the same connection. This is a framing boundary, not a replacement for authorization.
+认证、精确 Host/Origin 配对、CSRF 检查、活跃连接准入、会话修改路由和 JSON/上传消息定界校验不变。POST 仍拒绝分块 JSON 请求体、重复长度和无效长度。即使 GET 请求体包含语法正确且已认证的置顶/归档 POST，也不能在同一连接派发该修改。这是消息定界边界，不能替代授权。
 
-## Existing-note audit
+## 既有笔记审计
 
-No active note covers the listen backlog or unread GET framing. [Bridge session management](../../implemented/feature/2026-10-26-bridge-session-management.md) partially overlaps only in authenticated pin/archive route boundaries; that decision remains in force. The existing architecture security section documents the transport policy. No prior decision needs rejection or removal.
+没有活跃笔记覆盖监听积压队列或未读取的 GET 定界字节。[Bridge 会话管理](../../implemented/feature/2026-10-26-bridge-session-management.md)仅在已认证置顶/归档路由边界上部分重叠，该决定继续有效。既有架构安全章节记录传输策略。无需否决或移除旧决定。
 
-## Alternatives considered
+## 备选方案
 
-- Increase accepted handler concurrency: may reduce resets under load, but changes the resource and security budget rather than the pending connection queue.
-- Drain GET bodies: preserves upstream pooling, but requires bounded framing parsing and read-time limits. Closing the affected connection is the smaller fix for a gateway that does not accept GET bodies.
-- Disable keep-alive for all GETs: avoids residual bodies but needlessly loses pooling for ordinary bodyless resources.
+- 增加已接受处理器并发：可能减少负载下重置，但改变的是资源与安全预算，而非待处理连接队列。
+- 排空 GET 请求体：保留上游连接池，但需有界消息定界解析和读取时限。对于不接受 GET 请求体的网关，关闭受影响连接是更小的修复。
+- 对全部 GET 禁用 keep-alive：能避免残留请求体，但会无谓失去普通无请求体资源的连接池收益。
 
-## Testing
+## 测试
 
-The seven loopback proxy tests validate a 38-connection pending startup burst, the unchanged 48-slot accepted-connection limit, normal GET reuse, empty/chunked/invalid/duplicate-length GET closure, and rejected chunked writes. Added regressions put valid authenticated pin/archive POST bytes directly inside a framed GET body and assert no mutation dispatch and EOF. Separate authenticated POST cases exercise missing login, missing CSRF, wrong Origin, chunked encoding, duplicate/invalid lengths and successful single dispatch.
+七个回环代理测试验证了 38 连接待处理启动突发、保持不变的 48 槽已接受连接上限、正常 GET 复用、空/分块/无效/重复长度 GET 关闭，以及分块写入拒绝。新增回归将有效且已认证的置顶/归档 POST 字节直接放入已定界 GET 请求体，断言没有修改派发且返回 EOF。独立的已认证 POST 用例覆盖未登录、缺少 CSRF、错误 Origin、分块编码、重复/无效长度和成功单次派发。
 
-Bounded in-process old-behavior overrides reproduce both failures without editing product source: backlog 5 times out within the fixture's two-second connect limit; the old GET handler dispatches three synthetic pin calls and three archive calls from unread GET bodies. The patched seven-test suite passes. These expected pre-change failures are separate from regression results.
+通过进程内有界覆盖旧行为，在不修改产品源码的情况下复现两种失败：积压队列为 5 时，在夹具两秒连接时限内超时；旧 GET 处理器从未读取的 GET 请求体中派发三次合成置顶和三次归档调用。修复后的七项测试通过。这些预期的修改前失败与回归结果单独记录。
 
-The requested existing auth, login-security, Bridge, session-management and Python resource suites pass: 157 tests, two platform skips. Node asset/relay checks pass: four tests. All sessions and native-operation targets are synthetic; no real proxy deployment, desktop process, account, chat, installation or model call is exercised by these tests.
+要求执行的既有认证、登录安全、Bridge、会话管理和 Python 资源测试共 157 项通过，2 项因平台跳过。Node 资源/中继检查 4 项通过。所有会话和原生操作目标均为合成数据；测试未使用真实代理部署、桌面进程、账号、聊天、安装或模型调用。
 
-## Consequences
+## 影响
 
-Cold proxy startup can queue the intended burst without raising the active connection budget. Framed GETs cannot leave bytes for a subsequent HTTP request. Affected upstream sockets reconnect instead of being pooled; ordinary resource GETs retain reuse. A larger backlog does not guarantee more than 48 accepted connections or solve saturation by long-lived connections. Real proxy acceptance remains a separate deployment check. Existing binary/304 response helpers can omit an explicit close header but still close the socket; this change does not broaden their response behavior or alter protocol upgrades.
+冷启动代理可以排队预期突发连接，不提高活跃连接预算。带请求体定界的 GET 不能留下字节供后续 HTTP 请求解析。受影响的上游套接字会重新连接而非回收到连接池；普通资源 GET 保留复用。更大的积压队列不保证超过 48 个已接受连接，也不解决长连接饱和。真实代理验收仍需单独部署检查。现有二进制/304 响应辅助程序可能省略显式关闭头，但仍关闭套接字；本次修改不扩大其响应行为，也不改变协议升级。
+
+
+### v2.1.7 Test 的 Windows 拒绝响应收尾
+
+2026-10-28 Windows 实机回归中，未登录或缺少 CSRF 的 POST 多次在客户端得到 WinError 10054/10053，而不是应有的 401/403。服务端在读取请求体前拒绝请求，随即关闭仍有入站字节的 TCP 连接，可能使重置覆盖已经发送的错误响应。
+
+连接结束时先关闭发送方向，再最多用 200 毫秒丢弃 64 KiB 尾部字节，随后仍然关闭连接。此阶段不解析或派发新请求，不复用连接，不等待完整请求体；既有 48 个处理器槽直到收尾完成才释放。正常 keep-alive 请求不会进入此收尾。选择有界丢弃，而非在认证前读取完整请求体，避免让拒绝响应等待上传或引入新的消息定界解析；也不通过修改测试接受连接重置来掩盖错误响应丢失。
+
+新增回环用例在收到拒绝响应后才发送尾部，检查完整错误 JSON、关闭头与 EOF；原有夹具继续验证请求体不能夹带第二次修改、正常连接仍复用。具体三平台全量与冻结产物结果保存在本轮 `.tmp/v217-test-20261028/` 验收记录，初次失败不作为通过计数。

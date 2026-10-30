@@ -66,12 +66,13 @@ class DesktopNotificationTests(unittest.TestCase):
         self.turns['deepseek'][-1]['status'] = 'completed'
         self.assertEqual(self.scan()[0]['title'], 'DSH 运行已完成')
 
-    def test_failed_turn_and_idle_without_native_end_do_not_notify(self):
+    def test_failed_turn_requires_attention_but_idle_without_native_end_does_not(self):
         self.scan()
         self.rows[0]['updatedAt'] = 2
         self.turns['claude'].append({'turnId': 'failure', 'status': 'failed'})
         self.rows[1]['status'] = 'unknown'
-        self.assertEqual(self.scan(), [])
+        events = self.scan()
+        self.assertEqual([(event['host'], event['kind']) for event in events], [('desktop:claude', 'attention')])
 
     def test_session_override_uses_same_default_policy_and_does_not_attach_codex(self):
         self.manager.policy('same-native-id', 'desktop:claude', {'requests': 'off', 'completion': 'off'})

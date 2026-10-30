@@ -93,6 +93,7 @@ class NativeUpdaterIdentityTests(unittest.TestCase):
         self.home = self.root / '.codex'
         self.state = self.home / 'app-server-daemon'
         self.state.mkdir(parents=True)
+        self.state.chmod(0o700)
         self.proc = self.root / 'proc'
         self.proc.mkdir()
         self.boot = self.root / 'boot'
@@ -126,7 +127,9 @@ class NativeUpdaterIdentityTests(unittest.TestCase):
         return process
 
     def record(self, name, pid, ticks):
-        (self.state / name).write_text(json.dumps({'pid': pid, 'processIdentity': {'bootId': 'fixture-boot-id', 'startTicks': ticks}}))
+        path = self.state / name
+        path.write_text(json.dumps({'pid': pid, 'processIdentity': {'bootId': 'fixture-boot-id', 'startTicks': ticks}}))
+        path.chmod(0o600)
 
     def check(self, expected=None):
         return identity.codex_updater(self.updater, str(self.binary), self.args, self.env, self.home, expected)
@@ -151,6 +154,10 @@ class NativeUpdaterIdentityTests(unittest.TestCase):
         alternate.write_bytes(b'other native executable')
         (self.main / 'exe').unlink()
         (self.main / 'exe').symlink_to(alternate)
+        self.assertIsNone(self.check())
+
+    def test_group_writable_state_directory_never_exempts(self):
+        self.state.chmod(0o770)
         self.assertIsNone(self.check())
 
     def test_extra_arguments_and_foreign_home_are_not_native_updater_authorization(self):

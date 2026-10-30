@@ -1,37 +1,37 @@
-# Agent Note: Account presentation and gateway platform scope
+# Agent Note: 账号展示与网关平台范围
 
 Status: implemented
 
-## Problem
+## 问题
 
-The unified account change split the desktop enrollment entry, while the phone editor lacks unsaved-draft model discovery. Desktop overview quota reads saved active rows but omits the native login card used by account management, and its hidden account panel can suppress quota loading. WSL controls and managers are initialized on gateways without WSL capability.
+统一账号改动拆分了桌面添加入口，而手机编辑器无法为未保存草稿获取模型。桌面概览额度读取已保存的活跃账号行，却遗漏账号管理使用的原生登录卡片；隐藏的账号面板还可能抑制额度加载。没有 WSL 能力的网关也会初始化 WSL 控件和管理器。
 
-## Decision
+## 决策
 
-The desktop restores the Add account or API entry and keep the unified saved inventory. The phone uses the user-approved compact grouped form with existing theme tokens. An explicit authenticated Codex draft-model request validates the original URL/key rules, queries the catalog without saving or switching, and never persists draft credentials. Empty model fields take the first returned ID; manual choices and newer edits win over late responses.
+桌面恢复“添加账号或 API”入口，保留统一的已保存账号清单。手机使用用户批准的紧凑分组表单，沿用现有主题变量。显式且已认证的 Codex 草稿模型请求校验原有 URL/密钥规则，在不保存、不切换的情况下查询目录，且从不持久化草稿凭据。模型字段为空时填入首个返回 ID；手动选择和更新的编辑内容优先于迟到响应。
 
-The desktop flattens only its provider heading rows. The gateway gates WSL-specific manager imports/initialization by the gateway operating system and loads account controls only from the gateway capability. Windows endpoint identity, native routing and write guards stay intact. Desktop overview uses the same native-login identity as account management and its existing visible-page quota cadence.
+桌面只移除 provider 标题分组行。网关按自身操作系统控制 WSL 专用管理器的导入/初始化，并且只依据网关能力加载账号控件。Windows 端点身份、原生路由和写入保护保持不变。桌面概览采用与账号管理相同的原生登录身份，沿用现有可见页面的额度读取节奏。
 
-## Existing-note audit
+## 既有笔记审计
 
-- [Unified local accounts](../../implemented/feature/2026-10-26-unified-codex-accounts.md) partially overlaps: this supersedes its separate desktop editor placement, retaining inventory and switch verification.
-- [WSL account management](../../implemented/feature/2026-10-25-wsl-account-management.md) and [WSL unified entry](../../implemented/architecture/2026-10-24-codex-wsl-unified.md) partially overlap: endpoint routing and credentials remain unchanged; unsupported hosts skip initialization.
-- Claude manual-quota notes concern a separate provider and remain unchanged. No overlapping proposed/rejected account layout decision was found.
+- [统一本地账号](../../implemented/feature/2026-10-26-unified-codex-accounts.md)部分重叠：本决定替代其桌面编辑器单独放置方式，保留清单和切换验证。
+- [WSL 账号管理](../../implemented/feature/2026-10-25-wsl-account-management.md)与 [WSL 统一入口](../../implemented/architecture/2026-10-24-codex-wsl-unified.md)部分重叠：端点路由和凭据不变；不支持的宿主跳过初始化。
+- Claude 手动额度笔记涉及另一 provider，保持不变。未发现重叠的 proposed/rejected 账号布局决定。
 
-## Alternatives considered
+## 备选方案
 
-Keeping separate desktop forms reuses the CLI editor but contradicts the requested original entry. Merely hiding WSL controls preserves eager loads and environment queries on unsupported systems. Reusing another saved account's quota fills the cell but misidentifies the current login; the native login card is the authoritative alternative.
+保留独立桌面表单可复用 CLI 编辑器，但违背恢复原入口的要求。仅隐藏 WSL 控件，仍会在不支持的系统上提前加载并查询环境。复用另一已保存账号的额度能填满单元格，却会误认当前登录；应以原生登录卡片为准。
 
-## Testing
+## 测试
 
-Targeted tests verify draft discovery without mutations, stale/manual edits, native unsaved-login quota, flat desktop rows and Windows versus non-Windows initialization. The actual grouped editor is inspected at 320 and 390 CSS pixels in both existing themes with synthetic data; it has no horizontal overflow. Only the root agent edits source and tests; build agents receive a frozen candidate.
+定向测试验证草稿发现不产生修改、过期响应/手动编辑处理、未保存原生登录额度、桌面平铺行，以及 Windows 与非 Windows 的初始化差异。使用合成数据，在两种现有主题、320 和 390 CSS 像素宽度下检查真实分组编辑器，无横向溢出。仅主智能体修改源码和测试；构建智能体接收冻结候选版本。
 
-## Consequences
+## 影响
 
-An upstream catalog does not establish Responses compatibility. Missing quota remains explicitly unavailable rather than inferred. Lazy WSL loading must retain Windows behavior and report load failures without disturbing local accounts.
+上游模型目录不能证明 Responses 兼容性。缺失额度明确显示不可用，不作推断。WSL 按需加载必须保留 Windows 行为，并在加载失败时报告错误而不干扰本地账号。
 
-Repository-wide note validators still report pre-existing optimization folders and old note format failures; none of the changed notes is reported. Frontend regression: 1200 passed, one skipped. Account/platform/HTTP regression: 206 passed before additional platform lifecycle checks.
+全仓库笔记校验仍报告既有 optimization 目录和旧笔记格式错误；本轮修改的笔记未被报告。前端回归：1200 通过，1 跳过。账号/平台/HTTP 回归：在追加平台生命周期检查前，206 项通过。
 
-## User follow-up
+## 用户后续反馈
 
-The approved follow-up removes the outer compact disclosure style so the phone API entry uses the adjacent reminder disclosure typography. Group containers have no border; each field keeps a visible input boundary, persistent label and translated placeholder. Existing App theme tokens remain unchanged. The complete AccountsPanel nesting, rather than an isolated editor wrapper, is checked at 320/390px in light/dark themes.
+已批准的后续调整移除外层紧凑折叠样式，使手机 API 入口采用相邻提醒折叠项的文字样式。分组容器无边框；每个字段保留可见输入边界、固定标签和翻译后的占位提示。现有 App 主题变量不变。在浅色/深色主题的 320/390px 宽度下检查完整 AccountsPanel 嵌套结构，而非孤立编辑器容器。

@@ -140,9 +140,10 @@ else {
       stopping = state.mode !== 'pending';
       app.quit();
     });
-    ipcMain.on('fixture-expanded', () => {
+    ipcMain.on('fixture-expanded', event => {
       fs.appendFileSync(path.join(base, 'expands.log'), 'expand\n');
       if (state.mode.endsWith('late-cancel')) fs.writeFileSync(path.join(base, 'cancel'), 'cancel');
+      event.returnValue = true;
     });
     await window.loadFile(path.join(__dirname, 'index.html'));
     fs.writeFileSync(path.join(base, 'ready.json'), JSON.stringify({pid: process.pid, handle: window.getNativeWindowHandle().readBigUInt64LE().toString()}));
@@ -151,7 +152,7 @@ else {
   });
 }
 '''
-PRELOAD = "const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('fixture',{quit:()=>ipcRenderer.send('fixture-quit'),expanded:()=>ipcRenderer.send('fixture-expanded')});"
+PRELOAD = "const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('fixture',{quit:()=>ipcRenderer.send('fixture-quit'),expanded:()=>ipcRenderer.sendSync('fixture-expanded')});"
 HTML = '''<!doctype html><meta charset="utf-8"><title>Codex menu fixture</title>
 <div role="menubar" aria-label="Application menu"><button role="menuitem" id="application-menu-trigger-file-menu" aria-haspopup="menu" aria-expanded="false">File</button></div>
 <div id="application-menu-content" role="menu" hidden></div>
@@ -255,8 +256,10 @@ class CodexNativeQuit(unittest.TestCase):
                     self.assertEqual(sum(row.get('quitPhase') == 'dispatching' for row in rows), int(expected), output)
                     self.assertEqual(reply['pid'], pid)
                     if mode in ('normal', 'hidden'):
-                        self.assertEqual(reply['quitState'], 'exited', output)
-                        self.assertEqual(desktop.wait(app_process, 3), 0)
+                        # The helper may finish before Electron's child cleanup.
+                        # Independently require actual normal exit, without stop.
+                        self.assertIn(reply['quitState'], ('exited', 'submitted'), output)
+                        self.assertEqual(desktop.wait(app_process, 10), 0)
                     elif mode == 'pending':
                         self.assertEqual(reply['quitState'], 'pending', output)
                         self.assertIsNone(desktop.wait(app_process, 0), 'native confirmation was bypassed')

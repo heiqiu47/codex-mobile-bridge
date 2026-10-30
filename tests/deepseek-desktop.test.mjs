@@ -28,7 +28,7 @@ try{
   assert.equal(session.permissionMode,'full-access');assert.equal(session.permissionLabel,'Full access');
   assert.deepEqual(session.contextUsage,{usedTokens:120,contextWindow:1000,estimated:true});
   delete row.projections.values.contextPressure;delete row.projections.values.permissions;
-  const initialStatus=await(await request('status')).json();assert.equal(initialStatus.configured,false);assert.equal(initialStatus.bridgeRevision,7);
+  const initialStatus=await(await request('status')).json();assert.equal(initialStatus.configured,false);assert.equal(initialStatus.bridgeRevision,9);
   const services={settings:{describe:options=>{assert.deepEqual(options,{redactSecrets:true});return [{ns:'provider',value:{apiKeyEnv:'FIXTURE_KEY',private:'DO-NOT-EXPOSE'}}];}},credentials:{describe:async ref=>{assert.equal(ref,'FIXTURE_KEY');return {configured:true};},resolve:()=>{throw Error('Must not resolve credentials');}},llm:{listConfigurableProviders:()=>[{provider:'deepseek',settingsNs:'provider',settingsPath:[]}]}};
   ctx.get=name=>services[name];
   assert.equal((await(await request('status')).json()).configured,true);
@@ -70,6 +70,13 @@ try{
   assert.equal((await(await request('send',{id:'r',text:'follow-up',plugins:['review']})).json()).status,'queued');assert.equal(calls[0].mode,'queue');assert.ok(calls[0].content[0].text.includes('review'));
   const selected=await(await request('settings',{model:'deepseek/chat',effort:''})).json();assert.equal(selected.effort,'high');assert.equal(calls.at(-1).provider,'deepseek');assert.equal(calls.at(-1).model,'chat');assert.equal(calls.at(-1).reasoningEffort,undefined);
   assert.equal((await request('settings',{model:'deepseek/chat',effort:'unsupported'})).status,400);
+  assert.equal(models.capabilities.manualModels,true);assert.equal(models.capabilities.manualEffort,true);
+  const nativeSelect=ctx.sessionController.selectModel;
+  ctx.sessionController.selectModel=async value=>{assert.equal(value.model,'not-in-bridge-cache');assert.equal(value.reasoningEffort,'high');throw Error('session/model-unavailable');};
+  const rejected=await request('settings',{model:'deepseek/not-in-bridge-cache',effort:'high',manualEffort:true});assert.equal(rejected.status,400);assert.match(JSON.stringify(await rejected.json()),/model-unavailable/);
+  ctx.sessionController.selectModel=nativeSelect;
+  const nativeCatalog=ctx.sessionController.modelCatalog;ctx.sessionController.modelCatalog=async()=>{throw Error('catalog unavailable');};
+  const manual=await(await request('settings',{model:'deepseek/manual',effort:'high',manualModel:true,manualEffort:true})).json();assert.equal(manual.status,'accepted');assert.equal(manual.model,'deepseek/manual');ctx.sessionController.modelCatalog=nativeCatalog;
   const beforeAccess=calls.length;const permissions=await(await request('access')).json();assert.equal(permissions.options.length,2);assert.equal(calls.length,beforeAccess);
   assert.equal((await request('access',{mode:'invalid'})).status,400);assert.equal(calls.length,beforeAccess);
   assert.equal((await request('access',{mode:'full-access'})).status,200);assert.deepEqual(calls.at(-1),{permissionSession:{id:'native-session'},mode:'full-access'});

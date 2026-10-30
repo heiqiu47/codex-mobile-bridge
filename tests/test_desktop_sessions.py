@@ -22,6 +22,28 @@ class Adapters(unittest.TestCase):
         self.manager = DesktopSessions(self.root)
         self.addCleanup(self.manager.close)
 
+    def test_host_references_are_resolved_once_and_left_to_native_adapters(self):
+        from bridge.features.workspace.workspace import operate
+        file = self.root / '中文.txt'; file.write_text('fixture')
+        for provider in ['claude', 'deepseek']:
+            adapter = Mock(); adapter.receipts_path = None
+            adapter.call.return_value = {'status': 'accepted'}
+            self.manager.adapters[provider] = adapter
+            bridge = Mock(); bridge.workspace.side_effect = lambda sid, action, params: operate(str(self.root), action, params)
+            body = {'id': str(uuid.uuid4()), 'text': '', 'references': [{'path': file.name, 'absolutePath': str(file)}]}
+            with patch.object(self.manager, 'workspace_bridge', return_value=bridge):
+                self.assertEqual(self.manager.call(provider, 'send', 'chat', body)['status'], 'accepted')
+                self.manager.call(provider, 'send', 'chat', body)
+            self.assertEqual(adapter.call.call_count, 1)
+            dispatched = adapter.call.call_args.args[2]
+            self.assertNotIn('references', dispatched)
+            self.assertEqual(dispatched['text'], '')
+            self.assertEqual(dispatched['resolvedReferences'], [{'path': str(file), 'name': file.name, 'kind': 'file', 'size': 7, 'image': None}])
+            adapter.call.return_value = {'session': {'cwd': str(self.root)}, 'messages': [{'id': 'message', 'role': 'user', 'text': '', 'attachments': [{'type': 'file', 'path': str(file), 'name': file.name}]}]}
+            detail = self.manager._read(provider, 'detail', 'chat')
+            self.assertEqual(detail['messages'][0]['text'], '')
+            self.assertEqual(detail['files'][0]['path'], file.name)
+
     def test_claude_preparation_is_available_without_starting_gateway(self):
         self.manager.gateway_running = False
         adapter = self.manager.adapters['claude']
@@ -65,6 +87,48 @@ class Adapters(unittest.TestCase):
         adapter.call.assert_called_once_with('detail', 'session-one', {})
         with self.assertRaises(ValueError): self.manager.call('deepseek', 'eval', 'session-one')
         with self.assertRaises(ValueError): self.manager.call('deepseek', 'send', 'session-one', {'id':str(uuid.uuid4()),'text':''})
+
+    def test_desktop_claude_reuses_only_its_current_api_account_catalog(self):
+        adapter = self.manager.adapters['claude']
+        adapter.index['session'] = {'backend': 'cowork'}
+        store = Mock(); store.lock = __import__('threading').RLock()
+        store._current.return_value = ('api', 'fingerprint', {})
+        native = {'models': [{'id': 'native', 'efforts': ['high']}], 'capabilities': {'models': True}}
+        with patch.object(self.manager, '_model_identity', return_value='same-account'), \
+             patch.object(self.manager, '_account_store', return_value=store), \
+             patch.object(self.manager, '_account_models', return_value={'models': [{'id': 'upstream', 'efforts': []}]}) as account, \
+             patch.object(self.manager, '_read', return_value=native):
+            result = self.manager._catalog_models('claude', 'session', {'section': 'models'})
+            self.assertEqual([row['id'] for row in result['models']], ['upstream', 'native'])
+            account.assert_called_once_with('claude', refresh=False)
+        self.assertEqual(result['cache']['identity'], 'same-account')
+
+    def test_manual_settings_captured_account_is_checked_before_native_write(self):
+        adapter = self.manager.adapters['deepseek']
+        adapter.call = Mock(return_value={'status': 'accepted'})
+        body = {'id': str(uuid.uuid4()), 'model': 'provider/manual', 'manualModel': True,
+                'modelCatalogIdentity': 'old-account'}
+        with patch.object(self.manager, '_model_identity', return_value='new-account'):
+            with self.assertRaisesRegex(ValueError, '账号已切换'):
+                self.manager.call('deepseek', 'settings', 'session', body)
+        adapter.call.assert_not_called()
+        self.assertEqual(self.manager.db.execute('SELECT COUNT(*) FROM requests').fetchone()[0], 0)
+        with patch.object(self.manager, '_model_identity', return_value='old-account'):
+            self.assertEqual(self.manager.call('deepseek', 'settings', 'session', body)['status'], 'accepted')
+        adapter.call.assert_called_once()
+
+    def test_unavailable_catalog_still_carries_verified_account_identity(self):
+        with patch.object(self.manager, '_model_identity', return_value='same-account'), \
+             patch.object(self.manager, '_read', return_value={'models': [], 'capabilities': {'models': False}}):
+            result = self.manager._catalog_models('claude', 'session', {'section': 'models'})
+        self.assertEqual(result['cache']['identity'], 'same-account')
+
+    def test_catalog_identity_survives_cache_write_failure(self):
+        with patch.object(self.manager, '_model_identity', return_value='same-account'), \
+             patch.object(self.manager, '_read', return_value={'models': [], 'capabilities': {'models': True}}), \
+             patch.object(self.manager.model_store, 'write', side_effect=OSError('read-only')):
+            result = self.manager._catalog_models('claude', 'session', {'section': 'models'})
+        self.assertEqual(result['cache']['identity'], 'same-account')
 
     def test_legacy_claude_catalog_does_not_schedule_unsupported_refresh(self):
         adapter = self.manager.adapters['claude']
@@ -383,6 +447,15 @@ class HttpAdapters(unittest.TestCase):
     tearDown = test_bridge.HttpTests.tearDown
     request = test_bridge.HttpTests.request
     login = test_bridge.HttpTests.login
+
+    def test_client_cannot_supply_resolved_host_references(self):
+        manager = self.server.desktop_sessions = Mock()
+        headers = self.login()
+        body = {'sessionId': 'native-id', 'text': 'test', 'resolvedReferences': [{'path': '/outside/project'}]}
+        response = self.request('POST', '/api/desktop-sessions/claude/send', body, headers)
+        self.assertEqual(response[0], 400)
+        manager.call.assert_not_called()
+
     def test_client_get_uses_nonblocking_status_path(self):
         manager = self.server.desktop_sessions = Mock()
         manager.clients_status.return_value = {'clients': [], 'pending': True}

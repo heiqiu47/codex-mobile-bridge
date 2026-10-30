@@ -401,12 +401,16 @@ class RemoteAdapterContract(unittest.TestCase):
         self.cli.owned.clear()
 
     def test_ssh_json_uses_utf8_for_unicode_requests(self):
+        captured = {}
+        def read(command, **options):
+            captured['bytes'] = options['stdin'].read()
+            return SimpleNamespace(returncode=0, stdout='{"ok":true,"value":{}}')
         with patch.object(remote, '_command', return_value=['ssh', 'fixture']), \
-             patch.object(remote.subprocess, 'run', return_value=SimpleNamespace(
-                 returncode=0, stdout='{"ok":true,"value":{}}')) as run:
+             patch.object(remote.subprocess, 'run', side_effect=read) as run:
             self.assertEqual(remote._remote('fixture', {'cwd': '/项目'}), {})
         self.assertEqual(run.call_args.kwargs['encoding'], 'utf-8')
-        self.assertIn('/项目', run.call_args.kwargs['input'])
+        self.assertEqual(json.loads(captured['bytes']), {'cwd': '/项目'})
+        self.assertTrue(run.call_args.kwargs['stdin'].closed)
 
     def test_host_and_profile_scope_and_passive_listing(self):
         with patch.object(remote, '_remote', return_value={'sessions': [self.row]}) as request, \

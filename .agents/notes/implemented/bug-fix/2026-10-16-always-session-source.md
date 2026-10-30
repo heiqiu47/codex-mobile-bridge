@@ -1,21 +1,21 @@
-# Agent Note: Always identify a session source
+# Agent Note: 始终标明会话来源
 
 Status: implemented
 
-## Problem
+## 问题
 
-A list containing only CLI chats looked like Desktop chats because the source label disappeared when only one source was available. Users could not tell which runtime would continue the chat.
+仅包含 CLI 聊天的列表看起来像 Desktop 聊天，因为只有一种来源可用时来源标签会消失。用户无法判断将由哪个运行时继续聊天。
 
-## Decision
+## 决策
 
-Always show the source above the date on every session row: Codex APP/CLI/IDE, Claude Code/Cowork/CLI, and DeepSeek Harness APP. Unknown sources use the existing localized Other source label. The source selector remains conditional on multiple available types; its visibility is independent of row identity.
+每个会话行都在日期上方显示来源：Codex APP/CLI/IDE、Claude Code/Cowork/CLI、DeepSeek Harness APP。未知来源使用既有本地化的“其他来源”标签。来源选择器仍仅在存在多种可用类型时显示；它的可见性与行内身份标识独立。
 
-This supersedes only the single-type row-label rule in [Unified Claude chat list](../optimization/2026-10-14-claude-unified-chat-list.md). Chronological ordering, filtering, selection and project grouping stay as documented there.
+本决定只替代[统一 Claude 聊天列表](../feature/2026-10-14-claude-unified-chat-list.md)中单一类型不显示行标签的规则。时间顺序、过滤、选择与项目分组仍遵循该笔记。
 
-## Alternatives considered
+## 备选方案
 
-Keeping labels only in mixed lists saves a small amount of visual space but leaves single-source users unable to identify the runtime. Requiring a selector in every list adds a control without a filtering choice.
+只在混合列表中显示标签能节省少量视觉空间，但单一来源用户无法识别运行时。要求每个列表都显示选择器，则会在没有过滤选项时增加控件。
 
-## Consequences and verification
+## 影响与验证
 
-All sources use the existing two-column row layout and the existing swipe-stability rules. DOM regressions cover single-source Codex/Claude/DSH, legacy desktop rows, and unknown sources. Source selectors still hide when there is no filtering choice.
+所有来源使用现有双列行布局和滑动稳定性规则。DOM 回归覆盖单一来源的 Codex/Claude/DSH、旧 Desktop 行和未知来源。不存在过滤选项时，来源选择器仍隐藏。

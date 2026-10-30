@@ -1,13 +1,25 @@
-# Agent Note: Claude context readings
+# Agent Note: Claude 上下文用量读数
 
 Status: implemented
 
-## Decision
+## 问题
 
-For Claude Code CLI, SSH CLI, and Claude Desktop transcript fallback, show the latest main-loop assistant request's `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. These per-request counts describe the last observed model input; result-level `usage` and `modelUsage` are cumulative and cannot be used as the current context reading. Assistant `output_tokens` may be a placeholder, so it is excluded. A native `compact_boundary` invalidates the prior reading until a later request supplies usage. Zero is a valid measurement; absent or malformed usage is unknown.
+原生记录同时包含逐请求输入量、累计用量和可能为占位值的输出量。上下文展示必须区分这些计量口径；没有原生窗口容量时，也不能仅凭模型名称推算百分比。
 
-The 32-pixel ring shows a blue percentage fill only when the native record supplies a positive context-window capacity. A model name alone does not prove a limit, particularly for API-compatible providers. Native `result.modelUsage[latestAssistantModel].contextWindow` supplies capacity but its cumulative token counts are ignored. The Desktop connector passes only model identifiers and their context-window capacities from results; its existing context summary remains preferred when available. The injected connector revision changes so an older renderer closure cannot silently omit the new fields.
+## 决策
 
-## Verification
+Claude Code CLI、SSH CLI 和 Claude Desktop 记录回退均显示最近一次主循环助手请求的 `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`。这些逐请求计数描述最近观察到的模型输入；结果级 `usage` 和 `modelUsage` 为累计量，不能作为当前上下文读数。助手 `output_tokens` 可能是占位值，因此排除。原生 `compact_boundary` 会使先前读数失效，直到后续请求提供用量。零是有效测量值；缺失或格式错误的用量视为未知。
 
-Fixture tests cover latest versus cumulative usage, cache tokens, sidechains, compaction, unknown capacity and zero, plus local and SSH detail paths, Desktop transcript fallback and sanitized connector fields. Browser UI tests cover measured tokens without a capacity. No real chat or paid model request was used.
+32 像素圆环只有在原生记录提供正数上下文窗口容量时，才显示蓝色百分比填充。仅凭模型名称不能证明上限，尤其是 API 兼容 provider。原生 `result.modelUsage[latestAssistantModel].contextWindow` 提供容量，但其中累计 token 数忽略。Desktop 连接器只从结果传递模型标识和上下文窗口容量；既有上下文摘要可用时仍优先。注入连接器修订号随之变化，防止旧渲染闭包静默遗漏新字段。
+
+## 备选方案
+
+原记录明确排除了两种读数来源：结果级累计用量不能表示最近一次请求的当前输入量；模型名称不能证明 API 兼容 provider 的窗口容量。助手输出量还可能是占位值，因此不纳入输入读数。这些是原文已记录的计量取舍，不代表另有未记录的实验或候选实现。
+
+## 影响
+
+读数保留最近一次实际输入证据，且包含缓存输入；没有可信容量时不绘制百分比。压缩后到下一次用量事件之间显示未知，缺失值不按零处理。Desktop 连接器需要更新修订号以传递容量字段；既有原生摘要可用时仍优先。
+
+## 验证
+
+夹具测试覆盖最新与累计用量、缓存 token、旁支链、压缩、未知容量及零值，并覆盖本地/SSH 详情路径、Desktop 记录回退和已净化连接器字段。浏览器 UI 测试覆盖有测量 token 数但无容量的情况。未使用真实聊天或付费模型请求。

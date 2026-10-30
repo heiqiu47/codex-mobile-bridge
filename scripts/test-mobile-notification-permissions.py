@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise native startup notification logic with isolated OS permission fixtures."""
 import os
+import sys
 from pathlib import Path
 import subprocess
 
@@ -13,12 +14,12 @@ def section(source, start, end):
     return source[source.index(start):source.index(end, source.index(start))]
 
 
-android = (ROOT / 'mobile/android/src/io/github/try2love/codexbridge/MainActivity.java').read_text()
-monitor = (ROOT / 'mobile/android/src/io/github/try2love/codexbridge/MonitorService.java').read_text()
+android = (ROOT / 'mobile/android/src/io/github/try2love/codexbridge/MainActivity.java').read_text(encoding="utf-8")
+monitor = (ROOT / 'mobile/android/src/io/github/try2love/codexbridge/TaskNotifications.java').read_text(encoding="utf-8")
 assert 'root.post(this::requestStartupNotifications)' in android
-methods = section(android, ' void requestStartupNotifications()', ' void testNotification()')
+methods = section(android, ' void toggleBackgroundNotifications()', ' void testNotification()')
 methods += next(line for line in android.splitlines() if 'public void onRequestPermissionsResult(' in line)
-channel = section(monitor, ' static void createNotificationChannel(', ' public IBinder onBind')
+channel = section(monitor, ' static void createChannel(', '\n}')
 channel = channel.replace('android.media.AudioAttributes', 'AudioAttributes').replace('android.provider.Settings', 'Settings')
 java = r'''
 import java.util.*;
@@ -33,7 +34,8 @@ class NotificationChannel {String id,sound;int importance;AudioAttributes audio;
 class NotificationManager {static final int IMPORTANCE_HIGH=4;boolean enabled=true;int creates;Map<String,NotificationChannel> channels=new HashMap<>();boolean areNotificationsEnabled(){return enabled;}NotificationChannel getNotificationChannel(String id){return channels.get(id);}void createNotificationChannel(NotificationChannel value){creates++;channels.put(value.id,value);}}
 class MobileStrings {static String text(Context c,String s){return s;}}
 class Prefs {Map<String,Boolean> values=new HashMap<>();boolean contains(String k){return values.containsKey(k);}boolean getBoolean(String k,boolean d){return values.getOrDefault(k,d);}Prefs edit(){return this;}Prefs putBoolean(String k,boolean v){values.put(k,v);return this;}void apply(){}}
-class MonitorService extends Context { CHANNEL }
+class TaskNotifications extends Context { CHANNEL }
+class MonitorService {static int starts,refreshes;static boolean succeeds=true;static void refresh(){refreshes++;}static boolean startBackground(MainActivity app){starts++;if(!succeeds)app.prefs.putBoolean("backgroundNotifications",false);return succeeds;}}
 class MainActivity extends Activity {
  Prefs prefs=new Prefs();int permission=-1,requests,code,monitors,other;List<String> messages=new ArrayList<>();
  int checkSelfPermission(String p){return permission;}
@@ -52,16 +54,22 @@ public class NotificationPermissions {
   MainActivity granted=new MainActivity();granted.permission=0;granted.requestStartupNotifications();check(granted.requests==0&&granted.prefs.getBoolean("alerts",false),"already authorized upgrade enables alerts");
   Build.VERSION.SDK_INT=32;MainActivity old=new MainActivity();old.requestStartupNotifications();check(old.requests==0&&old.prefs.getBoolean("alerts",false),"old Android enables without runtime prompt");MainActivity blocked=new MainActivity();blocked.manager.enabled=false;blocked.requestStartupNotifications();check(!blocked.prefs.getBoolean("alerts",true),"respect system block on old Android");
   Build.VERSION.SDK_INT=35;MainActivity manual=new MainActivity();manual.onRequestPermissionsResult(22,new String[]{"notifications"},new int[]{-1});check(manual.messages.get(0).equals("请在系统设置中允许通知。"),"notification denial must not show camera copy");
+  MonitorService.starts=0;MonitorService.refreshes=0;MainActivity background=new MainActivity();background.permission=0;background.toggleBackgroundNotifications();check(background.prefs.getBoolean("backgroundNotifications",false)&&background.prefs.getBoolean("alerts",false)&&MonitorService.starts==1,"background enabled manually");background.toggleBackgroundNotifications();check(!background.prefs.getBoolean("backgroundNotifications",true)&&MonitorService.refreshes==1,"manual pause refreshes service");
+  MainActivity permission=new MainActivity();permission.toggleBackgroundNotifications();check(permission.code==26&&!permission.prefs.getBoolean("backgroundNotifications",false),"background waits for explicit permission");permission.permission=0;permission.onRequestPermissionsResult(26,new String[]{"notifications"},new int[]{0});check(permission.prefs.getBoolean("backgroundNotifications",false),"permission grant starts background");
+  MonitorService.succeeds=false;MainActivity failed=new MainActivity();failed.permission=0;failed.toggleBackgroundNotifications();check(!failed.prefs.getBoolean("backgroundNotifications",true)&&failed.messages.size()==1,"failed launch rolls back preference and explains recovery");
   System.out.println("PASS Android startup grant/deny/dismiss, upgrade, stored settings, channel sound and mute preservation");
  }
 }
 '''.replace('CHANNEL', channel).replace('METHODS', methods)
-(WORK / 'NotificationPermissions.java').write_text(java)
+(WORK / 'NotificationPermissions.java').write_text(java, encoding="utf-8")
 jdk = Path(os.environ['JAVA_HOME']) if os.environ.get('JAVA_HOME') else next((ROOT/'.tmp/mobile-tools/jdk').glob('*/Contents/Home'))
 subprocess.run([str(jdk/'bin/javac'), '-encoding', 'UTF-8', '-d', str(WORK), str(WORK/'NotificationPermissions.java')], check=True)
 subprocess.run([str(jdk/'bin/java'), '-cp', str(WORK), 'NotificationPermissions'], check=True)
 
-ios = (ROOT / 'mobile/ios/BridgePreview/App.swift').read_text()
+if '--android-only' in sys.argv:
+    raise SystemExit(0)
+
+ios = (ROOT / 'mobile/ios/BridgePreview/App.swift').read_text(encoding="utf-8")
 assert 'requestStartupNotifications()' in section(ios, '    override func viewDidAppear(', '    override func viewDidLayoutSubviews()')
 assert 'completion([.banner, .sound])' in ios and 'content.sound = .default' in ios
 methods = section(ios, '    private func requestStartupNotifications()', '    private func currentTask(').replace('private func', 'func')
@@ -92,6 +100,6 @@ for enabled in [false,true] {let saved=BridgeController();saved.defaults.set(ena
 denied.toggleForegroundAlerts();check(center.requests==before+1,"manual retry still works");center.complete(false);check(denied.messages.count==1,"manual denial gives settings guidance")
 print("PASS iOS startup options, grant/refusal, no repeated prompt, stored choices and manual retry")
 '''.replace('METHODS', methods)
-(WORK/'main.swift').write_text(swift)
+(WORK/'main.swift').write_text(swift, encoding="utf-8")
 subprocess.run(['xcrun', 'swiftc', '-module-cache-path', str(WORK/'swift-cache'), str(WORK/'main.swift'), '-o', str(WORK/'ios-permissions')], check=True)
 subprocess.run([str(WORK/'ios-permissions')], check=True)

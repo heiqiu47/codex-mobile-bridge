@@ -816,13 +816,13 @@ class CliSessions:
                 path = item.get('path')
                 if not path or not Path(path).is_absolute():
                     raise AppServerUnsupported('Invalid CLI file attachment path')
-            prefix = '# Files mentioned by the user:\n' + '\n'.join(
-                '- ' + item['path'] for item in files) + '\n\n## My request:\n'
+            from bridge.features.sessions.model import attachment_prompt
+            references = [{'path': item['path'], 'name': item.get('label') or Path(item['path']).name} for item in files]
             first_text = next((item for item in result if item['type'] == 'text'), None)
             if first_text is None:
-                result.insert(0, {'type': 'text', 'text': prefix})
+                result.insert(0, {'type': 'text', 'text': attachment_prompt('', references)})
             else:
-                first_text['text'] = prefix + first_text.get('text', '')
+                first_text['text'] = attachment_prompt(first_text.get('text', ''), references)
         return result
 
     @staticmethod
@@ -920,6 +920,13 @@ class CliSessions:
                 state['turnPlan'] = copy.deepcopy(params.get('plan') or [])
             elif method == 'thread/status/changed':
                 state['threadRuntimeStatus'] = params.get('status') or state['threadRuntimeStatus']
+            elif method == 'error':
+                # The native error notification explicitly separates automatic
+                # retry from a terminal failure requiring user intervention.
+                turn = next((item for item in state['turns'] if item['turnId'] == params.get('turnId')), None)
+                if turn is not None and type(params.get('willRetry')) is bool:
+                    turn.update(error=copy.deepcopy(params.get('error')), willRetry=params['willRetry'])
+                    turn['status'] = 'inProgress' if params['willRetry'] else 'failed'
             elif method in ('turn/started', 'turn/completed'):
                 turn = params.get('turn') or {}
                 row = next((item for item in state['turns'] if item['turnId'] == turn.get('id')), None)
@@ -934,6 +941,7 @@ class CliSessions:
                 elif turn.get('model'):
                     row['params'] = {'model': turn['model'], 'effort': turn.get('reasoningEffort')}
                 row.update(status=turn.get('status'), error=turn.get('error'))
+                row.pop('willRetry', None)
                 state['threadRuntimeStatus'] = {'type': 'active' if method == 'turn/started' else 'idle'}
                 if turn.get('items'):
                     items = turn['items']

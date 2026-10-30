@@ -184,13 +184,15 @@ class ClientNavigation {
   visibleClients(){return this.clients.filter(client=>client.enabled&&this.preference('switch:'+client.id));}
   icon(id){const n=document.createElement('span');n.className='client-icon client-'+id;n.setAttribute('aria-hidden','true');const img=document.createElement('img');img.src='/client-icons/'+(isCodexClient(id)?'codex':id.startsWith('wsl-claude:')?'claude':id)+'.png';img.alt='';n.append(img);return n;}
   applyClients(data){
+    this.clientsKnown=true;
     this.clients=data.clients;this.wslSupported=data.wslSupported??this.wslSupported;this.gatewayRunning=data.gatewayRunning??this.gatewayRunning;
     this.windowsSession=data.windowsSession??this.windowsSession;
     this.syncViewClients();
     if(data.computer){this.computer.dataset.deviceName=data.computer;this.computerName.textContent=data.computer;document.dispatchEvent(new Event('bridge-computer'));}
     const enabled=this.clients.filter(c=>c.enabled);
     const id=enabled.some(c=>c.id===this.provider)?this.provider:enabled[0]?.id||null;
-    if(id!==this.provider||this.view.provider!==(isCodexClient(id)?'codex':id||'codex'))this.choose(id,{activate:false}).catch(error=>this.notify(error.message));
+    if(this.pendingChatLink){this.paint();}
+    else if(id!==this.provider||this.view.provider!==(isCodexClient(id)?'codex':id||'codex'))this.choose(id,{activate:false,fromStatus:true}).catch(error=>this.notify(error.message));
     else{if(id&&this.view.previewOnly)this.view.confirmCachedList();this.paint();}
     this.onClientStates?.(this.clients);
   }
@@ -199,8 +201,9 @@ class ClientNavigation {
     this.loading=true;const revision=this.revision;
     try{const data=await ClientLifecycle.request(signal=>this.request('/api/clients',undefined,signal),{timeout:this.statusTimeout??10000,uncertain:false,message:'客户端状态读取超时，请重试。'});if(revision===this.revision){this.statusPending=data.pending===true;if(data.refreshError)throw Error(data.refreshError);if(!this.statusPending){ClientLifecycle.reconcile(this.operationFailures,this.managementClients(data.clients));this.applyClients(data);}}}
     catch(error){this.notify(error.message);}finally{this.loading=false;this.paint();}
+    if(this.clientsKnown&&this.pendingChatLink&&!document.getElementById('app').hidden){const {hash,openCodex}=this.pendingChatLink;this.pendingChatLink=null;try{await this.openChatLink(hash,openCodex);}catch(error){this.notify(error.message);}}
   }
-  clear(){this.revision++;this.clients=[];this.choosing=null;this.pending.clear();this.operationFailures?.clear();this.swipeSnapshots.clear();}
+  clear(){this.revision++;this.clients=[];this.clientsKnown=false;this.enabledClients=null;this.pendingChatLink=null;this.choosing=null;this.pending.clear();this.operationFailures?.clear();this.swipeSnapshots.clear();}
   async scanWsl(button){
     if(this.pending.size||this.choosing||this.hasUncertain())return;
     this.choosing='scan-wsl';const revision=++this.revision;button.disabled=true;this.paint();
@@ -218,19 +221,20 @@ class ClientNavigation {
   hasUncertain(){return [...(this.operationFailures?.values()||[])].some(value=>value.uncertain);}
   syncViewClients(){this.view.setClientStates?.(this.clients.map(client=>({...client,operationFailure:this.operationFailures?.get(client.id),operationUncertain:this.hasUncertain(),pendingEnable:this.gatewayRunning!==false&&this.pending.has(client.id)&&client.enabled})),id=>this.toggle(id,true),id=>this.initialize(id),()=>this.refresh(),id=>this.reconnect(id));}
   retryOperation(id){const failure=this.operationFailures?.get(id);if(!failure||this.hasUncertain())return;return failure.action==='initialize'?this.initialize(id):this.toggle(id,failure.action==='enable');}
-  async choose(id,{activate=true}={}){
+  async choose(id,{activate=true,fromStatus=false,loadList=true}={}){
+    if(!fromStatus)this.pendingChatLink=null;
     this.cancelListSwipe();
     const host=id?.startsWith('wsl:')&&isCodexClient(id)?id:undefined;if(host)id='codex';
     if(id===this.provider&&this.view.provider===(isCodexClient(id)?'codex':id||'codex')){
-      if(host){++this.revision;await this.onApplicationChange?.(id,id,{activate,host});}
+      if(host){++this.revision;await this.onApplicationChange?.(id,id,{activate,host,loadList});}
       return;
     }
     ++this.revision;
     const restoreCodex=id==='codex'&&this.provider===null&&this.view.provider==='codex'&&!this.pending.has('codex');
     this.rememberSwipeList();
     const previous=this.provider;this.listReadDone=false;this.listVisit=(this.listVisit||0)+1;this.provider=id;if(id)localStorage.setItem('bridge-client',id);
-    const ready=this.view.choose(isCodexClient(id)?'codex':id||'codex');if(restoreCodex)this.view.onSelect?.('codex');this.paint();
-    await this.onApplicationChange?.(previous,id,{activate,...(host?{host}:{})});await ready;
+    const ready=this.view.choose(isCodexClient(id)?'codex':id||'codex',{loadList});if(restoreCodex)this.view.onSelect?.('codex');this.paint();
+    await this.onApplicationChange?.(previous,id,{activate,loadList,...(host?{host}:{})});await ready;
   }
   acknowledgeList(provider,value){
     if(provider?.startsWith('wsl:')||this.listReadDone||provider!==this.provider||document.hidden||document.getElementById('app').hidden||value.connected===false||value.complete===false||value.unavailableHosts?.length)return;
@@ -251,10 +255,14 @@ class ClientNavigation {
   }
   async openChatLink(hash,openCodex){
     const target=this.chatTarget(hash);if(!target)return false;
+    if(!this.clientsKnown&&!this.clients.length&&!Array.isArray(this.enabledClients)){this.pendingChatLink={hash,openCodex};this.statusPending=true;return true;}
+    this.pendingChatLink=null;
     const entry=target.provider==='codex'?(target.host.startsWith('wsl:')?target.host:'codex'):target.provider;
-    if(!this.managementClients().some(client=>client.id===entry&&client.enabled)){this.notify('尚未启用应用，请打开应用管理。');return true;}
-    const ready=this.choose(target.host.startsWith('wsl:')?target.host:target.provider),generation=this.view.generation,revision=this.revision;await ready;
+    const enabled=this.clientsKnown||this.clients.length?this.managementClients().some(client=>client.id===entry&&client.enabled):this.enabledClients.includes(entry);
+    if(!enabled){this.notify('尚未启用应用，请打开应用管理。');return true;}
+    const ready=this.choose(target.host.startsWith('wsl:')?target.host:target.provider,{loadList:false}),generation=this.view.generation,revision=this.revision;await ready;
     if(this.provider!==target.provider||generation!==this.view.generation||revision!==this.revision)return true;
+    if(this.view.previewOnly)this.view.confirmCachedList();
     if(isCodexClient(target.provider))await openCodex(target.id,target.host);else await this.view.open(target.id);
     return true;
   }
@@ -273,12 +281,12 @@ class ClientNavigation {
       finally{this.choosing=null;this.paint();}
       if(quitDesktop===null)return;
     }
-    const forceDesktop=quitDesktop==='force';quitDesktop=quitDesktop===true||forceDesktop;
+    const acknowledgeUnavailable=quitDesktop==='recovery',forceDesktop=quitDesktop==='force';quitDesktop=quitDesktop===true||forceDesktop||acknowledgeUnavailable;
     const before=this.clients.map(c=>({...c})),previous=this.provider;
     this.operationFailures??=new Map();this.operationFailures.delete(id);let failed=false;
     this.pending.add(id);this.pendingQuitDesktop=quitDesktop;this.pendingForceDesktop=forceDesktop;++this.revision;
     this.applyClients({clients:this.withClientEnabled(id,enabled)});
-    try{const data=await ClientLifecycle.request(signal=>this.request('/api/clients',{provider:id,enabled,...(!enabled?{quitDesktop}:{}),...(forceDesktop?{forceDesktop:true,forceConfirmed:true}:{}),...(initializeDesktop?{initializeDesktop:true}:{})},signal),{timeout:this.lifecycleTimeout??45000});this.applyClients(data);if(enabled&&id==='codex'&&previous===null)this.view.onSelect?.('codex');}
+    try{const data=await ClientLifecycle.request(signal=>this.request('/api/clients',{provider:id,enabled,...(!enabled?{quitDesktop}:{}),...(forceDesktop?{forceDesktop:true,forceConfirmed:true}:{}),...(acknowledgeUnavailable?{acknowledgeUnavailable:true}:{}),...(initializeDesktop?{initializeDesktop:true}:{})},signal),{timeout:this.lifecycleTimeout??45000});this.applyClients(data);if(enabled&&id==='codex'&&previous===null)this.view.onSelect?.('codex');}
     catch(error){failed=true;this.operationFailures.set(id,ClientLifecycle.failure(initializeDesktop?'initialize':enabled?'enable':forceDesktop?'force':quitDesktop?'quit':'disable',error));this.provider=previous;this.applyClients({clients:before});throw error;}
     finally{this.pending.delete(id);this.pendingQuitDesktop=false;this.pendingForceDesktop=false;++this.revision;this.paint();if(failed)await this.refresh();}
   }

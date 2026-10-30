@@ -45,6 +45,21 @@ class ContextUsageTests(unittest.TestCase):
 
 
 class DirectoryReferenceTests(unittest.TestCase):
+    def test_user_references_include_project_files_but_never_visualizations_or_symlink_escape(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / '.tmp') as directory:
+            base = Path(directory); root = base/'project'; root.mkdir()
+            home = base/'home'; outside = home/'visualizations'; outside.mkdir(parents=True)
+            target = root/'a[b] #%.png'; target.write_bytes(b'fixture')
+            (root/'src').mkdir(); (outside/'private.txt').write_text('private')
+            (root/'escape').symlink_to(outside, target_is_directory=True)
+            text = '[a&#91;b&#93;](<./a%5Bb%5D%20%23%25.png>) [src](<./src/>)'
+            text += ' [outside](<' + str(outside/'private.txt') + '>) [escape](<./escape/private.txt>)'
+            state = {'cwd': str(root), 'turns': [{'items': [{'type': 'userMessage', 'content': [{'type': 'inputText', 'text': text}]}]}]}
+            rows = artifact_paths(state, home)
+            self.assertEqual({r['name'] for r in rows.values()}, {target.name, 'src'})
+            rows = workspace_references([{'role': 'user', 'text': text}], str(root))
+            self.assertEqual({r['path'] for r in rows}, {target.name, 'src'})
+
     def test_app_directory_is_locatable_but_not_an_ordinary_download(self):
         with tempfile.TemporaryDirectory(dir=ROOT / '.tmp') as directory:
             root = Path(directory); target = root / 'Gateway Preview.app'; target.mkdir()

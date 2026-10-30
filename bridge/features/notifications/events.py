@@ -19,6 +19,9 @@ class MobileEvents:
     def __init__(self, directory):
         self.path = Path(directory) / 'mobile-events.json'
         self.lock = threading.RLock()
+        self.condition = threading.Condition(self.lock)
+        self.generation = 0
+        self.closed = False
         self.value = read_json(self.path, {'streamId': uuid.uuid4().hex, 'cursor': 0, 'events': []})
         if 'pending' not in self.value:
             self.value['pending'] = [self.metadata(event) for event in self.value['events']
@@ -29,6 +32,24 @@ class MobileEvents:
         # Keep unread counts independent of the bounded inbox body history.
         return {key: event[key] for key in ('sequence', 'host', 'threadId', 'kind')}
 
+    def version(self):
+        with self.lock:
+            return self.generation
+
+    def changed(self):
+        with self.condition:
+            self.generation += 1
+            self.condition.notify_all()
+
+    def wait(self, version, timeout):
+        with self.condition:
+            self.condition.wait_for(lambda: self.closed or self.generation != version, timeout)
+
+    def close(self):
+        with self.condition:
+            self.closed = True
+            self.changed()
+
     def append(self, keys, row, title, body, completed):
         identity = hashlib.sha256('\n'.join(sorted(keys)).encode()).hexdigest()
         with self.lock:
@@ -37,12 +58,14 @@ class MobileEvents:
             before = self.value
             cursor = before['cursor'] + 1
             event = {'id': identity, 'sequence': cursor, 'threadId': row['id'], 'host': row['host'],
-                     'kind': 'completion' if completed else 'request', 'title': title, 'body': body,
+                     'trace': keys[0][-64:][:16] if len(keys[0]) >= 64 else '',
+                     'kind': 'attention' if completed == 'attention' else 'completion' if completed else 'request', 'title': title, 'body': body,
                      'createdAt': time.time()}
             updated = {**before, 'cursor': cursor, 'events': (before['events'] + [event])[-self.LIMIT:],
                        'pending': before['pending'] + [self.metadata(event)]}
             write_json(self.path, updated)
             self.value = updated
+            self.changed()
 
     def acknowledge(self, provider, stream, through):
         if provider not in (*self.PROVIDERS, 'all') or type(through) is not int or through < 0:
@@ -60,6 +83,7 @@ class MobileEvents:
                        if event['sequence'] > seen.get(self.provider(event), 0)]}
             write_json(self.path, updated)
             self.value = updated
+            self.changed()
 
     def checkpoint(self):
         with self.lock:

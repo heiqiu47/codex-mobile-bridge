@@ -1,3 +1,27 @@
+<a id="v217"></a>
+
+## v2.1.7 发布验收 / Release verification
+
+功能基线为 `25bd5c48e1b6a8b1d54e416457a131dbd62b3b3c`，正式版本整理提交为 `404d584`。候选 `9ac8f0e` 只补齐代码高亮静态资源的两处测试清单，没有改变产品逻辑。桌面与手机版本统一为 **2.1.7**，Android/iOS 构建号为 **40**；正式应用标识、Android 签名和桌面更新验签公钥保持不变。
+
+| 验收项 | 结果与证据边界 |
+| --- | --- |
+| 完整 CI | [候选 PR CI](https://github.com/try2love/codex-mobile-bridge/actions/runs/41031566392) 的 10 项任务全部通过，覆盖 Windows/Ubuntu Python 3.9、3.13，macOS Python 3.13、前端、真实浏览器及移动编译/更新检查。最终文档提交仍须满足 [发布 PR #109](https://github.com/try2love/codex-mobile-bridge/pull/109) 的必需检查后才能合并 |
+| 本地回归 | 前端 1314 通过、1 跳过；Chromium/WebKit 浏览器 144 通过；更新器 32 通过、1 跳过。初次后端全量运行的两项失败来自已新增资源未列入旧测试预期；修正后相关 112 项检查通过（2 项平台跳过），完整跨平台 CI 随后通过。最终文档提交的 macOS CI 暴露两项依赖 200ms 线程调度的计时/快照等待夹具，改为可控时钟和等待模拟后相关 20 项通过，保留远端超时后检查本地忙碌会话的原断言；未改产品逻辑。Windows 的真实范围下载测试另沿用 250ms 超时夹具，350ms 人工传输延迟可复现 503；该文件语义测试改用相邻流式集成测试的 5s 预算，超时专项测试不变 |
+| 五种桌面架构 | [候选构建](https://github.com/try2love/codex-mobile-bridge/actions/runs/41031509847) 的 macOS arm64/x64、Windows x64、Linux x64/arm64 全部通过。包括冻结运行时、安装启动、登录与扫码配对、通知、HTTPS、更新交接及适用平台的故障回滚；Windows 包含独立 ConPTY 组件，未替换系统组件 |
+| 跨版本数据兼容 | 在真实 Mac arm64、Windows x64、Ubuntu x64 上，用已校验的正式 v2.1.6 与候选 v2.1.7 包执行隔离运行时 `2.1.6 → 2.1.7 → 2.1.6`，原 QR 手机认证仍有效，配置字节保持。此项是包内网关跨版本数据验证；GUI 安装与更新器验收由上述平台工作流单独覆盖，不将其称为三台日常正式 App 已被覆盖升级 |
+| Android | 正式 APK 的应用标识及签名与 v2.1.6 一致。专用 Android 35 模拟器完成同包名覆盖升级/回退，偏好、电脑列表、原生加密绑定、WebView 认证及真实存储格式的草稿与引用均保留，无卸载或数据重置 |
+| iOS | 正式标识与两个扩展均为 2.1.7/build40，unsigned IPA 与源码包构建通过。专用 iOS 18.2 模拟器完成覆盖升级/回退，偏好、WebView 认证/草稿和原生 Keychain 绑定记录保持。模拟器使用 Xcode 正常签名；验收脚本修正了将 Keychain 加密字段当作明文查询的误判。本轮不声明 iPhone 真机签名安装验收；用户仍须使用原签名身份覆盖安装 |
+| 数据与资源边界 | 测试仅使用隔离配置和合成绑定，不发送聊天消息、不调用模型，不替换日常账号、配置、手机绑定或草稿。Windows 设备上的临时文件、安装包及日志均在 F 盘。Ubuntu 只清理已核实不在运行的旧 Test 重复产物，保留源码、验收记录和最近回退副本 |
+
+PR #85/#86/#92/#95（@heiqiu47）、#88（@mc373906408 / waken）和 #96（@littltstream）的原始提交均保留于发布分支历史，整合修改独立提交。发布使用 merge 保留贡献者身份，不 squash。相关功能与 Issue 对应关系见 [发布说明](RELEASE_NOTES.md#v217)。[#77](https://github.com/try2love/codex-mobile-bridge/issues/77) 的原生归档限制和 [#103](https://github.com/try2love/codex-mobile-bridge/issues/103) 的原生路由限制继续跟踪，WSL 账号管理仍为实验性功能。
+
+标签构建须再次通过；Release 保持草稿，直到全部 15 个桌面/移动/更新资产齐备、更新清单签名以及重新下载后的 SHA-256 校验通过才公开。最终标签工作流与资产见 [v2.1.7 发布页](https://github.com/try2love/codex-mobile-bridge/releases/tag/v2.1.7)。本轮本地证据在忽略目录 `.tmp/release-v217-20261030/`，不提交本机配置或凭据。
+
+**English:** v2.1.7/build40 retains production identifiers, Android signing and the desktop update-verification key. The linked 10-job candidate CI and all five desktop architecture builds passed, including package installation/startup and applicable updater/rollback checks. Actual Mac, Windows and Ubuntu packaged runtimes passed isolated 2.1.6 → 2.1.7 → 2.1.6 data compatibility with the original QR binding and configuration bytes preserved; this is separate from GUI updater testing. Dedicated Android 35 and iOS 18.2 simulators retained preferences, native bindings, WebView authentication and drafts across overlay upgrades and rollback. This does not claim a new physical-iPhone installation. Daily apps/data were not replaced; Windows temporary files stayed on F:. Original PR author commits are retained. The final tag build, signed manifest and all 15 downloaded assets must pass verification before publication. Native archive/routing limits remain documented; WSL account management remains experimental.
+
+---
+
 <a id="v216"></a>
 
 # v2.1.6 发布前验收（2026-10-27）

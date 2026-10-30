@@ -1,29 +1,31 @@
-# Agent Note: Route CLI-origin chats to their existing execution owner
+# Agent Note: 将源自 CLI 的聊天路由到其现有执行归属进程
 
 Status: implemented
 
-The model, Skill, plan and local Goal restrictions are superseded by [CLI session controls](../feature/2026-10-14-cli-session-controls.md); permission restrictions are superseded by [CLI permission switching](../feature/2026-10-14-cli-permission-switching.md). Editing/forking, rename and side-chat restrictions remain.
+模型、Skill、计划与本地 Goal 的限制由[CLI 会话控制](../feature/2026-10-14-cli-session-controls.md)替代；权限限制由[CLI 权限切换](../feature/2026-10-14-cli-permission-switching.md)替代。编辑/分叉、重命名和旁支聊天的限制仍然有效。
 
-## Problem
+## 问题
 
-The CLI source marker describes where a chat began, not which process currently executes it. Blocking every Desktop snapshot for CLI origins sends App-adopted chats into a separate daemon resume, which fails with `already has an active writer`. The reported chat has a live matching Desktop owner while the daemon reports notLoaded. Previous isolated native warm/cold acceptance did not cover this case.
+CLI 来源标记描述聊天从哪里开始，并不说明当前由哪个进程执行。对 CLI 来源一概屏蔽 Desktop 快照，会将已由 App 接管的聊天送入另一个守护进程恢复，继而报出 `already has an active writer`。用户报告的聊天具有存活且匹配的 Desktop 归属进程，而守护进程报告 notLoaded。此前隔离的原生热/冷恢复验收未覆盖这种情况。
 
-## Decision
+## 决策
 
-Read saved history and passively discover the existing Desktop owner for CLI-origin chats. Follow only the selected owner after host/id/cwd/provider validation. Explicit continuation uses this existing connection when present; only a bounded lookup without a discovered owner allows the established native daemon path. A discovery timeout is not proof of absence: explicit native resume may still be attempted, while the native writer lock prevents competing ownership. Finding an owner but failing snapshot identity blocks that fallback. Neither pathway navigates Desktop to claim a CLI thread. Origin labels remain unchanged. Connected native sessions reject Desktop snapshots; selected Desktop sessions reject native callbacks. Disconnects invalidate only sessions using that runtime. Unknown writes are not replayed.
+对源自 CLI 的聊天，读取保存历史，并被动发现现有 Desktop 归属进程。校验 host/id/cwd/provider 后，只跟随所选归属进程。存在该连接时，显式继续操作使用现有连接；仅在有界查询未发现归属进程时，才允许使用既有原生守护进程路径。发现超时并不证明归属进程不存在：仍可尝试显式原生恢复，由原生写入锁阻止竞争归属。若发现了归属进程但快照身份校验失败，则阻止该回退。两条路径都不会通过导航 Desktop 来接管 CLI 线程。来源标签保持不变。已连接的原生会话拒绝 Desktop 快照；已选择的 Desktop 会话拒绝原生回调。断开连接只使使用该运行时的会话失效。结果未知的写入不重放。
 
-## Alternatives considered
+## 备选方案
 
-Routing every CLI-origin chat to the daemon keeps source-specific behavior simple, but conflicts with actual App ownership. Removing writer locks or killing the owner would disrupt user work and is not an acceptable recovery. Always activating Desktop would change ownership of CLI-only chats and lose the existing terminal/daemon lifecycle; the native cold-resume path remains necessary.
+将所有 CLI 来源聊天交给守护进程，按来源处理会更简单，但与实际 App 执行归属冲突。移除写入锁或终止归属进程会打断用户工作，不能作为恢复方式。总是激活 Desktop 会改变纯 CLI 聊天的归属，并丢失现有终端/守护进程生命周期；因此仍需保留原生冷恢复路径。
 
-## Existing-note audit
+## 既有笔记审计
 
-[CLI access](../feature/2026-10-14-codex-cli-access.md) and [cold resume](../feature/2026-10-14-codex-cli-resume.md) are partially superseded specifically on source-based routing. Discovery, diagnostics, native resume and no-replay rules still apply. Other file-reading and notification notes are unrelated.
+[CLI 接入](../feature/2026-10-14-codex-cli-access.md)和[冷恢复](../feature/2026-10-14-codex-cli-resume.md)中按来源决定路由的部分被本决定替代。发现、诊断、原生恢复与禁止重放规则仍然有效。其他文件读取及通知笔记与本决定无关。
 
-## Verification
+## 验证
 
-The reported chat connects read-only to its live Desktop owner in 0.11 seconds with saved history retained, native attach count zero and no message sent. An isolated native 0.162.1 two-process test reproduces active-writer rejection in the competing daemon and successful rejoin in the original owner; it makes no model calls. With real Desktop IPC available but no owner for the isolated CLI thread, discovery times out and explicit native cold resume succeeds. Service fixtures cover selected-owner send routing, identity rejection, native in-flight competition, stale events and disconnects. Full regression and packaged acceptance results are recorded in [VERIFICATION.md](../../../../VERIFICATION.md).
+用户报告的聊天在 0.11 秒内以只读方式连接到存活的 Desktop 归属进程，保存历史保留，原生附加次数为零，未发送消息。隔离的原生 0.162.1 双进程测试复现了竞争守护进程的活跃写入者拒绝，以及在原归属进程中成功重新加入；该测试不调用模型。真实 Desktop IPC 可用、但隔离 CLI 线程不存在归属进程时，发现操作超时，随后显式原生冷恢复成功。服务夹具覆盖按选定归属发送、身份拒绝、原生进行中竞争、过期事件及断开连接。完整回归和安装包验收结果记录于 [VERIFICATION.md](../../../../VERIFICATION.md)。
 
-## Consequences
+## 影响
 
-App IPC and native daemon protocols are separate and version-sensitive. Native Windows/Linux and arbitrary SSH hosts require their own acceptance; macOS and protocol fixtures do not establish those environments. A writer without a supported discoverable endpoint cannot safely be seized.
+App IPC 与原生守护进程使用不同协议，且受版本影响。原生 Windows/Linux 和任意 SSH 主机需要各自验收；macOS 与协议夹具不能证明这些环境可用。没有受支持且可发现端点的写入者不能被安全强行接管。
+
+[SSH 目录与 Skill 等待修复](2026-10-28-ssh-catalog-read-and-skill-latency.md)只改被动目录读取，保留本篇原 owner、身份与显式接管边界。

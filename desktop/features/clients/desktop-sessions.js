@@ -3,6 +3,7 @@ class DesktopConnectionsPanel {
   constructor({root,api,feedback}) {
     Object.assign(this,{root,api,feedback,clientsRevision:0,statusRevision:0});
     this.deepseekHome=root.querySelector('[data-deepseek-home]');
+    const add=document.getElementById('add-client');if(add)add.onclick=()=>this.addClient();
     const refresh=document.getElementById('refresh-clients');if(refresh)refresh.onclick=()=>this.scan(true);
     setInterval(()=>this.pollClients(),15000);setInterval(()=>this.pollClients(true),2000);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)this.pollClients();});
@@ -24,6 +25,7 @@ class DesktopConnectionsPanel {
   }
   renderDetails(){
     const value=this.connectionValue;
+    const binding=this.root.querySelector('[data-deepseek-binding]');if(binding)binding.textContent=value?.deepseekBinding?.file||'';
     for(const provider of ['deepseek','claude']){
       const client=this.clients?.find(client=>client.id===provider),backend=value?.backends?.[provider],node=this.root.querySelector('[data-desktop-status='+provider+']');
       const reason=(client?this.connection(client).reason:'')||this.statusError||backend?.reason||(backend?(backend.connected?'已连接桌面':'尚未连接'):'正在检查接入…');
@@ -120,7 +122,7 @@ class DesktopConnectionsPanel {
     }catch(error){release();this.feedback(error.message,true);}
   }
   renderScan(){
-    const node=document.getElementById('client-scan-status');if(node){node.textContent=BridgeI18n.t(this.scanMessage||'选择需要接入的应用。macOS Claude 默认后台启动并尝试恢复已有连接；“初始化连接”经确认后使用电脑前台。Windows 优先尝试后台初始化。')+' '+BridgeI18n.t(ClientLifecycle.sessionNotice(this.windowsSession));node.classList.toggle('error',!!this.scanError);}
+    const node=document.getElementById('client-scan-status');if(node){node.textContent=BridgeI18n.t(this.scanMessage||(this.visibleClients().some(client=>client.id==='claude')?'选择需要接入的应用。macOS Claude 默认后台启动并尝试恢复已有连接；“初始化连接”经确认后使用电脑前台。Windows 优先尝试后台初始化。':'选择已有接入，或通过“添加接入”配置客户端。'))+' '+BridgeI18n.t(ClientLifecycle.sessionNotice(this.windowsSession));node.classList.toggle('error',!!this.scanError);}
     const button=document.getElementById('refresh-clients');if(button){button.disabled=!!this.scanning||!!this.busy||!!this.choosingClient;button.textContent=BridgeI18n.t(this.scanning?'正在扫描…':'重新扫描');}
     this.root.querySelectorAll('[data-desktop-action]').forEach(button=>button.disabled=!!this.scanning||!!this.busy||!!this.choosingClient||(button.dataset.desktopAction!=='scan'&&this.hasUncertain()));
   }
@@ -134,15 +136,29 @@ class DesktopConnectionsPanel {
       finally{this.choosingClient=null;this.renderClients();this.renderScan();}
       if(quitDesktop===null)return;
     }
-    const forceDesktop=quitDesktop==='force';quitDesktop=quitDesktop===true||forceDesktop;
+    const acknowledgeUnavailable=quitDesktop==='recovery',forceDesktop=quitDesktop==='force';quitDesktop=quitDesktop===true||forceDesktop||acknowledgeUnavailable;
     const before=this.clients;
     this.operationFailures??=new Map();this.operationFailures.delete(id);
     this.busy=true;this.pendingClient={id,enabled,quitDesktop,forceDesktop};this.clientsRevision++;this.statusRevision++;
     this.clients=this.withClientEnabled(id,enabled);
     this.renderClients();this.renderScan();
-    try{const value=await ClientLifecycle.request(()=>this.api.desktopSessions({action:'toggle-client',provider:id,enabled,...(!enabled?{quitDesktop}:{}),...(forceDesktop?{forceDesktop:true,forceConfirmed:true}:{})}),{timeout:this.lifecycleTimeout??45000});if(value.clients)this.clients=value.clients;this.gatewayRunning=value.gatewayRunning??this.gatewayRunning;this.windowsSession=value.windowsSession??this.windowsSession;}
+    try{const value=await ClientLifecycle.request(()=>this.api.desktopSessions({action:'toggle-client',provider:id,enabled,...(!enabled?{quitDesktop}:{}),...(forceDesktop?{forceDesktop:true,forceConfirmed:true}:{}),...(acknowledgeUnavailable?{acknowledgeUnavailable:true}:{})}),{timeout:this.lifecycleTimeout??45000});if(value.clients)this.clients=value.clients;this.gatewayRunning=value.gatewayRunning??this.gatewayRunning;this.windowsSession=value.windowsSession??this.windowsSession;}
     catch(error){this.operationFailures.set(id,ClientLifecycle.failure(enabled?'enable':forceDesktop?'force':quitDesktop?'quit':'disable',error,'desktop'));this.clients=before;this.feedback(error.message,true);}
     finally{this.busy=false;this.pendingClient=null;this.renderClients();this.renderScan();await this.refreshClients(true);}
+  }
+  addClient(){
+    const dialog=document.createElement('dialog');dialog.className='client-disable-dialog';dialog.setAttribute('aria-labelledby','client-add-title');
+    const heading=document.createElement('h2');heading.id='client-add-title';heading.textContent=BridgeI18n.t('添加接入');dialog.append(heading);
+    const actions=document.createElement('div');actions.className='actions';
+    for(const [id,label] of [['codex','Codex'],['claude','Claude'],['deepseek','DSH / 自定义 Harness']]){
+      const button=document.createElement('button');button.type='button';button.textContent=BridgeI18n.t(label);
+      button.onclick=()=>{dialog.close();window.GatewayLayout.selectClient(id);if(id==='deepseek'){const manual=this.root.querySelector('[data-deepseek-manual]');if(manual)manual.open=true;}};actions.append(button);
+    }
+    const cancel=document.createElement('button');cancel.type='button';cancel.textContent=BridgeI18n.t('取消');cancel.onclick=()=>dialog.close();actions.append(cancel);dialog.append(actions);
+    dialog.addEventListener('close',()=>dialog.remove());document.body.append(dialog);dialog.showModal();cancel.focus();
+  }
+  visibleClients(){
+    return this.managementClients().filter(client=>client.installed||client.configured||client.enabled||client.connected||client.running||client.bindingMode==='manual');
   }
   renderClients(){
     this.renderDetails();
@@ -150,7 +166,7 @@ class DesktopConnectionsPanel {
     const node=(tag,text,cls='')=>{const n=document.createElement(tag);n.className=cls;if(text!==undefined)n.textContent=t(text);return n;};
     const table=node('table',undefined,'connection-table'),head=node('thead'),tr=node('tr'),body=node('tbody');
     for(const title of ['客户端','应用开关','连接状态','当前接入 / 剩余额度','管理'])tr.append(node('th',title));head.append(tr);table.append(head,body);
-    for(const client of this.managementClients()){
+    for(const client of this.visibleClients()){
       const row=node('tr'),identity=node('td'),name=node('div',undefined,'connection-name'),logo=node('span',undefined,'client-logo');row.dataset.clientId=client.id;if(client.parentId)row.dataset.clientParent=client.parentId;
       const img=node('img');img.src='../web/client-icons/'+(client.icon||client.id)+'.png';img.alt='';logo.append(img);
       const label=node('div');label.append(node('strong',client.name),node('small',client.kind==='wsl-claude-cli'?'WSL Claude Code':client.kind==='wsl-cli'?'WSL Codex CLI':({codex:'Codex Desktop',claude:'Claude Desktop',deepseek:'DeepSeek Harness'})[client.id]));name.append(logo,label);identity.append(name);
@@ -177,7 +193,7 @@ class DesktopConnectionsPanel {
       if(!client.enabled&&client.running&&client.canQuitDesktop!==false&&this.gatewayRunning!==false){const quit=node('button','关闭电脑 App…');quit.type='button';quit.disabled=this.busy||this.scanning||!!this.choosingClient||this.hasUncertain();quit.onclick=()=>this.toggleClient(client.id,false);buttons.append(quit);}
       manage.type='button';manage.onclick=()=>['wsl-cli','wsl-claude-cli'].includes(client.kind)?this.wslDetails(client):window.GatewayLayout.selectClient(client.id);buttons.append(manage);actions.append(buttons);row.append(identity,access,status,account,actions);body.append(row);
     }
-    root.replaceChildren(table);this.renderAccount(this.accountValue);
+    root.replaceChildren(this.visibleClients().length?table:node('p','尚未发现客户端，请添加接入或重新扫描。','hint'));this.renderAccount(this.accountValue);
     for(const [provider,panel] of Object.entries(this.accountPanels)){this.renderClientAccount(provider,panel.value);}
     this.resumeAccounts();
   }
@@ -245,6 +261,7 @@ class DesktopConnectionsPanel {
   }
   async action(action){
     if(this.busy||this.scanning||this.choosingClient||this.hasUncertain())return;
+    if(['export-deepseek-plugin','scan-deepseek-plugins','bind-deepseek-plugin','unbind-deepseek-plugin'].includes(action))return this.manualDeepseek(action);
     if(action==='setup-claude')return this.showClaudeSetup();
     if(action==='restart-deepseek'&&!window.confirm(BridgeI18n.t('重启 Harness 会断开当前会话。请先在 Harness 中结束所有任务并保存工作，再确认重启并接入。')))return;
     if(action==='restart-claude'&&!window.confirm(BridgeI18n.t('重启 Claude 会断开当前会话。请先结束任务并保存工作，再确认重启并接入。')))return;
@@ -265,6 +282,36 @@ class DesktopConnectionsPanel {
     }catch(error){if(provider)this.operationFailures.set(provider,{...ClientLifecycle.failure(operation,error,'desktop'),desktopAction:action});this.feedback(error.message,true);}
     finally{this.busy=false;buttons.forEach(button=>button.disabled=false);this.renderClients();this.renderScan();if(provider&&this.operationFailures.has(provider))await this.refreshClients(true);}
     if(rescan)await this.scan();
+  }
+  renderPluginCandidates(candidates){
+    const root=this.root.querySelector('[data-deepseek-candidates]');root.replaceChildren();
+    if(!candidates.length){root.textContent=BridgeI18n.t('未发现接入插件，请先在此 Harness 核心中安装并加载插件。');return;}
+    for(const item of candidates){
+      const row=document.createElement('p'),button=document.createElement('button'),path=document.createElement('small');
+      button.type='button';button.textContent=BridgeI18n.t('绑定档案：')+item.profile;
+      button.onclick=()=>{if(!this.busy&&!this.scanning&&!this.hasUncertain())this.manualDeepseek('bind-deepseek-plugin',item.file);};
+      path.textContent=item.file;row.append(button,path);root.append(row);
+    }
+  }
+  async manualDeepseek(action,file){
+    this.busy=true;this.clientsRevision++;this.statusRevision++;this.renderClients();this.renderScan();
+    try{
+      const payload={action};
+      if(action==='scan-deepseek-plugins'){
+        payload.home=await this.api.choose('folder');if(!payload.home)return;
+      }else if(action==='export-deepseek-plugin'){
+        payload.destination=await this.api.choose('folder');if(!payload.destination)return;
+      }else if(action==='bind-deepseek-plugin'){
+        payload.file=file||await this.api.choose('file');if(!payload.file)return;
+        const preview=await this.api.desktopSessions({action:'preview-deepseek-plugin',file:payload.file});
+        if(!window.confirm(BridgeI18n.t('连接这个 Harness 档案？')+'\n'+preview.profile+'\n'+preview.home+'\n'+BridgeI18n.t('插件版本：')+(preview.plugin?.version||BridgeI18n.t('旧版'))+'\n'+BridgeI18n.t('仅绑定当前网关，不退出或修改原客户端。')))return;
+        payload.instanceId=preview.instanceId;
+      }
+      const value=await this.api.desktopSessions(payload);
+      if(action==='scan-deepseek-plugins'){this.renderPluginCandidates(value.candidates||[]);return;}
+      this.feedback(value.path?BridgeI18n.t('插件包已保存：')+value.path+(value.tarPath?' · '+value.tarPath:''):BridgeI18n.t(value.bound?'已绑定，请开启 DSH 接入':'已解除手动绑定'));
+    }catch(error){this.feedback(error.message,true);}
+    finally{this.busy=false;await this.refreshClients(true);await this.refresh();this.renderClients();this.renderScan();}
   }
 }
 

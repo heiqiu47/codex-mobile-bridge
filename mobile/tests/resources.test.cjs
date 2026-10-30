@@ -15,6 +15,20 @@ test('both Android variants register the downloaded-file viewer provider', () =>
   }
 });
 
+test('both Android hosts declare the same private background monitoring service', () => {
+  for (const manifest of ['mobile/android/AndroidManifest.xml', 'mobile/android-push/AndroidManifest.xml']) {
+    const source = read(manifest);
+    for (const permission of ['FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_SPECIAL_USE', 'ACCESS_NETWORK_STATE']) {
+      assert.ok(source.includes(`android.permission.${permission}`), `${manifest}: ${permission}`);
+    }
+    const service = source.match(/<service[^>]*android:name="io\.github\.try2love\.codexbridge\.MonitorService"[\s\S]*?<\/service>/)?.[0];
+    assert.ok(service, manifest);
+    assert.match(service, /android:exported="false"/);
+    assert.match(service, /android:foregroundServiceType="specialUse"/);
+    assert.match(service, /android\.app\.PROPERTY_SPECIAL_USE_FGS_SUBTYPE/);
+  }
+});
+
 function xcodeObjects() {
   const source = read('mobile/ios/BridgePreview.xcodeproj/project.pbxproj');
   return new Map([...source.matchAll(/([A-F0-9]{24})(?: \/\*[^*]*\*\/)? = \{([\s\S]*?)\};/g)]

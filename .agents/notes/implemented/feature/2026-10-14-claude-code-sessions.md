@@ -1,53 +1,55 @@
-# Agent Note: Continue closed local Claude Code sessions
+# Agent Note: 继续已关闭的本地 Claude Code 会话
 
 Status: implemented
 
-## Problem
+## 问题
 
-Claude Desktop discovery does not expose terminal Claude Code chats. Reusing Desktop initialization for those chats changes their runtime and does not preserve the CLI profile, project configuration or permission mode.
+Claude Desktop 发现机制不暴露终端 Claude Code 聊天。复用 Desktop 初始化会改变这些聊天的运行时，不能保留 CLI 配置、项目设置或权限模式。
 
-## Decision
+## 决策
 
-Read saved chats from the explicit CLAUDE_CONFIG_DIR, the selected Cockpit CLI instance, or the default Claude profile. A gateway ID binds the native UUID to its profile and settings fingerprint. Passive list/detail never launches a session. Existing native settings sources remain user, project and local; credentials stay in the native profile/environment.
+从明确的 CLAUDE_CONFIG_DIR、选定 Cockpit CLI 实例或默认 Claude 配置读取保存聊天。网关 ID 将原生 UUID 绑定到配置及设置指纹。被动列表/详情不启动会话。原生设置来源仍是 user、project 和 local；凭据留在原生配置/环境中。
 
-An explicit resume validates the saved cwd and known prior permission mode, refreshes authentication evidence, and checks the native sessions registry immediately before spawning the same native UUID. The initialize control request starts no model turn. Only the resulting owned process receives send, model, permission, approval and interrupt controls. Its first system/init frame must match the UUID and cwd; mismatch terminates that owned process. Native initialize alone has no UUID field, so it is not claimed as independent identity evidence.
+显式恢复校验保存的 cwd 和已知先前权限模式，刷新认证证据，并在启动同一原生 UUID 前立即检查原生会话注册表。initialize 控制请求不启动模型轮次。只有由此启动并持有的进程接收发送、模型、权限、批准和中断控制。首个 system/init 帧必须匹配 UUID 和 cwd，否则终止该进程。原生 initialize 本身没有 UUID 字段，不能作为独立身份证据。
 
-Writes use the existing UUID receipt ledger. Known pre-spawn rejections return blocked and allow a later explicit request; unknown outcomes are never automatically replayed. Approval IDs are claimed before sending, cancellation removes pending requests, and native terminal results feed completion evidence. A second message cannot be sent during a running turn or pending approval. Claude CLI readiness is independent of Desktop connectivity.
+写入使用既有 UUID 回执台账。已知启动前拒绝返回阻止状态，允许稍后的显式请求；未知结果绝不自动重放。批准 ID 在发送前被占用，取消移除待处理请求，原生终态结果提供完成证据。轮次运行中或存在待批准事项时不能发送第二条消息。Claude CLI 就绪与 Desktop 连通性独立。
 
-Display status resolves CLI availability immediately and refreshes its cached authentication result in the background. Desktop initialization and its ready check use only Desktop connection and session evidence, so CLI authentication and saved-history scans cannot delay them. Explicit CLI creation and resume still perform fresh authentication checks; the display cache never authorizes a write.
+展示状态立即判断 CLI 可用性，在后台刷新缓存认证结果。Desktop 初始化及就绪检查只使用 Desktop 连接和会话证据，因此 CLI 认证和保存历史扫描不会拖慢它们。显式 CLI 新建和恢复仍做即时认证检查；展示缓存不授权写入。
 
-In Web and phone app management, CLI availability does not hide the Desktop launch control. The gateway reports `canStartDesktop` only for an installed, native-console-capable Claude Desktop whose process is confirmed stopped. A confirmed single running main process reports `canInitializeDesktop` so an idle setup still exposes initialization unless reconnect is available. Unknown process state offers neither action. Both initialization controls use the existing confirmation and `initializeDesktop` request; enabling CLI access alone never sends that intent.
+Web 和手机 App 管理中，CLI 可用性不隐藏 Desktop 启动控件。仅当 Claude Desktop 已安装、支持原生控制台且进程确认停止时，网关报告 `canStartDesktop`。确认单一主进程运行时报告 `canInitializeDesktop`，使空闲设置状态仍暴露初始化，除非可以重新连接。进程状态未知时两种操作均不提供。两个初始化控件都使用既有确认及 `initializeDesktop` 请求；仅启用 CLI 接入不发送该意图。
 
-## Alternatives considered
+## 备选方案
 
-The native print-mode CLI accepts concurrent writers for one UUID, so relying on an upstream lock is insufficient. Opening an existing live terminal chat in another process is rejected. Registry evidence can verify a currently running writer, but cannot create an atomic lock against an independently started terminal.
+原生 print 模式 CLI 允许同一 UUID 有并发写入者，仅依靠上游锁不充分。在另一进程打开现有活跃终端聊天会被拒绝。注册表证据可核验当前写入者，却不能针对独立启动的终端建立原子锁。
 
-Using the combined Desktop and CLI list to verify Desktop readiness exposes every saved CLI history file on the Desktop setup path. Keeping that list for user browsing while reading Desktop sessions directly for readiness preserves both views.
+使用合并的 Desktop/CLI 列表验证 Desktop 就绪，会让每份保存的 CLI 历史进入 Desktop 设置路径。保留合并列表供浏览，同时直接读取 Desktop 会话判断就绪，可保留两种视图。
 
-Routing the user's credentials through a new SDK service adds a second configuration owner. Spawning the installed CLI with the original profile/cwd keeps native configuration and authentication behavior. SSH Claude Code is excluded until equivalent source/profile and process checks exist.
+让凭据经过新 SDK 服务会增加第二个配置管理者。使用原配置/cwd 启动已安装 CLI，可保留原生配置和认证行为。SSH Claude Code 在具备等效来源/配置及进程检查前不纳入。
 
-Using the app enable switch as the Desktop launch trigger would also start Desktop for CLI-only selections. The explicit launch control keeps the two choices independent.
+用应用启用开关触发 Desktop 启动，会在仅选择 CLI 时也启动 Desktop。显式启动控件保持两种选择独立。
 
-## Consequences
+## 影响
 
-Closed local sessions can resume and expose native controls in the existing mobile/Web interface. Unknown original permissions, unavailable original configuration or uncertain writer evidence remain non-writable. The registry guard compares each writer's process start identity, and Linux additionally binds the machine ID and PID namespace. A terminal opened between the final registry check and spawn remains a narrow upstream concurrency limitation.
+已关闭本地会话可在现有手机/Web 界面恢复并提供原生控制。原权限未知、原配置不可用或写入者证据不确定时仍不可写。注册表保护比较每个写入者的进程启动身份，Linux 还绑定机器 ID 和 PID 命名空间。终端在最终注册表检查与启动之间打开，仍是上游的狭窄并发限制。
 
-An installed, stopped Desktop remains launchable from app management even when Claude Code is available. Unknown process state, unsupported automatic connection, absent installation or stopped gateway hides that control. A renderer test verifies the button and its existing request payload; backend lifecycle fixtures cover those capability boundaries. The control has not been exercised against a real Desktop in this check.
+即使 Claude Code 可用，已安装且停止的 Desktop 仍可从应用管理启动。进程状态未知、不支持自动连接、未安装或网关停止时隐藏控件。渲染测试验证按钮和既有请求载荷；后端生命周期夹具覆盖能力边界。本次检查未对真实 Desktop 操作该控件。
 
-For a selected managed API profile, authentication checks and CLI launch omit ambient `ANTHROPIC_*` values and the documented Claude provider-routing variables. The native profile's settings remain the source of the selected credentials and provider.
+选定受管 API 配置时，认证检查和 CLI 启动忽略环境中的 `ANTHROPIC_*` 值及已记录的 Claude provider 路由变量。原生配置设置仍是选定凭据和 provider 的来源。
 
-Windows Claude Code 2.1.168 was inspected on a native Windows host. Its registry may store `procStart` as CIM `CreationDate.Ticks`, but a native `sdk-cli` record can omit it. For a valid 2.1.168 record without `procStart`, only a native query that confirms the PID is absent permits a closed-session resume; a live PID or uncertain query remains blocked. Records with a valid start identity still block a live matching writer and admit an exited or reused PID. Malformed start identities and other Windows registry versions remain fail closed. The guard neither deletes the record nor relaxes active-writer protection, and Python never uses POSIX `os.kill` on Windows. A read-only check against the retained isolated 2.1.168 record confirmed the original guard blocked its absent PID and the corrected guard admitted it; the record hash was unchanged. Native Linux 2.1.287 uses a `linux:<machine-id>:<pid-namespace>` domain and the decimal start token from `/proc/<pid>/stat` field 22. The local guard and standalone SSH worker compare those fields, not macOS UTC `ps` output. Native Ubuntu tests blocked live writers, allowed exited/reused identities and rejected malformed records. Real SSH acceptance additionally passed resume, new chat, send, model/permission changes, Skill, upload, approval refusal, interrupt and a second closed resume against a loopback API.
+在原生 Windows 主机检查了 Claude Code 2.1.168。注册表可能以 CIM `CreationDate.Ticks` 保存 `procStart`，但原生 `sdk-cli` 记录可省略它。对缺少 `procStart` 的有效 2.1.168 记录，只有原生查询确认 PID 不存在才允许恢复关闭会话；PID 存活或查询不确定仍阻止。有有效启动身份的记录仍阻止存活且匹配的写入者，允许已退出或 PID 已复用的情况。启动身份格式错误及其他 Windows 注册表版本仍拒绝。保护既不删除记录，也不放宽活跃写入者限制，Python 在 Windows 上绝不使用 POSIX `os.kill`。针对保留的隔离 2.1.168 记录的只读检查确认，原保护阻止了不存在的 PID，修正后允许；记录哈希未变。原生 Linux 2.1.287 使用 `linux:<machine-id>:<pid-namespace>` 域及 `/proc/<pid>/stat` 第 22 字段的十进制启动标记。本地保护和独立 SSH 工作程序比较这些字段，而非 macOS UTC `ps` 输出。原生 Ubuntu 测试阻止存活写入者、允许退出/复用身份并拒绝错误记录。真实 SSH 验收还在回环 API 下通过恢复、新聊天、发送、模型/权限修改、Skill、上传、批准拒绝、中断及第二次关闭后恢复。
 
-An actual synthetic API request verified the selected existing authentication; an isolated capture verified project CLAUDE.md inheritance. Claude Code 2.1.287 with a loopback model service verified model selection, effective permission mode, allow/deny tool effects, interrupt of a running turn, and active-writer rejection followed by closed-session admission. Browser 390px English fixtures verified history-only, Continue, model/permissions, approvals and Stop presentation. These are macOS/native and browser checks, not Windows/Linux or physical-phone execution claims.
+实际合成 API 请求验证了选定既有认证；隔离捕获验证项目 CLAUDE.md 继承。Claude Code 2.1.287 配合回环模型服务验证模型选择、生效权限模式、允许/拒绝工具效果、运行轮次中断，以及活跃写入者拒绝后允许关闭会话。390px 英文浏览器夹具验证仅历史、继续、模型/权限、批准和停止展示。这些是 macOS/原生与浏览器检查，不代表 Windows/Linux 或手机真机执行。
 
-Decision search found [Codex CLI access](2026-10-14-codex-cli-access.md), which shares passive discovery and explicit ownership principles but concerns a different runtime. Its constraints remain valid; this note adds the local Claude implementation without superseding it.
+决策检索发现 [Codex CLI 接入](2026-10-14-codex-cli-access.md)，共享被动发现和显式归属原则，但属于另一运行时。其约束继续有效；本笔记新增本地 Claude 实现，不替代它。
 
-## Explicit new CLI sessions
+## 显式新建 CLI 会话
 
-The new-chat picker offers Claude Code CLI beside Desktop Code and Cowork when the selected local or SSH profile is authenticated and a known project cwd exists. CLI creation requires a first message; the native CLI assigns the title. The selected project key binds its host, profile origin and cwd, and the adapter checks those inputs again before starting `claude -p --session-id` with stream-json controls. No bridge-written JSONL or empty placeholder chat is created. The native saved user event must contain the exact sent UUID before the operation reports ready; the older Windows CLI does not emit a replay-user event before its API retries. An uncertain write stays unknown under the existing receipt ledger and is never replayed automatically.
+所选本地或 SSH 配置已认证且存在已知项目 cwd 时，新聊天选择器在 Desktop Code/Cowork 旁提供 Claude Code CLI。CLI 新建必须有首条消息，标题由原生 CLI 指定。选定项目键绑定主机、配置来源及 cwd；适配器在以 stream-json 控制启动 `claude -p --session-id` 前复核输入。Bridge 不写 JSONL，也不创建空占位聊天。原生保存用户事件包含实际发送的精确 UUID 后才报告就绪；旧 Windows CLI 在 API 重试前不发用户事件重放。写入不确定时按现有回执台账保持未知，绝不自动重放。
 
-An isolated Claude Code 2.1.287 mock API run created one local and one loopback SSH session. Each retained the selected profile's synthetic credential, cwd, model and plan mode, sent its first message once, and produced native saved history. The SSH check validates the transport and protocol on macOS; it is not a paid Linux model run.
+隔离 Claude Code 2.1.287 模拟 API 运行创建一个本地和一个回环 SSH 会话。均保留所选配置的合成凭据、cwd、模型和计划模式，首条消息只发送一次，并产生原生保存历史。SSH 检查验证 macOS 上的传输及协议，不是付费 Linux 模型运行。
 
-An isolated native Windows 2.1.168 run used the installed npm `.cmd` shim, UTF-8 stream JSON, a fake key, and a loopback-only unavailable API. Product-level new-session creation, native saved first-message evidence and immediate closed-session resume succeeded with the selected profile and cwd. Product permission-mode change, model selection and interrupt controls returned success. This version accepts `--permission-prompt-tool stdio` but rejects the newer `--permission-prompts host`; `set_permission_mode` confirms its mode in the control response rather than a separate status event. That initial unavailable-endpoint run did not exercise a second send or tool approval. A subsequent [native Windows fixture](../../../../tests/acceptance/windows_claude_cli_full.py) completed first and second replies, closed-session resume and another reply using a loopback Anthropic SSE service. Tool approval was checked before responding: denial created no file and produced the exact rejected tool result; acceptance created only the requested marker and produced the exact successful tool result and final reply. A repeated approval was rejected without a second file change. All seven model requests used the isolated endpoint, synthetic key and selected model. Product detail and native JSONL retained final replies; configuration, product and registry cwd matched the isolated project. The fixture closed its writers and listener, independently rechecked from the host. No paid credentials or physical phone were used.
+隔离原生 Windows 2.1.168 运行使用已安装 npm `.cmd` 包装器、UTF-8 流式 JSON、假密钥及仅回环的不可用 API。产品层新建、原生保存首条消息证据和立即关闭后恢复均成功，保留选定配置/cwd。产品权限模式切换、模型选择及中断返回成功。该版本接受 `--permission-prompt-tool stdio`，拒绝较新的 `--permission-prompts host`；`set_permission_mode` 在控制响应而非独立状态事件中确认模式。最初不可用端点运行未测试第二次发送或工具批准。后续[原生 Windows 夹具](../../../../tests/acceptance/windows_claude_cli_full.py)通过回环 Anthropic SSE 服务完成第一、第二次回复，以及关闭后恢复再回复。工具批准在响应前检查：拒绝未创建文件并产生精确拒绝工具结果；批准只创建请求标记并产生精确成功工具结果及最终回复。重复批准被拒绝，没有第二次文件变化。七次模型请求均使用隔离端点、合成密钥和选定模型。产品详情及原生 JSONL 保留最终回复；配置、产品和注册表 cwd 均匹配隔离项目。夹具关闭写入者和监听器，并从宿主独立复核。未使用付费凭据或手机真机。
 
-The Windows npm shim has a distinct native `claude.exe` child PID. Terminating only the shim left that exact registered child running beyond five seconds. Local CLI ownership now checks the live shim-child parent relation and process creation identity at initialize, then checks creation FILETIME again on the same Windows handle before terminating that child during close. An isolated native run confirmed the child exited by the time close returned and stayed absent over five seconds. UTF-8 is explicit for CLI/SSH stream JSON and saved Claude history, registry and Cockpit profile JSON; native Windows CP936 verified Chinese history remained intact.
+Windows npm 包装器有独立的原生 `claude.exe` 子 PID。只终止包装器会让该精确注册子进程继续运行超过五秒。本地 CLI 归属在初始化时检查存活包装器与子进程的父子关系及进程创建身份；关闭时，在同一 Windows 句柄上再次核对创建 FILETIME，然后终止子进程。隔离原生运行确认 close 返回时子进程已退出，随后五秒仍不存在。CLI/SSH 流式 JSON 及保存的 Claude 历史、注册表、Cockpit 配置 JSON 均显式使用 UTF-8；原生 Windows CP936 环境验证中文历史完整保留。
+
+[发送期间的即时反馈](../bug-fix/2026-10-29-desktop-send-feedback.md)在共享页面显示暂存内容与回执提示，保留本篇显式激活、原生归属及未知写入不重放的边界。

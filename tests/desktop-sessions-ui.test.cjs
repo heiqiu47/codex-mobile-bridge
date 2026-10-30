@@ -1,5 +1,25 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path'),{webcrypto}=require('node:crypto');
+test('loaded desktop chat content reports readiness after rendering, including saved history',async()=>{
+ const ui=await opened();let ready=0;
+ ui.view.onDetailReady=()=>{assert.match(ui.view.messages.textContent,/Latest reply/);ready++;};
+ const detail={session:{id:'a',title:'A'},messages:[{id:'reply',role:'assistant',text:'Latest reply'}]};
+ ui.view.applyDetail(detail,true);assert.equal(ready,0);
+ ui.view.applyDetail(detail);assert.equal(ready,1);
+ ui.view.applyDetail({...detail,connected:false});assert.equal(ready,2);
+});
+
+test('opening the current desktop chat keeps its draft, message nodes and workbench',async()=>{
+ const ui=await opened(),view=ui.view,session=view.workbench.current;
+ ui.setHandler(async()=>({session:{id:'a',title:'Chat',status:'idle'},messages:[{id:'reply',role:'assistant',text:'Current reply'}]}));await view.open('a');
+ view.input.value='unsent draft';Object.defineProperty(view.messages,'scrollHeight',{value:1000,configurable:true});view.messages.scrollTop=42;const nodes=[...view.messages.children];
+ const prepare=view.prepareChat;view.prepareChat=()=>{throw Error('chat rebuilt');};
+ await view.open(view.sid);
+ assert.equal(view.workbench.current,session);assert.equal(view.input.value,'unsent draft');
+ assert.equal(view.messages.scrollTop,42);assert.equal(view.messages.children.length,nodes.length);
+ assert.ok(nodes.every((node,index)=>node===view.messages.children[index]));
+ view.prepareChat=prepare;
+});
 function fixture({storage=new Map(),sessionStore=new Map()}={}){
  const listeners={};let document;
  class Node {
@@ -31,6 +51,39 @@ function fixture({storage=new Map(),sessionStore=new Map()}={}){
  return {view,root,document,calls,notices,storage,sessionStore,setHandler:fn=>handler=fn,setUploadHandler:fn=>uploadHandler=fn,run:s=>vm.runInContext(s,context),text:n=>n.textContent};
 }
 async function opened(){const ui=fixture();await ui.view.choose('claude');await ui.view.open('a');return ui;}
+test('native context reuses activity folding and retains explicit expansion after refresh',async()=>{
+ const ui=await opened(),view=ui.view;view.provider='deepseek';
+ const message={id:'context',role:'activity',kind:'context',title:'上下文',text:'Exact native context'};
+ const detail={connected:true,session:{id:'a',title:'Chat',status:'idle'},messages:[message]};
+ view.applyDetail(detail);const node=view.messageNodes.get('context').node;
+ assert.equal(node.tagName,'DETAILS');assert.equal(!!node.open,false);assert.match(node.textContent,/Exact native context/);
+ node.open=true;view.applyDetail(detail);assert.equal(view.messageNodes.get('context').node,node);assert.equal(node.open,true);
+});
+test('native history images use the shared preview markup and survive unchanged refreshes',async()=>{
+ const ui=await opened(),view=ui.view,id='a'.repeat(64),message={id:'image',role:'user',text:'',attachments:[{type:'image',name:'photo.png',desktopId:id}]};
+ const detail={connected:true,session:{id:'a',title:'Chat',status:'idle'},messages:[message]};
+ view.applyDetail(detail);const node=view.messageNodes.get('image').node;
+ assert.equal(node.querySelector('.attachment-image').src,view.path('images/'+id,'a','claude'));
+ assert.equal(node.querySelector('.timeline-attachments').children.length,2);
+ view.applyDetail(detail);assert.equal(view.messageNodes.get('image').node,node);
+ view.provider='deepseek';view.messageNodes.clear();view.applyDetail(detail);
+ assert.match(view.messageNodes.get('image').node.querySelector('.attachment-image').src,/deepseek/);
+});
+test('shared task indicator separates native work, approvals, stale reads and completion',async()=>{
+ const ui=await opened(),view=ui.view,apply=(status,requests=[])=>view.applyDetail({connected:true,session:{id:'a',title:'Chat',status,requests},messages:[]});
+ apply('active');assert.equal(view.progress.dataset.state,'working');assert.equal(view.progress.hidden,false);assert.ok(view.messages.children.includes(view.progress));
+ apply('active',[{id:'approval',tool:'Confirm',input:{}}]);assert.equal(view.progress.dataset.state,'waiting');
+ view.staleDetail();assert.equal(view.progress.dataset.state,'unknown');assert.doesNotMatch(view.progress.textContent,/正在工作/);
+ apply('blocked');assert.equal(view.progress.dataset.state,'blocked');apply('idle');assert.equal(view.progress.hidden,true);
+ view.provider='future-agent';apply('active');assert.equal(view.progress.dataset.state,'working');assert.match(view.progress.textContent,/future-agent/);
+ view.prepareChat('b');assert.equal(view.progress.hidden,true);
+});
+test('notification provider selection skips list loading and the previously open chat',async()=>{
+ const ui=fixture(),prepared=[];ui.view.providerViews.set('claude',{rows:[],sid:'previous'});
+ ui.view.prepareChat=id=>prepared.push(id);
+ await ui.view.choose('claude',{loadList:false});
+ assert.equal(ui.view.provider,'claude');assert.deepEqual(prepared,[]);assert.equal(ui.calls.length,0);
+});
 
 test('older history prepends messages without adopting old approvals or access',async()=>{
  const ui=await opened(),message=i=>({id:String(i),role:'assistant',text:'Row '+i});
@@ -1042,4 +1095,97 @@ for(const provider of ['claude','deepseek'])for(const prefetched of [false,true]
  assert.equal(await ui.view.refreshList(),true);
  assert.equal(observed.length,1);assert.equal(observed[0][2],token);assert.equal(observed[0][0].provider,provider);assert.equal(observed[0][0].id,'pinned-chat');assert.equal(observed[0][1],true);
  assert.match(ui.view.rowsRoot.textContent,/Pinned chat/);assert.equal(ui.view.listSync.automaticFailures,0);
+});
+
+test('explicit Bridge project and section grouping preserves execution location',async()=>{
+ const ui=fixture();await ui.view.choose('claude');ui.view.listMode.value='project';
+ ui.view.rows=[{id:'a',title:'A',backend:'cli',cwd:'/original',projectId:'p',projectName:'Engineering',sectionId:'s',sectionName:'Todo'},
+ {id:'b',title:'B',backend:'cli',cwd:'/original',projectId:'p',projectName:'Engineering',sectionId:'s2',sectionName:'Review'}];
+ ui.view.renderList();assert.equal(ui.view.rowsRoot.querySelectorAll('details').length,2);
+ assert.match(ui.view.rowsRoot.textContent,/Engineering.*Todo/);assert.match(ui.view.rowsRoot.textContent,/Review/);
+ assert.ok(ui.view.rows.every(row=>row.cwd==='/original'));
+});
+
+for(const [provider,backend,runtime] of [['claude','code','local'],['claude','cowork','local'],['claude','cli','local'],['claude','cli','wsl'],['deepseek','desktop','local']])test(`${provider} ${backend} ${runtime} send shows pending content synchronously and confirms only after acknowledgement`,async()=>{
+ const ui=fixture(),view=ui.view;await view.choose(provider);await view.open('a');view.state={...view.state,backend,runtime,connectionState:'ready'};
+ let finish;ui.setHandler((url,body)=>body?new Promise(resolve=>finish=resolve):Promise.resolve(url.includes('/detail')?{session:{id:'a',status:'idle',capabilities:{}},messages:[{id:'native',role:'user',text:'slow message'}]}:{sessions:[]}));
+ view.input.value='slow message';const sending=view.submit();
+ assert.equal(view.sendFeedback.hidden,false);assert.match(view.sendFeedback.textContent,/正在发送….*slow message/);assert.equal(view.send.textContent,'正在发送…');assert.equal(view.send.disabled,true);assert.equal(ui.notices.length,0);
+ await view.submit();assert.equal(ui.calls.filter(call=>call.body).length,1,'a second click does not submit twice');
+ view.applyDetail({session:{id:'a',status:'idle',capabilities:{}},messages:[{id:'native',role:'user',text:'slow message'}]});assert.equal(view.messages.querySelectorAll('.message').length,1,'pending preview is not a second native-history bubble');assert.equal(view.sendFeedback.hidden,false);
+ view.input.value='next draft';view.input.oninput();finish({status:'accepted'});await sending;
+ assert.equal(view.sendFeedback.hidden,true);assert.equal(view.send.textContent,'发送 ↑');assert.equal(view.input.value,'next draft');assert.deepEqual(ui.notices,['已发送到会话']);
+});
+
+test('queued send confirmation differs from delivery and failures keep the original draft and request id',async()=>{
+ const ui=await opened(),view=ui.view;let writes=0,first;ui.setHandler(async(url,body)=>{if(!body)return url.includes('/detail')?{session:{id:'a',status:'idle',capabilities:{}},messages:[]}:{sessions:[]};writes++;first??=body.id;assert.equal(body.id,first);return writes===1?{status:'unknown',message:'结果待核对'}:{status:'queued'};});
+ view.input.value='keep me';await view.submit();assert.equal(view.sendFeedback.hidden,true);assert.equal(view.input.value,'keep me');assert.deepEqual(ui.notices,['结果待核对']);assert.equal(writes,1);
+ view.freshDetail=true;await view.submit();assert.equal(writes,2);assert.equal(view.input.value,'');assert.equal(ui.notices.at(-1),'已加入待发送队列');
+});
+
+test('pending send feedback stays scoped across chat, provider and account changes',async()=>{
+ for(const change of ['chat','provider','account','gateway','logout']){
+  const ui=await opened(),view=ui.view;view.bindDraftGateway('gateway-a');view.bindDraftScope({draftAccountIdentity:'account-a'});let finish;
+  ui.setHandler((url,body)=>body?new Promise(resolve=>finish=resolve):Promise.resolve({sessions:[]}));view.input.value='private pending text';const sending=view.submit();assert.equal(view.sendFeedback.hidden,false);
+  if(change==='chat')view.sid='b';else if(change==='provider')view.provider='deepseek';else if(change==='account')view.bindDraftScope({draftAccountIdentity:'account-b'});else if(change==='gateway')view.bindDraftGateway('gateway-b');else view.clear();
+  view.updateComposer();assert.equal(view.sendFeedback.hidden,true,change);assert.equal(view.sendFeedback.textContent,'',change+' removes hidden private text');
+  finish({status:'accepted'});await sending;assert.equal(view.sendFeedback.hidden,true);assert.equal(ui.notices.length,0,change+' does not announce success in another context');
+ }
+});
+
+test('network failure clears only transient sending UI and never retries or clears the draft',async()=>{
+ const ui=await opened(),view=ui.view;ui.setHandler(async(url,body)=>{if(body)throw Error('connection lost');return {sessions:[]};});view.input.value='preserved after timeout';await view.submit();assert.equal(view.sendFeedback.hidden,true);assert.equal(view.input.value,'preserved after timeout');assert.equal(ui.calls.filter(call=>call.body).length,1);assert.deepEqual(ui.notices,['connection lost']);assert.equal(view.pending.size,1);
+});
+
+test('late send failure does not expose its message after leaving the original provider',async()=>{
+ const ui=await opened(),view=ui.view;let reject;ui.setHandler((url,body)=>body?new Promise((resolve,fail)=>reject=fail):Promise.resolve({sessions:[]}));view.input.value='private message';const sending=view.submit();view.provider='deepseek';view.updateComposer();reject(Error('private source error'));await sending;assert.equal(view.error.textContent,'');assert.equal(ui.notices.length,0);
+});
+
+test('empty Claude and DSH catalogs retain manual model and effort without fake account switching',async()=>{
+ for(const provider of ['claude','deepseek']){
+  const ui=fixture();await ui.view.choose(provider);await ui.view.open('a');ui.view.state.modelCatalogIdentity='same-account';ui.view.state.capabilities={models:true,effort:true,manualModels:true,manualEffort:true};
+  ui.setHandler(async(url,body)=>body?{status:'accepted'}:{models:[],capabilities:{models:true,manualModels:true,manualEffort:true},cache:{identity:'same-account'}});
+  await ui.view.models();const dialog=ui.document.querySelector('dialog'),model=dialog.querySelector('.ds-manual-model'),effort=dialog.querySelector('.ds-manual-effort');
+  assert.equal(model.hidden,false);assert.doesNotMatch(dialog.textContent,/muted|账号已切换/);model.value=provider==='deepseek'?'provider/manual-model':'manual-model';model.oninput();
+  const custom=dialog.querySelector('.effort-options').querySelector('input');custom.checked=true;custom.onchange();effort.value='high';effort.oninput();
+  assert.equal(effort.hidden,false);assert.equal(dialog.querySelector('.primary').disabled,false);await dialog.querySelector('form').onsubmit({preventDefault(){}});
+  const write=ui.calls.find(call=>call.url.includes('/settings'));assert.equal(write.body.model,model.value);assert.equal(write.body.effort,'high');assert.equal(write.body.manualEffort,true);
+ }
+});
+test('model catalog account mismatch remains blocked and does not expose manual writes',async()=>{
+ const ui=await opened();ui.view.state.modelCatalogIdentity='account-a';ui.view.state.capabilities={models:true,effort:true};ui.setHandler(async()=>({models:[],capabilities:{models:true},cache:{identity:'account-b'}}));await ui.view.models();
+ const dialog=ui.document.querySelector('dialog');assert.match(dialog.querySelector('.error').textContent,/账号已切换/);assert.equal(dialog.querySelector('.primary').disabled,true);await dialog.querySelector('form').onsubmit({preventDefault(){}});assert.equal(ui.calls.filter(call=>call.body).length,0);
+});
+
+test('older model cache cannot erase verified live manual capability or revive an old DSH runtime',async()=>{
+ for(const supported of [true,false]){const ui=fixture();await ui.view.choose('deepseek');await ui.view.open('a');ui.view.state.capabilities={models:true,manualModels:supported,manualEffort:supported};ui.setHandler(async()=>({models:[{id:'model-a',efforts:[]}],capabilities:{models:true,manualModels:!supported,manualEffort:!supported}}));await ui.view.models();const dialog=ui.document.querySelector('dialog');assert.equal(dialog.querySelector('.model-options').querySelectorAll('input').some(input=>input.value==='__custom__'),supported);dialog.close();}
+});
+
+test('manual settings while catalog is pending carry the captured account and stale responses cannot replace it',async()=>{
+ const ui=await opened();ui.view.state.modelCatalogIdentity='account-a';ui.view.state.capabilities={models:true,manualModels:true,manualEffort:true};let finish;
+ ui.setHandler(async(url,body)=>body?{status:'unknown',message:'账号已切换，请重新打开模型设置'}:url.includes('/catalog')?new Promise(resolve=>finish=resolve):{sessions:[]});const opening=ui.view.models();const dialog=ui.document.querySelector('dialog'),input=dialog.querySelector('.ds-manual-model');input.value='manual-model';input.oninput();assert.equal(dialog.querySelector('.primary').disabled,false);await dialog.querySelector('form').onsubmit({preventDefault(){}});const write=ui.calls.find(call=>call.body);assert.equal(write.body.modelCatalogIdentity,'account-a');finish({models:[{id:'private-b'}],cache:{identity:'account-b'}});await opening;assert.doesNotMatch(dialog.textContent,/private-b/);assert.equal(dialog.querySelector('.primary').disabled,true);
+});
+
+test('model source notices are translated per line without hiding automatic or manual choices',async()=>{
+ const ui=await opened();ui.view.state.modelCatalogIdentity='account';ui.view.state.capabilities={models:true,manualModels:true,manualEffort:true};
+ ui.run("BridgeI18n.t=text=>({'配置来源提示':'Configured models','来源尚待核验':'Sources require verification'}[text]||text)");
+ ui.setHandler(async()=>({models:[{id:'current-model',source:'upstream-api',efforts:['high']}],source:'mixed',modelSourcesVersion:1,capabilities:{models:true,manualModels:true,manualEffort:true},cache:{identity:'account'},notice:'配置来源提示\n来源尚待核验'}));
+ await ui.view.models();const dialog=ui.document.querySelector('dialog');assert.match(dialog.textContent,/Configured models\nSources require verification/);assert.doesNotMatch(dialog.textContent,/历史模型仅供查看/);
+ const choices=dialog.querySelector('.model-options').querySelectorAll('input').map(row=>row.value);assert.ok(choices.includes('current-model'));assert.ok(choices.includes('__custom__'));
+});
+
+test('project trust requires explicit confirmation and never replays the first message',async()=>{
+ const ui=await opened();ui.run('window.BridgeProjectPicker={confirmTrust:async()=>false}');
+ ui.setHandler(async(url,body)=>{
+  if(url.endsWith('/projects'))return {projects:[{key:'p',surface:'code',environment:'code',cwd:'/selected',name:'Project'}],environments:[{key:'code',surface:'code',createRequiresMessage:true}]};
+  if(url.endsWith('/create'))return {status:'blocked',code:'workspace-trust-required',workspace:'/selected',canConfirmTrust:true,message:'Native trust required'};
+  if(url.endsWith('/register'))return {project:{key:'registered',cwd:'/selected'}};
+  if(url.endsWith('/trust'))return {trusted:body.confirmed,path:'/selected'};
+  return {sessions:[]};
+ });
+ await ui.view.create();const dialog=ui.document.querySelector('dialog'),form=dialog.querySelector('form'),message=dialog.querySelector('textarea');message.value='Retain this instruction';
+ await form.onsubmit({preventDefault(){}});const trust=dialog.querySelectorAll('button').find(b=>b.textContent==='确认工作区信任…');assert.equal(trust.hidden,false);
+ await trust.onclick();assert.equal(ui.calls.filter(c=>c.url.endsWith('/trust')&&c.body.confirmed).length,0);assert.equal(message.value,'Retain this instruction');
+ ui.run('window.BridgeProjectPicker.confirmTrust=async options=>options.isCurrent()');await trust.onclick();
+ assert.equal(ui.calls.filter(c=>c.url.endsWith('/trust')&&c.body.confirmed).length,1);assert.equal(ui.calls.filter(c=>c.url.endsWith('/create')).length,1);assert.equal(message.value,'Retain this instruction');assert.equal(trust.hidden,true);
 });

@@ -504,6 +504,54 @@ class WslSessionTests(unittest.TestCase):
                                                               'model_provider': 'magpie'})
         return entry
 
+    def test_timeline_does_not_hold_session_condition_while_waiting_for_receipts(self):
+        session = self.entry.session(self.identifier, attach=False)
+        # Writers hold the entry gate before updating session state. A timeline
+        # read must not hold that state lock while waiting for the same gate.
+        writer_ready, queue_entered = threading.Event(), threading.Event()
+        acquired, failures = [], []
+        original_queue = self.entry._queue
+        def queue(identifier):
+            queue_entered.set()
+            return original_queue(identifier)
+        def writer():
+            with self.entry.write_lock:
+                writer_ready.set()
+                if not queue_entered.wait(2):
+                    failures.append('timeline did not read receipts')
+                    return
+                locked = session.condition.acquire(timeout=1)
+                acquired.append(locked)
+                if locked:
+                    session.condition.release()
+        thread = threading.Thread(target=writer, daemon=True)
+        session.refreshing = True  # Exclude unrelated network/history refresh.
+        with patch.object(self.entry, '_queue', side_effect=queue):
+            thread.start()
+            self.assertTrue(writer_ready.wait(2))
+            try:
+                self.entry.timeline_read(self.identifier)
+            finally:
+                queue_entered.set()
+                thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(acquired, [True], 'timeline inverted the session and write locks')
+
+    def test_delayed_timeline_snapshot_cannot_replace_a_newer_projection(self):
+        session = self.entry.session(self.identifier, attach=False)
+        session.refreshing = True
+        older = self.entry.view(self.identifier, attach=False)
+        newer = {**older, 'sequence': older['sequence'] + 1, 'title': 'Newer state'}
+        def delayed_view(*args, **kwargs):
+            with session.condition:
+                session.timeline.update(newer)
+            return older
+        with patch.object(self.entry, 'view', side_effect=delayed_view):
+            page = self.entry.timeline_read(self.identifier)
+        self.assertEqual(page['sequence'], newer['sequence'])
+        self.assertEqual(page['meta']['title'], 'Newer state')
+
     def test_reads_are_passive_and_explicit_send_subscribes_to_same_loaded_daemon(self):
         view = self.entry.view(self.identifier)
         self.assertTrue(view['connected'])

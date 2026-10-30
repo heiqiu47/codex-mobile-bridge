@@ -2,6 +2,7 @@ import http.client
 import json
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -51,6 +52,24 @@ class MobileEventTests(unittest.TestCase):
         self.assertNotIn('Private', json.dumps(value['summary']))
         self.assertNotIn(THREAD, json.dumps(value['summary']))
         self.assertEqual(MobileEvents(self.path).read(999)['summary'], value['summary'])
+
+    def test_inbox_body_uses_only_the_opted_in_chat_title(self):
+        manager = Notifications(None, self.path, lambda: ['https://gateway.example'])
+        manager.defaults({'requests': True, 'completion': True})
+        row = {'id': THREAD, 'host': 'local'}
+        title = '聊天标题' * 40
+        for completed in (False, True):
+            for include_title in (False, True):
+                with self.subTest(completed=completed, include_title=include_title):
+                    config = save_settings(self.path, {'mobileEnabled': True, 'includeTitle': include_title})
+                    target = manager._targets(config)['mobile']
+                    key = manager._delivery_key(row, f'{completed}:{include_title}', target=target)
+                    self.assertTrue(manager._send_keys(config, row, title, 'mobile', target, [key], completed))
+                    event = manager.mobile.read()['events'][-1]
+                    generic = ('有 1 次运行已完成，请打开聊天查看。' if completed
+                               else '有 1 项请求等待处理，请打开聊天查看。')
+                    self.assertEqual(event['body'], title[:120] if include_title else generic)
+                    self.assertEqual(event['title'], 'Codex 运行已完成' if completed else 'Codex 需要你的确认')
 
     def test_inbox_delivery_preserves_global_policy_and_hides_private_title(self):
         manager = Notifications(None, self.path, lambda: ['https://gateway.example'])
@@ -102,6 +121,140 @@ class MobileEventTests(unittest.TestCase):
             self.assertEqual(request(cookie)[0], 401)
         finally:
             server.shutdown();worker.join();server.server_close()
+
+
+class LongPollTests(unittest.TestCase):
+    setUp = MobileEventTests.setUp
+
+    def manager(self):
+        save_settings(self.path, {'mobileEnabled': True})
+        manager = Notifications(None, self.path)
+        self.addCleanup(manager.close)
+        return manager
+
+    def start_wait(self, manager, baseline=None, seconds=1):
+        baseline = baseline or manager.mobile_snapshot()
+        entered = threading.Event()
+        original = manager.mobile.wait
+        def wait(version, timeout):
+            entered.set()
+            original(version, timeout)
+        result = []
+        with patch.object(manager.mobile, 'wait', side_effect=wait):
+            worker = threading.Thread(target=lambda: result.append(manager.mobile_snapshot(
+                baseline['cursor'], wait=seconds, stream=baseline['streamId'], revision=baseline['revision'])))
+            worker.start()
+            self.assertTrue(entered.wait(.5))
+        self.addCleanup(worker.join, 2)
+        return worker, result
+
+    def test_idle_deadline_and_legacy_immediate_capability(self):
+        manager = self.manager()
+        baseline = manager.mobile_snapshot()
+        self.assertEqual(baseline['longPoll'], 60)
+        started = time.monotonic()
+        value = manager.mobile_snapshot(0, wait=.08, stream=baseline['streamId'], revision=baseline['revision'])
+        self.assertGreaterEqual(time.monotonic() - started, .07)
+        self.assertGreaterEqual(value['timing']['waitMs'], 70)
+        self.assertEqual({k: v for k, v in value.items() if k != 'timing'},
+                         {k: v for k, v in baseline.items() if k != 'timing'})
+
+    def test_event_wakes_every_waiter_without_holding_the_feed_lock(self):
+        manager = self.manager()
+        pending = [self.start_wait(manager) for _ in range(4)]
+        manager.mobile.append(['new'], {'id': THREAD, 'host': 'local'}, 'Test', 'Body', False)
+        for worker, result in pending:
+            worker.join(.5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(result[0]['cursor'], 1)
+            self.assertGreaterEqual(result[0]['events'][0]['ageMs'], 0)
+            self.assertLess(result[0]['events'][0]['ageMs'], 500)
+
+    def test_acknowledgement_and_policy_changes_wake_without_new_events(self):
+        manager = self.manager()
+        manager.mobile.append(['new'], {'id': THREAD, 'host': 'local'}, 'Test', 'Body', False)
+        worker, result = self.start_wait(manager)
+        manager.mobile.acknowledge('codex', manager.mobile.checkpoint()['streamId'], 1)
+        worker.join(.5)
+        self.assertEqual(result[0]['unread']['codex'], 0)
+        worker, result = self.start_wait(manager)
+        manager.defaults({'requests': False, 'completion': False})
+        worker.join(.5)
+        self.assertEqual(result[0]['summary'], [])
+
+    def test_change_between_snapshot_and_wait_is_observed(self):
+        manager = self.manager()
+        baseline = manager.mobile_snapshot()
+        original = manager.mobile.wait
+        def race(version, timeout):
+            manager.mobile.append(['race'], {'id': THREAD, 'host': 'local'}, 'Test', 'Body', False)
+            original(version, timeout)
+        with patch.object(manager.mobile, 'wait', side_effect=race):
+            value = manager.mobile_snapshot(0, wait=1, stream=baseline['streamId'], revision=baseline['revision'])
+        self.assertEqual(value['cursor'], 1)
+
+    def test_stale_revision_stream_and_ahead_cursor_return_immediately(self):
+        manager = self.manager()
+        baseline = manager.mobile_snapshot()
+        with patch.object(manager.mobile, 'wait', side_effect=AssertionError('Unexpected wait')):
+            for after, stream, revision in [(0, 'replaced', baseline['revision']), (1, baseline['streamId'], baseline['revision']),
+                                             (0, baseline['streamId'], '0' * 32)]:
+                self.assertEqual(manager.mobile_snapshot(after, wait=60, stream=stream, revision=revision)['cursor'], 0)
+
+    def test_external_settings_keep_the_existing_refresh_bound(self):
+        manager = self.manager()
+        baseline = manager.mobile_snapshot()
+        def external_save(version, timeout):
+            self.assertLessEqual(timeout, 15)
+            save_settings(self.path, {'mobileEnabled': False})
+        with patch.object(manager.mobile, 'wait', side_effect=external_save):
+            result = manager.mobile_snapshot(0, wait=60, stream=baseline['streamId'], revision=baseline['revision'])
+        self.assertFalse(result['enabled'])
+        self.assertNotEqual(result['revision'], baseline['revision'])
+
+    def test_close_wakes_pending_requests(self):
+        manager = self.manager()
+        worker, result = self.start_wait(manager, seconds=60)
+        manager.close()
+        worker.join(.5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result[0]['events'], [])
+
+    def test_http_validates_wait_and_rechecks_revocation_after_wait(self):
+        server = GatewayServer(('127.0.0.1', 0), object(), {'auth': {'mode': 'password', 'username': 'test',
+            **password_record('long-password')}, 'origins': ['https://gateway.example']}, ROOT/'web')
+        server.notifications = manager = self.manager()
+        token, _ = server.auth.new_session('127.0.0.1')
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        def request(query):
+            connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=3)
+            connection.request('GET', '/api/mobile/events?' + query, headers={'Host': 'gateway.example',
+                'Origin': 'https://gateway.example', 'Cookie': 'codex_mobile_session=' + token})
+            response = connection.getresponse()
+            value = response.status, json.loads(response.read())
+            connection.close()
+            return value
+        try:
+            for query in ('wait=61', 'wait=-1', 'wait=abc', 'wait=100000000000', 'revision=bad', 'streamId='):
+                self.assertEqual(request(query)[0], 400)
+            code, baseline = request('after=0')
+            self.assertEqual(code, 200)
+            entered = threading.Event()
+            original = manager.mobile.wait
+            def revoke(version, timeout):
+                entered.set()
+                server.auth.logout(token)
+                manager.close()
+                original(version, timeout)
+            with patch.object(manager.mobile, 'wait', side_effect=revoke):
+                self.assertEqual(request('after=0&wait=60&streamId=' + baseline['streamId']
+                    + '&revision=' + baseline['revision'])[0], 401)
+            self.assertTrue(entered.is_set())
+        finally:
+            server.shutdown()
+            worker.join()
+            server.server_close()
 
 
 class ServerUnreadTests(unittest.TestCase):

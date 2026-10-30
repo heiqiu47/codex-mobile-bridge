@@ -7,6 +7,7 @@ import base64
 import copy
 import functools
 import hashlib
+import inspect
 import json
 import os
 import queue
@@ -25,6 +26,8 @@ from bridge.clients.desktop_app import DesktopApp
 from bridge.features.accounts.models import model_catalog, model_ids
 from bridge.clients.codex.catalog import Catalog, ModelStore, MODEL_REFRESH_SECONDS
 from bridge.features.accounts.info import AccountInfo
+from bridge.features.accounts.operation_gate import OperationGate
+from bridge.features.accounts.reset_forecast import ResetForecast
 from bridge.clients.codex.configuration import magpie_managed
 from bridge.clients.codex.transport import connect_stream
 from bridge.features.notifications.channels import read_json
@@ -72,14 +75,28 @@ def token_owner(auth):
         return None
 
 
-def operation(method):
-    """One gate for native mutations, background queue sends and activation."""
+def operation(method=None, *, host=None, project=None):
+    """Host operations are independent; account and lifecycle changes stay exclusive."""
+    if method is None:
+        return functools.partial(operation, host=host, project=project)
+    signature = inspect.signature(method) if host or project else None
     @functools.wraps(method)
     def call(self, *args, **kwargs):
         manager = getattr(self, 'accounts', None)
         if manager is None:
             return method(self, *args, **kwargs)
-        with manager.gate:
+        host_id = getattr(self, 'host', 'local')
+        if signature:
+            values = signature.bind(self, *args, **kwargs)
+            values.apply_defaults()
+            if host:
+                host_id = values.arguments[host]
+            else:
+                host_id = self.project_host(values.arguments[project])
+        if not isinstance(host_id, str):
+            raise ValueError('运行主机无效')
+        gate = manager.gate
+        with gate.host(host_id) if isinstance(gate, OperationGate) else gate:
             guard = getattr(manager, 'require_client_enabled', None)
             if guard is not None:
                 guard()
@@ -141,7 +158,7 @@ class Accounts:
         if self.root.is_symlink():
             raise ValueError('账号目录不能是符号链接')
         self.lock = threading.RLock()
-        self.gate = threading.RLock()
+        self.gate = OperationGate()
         self.api_models_locks = {}
         self.api_model_store = ModelStore(bridge.data_dir)
         self.saved_model_catalogs = {}
@@ -156,6 +173,8 @@ class Accounts:
         self.discovery = None
         self.candidates = {}
         self.info = AccountInfo(self)
+        self.reset_forecast = ResetForecast()
+        self.reset_dynamic_enabled = read_json(self.root/'reset-dynamic.json', {}).get('enabled') is True
         from bridge.features.updates.codex import DesktopUpdates
         from bridge.features.accounts.monitor import AccountMonitor
         self.updates = DesktopUpdates(self)
@@ -248,9 +267,21 @@ class Accounts:
                     'externalChange': bool(self.index.get('activeId')) and not verified,
                     'sharedWithLocalCli': True, 'switch': dict(self.state),
                     'loginAccount': copy.deepcopy(self.info.current_login()),
+                    'resetDynamicEnabled':self.reset_dynamic_enabled,
+                    'globalReset':self.reset_forecast.status() if self.reset_dynamic_enabled else None,
                     'reminders':dict(self.monitor.preferences), 'reminderError':self.monitor.last_error,
                     'desktopUpdate':self.updates.status(), 'management': management,
+                    'sshHosts': self.bridge.ssh_status() if hasattr(self.bridge, 'ssh_status') else [],
                     'canSwitch': not management['external']}
+
+    def set_reset_dynamic(self, enabled):
+        if type(enabled) is not bool:
+            raise ValueError('重置动态设置无效')
+        with self.lock:
+            if enabled and not self.reset_dynamic_enabled:
+                self.monitor.reset_global_watch()
+            private_json(self.root/'reset-dynamic.json', {'enabled': enabled})
+            self.reset_dynamic_enabled = enabled
 
     def management(self):
         try:
@@ -748,6 +779,11 @@ class Accounts:
 
     def control(self, value):
         action = value.get('action', 'list')
+        if action == 'retrySsh':
+            if set(value) != {'action', 'host'}:
+                raise ValueError('SSH 重试请求包含不支持的字段')
+            self.bridge.retry_ssh(value['host'])
+            return self.desktop_status()
         if action == 'management':
             if set(value) != {'action', 'mode'} or value['mode'] not in ('auto', 'external'):
                 raise ValueError('接入管理模式无效')
@@ -773,6 +809,8 @@ class Accounts:
             self.info.request(value)
             return self.desktop_status()
         if action == 'list':
+            if self.reset_dynamic_enabled and value.get('resetForecast') in (True, 'refresh'):
+                self.reset_forecast.request(refresh=value.get('resetForecast') == 'refresh')
             return self.desktop_status()
         if action in ('scan', 'import', 'models'):
             return {'scan': self.scan, 'import': self.import_account, 'models': self.models}[action](value)

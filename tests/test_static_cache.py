@@ -157,6 +157,18 @@ class StaticCacheTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(self.get('/api/auth')[1]['Cache-Control'], 'no-store')
 
+    def test_startup_retry_keys_preserve_asset_bytes_csp_and_content_version(self):
+        digest = current_version(self.web, '/app.js')
+        original = self.get('/app.js?v=' + digest)
+        self.assertIn('immutable', original[1]['Cache-Control'])
+        for attempt in (2, 3):
+            retry = self.get('/app.js?v=' + digest + '&bridge_retry=fixture-' + str(attempt))
+            self.assertEqual((retry[0], retry[2]), (200, original[2]))
+            self.assertEqual(retry[1]['ETag'], original[1]['ETag'])
+            self.assertEqual(retry[1]['Content-Type'], original[1]['Content-Type'])
+            self.assertEqual(retry[1]['Content-Security-Policy'], original[1]['Content-Security-Policy'])
+            self.assertEqual(retry[1]['Cache-Control'], 'no-cache')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,0 +1,11 @@
+{
+  "accepted": [
+    ["http://192.168.1.5:3089/?auth=abc123", "http://192.168.1.5:3089/?auth=abc123"],
+    ["http://[fd00::1]:3089/?auth=abc123", "http://[fd00::1]:3089/?auth=abc123"],
+    ["https://dsh.example/mobile/?token=a%2Bb#session=one", "https://dsh.example/mobile/?token=a%2Bb#session=one"],
+    ["HTTPS://DSH.EXAMPLE?auth=abc&next=%2Fchat", "https://dsh.example/?auth=abc&next=%2Fchat"],
+    ["http://localhost:3089", "http://localhost:3089/"],
+    ["http://[::1]:3089/", "http://[::1]:3089/"]
+  ],
+  "rejected": ["http://public.example/?auth=secret", "https://user:password@dsh.example", "file:///etc/passwd", "javascript:alert(1)", "https://dsh.example:0/", "https://dsh.example:65536/", "https://dsh.example\\@evil.example/", "https://dsh.example/path\nother", "https://dsh.example/?auth=%zz", "http://[2001:4860::1]/", "http://192.168.001.5/", "https:///?auth=secret"]
+}

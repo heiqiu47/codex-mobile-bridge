@@ -12,6 +12,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class StoreTests(unittest.TestCase):
+    def test_native_project_assignment_and_clear_are_read_from_the_database(self):
+        with closing(sqlite3.connect(self.path)) as conn, conn:
+            conn.execute('ALTER TABLE threads ADD COLUMN project_id TEXT')
+            conn.execute('CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT)')
+            conn.execute("INSERT INTO projects VALUES ('native','Native project')")
+            conn.execute("UPDATE threads SET project_id='native'")
+        self.assertEqual(self.store.list()[0]['_nativeProject'], {'id': 'native', 'name': 'Native project'})
+        with closing(sqlite3.connect(self.path)) as conn, conn:
+            conn.execute('UPDATE threads SET project_id=NULL')
+        self.assertIsNone(self.store.list()[0]['_nativeProject'])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.tmp')
         self.root = Path(self.temp.name)

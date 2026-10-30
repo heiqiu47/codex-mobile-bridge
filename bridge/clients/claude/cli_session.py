@@ -14,10 +14,10 @@ from collections import deque
 from pathlib import Path
 
 from bridge.clients.claude import model, file_archive
-from bridge.clients.claude.history import file_stamp, page as history_page
+from bridge.clients.claude.history import file_stamp, page as history_page, image_event
 from bridge.clients.claude.context import context_fields
 from bridge.clients.claude.session_registry import assert_session_closed
-from bridge.clients.errors import BridgeUnavailable
+from bridge.clients.errors import BridgeUnavailable, ResumePreflightBlocked
 from bridge.clients.uploads import DesktopUploads
 
 
@@ -152,7 +152,7 @@ def _cli_catalog(owned, public, refresh=False):
         selection = {'currentModel': public['model'], 'currentEffort': ''}
         verified = False
     return {'models': rows, **selection,
-            'capabilities': {'models': bool(rows and verified),
+            'capabilities': {'models': bool(verified), 'manualModels': bool(verified), 'manualEffort': bool(verified),
                              'effort': bool(verified and any(row['efforts'] for row in rows)),
                              'skills': True}, 'skills': _skill_catalog(owned.catalog)}
 
@@ -160,10 +160,16 @@ def _cli_catalog(owned, public, refresh=False):
 def _set_cli_settings(owned, body):
     rows = _model_catalog(owned.catalog)
     selected = next((row for row in rows if row['id'] == body.get('model')), None)
-    if selected is None:
-        raise ValueError('请选择 Claude Code 提供的模型')
+    manual_model = selected is None
+    if manual_model:
+        identifier = body.get('model')
+        if not isinstance(identifier, str) or not re.fullmatch(r'[^\s\x00-\x1f\x7f]{1,256}', identifier):
+            raise ValueError('请输入有效的模型名称')
+        selected = {'id': identifier, 'efforts': []}
     effort = body.get('effort')
-    if effort is not None and effort not in selected['efforts']:
+    if body.get('manualEffort') is True and (not isinstance(effort, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', effort)):
+        raise ValueError('请输入有效的思考强度')
+    if effort is not None and body.get('manualEffort') is not True and effort not in selected['efforts']:
         raise ValueError('该模型不支持此思考强度')
     _applied_settings(owned)
     target = next((item for item in owned.catalog.get('models') or []
@@ -176,7 +182,7 @@ def _set_cli_settings(owned, body):
                        'settings': {'effortLevel': None if effort == 'auto' else effort}})
     settings = _applied_settings(owned)
     applied = settings['applied']
-    if (_has_resolved_models(owned.catalog) and applied.get('model') != expected or
+    if ((_has_resolved_models(owned.catalog) or manual_model) and applied.get('model') != expected or
             effort not in (None, 'auto') and applied.get('effort') != effort):
         raise BridgeUnavailable('Claude Code 未确认模型或思考强度设置，请刷新检查')
     sources = settings.get('sources')
@@ -188,10 +194,6 @@ def _set_cli_settings(owned, body):
     owned.model = applied['model']
 
 IMAGE_URL = re.compile(r'data:(image/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]+={0,2})\Z')
-
-
-class ResumePreflightBlocked(BridgeUnavailable):
-    """The resume process has definitely not been started."""
 
 
 def _profile():
@@ -267,11 +269,12 @@ def _text(content):
 
 def _message_content(body):
     """Build the CLI's native stream-json user content from server-resolved uploads."""
+    from bridge.clients.file_mentions import file_mentions
+    text = body['text']
     images = body.get('resolvedImages') or []
     files = body.get('resolvedFiles') or []
     if not images and not files:
-        return body['text']
-    text = body['text']
+        return file_mentions(text, body.get('resolvedReferences', []))
     if files:
         references = []
         for item in files:
@@ -281,6 +284,7 @@ def _message_content(body):
         text += ('\n\n' if text.strip() else '') + '请读取并参考这些已上传的本机文件：\n' + json.dumps(references, ensure_ascii=False)
     # Claude parses slash invocations from a single text block. Keep file
     # references with that text so adding an attachment preserves the Skill.
+    text = file_mentions(text, body.get('resolvedReferences', []))
     blocks = [{'type': 'text', 'text': text}] if text.strip() else []
     for image in images:
         match = IMAGE_URL.fullmatch(image.get('url', '')) if isinstance(image, dict) else None
@@ -770,6 +774,8 @@ class ClaudeCli:
                 raise ResumePreflightBlocked(str(exc)) from exc
             raise
         native = row['nativeId']
+        if action == 'image':
+            return model.history_image([image_event(row['path'], body.get('source'))], body.get('source'))
         with self.lock:
             owned = self.owned.get(native)
             if owned and owned.error and owned.process.poll() is None:

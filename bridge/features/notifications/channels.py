@@ -4,6 +4,7 @@ import base64
 import hmac
 from bridge.api.validation import FieldError, at_field
 import json
+import logging
 import re
 import threading
 import time
@@ -585,9 +586,14 @@ class Notifications:
         self.desktop_details = {}
         self.desktop_cursor = 0
         self.lock = threading.RLock()
+        self.delivery_lock = threading.Lock()
+        self.delivery_wakeup = threading.Event()
+        self.delivery_queue = {}
+        self.delivery_worker = None
         self.closed = threading.Event()
         self.ledger = read_json(self.data_dir/'notification-delivery.json', {})
         self.completions = read_json(self.data_dir/'notification-completions.json', {})
+        self.attention = read_json(self.data_dir/'notification-attention.json', {})
         # Bind legacy ntfy-only records to their existing destination once. A new
         # recipient must not inherit another recipient's delivery or retry state.
         config = settings(self.data_dir)
@@ -616,12 +622,37 @@ class Notifications:
         self.mobile_push = MobilePush(self.data_dir, self.mobile)
 
     def _targets(self, config):
-        result = channels(config)
+        result = {}
         if config.get('mobileEnabled'):
             result['mobile'] = 'mobile:' + self.mobile.value['streamId']
+        result.update(channels(config))
         return result
 
-    def mobile_snapshot(self, after=0):
+    def mobile_snapshot(self, after=0, *, wait=0, stream=None, revision=None):
+        started = time.monotonic()
+        deadline = started + wait
+        while True:
+            version = self.mobile.version()
+            snapshot = self._mobile_snapshot(after)
+            # A content token also detects preferences saved by the desktop process.
+            state = {key: value for key, value in snapshot.items() if key != 'events'}
+            token = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()[:32]
+            remaining = deadline - time.monotonic()
+            if (remaining <= 0 or self.closed.is_set() or not snapshot['enabled']
+                    or stream != snapshot['streamId'] or after != snapshot['cursor'] or revision != token):
+                elapsed = round((time.monotonic() - started) * 1000, 1)
+                now = time.time()
+                events = [{**event, 'ageMs': max(0, round((now - event['createdAt']) * 1000))}
+                          for event in snapshot['events']]
+                if events:
+                    logging.info('notification stage=read events=%d cursor=%d wait_ms=%.1f', len(events), snapshot['cursor'], elapsed)
+                # Timing is response-local, outside the stable revision. Phone
+                # and gateway wall clocks are never subtracted from one another.
+                return {**snapshot, 'events': events, 'longPoll': 60, 'revision': token, 'timing': {'waitMs': elapsed}}
+            # Desktop preferences live in a separate process; retain their existing refresh bound.
+            self.mobile.wait(version, min(15, remaining))
+
+    def _mobile_snapshot(self, after):
         """One passive snapshot for all phones; reads never attach a desktop chat."""
         enabled = settings(self.data_dir).get('mobileEnabled', False)
         policies, legacy = self.policies(), self.watches()
@@ -645,6 +676,8 @@ class Notifications:
             {**row, 'unread': snapshot['unread'][row['id']]} for row in clients]}
 
     def start(self):
+        self.delivery_worker = threading.Thread(target=self._delivery_run, daemon=True)
+        self.delivery_worker.start()
         self.worker = threading.Thread(target=self._run, daemon=True)
         self.worker.start()
         self.push_worker = threading.Thread(target=self._push_run, daemon=True)
@@ -652,9 +685,13 @@ class Notifications:
 
     def close(self):
         self.closed.set()
+        self.mobile.close()
         self.wakeup.set()
+        self.delivery_wakeup.set()
         if self.worker:
             self.worker.join(timeout=2)
+        if self.delivery_worker:
+            self.delivery_worker.join(timeout=2)
         for session in self.attached.values():
             session.watched = False
 
@@ -676,6 +713,7 @@ class Notifications:
                 self.wakeup.set()
                 policies.update(value)
                 write_json(self.data_dir/'notification-policies.json', policies)
+                self.mobile.changed()
             return {key: policies[key] for key in ('requests', 'completion')}
 
     def _effective(self, row, policies=None, legacy_rows=None):
@@ -717,6 +755,7 @@ class Notifications:
                 self._clear_completion(host, thread_id)
                 write_json(self.data_dir/'notification-completions.json', self.completions)
                 write_json(self.data_dir/'notification-policies.json', policies)
+                self.mobile.changed()
             row = self._effective({'id': thread_id, 'host': host}, policies)
             return {'available': bool(self._targets(settings(self.data_dir))), 'watching': row['notifyOnRequest'] or row['notifyOnCompletion'],
                     'notifyOnRequest': row['notifyOnRequest'], 'notifyOnCompletion': row['notifyOnCompletion'],
@@ -793,6 +832,7 @@ class Notifications:
                 else:
                     policies.setdefault('chats', {}).pop(key, None)
                 write_json(self.data_dir/'notification-policies.json', policies)
+                self.mobile.changed()
             return {'available': bool(targets), 'watching': selected, 'notifyOnCompletion': selected and completion}
 
     def control(self, value):
@@ -808,6 +848,8 @@ class Notifications:
 
     def _clear_completion(self, host, thread_id):
         self.completions = {k: v for k, v in self.completions.items() if json.loads(k)[:2] != [host, thread_id]}
+        self.delivery_queue = {key: job for key, job in self.delivery_queue.items()
+                               if not (key[:2] == (host, thread_id) and key[-1] is True)}
 
     @staticmethod
     def _completion_key(host, thread_id, target):
@@ -826,12 +868,19 @@ class Notifications:
                 return []
             previous = self.completions.get(key)
             current = self._completion_baseline(turns)
+            # DSH sequence numbers survive latest-page truncation. A missing UUID
+            # anchor alone is not evidence that a historical turn is new.
+            ordered = row['host'] == 'desktop:deepseek' and all(type(t.get('sequence')) is int for t in turns)
+            if ordered:
+                current['sequence'] = max([t['sequence'] for t in turns] + [(previous or {}).get('sequence', -1)])
             current['title'] = row.get('title') or (previous or {}).get('title') or '聊天'
             if previous is not None:
                 # Only turns after the last live boundary (or observed running) are new.
                 # Older pages loaded into a snapshot must never become completion alerts.
                 anchor = next((i for i, t in enumerate(turns) if t.get('turnId') == previous['anchor']), None)
                 newer = turns if previous['anchor'] is None else turns[anchor + 1:] if anchor is not None else []
+                if ordered and type(previous.get('sequence')) is int:
+                    newer = [t for t in turns if t['sequence'] > previous['sequence']]
                 eligible = set(previous['running']) | {t['turnId'] for t in newer if t.get('turnId')}
                 pending = previous['pending'] + [t['turnId'] for t in turns if t.get('turnId') in eligible and t.get('status') == 'completed']
                 current['pending'] = list(dict.fromkeys(pending))
@@ -850,8 +899,64 @@ class Notifications:
     def _delivery_key(row, event_id, completion=False, target=''):
         identity = [row['host'], row['id'], event_id]
         if completion:
-            identity.append('completion')
+            identity.append('attention' if completion == 'attention' else 'completion')
         return (target + ':' if target else '') + hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()
+
+    def _attention_pending(self, row, turns, target):
+        """Only explicit new terminal failures require intervention, never idle time.
+
+        Keep an episode counter so a resumed native turn can fail again without
+        replaying its first alert. First reads and older history are baselines.
+        """
+        key = self._completion_key(row['host'], row['id'], target)
+        with self.lock:
+            if not self._effective(row)['notifyOnRequest']:
+                return []
+            turns = [t for t in turns if t.get('turnId')]
+            previous = self.attention.get(key)
+            if not turns:
+                if previous is None:
+                    self.attention[key] = {'anchor': None, 'turns': {}, 'pending': ''}
+                    write_json(self.data_dir/'notification-attention.json', self.attention)
+                return []
+            ordered = row['host'] == 'desktop:deepseek' and all(type(t.get('sequence')) is int for t in turns)
+            anchor = next((i for i, t in enumerate(turns) if t['turnId'] == (previous or {}).get('anchor')), None)
+            newer = turns if previous and previous.get('anchor') is None else turns[anchor + 1:] if anchor is not None else []
+            if ordered and previous and type(previous.get('sequence')) is int:
+                newer = [t for t in turns if t['sequence'] > previous['sequence']]
+            known = (previous or {}).get('turns', {})
+            # A truncated/older page is not a recovery or a new failure.
+            if previous and anchor is None and not newer and not any(known.get(t['turnId'], {}).get('status') == 'inProgress' for t in turns):
+                return []
+            eligible = {t['turnId'] for t in newer}
+            observed = dict(known)
+            pending = ''
+            for turn in turns:
+                identifier = turn['turnId']
+                status = turn.get('status')
+                if turn.get('willRetry') is True:
+                    status = 'inProgress'
+                failed = status in ('failed', 'blocked') and turn.get('endReason') not in ('aborted', 'interrupted', 'forked')
+                old = known.get(identifier, {})
+                episode = old.get('episode', 0)
+                new_boundary = ordered and type(old.get('sequence')) is int and turn['sequence'] > old['sequence']
+                if failed and (old.get('status') not in ('failed', 'blocked') or new_boundary):
+                    if previous is not None and (identifier in eligible or old.get('status') == 'inProgress'):
+                        episode += 1
+                observed[identifier] = {'status': status, 'episode': episode}
+                if ordered:
+                    observed[identifier]['sequence'] = turn['sequence']
+                if turn is turns[-1] and failed and episode:
+                    pending = json.dumps([identifier, episode])
+            current = {'anchor': turns[-1]['turnId'], 'turns': dict(list(observed.items())[-128:]),
+                       'pending': pending, 'title': row.get('title') or '聊天'}
+            if ordered:
+                current['sequence'] = max([t['sequence'] for t in turns] + [(previous or {}).get('sequence', -1)])
+            if current != previous:
+                self.attention[key] = current
+                write_json(self.data_dir/'notification-attention.json', self.attention)
+            delivery = self._delivery_key(row, pending, completion='attention', target=target)
+            return [delivery] if pending and not self.ledger.get(delivery, {}).get('delivered') else []
 
     def click_url(self, config, thread_id, host):
         thread_id = quote(thread_id, safe='').replace('~', '%7E')
@@ -863,26 +968,63 @@ class Notifications:
             return 'codexbridge://open?origin=' + quote(base.rstrip('/'), safe='') + '&thread=' + thread_id + '&host=' + quote(host, safe='')
         return base.rstrip('/') + '/#' + thread_id + '~' + quote(host, safe='') if base else ''
 
-    def _send_keys(self, config, row, title, channel, target, keys, completed):
+    def _dispatch(self, config, row, title, channel, target, keys, completed):
+        detected = time.monotonic()
+        if channel == 'mobile':
+            return self._send_keys(config, row, title, channel, target, keys, completed, detected=detected)
+        with self.lock:
+            identity = (row['host'], row['id'], channel, completed)
+            pending = [key for key in keys if not self.ledger.get(key, {}).get('delivered')
+                       and time.time() >= self.ledger.get(key, {}).get('next', 0)]
+            if not pending:
+                self.delivery_queue.pop(identity, None)
+                return False
+            prior = self.delivery_queue.get(identity)
+            if prior and prior[4] == target:
+                detected = prior[-1]
+            self.delivery_queue[identity] = (config, dict(row), title, channel, target, pending, completed, detected)
+            self.delivery_wakeup.set()
+        return False
+
+    def deliver_pending(self):
+        """Drain one-shot scans or the background sender, never under the scan lock."""
+        with self.delivery_lock:
+            while not self.closed.is_set():
+                with self.lock:
+                    if not self.delivery_queue:
+                        break
+                    identity = next(iter(self.delivery_queue))
+                    *args, detected = self.delivery_queue.pop(identity)
+                self._send_keys(*args, detected=detected)
+
+    def _send_keys(self, config, row, title, channel, target, keys, completed, *, detected=None):
+        started = time.monotonic()
         now = time.time()
-        pending = [k for k in keys if not self.ledger.get(k, {}).get('delivered') and now >= self.ledger.get(k, {}).get('next', 0)]
-        if not pending:
-            return False
-        config = settings(self.data_dir)
-        if channel != 'mobile' and channels(config).get(channel) != target:
-            return False
-        provider = self.desktop_provider(row['host'])
-        if provider and (self.desktop_sessions is None or not self.desktop_sessions.enabled(provider)):
-            return False
-        current = self._effective(row)
-        if not current['notifyOnCompletion' if completed else 'notifyOnRequest']:
-            return False
-        provider = self.desktop_provider(row['host'])
-        client = {'claude': 'Claude', 'deepseek': 'DSH'}.get(provider, 'Codex')
-        heading = client + (' 运行已完成' if completed else ' 需要你的确认')
-        body = f'有 {len(pending)} 次运行已完成，请打开聊天查看。' if completed else f'有 {len(pending)} 项请求等待处理，请打开聊天查看。'
-        if config['includeTitle']:
-            body = title[:120] + '\n' + body
+        with self.lock:
+            pending = [k for k in keys if not self.ledger.get(k, {}).get('delivered') and now >= self.ledger.get(k, {}).get('next', 0)]
+            if not pending or self.closed.is_set():
+                return False
+            config = settings(self.data_dir)
+            if self._targets(config).get(channel) != target:
+                return False
+            provider = self.desktop_provider(row['host'])
+            if provider and (self.desktop_sessions is None or not self.desktop_sessions.enabled(provider)):
+                return False
+            current = self._effective(row)
+            if not current['notifyOnCompletion' if completed is True else 'notifyOnRequest']:
+                return False
+            if completed == 'attention':
+                record = self.attention.get(self._completion_key(row['host'], row['id'], target), {})
+                if not record.get('pending') or self._delivery_key(row, record['pending'], completion='attention', target=target) not in pending:
+                    return False
+            client = {'claude': 'Claude', 'deepseek': 'DSH'}.get(provider, 'Codex')
+            kind = 'attention' if completed == 'attention' else 'completion' if completed else 'request'
+            heading = client + (' 需要你处理' if kind == 'attention' else ' 运行已完成' if completed else ' 需要你的确认')
+            body = ('本轮运行遇到问题，请打开聊天查看并手动继续或调整模型。' if kind == 'attention' else
+                    f'有 {len(pending)} 次运行已完成，请打开聊天查看。' if completed else f'有 {len(pending)} 项请求等待处理，请打开聊天查看。')
+            if config['includeTitle']:
+                body = title[:120] if channel == 'mobile' else title[:120] + '\n' + body
+        success = False
         try:
             if channel == 'mobile':
                 self.mobile.append(pending, row, heading, body, completed)
@@ -890,23 +1032,47 @@ class Notifications:
                 click = self.click_url(config, row['id'], row['host'])
                 if channel == 'webhook' or channel.startswith('webhook:'):
                     publish_webhook(webhook_channel_config(config, channel), heading, body, click,
-                                    event='task.completed' if completed else 'approval.required', event_id=pending[0],
+                                    event='task.attention' if kind == 'attention' else 'task.completed' if completed else 'approval.required', event_id=pending[0],
                                     session_name=title[:120] if config['includeTitle'] else '', client=client,
                                     host=row['host'], count=len(pending))
                 else:
                     sender = {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[channel]
                     sender(config, heading, body, click)
-            for key in pending:
-                self.ledger[key] = {'delivered': True, 'time': now}
-            self._status(channel, lastSent=now, error='')
+            success = True
         except Exception:
+            pass  # Publish errors must not expose endpoint credentials or content.
+        elapsed = (time.monotonic() - started) * 1000
+        logging.info('notification stage=%s provider=%s kind=%s channel=%s trace=%s count=%d queue_ms=%.1f work_ms=%.1f outcome=%s',
+                     'inbox' if channel == 'mobile' else 'outbound', provider or 'codex',
+                     kind, channel.split(':')[0], pending[0][-64:][:16],
+                     len(pending), max(0, started - (detected if detected is not None else started)) * 1000,
+                     elapsed, 'accepted' if success else 'failed')
+        with self.lock:
+            if self.closed.is_set():
+                return False
             for key in pending:
-                attempts = self.ledger.get(key, {}).get('attempts', 0) + 1
-                self.ledger[key] = {'delivered': False, 'attempts': attempts, 'next': now + min(300, 5 * 2 ** min(attempts, 6)), 'time': now}
-            self._status(channel, error='发送失败，将在提醒仍开启时重试完成通知；待确认通知仅在请求仍待处理时重试。请检查服务地址、认证和网络。')
+                if success:
+                    self.ledger[key] = {'delivered': True, 'time': now}
+                else:
+                    attempts = self.ledger.get(key, {}).get('attempts', 0) + 1
+                    self.ledger[key] = {'delivered': False, 'attempts': attempts, 'next': now + min(300, 5 * 2 ** min(attempts, 6)), 'time': now}
+            if success:
+                self._status(channel, lastSent=now, error='')
+            else:
+                self._status(channel, error='发送失败，将在提醒仍开启时重试完成通知；待确认通知仅在请求仍待处理时重试。请检查服务地址、认证和网络。')
+            if len(self.ledger) > 5000:
+                self.ledger = dict(sorted(self.ledger.items(), key=lambda p: p[1].get('time', 0))[-4000:])
+            write_json(self.data_dir/'notification-delivery.json', self.ledger)
         return True
 
-    def scan(self):
+    def scan(self, *, deliver=True):
+        # A manual single pass retains synchronous delivery. The live scanner and
+        # sender use separate workers, sharing the exact same detection path.
+        started = time.monotonic()
+        cursor = self.mobile.checkpoint()['cursor']
+        with self.lock:
+            self.delivery_queue = {key: job for key, job in self.delivery_queue.items()
+                                   if key[-1] or self.desktop_provider(key[0])}
         config = settings(self.data_dir)
         targets = self._targets(config)
         signature = tuple(sorted(targets.items()))
@@ -922,7 +1088,11 @@ class Notifications:
         if targets and time.monotonic() >= self.discovery_at and hasattr(self.bridge, 'notification_candidates'):
             self.discovery_at = time.monotonic() + 30
             # Explicit watches also need to discover a new run after going idle.
-            for row in self.bridge.notification_candidates():
+            discovery_started = time.monotonic()
+            candidates = self.bridge.notification_candidates()
+            logging.info('notification stage=discovery work_ms=%.1f count=%d',
+                         (time.monotonic() - discovery_started) * 1000, len(candidates))
+            for row in candidates:
                 key = (row['host'], row['id'])
                 self.candidates[key] = row
                 self.dormant.discard(key)
@@ -930,6 +1100,20 @@ class Notifications:
             watches = [r for r in self._selected() if (r['host'], r['id']) not in self.dormant] if targets else []
             changed = False
             policies, legacy_rows = self.policies(), self.watches()
+            for key, record in list(self.attention.items()):
+                host, identifier, target = json.loads(key)
+                row = {'host': host, 'id': identifier}
+                if target not in targets.values() or not self._effective(row, policies, legacy_rows)['notifyOnRequest']:
+                    del self.attention[key]
+                    write_json(self.data_dir/'notification-attention.json', self.attention)
+                    continue
+                if record.get('pending'):
+                    channel = next(c for c, t in targets.items() if t == target)
+                    keys = [self._delivery_key(row, record['pending'], completion='attention', target=target)]
+                    # Unlike completion, do not replay mobile events before the latest
+                    # native state has had a chance to cancel a recovered episode.
+                    if channel != 'mobile':
+                        changed = self._dispatch(config, row, record.get('title') or '聊天', channel, target, keys, 'attention') or changed
             for key, record in list(self.completions.items()):
                 host, identifier, target = json.loads(key)
                 row = {'host': host, 'id': identifier}
@@ -942,7 +1126,7 @@ class Notifications:
                     continue
                 channel = next(c for c, t in targets.items() if t == target)
                 keys = [self._delivery_key(row, turn, completion=True, target=target) for turn in record['pending']]
-                changed = self._send_keys(config, row, record.get('title') or '聊天', channel, target, keys, True) or changed
+                changed = self._dispatch(config, row, record.get('title') or '聊天', channel, target, keys, True) or changed
         selected = {(r['host'], r['id']) for r in watches}
         for key in set(self.attached) - selected:
             session = self.attached[key]
@@ -986,12 +1170,13 @@ class Notifications:
                         live_running = session.state.get('threadRuntimeStatus', {}).get('type') == 'active' or any(t.get('status') == 'inProgress' for t in ordered_turns(session.state))
                         self.mobile_push.update_activity(row, 'waiting' if requests else 'running' if live_running else 'ready')
                         title = session.state.get('title') or '聊天'
-                        turns = [{'turnId': t.get('turnId'), 'status': t.get('status')} for t in ordered_turns(session.state)]
+                        turns = [{k: t[k] for k in ('turnId', 'status', 'willRetry') if k in t} for t in ordered_turns(session.state)]
                     completed_keys = {channel: self._completion_pending({**current, 'title': title}, turns, target) if current.get('notifyOnCompletion') else [] for channel, target in targets.items()}
+                    attention_keys = {channel: self._attention_pending({**current, 'title': title}, turns, target) for channel, target in targets.items()}
                 for channel, target in targets.items():
                     with self.lock:
-                        for completed, keys in ((False, [self._delivery_key(row, r['id'], target=target) for r in requests]), (True, completed_keys[channel])):
-                            changed = self._send_keys(config, row, title, channel, target, keys, completed) or changed
+                        for completed, keys in ((False, [self._delivery_key(row, r['id'], target=target) for r in requests]), (True, completed_keys[channel]), ('attention', attention_keys[channel])):
+                            changed = self._dispatch(config, row, title, channel, target, keys, completed) or changed
                 if hasattr(source, 'release_notification_session'):
                     # Keep only live tasks and approvals attached. Completion retry
                     # records above are independent of the thread subscription.
@@ -1007,17 +1192,33 @@ class Notifications:
             except Exception:
                 self._status(error='部分关注聊天暂时无法连接，请检查电脑 App 或 SSH 连接。')
         changed = self._scan_desktops(config, targets) or changed
-        if changed:
-            if len(self.ledger) > 5000:
-                self.ledger = dict(sorted(self.ledger.items(), key=lambda p: p[1].get('time', 0))[-4000:])
-            write_json(self.data_dir/'notification-delivery.json', self.ledger)
+        # Retry failed durable inbox writes after fresh native snapshots have
+        # cancelled recovered episodes, including now-dormant subscriptions.
+        if 'mobile' in targets:
+            with self.lock:
+                for key, record in self.attention.items():
+                    host, identifier, target = json.loads(key)
+                    if target == targets['mobile'] and record.get('pending'):
+                        row = {'host': host, 'id': identifier}
+                        keys = [self._delivery_key(row, record['pending'], completion='attention', target=target)]
+                        changed = self._dispatch(config, row, record.get('title') or '聊天', 'mobile', target, keys, 'attention') or changed
+        elapsed = (time.monotonic() - started) * 1000
+        if elapsed >= 1000 or self.mobile.checkpoint()['cursor'] != cursor:
+            logging.info('notification stage=scan work_ms=%.1f inbox_cursor=%d', elapsed, self.mobile.checkpoint()['cursor'])
+        if deliver:
+            self.deliver_pending()
 
     def _scan_desktops(self, config, targets):
         manager = self.desktop_sessions
         if not targets or manager is None or time.monotonic() < self.desktop_poll_at:
             return False
         self.desktop_poll_at = time.monotonic() + 10
+        with self.lock:
+            self.delivery_queue = {key: job for key, job in self.delivery_queue.items()
+                                   if key[-1] or not self.desktop_provider(key[0])}
+        listed = time.monotonic()
         rows = manager.notification_rows()
+        logging.info('notification stage=desktop-list work_ms=%.1f count=%d', (time.monotonic() - listed) * 1000, len(rows))
         if not rows:
             return False
         # Rotate bounded history reads so one large client's history cannot block
@@ -1040,18 +1241,19 @@ class Notifications:
                 self.mobile_push.update_activity(row, 'waiting' if requests else 'running' if row.get('status') == 'active' else 'ready')
             for channel, target in targets.items():
                 keys = [self._delivery_key(row, r['id'], target=target) for r in requests]
-                changed = self._send_keys(config, row, title, channel, target, keys, False) or changed
-            if not current['notifyOnCompletion']:
-                continue
+                changed = self._dispatch(config, row, title, channel, target, keys, False) or changed
             key = (row['host'], row['id'])
-            signature = (row.get('updatedAt'), row.get('status'))
+            signature = (row.get('updatedAt'), row.get('status'), row.get('error'))
             cached = self.desktop_details.get(key)
             if cached is None or cached[0] != signature or row.get('status') == 'active':
                 if reads >= 8:
                     continue
                 reads += 1
                 try:
+                    read_started = time.monotonic()
                     detail = manager.call(row['provider'], 'detail', row['id'])
+                    logging.info('notification stage=desktop-detail provider=%s work_ms=%.1f',
+                                 row['provider'], (time.monotonic() - read_started) * 1000)
                     if detail.get('connected') is False or not isinstance(detail.get('turns'), list):
                         continue
                     cached = (signature, detail['turns'])
@@ -1060,10 +1262,16 @@ class Notifications:
                     continue
             for channel, target in targets.items():
                 keys = self._completion_pending({**current, 'title': title}, cached[1], target)
-                changed = self._send_keys(config, row, title, channel, target, keys, True) or changed
+                changed = self._dispatch(config, row, title, channel, target, keys, True) or changed
+                keys = self._attention_pending({**current, 'title': title}, cached[1], target)
+                changed = self._dispatch(config, row, title, channel, target, keys, 'attention') or changed
         return changed
 
     def _status(self, channel=None, **values):
+        with self.lock:
+            self._write_status(channel, **values)
+
+    def _write_status(self, channel=None, **values):
         path = self.data_dir/'notification-status.json'
         prior = read_json(path, {})
         if channel:
@@ -1079,14 +1287,24 @@ class Notifications:
     def _run(self):
         while not self.closed.is_set():
             try:
-                self.security.scan()
-                self.scan()
+                self.scan(deliver=False)
             except Exception:
                 self._status(error='通知配置读取失败，请在电脑启动器重新保存配置。')
             self.wakeup.wait(3)
             self.wakeup.clear()
             # Coalesce a burst of stream patches rather than scan per token.
             self.closed.wait(1)
+
+    def _delivery_run(self):
+        while not self.closed.is_set():
+            self.delivery_wakeup.clear()
+            try:
+                self.deliver_pending()
+                if not self.closed.is_set():
+                    self.security.scan()
+            except Exception:
+                self._status(error='通知配置读取失败，请在电脑启动器重新保存配置。')
+            self.delivery_wakeup.wait(3)
 
     def _push_allowed(self, event):
         provider = self.desktop_provider(event['host'])

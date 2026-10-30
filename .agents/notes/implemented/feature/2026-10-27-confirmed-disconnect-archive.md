@@ -1,58 +1,66 @@
-# Agent Note: Confirmed stop, release and archive
+# Agent Note: 经确认后停止、释放并归档
 
 Status: implemented
 
-## Problem
+## 问题
 
-Disconnecting a Bridge reader does not release a native writer. Users explicitly request stopping the selected chat before archive, with a confirmation dialog whose left button is Confirm archive and right button is Cancel. A failed stop must not cause an archive or be replayed as a new stop after reconnect.
+断开 Bridge 读取连接不释放原生写入者。用户明确要求先停止选定聊天再归档，并在确认框左侧放“确认归档”、右侧放“取消”。停止失败不能导致归档，也不能在重新连接后作为新停止操作重放。
 
-## Decision
+## 决策
 
-An explicit `disconnect:true` on an archive request opts into stopping the exact original target and its verified descendants. Older requests retain idle-only semantics; restore never stops work. The existing lifecycle gates exclude new Bridge submissions during the operation. Persist the existing unknown receipt before any stop or release, read fresh native state after stopping, and only then archive through the original runtime. Never close a shared application/daemon or kill unrelated processes to release one chat. Uncontrollable native owners remain a clear failure, not a fabricated success.
+归档请求显式携带 `disconnect:true`，表示选择停止精确原目标及其已验证后代。旧请求保留仅空闲语义；恢复绝不停止工作。操作期间现有生命周期检查阻止新的 Bridge 提交。任何停止或释放前先持久保存既有未知回执，停止后重新读取原生状态，再通过原运行时归档。绝不为释放一个聊天而关闭共享应用/守护进程或杀死无关进程。不可控制的原生归属进程明确报告失败，不伪造成功。
 
-The confirmation displays title, execution host and interruption consequences. Confirm archive is on the left, Cancel on the right and initially focused. Both buttons use the same existing primary style and equal grid columns; phone-width visual acceptance prevents a narrow/wrapped Cancel label. Cancel, Escape and dismissal perform no request. Restore retains its separate action.
+确认框显示标题、执行主机和中断后果。确认归档在左，取消在右且默认获得焦点。两个按钮使用同一现有主按钮样式和等宽网格列；手机宽度视觉验收防止取消标签过窄或换行。取消、Escape 和关闭对话框不发送请求。恢复保留独立操作。
 
-## Existing-note audit
+## 既有笔记审计
 
-- [Native archive feedback](../../implemented/bug-fix/2026-10-26-native-session-archive-feedback.md): partially superseded only for explicitly confirmed stopping; original-owner, reversible storage and uncertain-write requirements remain.
-- [Bridge session management](../../implemented/feature/2026-10-26-bridge-session-management.md): overlapping routing, identities and receipts remain in force.
-- Local-first pin notes remain unrelated: stopping and archive never enter their retry queue.
-- No other active proposed/rejected archive decision supersedes this request.
+- [原生归档反馈](../../implemented/bug-fix/2026-10-26-native-session-archive-feedback.md)：仅显式确认停止部分被替代；原归属、可逆存储和不确定写入要求保留。
+- [Bridge 会话管理](../../implemented/feature/2026-10-26-bridge-session-management.md)：重叠的路由、身份和回执规则继续有效。
+- 本地优先置顶笔记无关；停止和归档不进入其重试队列。
+- 没有其他活跃 proposed/rejected 归档决定替代本请求。
 
-## Alternatives considered
+## 备选方案
 
-Merely disconnecting Bridge leaves native writers alive. Exiting the whole desktop app releases writers but affects unrelated chats. Editing Codex storage bypasses native ownership. Direct native archive through the actual owner avoids unnecessary detach/reattach when supported; releasing a per-chat Claude executor is needed before file-level archive.
+仅断开 Bridge 会留下原生写入者。退出整个桌面 App 会释放写入者，却影响无关聊天。编辑 Codex 存储绕过原生归属。受支持时，通过实际归属进程直接原生归档可避免不必要的分离/重新附加；文件级归档前则需要释放逐聊天 Claude 执行器。
 
-## Verification contract
+## 验证契约
 
-Dialog order and cancellation are exercised through the real event handlers. New synthetic native sessions demonstrate targeted stop/archive/restore while an unrelated session remains usable. Unknown stop/archive results are never replayed. Unsupported external owners are refused without stopping the whole app. Existing idle-only and restore callers retain their behavior.
+通过真实事件处理器验证对话框顺序和取消。新建合成原生会话演示定向停止/归档/恢复，同时无关会话保持可用。未知停止/归档结果不重放。不支持的外部归属进程被拒绝，不停止整个 App。既有仅空闲及恢复调用者保留行为。
 
-## Consequences
+## 影响
 
-Native client capabilities differ by version; a connected App follower is not its execution owner. Approval covers dedicated new test sessions only, not stopping existing user work. No whole-app shutdown, credential change or release publishing is part of this change.
+原生客户端能力因版本不同；已连接的 App 跟随者不等于执行归属进程。授权仅覆盖专用新测试会话，不包括停止用户已有工作。本次改动不包含整个 App 关闭、凭据变更或发布版本。
 
-## Provider behavior
+## 各 provider 的行为
 
-Codex CLI and WSL stop verified current turns through their original runtime, clear only that subtree's background terminals, re-read idle state and the descendant inventory, then call native archive without restarting/resuming the target. A `notLoaded` thread is not queried for background terminals (the installed runtime rejects that call) or loaded just for archival. A changed original control connection or child scope prevents archive. New uncertain receipts retain the complete pre-operation archive scope: a partially archived subtree cannot be reported or reconciled as confirmed merely because its root archived.
+Codex CLI 和 WSL 通过原运行时停止已验证当前轮次，只清除该子树的后台终端，重新读取空闲状态和后代清单，再原生归档，不重启或恢复目标。`notLoaded` 线程既不查询后台终端（已安装运行时拒绝该调用），也不为归档而加载。原控制连接或子范围变化会阻止归档。新的不确定回执保留完整操作前归档范围：不能仅因根已归档，就把部分归档的子树报告或核对为已确认。
 
-Claude Code Desktop uses its existing native interrupt on the verified running subtree, polls fresh native activity and then archives with `cleanupWorktree:false`. Connector revision 12 prevents an old injected implementation silently accepting the new behavior. Unresolved background work, queued input, unknown descendants and pending native mutations still prevent archive. Cowork does not gain unsupported archive/restore capability.
+Claude Code Desktop 对已验证运行子树使用既有原生中断，轮询新的原生活动状态，再以 `cleanupWorktree:false` 归档。连接器修订 12 防止旧注入实现静默接受新行为。未解决后台工作、排队输入、未知后代和待处理原生修改仍阻止归档。Cowork 不获得不受支持的归档/恢复能力。
 
-Owned Claude CLI/SSH/WSL executors acknowledge native interrupt, wait for result/pending-request settlement, close stdin and wait for process exit before the existing profile, version, registry and executable-census checks. There is no terminate/kill fallback. Installed CLI 2.1.292 emits a final `error_during_execution` result and exit code 1 after acknowledged user interruption; this specific active-stop exit is accepted, while timeout and signal/other abnormal exits prevent archive. File-level archive and restoration remain reversible and preserve the original native ID and bytes. The remote archive-state read may report unsafe without stopping anything; the remote mutation still requires all original writer checks.
+Bridge 持有的 Claude CLI/SSH/WSL 执行器确认原生中断后，等待结果/待处理请求结清，关闭 stdin 并等待进程退出，再执行既有配置、版本、注册表和可执行进程清查。不使用 terminate/kill 回退。已安装 CLI 2.1.292 在确认用户中断后发出最终 `error_during_execution` 结果，并以代码 1 退出；接受这一特定活跃停止退出，超时、信号退出或其他异常退出阻止归档。文件级归档和恢复保持可逆，保留原生 ID 及字节。远程归档状态读取可报告不安全而不停止任何内容；远程修改仍要求全部原写入者检查。
 
-DSH uses the native `workspace/session-stop` providers for the selected session's turn, descendants, jobs and schedules, then verifies `workspace/session-activity`, current running state and pending questions before native `archiveSession(sid,{})`. The installed registry's `stopActivity:true` persists the archive before requesting stops and swallows stop failures; it was rejected for this stop-before-archive contract. Native default admission still guards the final write. Bridge revision 7 distinguishes this contract from the previously loaded idle-only implementation. The verified revision 6 LF and CRLF source hashes remain recognized: discovery reuses the original transport, source location, credentials and receipts without rewriting a live plugin; upgrading the native plugin retains the existing explicit restart and fresh task-state gate. Unknown source hashes remain rejected. Reconnecting or starting the gateway with an older running DSH host only records restart-required; it never exits the host or updates its loaded source. Only the explicit restart action can use the fresh idle gate and replace that source. This boundary corrects the pre-existing reconnect path that otherwise upgraded and restarted a running host during Test startup.
+DSH 使用原生 `workspace/session-stop` 提供者停止选定会话的轮次、后代、作业和计划，再验证 `workspace/session-activity`、当前运行状态及待回答问题，最后原生 `archiveSession(sid,{})`。已安装注册表的 `stopActivity:true` 先持久归档再请求停止，并吞掉停止失败，因此不符合先停止后归档契约。原生默认准入仍保护最终写入。Bridge 修订 7 将此契约与此前已加载的仅空闲实现区分。经验证的修订 6 LF/CRLF 源码哈希仍被识别：发现复用原传输、源码位置、凭据和回执，不重写活跃插件；升级原生插件仍需既有显式重启和即时任务状态检查。未知源码哈希仍拒绝。重新连接或在旧 DSH 宿主运行时启动网关，只记录需要重启，不退出宿主或更新其加载源码。只有显式重启操作才可使用即时空闲检查并替换源码。该边界修正了旧重新连接路径，否则 Test 启动期间会升级并重启运行中的宿主。
 
-## Verification and limits
+## 验证与限制
 
-- Release cross-platform validation separates real POSIX archive storage tests from portable process/dispatch contracts. Windows native Claude archival remains disabled and has an explicit negative test; POSIX fsync/ownership round-trips run on Mac/Linux rather than mocking a successful Windows archive. Synthetic process census fixtures provide getuid explicitly and compare path components independently of the runner. The standalone remote-worker fixture executes its exact generated payload from a temporary file, avoiding the Windows command-line length ceiling while still running without Bridge imports.
+- 发布跨平台验证将真实 POSIX 归档存储测试与可移植进程/派发契约分开。Windows 原生 Claude 归档仍禁用，并有明确否定测试；POSIX fsync/归属往返在 Mac/Linux 运行，不模拟 Windows 归档成功。合成进程清查夹具显式提供 getuid，并独立于运行器比较路径组件。独立远程工作程序夹具从临时文件执行精确生成载荷，避免 Windows 命令行长度上限，同时仍不导入 Bridge。
 
-- DSH migration follow-up: 51 targeted Python tests and 6 native-provider Node tests passed. The subsequent no-implicit-restart correction passes all 54 DSH migration/recovery tests. The WSL-specific lifecycle fixture explicitly supplies both Windows registries while the default macOS fixture remains free of WSL initialization; all 151 lifecycle/migration/recovery tests pass. Release preparation runs 2,671 backend source tests with 47 documented platform/native-fixture skips and no failures, plus 1,206 frontend passes and one platform skip. The installed revision 6 connector is recognized read-only with no configuration writes; explicit-upgrade fixtures retain its original credentials, receipts and insertion.
-- Frontend: 1,206 passed, one existing skipped test. Confirmation handlers verify left Confirm archive/right Cancel, default Cancel focus, no request on cancel/dismissal, exact host/provider identity, and restore without stopping. Actual connector/host fixture tests verify stop ordering, target-only scope and failure before archival.
-- Backend: 185 targeted tests passed before the final original-connection guard; 29 focused archive tests passed after that guard. Coverage includes HTTP auth/CSRF and flag validation, full-subtree receipts, no replay after unknown stop, owned CLI exit semantics, real synthetic file archive/restore, remote identity and WSL routing. Three existing remote archive tests had been accidentally nested below `unittest.main()`; they are now discovered and run.
-- Installed Codex 0.164.0-alpha.11.1: isolated home plus fake loopback Responses streaming, no account credentials. Two new native sessions actively streamed. Production stop helper stopped only the target; same-runtime archive and restore retained its ID; the second session remained active until explicit test cleanup. A concurrent second runtime was refused by the original writer lock. A restored/unloaded session passed the new preflight without being resumed. Evidence is under the ignored `.tmp/disconnect-archive-20261027/codex-native/`.
-- Installed Claude 2.1.292: a new isolated, sandboxed CLI with fake loopback inference acknowledged interrupt, emitted its final result, consumed EOF and exited with code 1. Real user files, keychain and external networking stayed forbidden. The subsequent production executable census found another existing Claude CLI and correctly prevented file archival; no unrelated process was stopped. Therefore this run proves native release and the writer refusal, not a completed live Claude archive round-trip. Synthetic adapter/file tests cover the remaining ordering and restore path.
-- Initial implementation did not run Windows/WSL/Linux native acceptance. Release preparation subsequently passed isolated target-only Codex stop/archive/restore on Windows 0.164.0-alpha.11.1, Ubuntu 0.160.0 and WSL 0.164.0, while another synthetic session remained active and a second writer was refused. Live Claude Code Desktop/DSH archive acceptance remains contract regression coverage rather than new native end-to-end evidence. The real local Claude release-plus-file roundtrip fixture, like the file-storage suite, runs only on POSIX; Windows unsupported-capability coverage remains active.
-- Loaded Codex App sessions remain an explicit limitation. Installed App 26.1021.31345 exposes follower interrupt but no verified follower archive/unload operation. Removing Bridge's follower cannot release the App's own writer. The implementation does not stop a desktop turn that it cannot subsequently release, quit a shared App, forge archive broadcasts or edit native storage. Writer-free App history retains the earlier supported native archive path. This change does not justify a claim of universal App/CLI archive support or closing that remaining issue.
+- DSH 迁移后续：51 项定向 Python 和 6 项原生 provider Node 测试通过。随后禁止隐式重启的修正通过全部 54 项 DSH 迁移/恢复测试。WSL 专属生命周期夹具显式提供两份 Windows 注册表，默认 macOS 夹具仍不初始化 WSL；151 项生命周期/迁移/恢复测试全部通过。发布准备运行 2,671 项后端源码测试，47 项有记录的平台/原生夹具跳过，无失败；前端 1,206 通过、1 项平台跳过。已安装修订 6 连接器只读识别，不写配置；显式升级夹具保留原凭据、回执和注入内容。
+- 前端：1,206 通过，1 项既有测试跳过。确认处理器验证左确认归档/右取消、默认取消焦点、取消/关闭无请求、精确主机/provider 身份及恢复不停止。真实连接器/宿主夹具验证停止顺序、仅目标范围和归档前失败。
+- 后端：最终原连接保护前，185 项定向测试通过；加入该保护后，29 项归档专项通过。覆盖 HTTP 认证/CSRF/标记验证、完整子树回执、未知停止不重放、持有 CLI 退出语义、真实合成文件归档/恢复、远程身份及 WSL 路由。三个既有远程归档测试曾误放在 `unittest.main()` 下方，现已被发现并运行。
+- 已安装 Codex 0.164.0-alpha.11.1：使用隔离主目录和假回环 Responses 流，不用账号凭据。两个新原生会话持续流式输出。生产停止辅助程序仅停止目标；同运行时归档/恢复保留其 ID，第二会话直到显式测试清理前仍活跃。并发第二运行时被原写入锁拒绝。已恢复但未加载的会话通过新预检，未被恢复加载。证据位于忽略目录 `.tmp/disconnect-archive-20261027/codex-native/`。
+- 已安装 Claude 2.1.292：新隔离沙箱 CLI 使用假回环推理，确认中断、发出最终结果、消费 EOF 并以代码 1 退出。真实用户文件、钥匙串和外部网络仍禁止访问。后续生产可执行进程清查发现另一个既有 Claude CLI，正确阻止文件归档；没有停止无关进程。因此该运行证明原生释放及写入者拒绝，不证明已完成真实 Claude 归档往返。合成适配器/文件测试覆盖剩余顺序和恢复路径。
+- 初始实现未运行 Windows/WSL/Linux 原生验收。发布准备随后在 Windows 0.164.0-alpha.11.1、Ubuntu 0.160.0、WSL 0.164.0 上通过隔离、仅目标的 Codex 停止/归档/恢复，同时另一合成会话保持活跃，第二写入者被拒绝。真实 Claude Code Desktop/DSH 归档验收仍是契约回归覆盖，不是新的原生端到端证据。真实本地 Claude 释放加文件往返夹具与文件存储测试一样，仅运行于 POSIX；Windows 不支持能力覆盖继续有效。
+- 已加载 Codex App 会话仍是明确限制。已安装 App 26.1021.31345 暴露跟随者中断，但无已验证的跟随者归档/卸载操作。移除 Bridge 跟随者不能释放 App 自身写入者。实现不会停止随后无法释放的桌面轮次，不退出共享 App、不伪造归档广播、不修改原生存储。无写入者的 App 历史保留此前支持的原生归档路径。本改动不足以声称所有 App/CLI 都支持归档，也不足以关闭剩余问题。
 
-## Branch cleanup
+## 分支清理
 
-User-approved remote and local `release/v2.1.4-preview.1` (4c251de061da073c6138780d2c9a3a868ea123c5) and `release/v2.1.0-preview.1` (422a46b6ae90b0c52748894c387741ce346ebb92) were deleted after fresh main ancestry and worktree-occupancy checks. Remote deletion used atomic, exact expected-head leases. Tags and Releases were retained. No v2.1.6 release or tag was published.
+用户批准删除远程及本地 `release/v2.1.4-preview.1`（4c251de061da073c6138780d2c9a3a868ea123c5）和 `release/v2.1.0-preview.1`（422a46b6ae90b0c52748894c387741ce346ebb92）。删除前重新检查 main 祖先关系和工作树占用。远程删除采用原子操作及精确预期 HEAD 租约。标签和 Releases 保留。当时未发布 v2.1.6 Release 或标签。
+
+## 关联接入
+
+[DSH 通用插件与显式档案绑定](2026-10-28-dsh-generic-plugin-binding.md)复用本篇契约，记录第三方核心的接入边界和隔离运行验证；不替代其他客户端及版本的验证限制。
+
+## 共享菜单入口
+
+[共享会话菜单与原生分类写入](2026-10-28-shared-session-menu.md)统一列表和标题入口，保留本篇规则及能力限制，不改变其原生执行契约。

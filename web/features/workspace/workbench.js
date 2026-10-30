@@ -29,8 +29,8 @@ const FileFont=(()=>{
 })();
 
 class Workbench {
-  constructor({chat, request, csrf, notify, onUnauthorized, openChat}) {
-    Object.assign(this, {chat, request, csrf, notify, onUnauthorized, openChat});
+  constructor({chat, request, csrf, notify, onUnauthorized, openChat, composer, onReference}) {
+    Object.assign(this, {chat, request, csrf, notify, onUnauthorized, openChat, composer, onReference});
     window.BridgeFileActions?.register(chat,this);
     this.sessions = new Map();
     this.mermaidScope=window.BridgeMermaidCards?.createScope();
@@ -260,6 +260,12 @@ class Workbench {
       this.directory(session, tab, session.directory);
     }
     this.select('files');
+  }
+  referenceFile(session, info) {
+    const input=this.composer;
+    if(session!==this.current||!input||input.disabled||input.readOnly)return false;
+    if(!this.attachReference?.(info))return false;
+    this.select('chat');this.onReference?.();input.focus();return true;
   }
   cancelLocate() {
     const state=this.locateState;if(!state)return;
@@ -520,7 +526,10 @@ class Workbench {
       const result = pdf
         ? {...await this.request(downloadUrl + '&info=1', undefined, tab.controller.signal), kind:'pdf'}
         : await this.request(this.url(session, 'preview', entry.path), undefined, tab.controller.signal);
-      if (window.BridgeFeatures && ['pdf','text'].includes(result.kind)) await window.BridgeFeatures.load('files');
+      if (window.BridgeFeatures && ['pdf','text'].includes(result.kind)) {
+        await window.BridgeFeatures.load('files');
+        if(result.kind==='text')await window.BridgeFeatures.load('syntax').catch(()=>{});
+      }
       if (window.BridgeFeatures && result.kind === 'text' && /\.md$/i.test(result.name)) await window.BridgeFeatures.load('chat');
       if (tab.controller.signal.aborted || !this.sessions.has(session.key) || !session.files.includes(tab)) return;
       const head = this.node('div', 'wb-preview-head'), title = this.node('div', 'wb-preview-title'), actions = this.node('div', 'wb-preview-actions');

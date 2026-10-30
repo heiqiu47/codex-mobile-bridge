@@ -843,6 +843,25 @@ class CliSessionTests(unittest.TestCase):
             'threadId': 'thread-a', 'turn': {'id': 'turn-1', 'status': 'completed'}}})
         self.assertEqual(self.states[-1][1]['turns'][0]['status'], 'completed')
 
+    def test_capacity_error_distinguishes_native_retry_and_required_intervention(self):
+        self.sessions.attach('thread-a', explicit=True)
+        started = {'method': 'turn/started', 'params': {
+            'threadId': 'thread-a', 'turn': {'id': 'capacity-turn', 'status': 'inProgress', 'items': []}}}
+        self.sessions._event(started)
+        sent = list(self.fake.sent)
+        for retry, status in ((True, 'inProgress'), (False, 'failed')):
+            self.sessions._event({'method': 'error', 'params': {
+                'threadId': 'thread-a', 'turnId': 'capacity-turn', 'willRetry': retry,
+                'error': {'message': 'Selected model is at capacity. Please try a different model.',
+                          'codexErrorInfo': 'serverOverloaded'}}})
+            turn = self.states[-1][1]['turns'][-1]
+            self.assertEqual(turn['status'], status)
+            self.assertEqual(turn['willRetry'], retry)
+        self.assertEqual(self.fake.sent, sent)  # Neither retry nor continue is sent by Bridge.
+        self.sessions._event(started)
+        self.assertEqual(self.states[-1][1]['turns'][-1]['status'], 'inProgress')
+        self.assertNotIn('willRetry', self.states[-1][1]['turns'][-1])
+
     def test_completed_turn_keeps_user_item_omitted_from_event(self):
         self.fake.thread['turns'] = [{'id': 'turn-1', 'status': 'inProgress', 'items': [
             {'id': 'user-1', 'type': 'userMessage', 'content': [{'type': 'text', 'text': 'Hello'}]},

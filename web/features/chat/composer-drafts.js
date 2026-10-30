@@ -64,6 +64,7 @@ class ComposerDrafts {
   pendingSend(scope){const saved=this.read(this.key(scope,'pending-v2')),old=this.pending(scope);return saved?.id?saved:old&&saved?.legacyVersion!==JSON.stringify(old)?old:null;}
   async beginSend(scope,body,id,attempt,imported=false){
     if(!this.coordinator)return this.pendingSend(scope)?{blocked:true}:false;
+    const draftRevision=this.load(scope)?.revision;
     const result=await this.coordinate(coordinated=>{
       const key=this.key(scope,'pending-v2');if(!key)return null;
       const saved=this.read(key),old=this.pending(scope),legacyVersion=old?JSON.stringify(old):null;
@@ -75,7 +76,7 @@ class ComposerDrafts {
       const previous=unseenLegacy?old:saved;
       if(previous?.body?.text===body.text&&previous.fingerprint!==fingerprint)return {...previous,blocked:true};
       const same=previous?.fingerprint===fingerprint;
-      const pending=same?{...previous}:{id,fingerprint,body};
+      const pending=same?{...previous}:{id,fingerprint,body,draftRevision};
       pending.attempts=[...(same&&Array.isArray(previous.attempts)?previous.attempts:[]),attempt];
       pending.untracked=!!(same&&(previous.untracked||unseenLegacy)||imported||!coordinated);
       pending.legacyVersion=unseenLegacy?legacyVersion:saved?.legacyVersion??null;
@@ -110,7 +111,7 @@ class ComposerDrafts {
     const records=[],saved=this.read(this.key(scope,'pending-v2')),old=this.pending(scope);
     const add=(source,value)=>{
       if(!value||typeof value.id!=='string'||!value.id)return;
-      const body=value.body||Object.fromEntries(['text','mode','skills','workMode','attachments','uiLocale'].filter(key=>Object.prototype.hasOwnProperty.call(value,key)).map(key=>[key,value[key]]));
+      const body=value.body||Object.fromEntries(['text','mode','skills','workMode','attachments','references','uiLocale'].filter(key=>Object.prototype.hasOwnProperty.call(value,key)).map(key=>[key,value[key]]));
       records.push({source,scopeKey:this.key(scope),id:value.id,version:JSON.stringify(value),body:JSON.parse(JSON.stringify(body)),fingerprint:value.fingerprint||JSON.stringify(body),accountUnverified:(source==='session'||source==='memory')&&!value.account});
     };
     if(old&&saved?.legacyVersion!==JSON.stringify(old))add('v1',old);
@@ -141,6 +142,7 @@ class ComposerDrafts {
   async consumePendingRecords(scope,selected,options){
     if(!this.key(scope))return {resolved:[],remaining:[]};
     const matches=(record,current)=>record.scopeKey===current.scopeKey&&record.source===current.source&&record.id===current.id&&record.version===current.version;
+    let clearedDraft=null;
     const shared=await this.coordinate(()=>{
       const current=this.pendingRecords(scope,options),eligible=selected.filter(record=>['v1','v2'].includes(record.source)&&current.some(value=>matches(record,value)));
       if(!eligible.length)return [];
@@ -148,7 +150,13 @@ class ComposerDrafts {
       const legacy=eligible.find(record=>record.source==='v1'),active=eligible.some(record=>record.source==='v2');
       const next=active?{cleared:true,legacyVersion:saved?.legacyVersion??null}:{...(saved||{cleared:true})};
       if(legacy)next.legacyVersion=legacy.version;
-      return this.write(key,next)?eligible:[];
+      if(!this.write(key,next))return [];
+      const accepted=eligible.find(record=>record.source==='v2'&&['accepted','queued'].includes(record.status)),draft=this.load(scope);
+      if(accepted&&Number.isInteger(saved?.draftRevision)&&draft?.revision===saved.draftRevision){
+        this.clear(scope);
+        if(!this.load(scope))clearedDraft={scope:{...scope},draft,body:accepted.body,id:accepted.id};
+      }
+      return eligible;
     });
     const resolved=Array.isArray(shared)?shared:[];
     // Session storage and the memory fallback belong to this document. Never
@@ -160,7 +168,7 @@ class ComposerDrafts {
       else {try{options.temporary.removeItem(key);}catch{continue;}}
       resolved.push(record);
     }
-    return {resolved:resolved.map(({source,id,status})=>({source,id,status})),remaining:this.pendingRecords(scope,options)};
+    return {resolved:resolved.map(({source,id,status})=>({source,id,status})),remaining:this.pendingRecords(scope,options),clearedDraft};
   }
   continueAccount(previous,next){
     if(!this.key(previous)||!this.key(next)||previous.account===next.account||

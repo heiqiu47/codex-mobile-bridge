@@ -78,20 +78,26 @@ class TransportTests(unittest.TestCase):
 
 
 class PlatformDataTests(unittest.TestCase):
-    @unittest.skipUnless(os.name == 'nt', 'Windows path semantics')
-    def test_local_paths_ignore_case_and_slash_but_remote_paths_do_not(self):
+    def test_saved_memberships_determine_local_and_remote_groups(self):
         hosts = AppHosts(ROOT)
-        hosts.state = lambda: {'local-projects': {
-            'a': {'id': 'a', 'name': 'Workspace', 'rootPaths': [r'C:\Work']},
-            'b': {'id': 'b', 'name': 'Nested', 'rootPaths': ['C:/Work/Nested']}}}
-        rows = hosts.decorate([{'id': 'x', 'cwd': r'c:\WORK\nested\src'}], 'local', 'PC')
-        self.assertEqual(rows[0]['projectKey'], 'local|b')
-        rows = hosts.decorate([{'id': 'x', 'cwd': r'C:\Work-other\MyProject'}], 'local', 'PC')
-        self.assertEqual(rows[0]['projectName'], 'MyProject')
-        hosts.state = lambda: {'remote-projects': [
-            {'id': 'r', 'hostId': 'remote', 'remotePath': '/Work'}]}
-        rows = hosts.decorate([{'id': 'x', 'cwd': '/work/src'}], 'remote', 'Server')
-        self.assertNotEqual(rows[0]['projectKey'], 'remote|r')
+        hosts.state = lambda: {
+            'local-projects': {'b': {'id': 'b', 'name': 'Nested', 'rootPaths': ['C:/Work/Nested']}},
+            'remote-projects': [{'id': 'r', 'hostId': 'remote', 'label': 'Work', 'remotePath': '/Work'}],
+            'thread-project-assignments': {
+                'local-member': {'projectId': 'b', 'hostId': 'local'},
+                'remote-member': {'projectId': 'r', 'hostId': 'remote'},
+            },
+        }
+        for host, identifier, cwd, group in [
+                ('local', 'local-member', r'C:\Other', 'b'),
+                ('local', 'unassigned', r'c:\WORK\nested\src', 'unassigned'),
+                ('remote', 'remote-member', '/other', 'r'),
+                ('remote', 'unassigned', '/Work/src', 'unassigned'),
+                ('remote', 'local-member', '/Work/src', 'unassigned')]:
+            with self.subTest(host=host, identifier=identifier):
+                row = hosts.decorate([{'id': identifier, 'cwd': cwd}], host, host)[0]
+                self.assertEqual(row['projectKey'], host + '|' + group)
+                self.assertEqual(row['cwd'], cwd)
 
     @unittest.skipUnless(os.name == 'nt', 'Windows runtime discovery')
     def test_runtime_in_local_app_data(self):

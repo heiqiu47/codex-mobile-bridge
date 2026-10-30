@@ -251,7 +251,8 @@ class CurrentLoginTests(unittest.TestCase):
         save_settings(self.root, {'barkEnabled': True, 'barkKey': 'fixture'})
         self.manager.monitor.configure({'lowQuota': True, 'quotaReset': True})
         identity = copy.deepcopy(self.manager.info.identity)
-        with patch('bridge.features.accounts.info.threading.Thread', side_effect=immediate_worker), \
+        with patch('bridge.features.accounts.monitor.time.time', return_value=now) as clock, \
+                patch('bridge.features.accounts.info.threading.Thread', side_effect=immediate_worker), \
                 patch.object(self.manager.info, 'read_identity', return_value=identity), \
                 patch('bridge.features.accounts.accounts.ManagedRPC', return_value=rpc), \
                 patch('bridge.features.accounts.account.Account.rpc', return_value=rpc), \
@@ -269,11 +270,11 @@ class CurrentLoginTests(unittest.TestCase):
             self.manager.monitor.scan()
             self.assertEqual(send.call_count, 1)
             rpc.limits['rateLimits']['primary'].update(usedPercent=0, resetsAt=now+18000)
-            with patch('bridge.features.accounts.monitor.time.time', return_value=now+301):
-                self.manager.monitor.scan()
-                self.assertEqual([call.args[1] for call in send.call_args_list], ['Codex 额度不足', 'Codex 额度已恢复'])
-                AccountMonitor(self.manager).scan()
-                self.assertEqual(send.call_count, 2)
+            clock.return_value = now+301
+            self.manager.monitor.scan()
+            self.assertEqual([call.args[1] for call in send.call_args_list], ['Codex 额度不足', 'Codex 额度已恢复'])
+            AccountMonitor(self.manager).scan()
+            self.assertEqual(send.call_count, 2)
 
     def test_legacy_native_login_and_saved_profile_share_reminder_identity(self):
         row, _, rpc, _ = self.saved_login()

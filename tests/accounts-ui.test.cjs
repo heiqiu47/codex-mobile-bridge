@@ -10,7 +10,7 @@ function fixture(desktop=false){
   const context=vm.createContext({document:{createElement:node,body:node('body'),hidden:false,activeElement:null,addEventListener:(name,fn)=>listeners.set(name,[...(listeners.get(name)||[]),fn])},root,Date:Clock,crypto:{randomUUID:()=> '11111111-1111-4111-8111-111111111111'},
     setTimeout:(fn,ms)=>{timers.push({fn,ms});return timers.length;},clearTimeout:id=>{if(timers[id-1])timers[id-1].cancelled=true;},localStorage:{getItem(){return null;},setItem(){}},window:{confirm:message=>{prompts.push(message);return confirmed;},prompt:()=>null}});
   for(const f of ['web/shared/i18n.js','web/features/accounts/account.js','web/features/accounts/accounts.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',f),'utf8'),context);
-  const Class=vm.runInContext('AccountsPanel',context),panel=new Class({root,desktop,read:()=>{readCalls++;return read();},request:v=>{requests.push(v);return request(v);}});
+  const Class=vm.runInContext('AccountsPanel',context),panel=new Class({root,desktop,read:force=>{readCalls++;return read(force);},request:v=>{requests.push(v);return request(v);}});
   const all=(n=root)=>[n,...n.children.flatMap(all)];
   return {panel,root,requests,prompts,all,timers,readCalls:()=>readCalls,focus:node=>context.document.activeElement=node,blur:()=>context.document.activeElement=context.document.body,active:()=>context.document.activeElement,now:()=>now,advance:ms=>now+=ms,hidden:value=>{context.document.hidden=value;for(const fn of listeners.get('visibilitychange')||[])fn();},configHidden:value=>{configHidden=value;for(const fn of listeners.get('bridge-client-config')||[])fn();},ancestorHidden:value=>{ancestorHidden=value;},fireTimer:async ms=>{const timer=timers.find(row=>!row.cancelled&&row.ms===ms);assert.ok(timer,`expected ${ms}ms timer`);timer.cancelled=true;await timer.fn();},noRandomUUID:()=>{context.crypto={getRandomValues:bytes=>require("node:crypto").randomFillSync(bytes)};},text:()=>all().map(n=>n.textContent).join('\n'),setValue:v=>value=v,value:()=>value,setRequest:v=>request=v,setRead:v=>read=v,confirm:v=>confirmed=v,
     language:()=>{vm.runInContext("BridgeI18n.setLanguage('en')",context);panel.render();}};
@@ -34,6 +34,16 @@ test('web exposes saved account selection without enrollment or credential input
  ui.confirm(false);await ui.panel.choose(ui.value().accounts[0]);assert.equal(ui.requests.length,0);
  ui.confirm(true);await ui.panel.choose(ui.value().accounts[0]);assert.deepEqual(Object.keys(ui.requests[0]).sort(),['action','confirmed','id','requestId','syncLocalCli','tasksConfirmed']);
  assert.equal(ui.requests[0].tasksConfirmed,true);assert.match(ui.prompts[0],/未在网页显示/);
+});
+
+for(const desktop of [false,true])test(`${desktop?'desktop':'web'} retries the selected offline SSH host from accounts`,async()=>{
+ const ui=fixture(desktop);ui.setValue({...ui.value(),sshHosts:[{host:'remote:one',label:'Offline server',state:'offline',nextRetryAt:ui.now()/1000+60}]});await ui.panel.refresh();
+ assert.match(ui.text(),/SSH 连接/);assert.match(ui.text(),/下次自动重试/);
+ await ui.all().find(n=>n.textContent==='重试 SSH 连接').onclick();
+ assert.deepEqual({...ui.requests[0]},{action:'retrySsh',host:'remote:one'});
+ ui.panel.accept({...ui.value(),sshHosts:[{host:'remote:one',label:'Offline server',state:'checking'}]});
+ assert.equal(ui.all().find(n=>n.textContent==='重试 SSH 连接').disabled,true);
+ ui.panel.clear();assert.equal(ui.panel.sshHosts.hidden,true);assert.equal(ui.panel.sshHosts.children.length,0);
 });
 test('Codex switch always requests CLI verification without an opt-in checkbox',async()=>{
  const ui=fixture();await ui.panel.refresh();
@@ -416,4 +426,63 @@ test('desktop API edit opens the outer editor even with a nested article and res
  ui.panel.attachApiAccess({root,edit:()=>calls.push('edit'),probe:()=>{}},details);await ui.panel.refresh();
  const edits=()=>ui.all().filter(node=>node.textContent==='修改'&&!node.hidden);assert.equal(edits().length,1);edits()[0].onclick();assert.equal(details.open,true);assert.deepEqual(calls,['edit']);
  ui.setValue({...ui.value(),switch:{phase:'applying'}});await ui.panel.refresh();assert.equal(edits()[0].disabled,true);assert.equal(ui.all().find(node=>node.textContent==='测试模型接口').disabled,true);
+});
+
+test('reset outlook follows the shared feature switch on web and desktop',()=>{
+ for(const desktop of [false,true]){
+  const ui=fixture(desktop),base=ui.value(),forecast={state:'ready',source:'https://codex-reset.com/',probabilities:{h24:25,h48:50},updatedAt:ui.now()/1000};
+  ui.panel.accept({...base,resetDynamicEnabled:false,globalReset:null});assert.equal(ui.panel.globalReset.hidden,true);
+  ui.panel.accept({...base,resetDynamicEnabled:true,globalReset:forecast});assert.equal(ui.panel.globalReset.hidden,false);assert.match(ui.text(),/24 小时内\n25%/);
+  ui.panel.accept({...base,resetDynamicEnabled:false,globalReset:null});assert.equal(ui.panel.globalReset.hidden,true);
+ }
+});
+
+test('manual reset refresh tracks async completion and cooldown',async()=>{
+ const ui=fixture(),base=ui.value(),stamp=ui.now()/1000;
+ const value=(refresh)=>({...base,resetDynamicEnabled:true,globalReset:{state:'ready',source:'https://codex-reset.com/',updatedAt:stamp,probabilities:{},refresh}});
+ const initial={instanceId:'one',id:1,checking:false,cooldownUntil:0};ui.panel.accept(value(initial));
+ let forceArg;ui.setRead(async force=>{forceArg=force;return value({...initial,id:2,checking:true});});
+ await ui.panel.refreshGlobalReset();assert.equal(forceArg,true);assert.equal(ui.panel.globalResetRefreshIntent.id,2);
+ assert.ok(ui.timers.some(t=>!t.cancelled&&t.ms===2000));
+ ui.setRead(async()=>value({...initial,id:2,checking:false,changed:true}));await ui.fireTimer(2000);
+ assert.equal(ui.panel.globalResetRefreshIntent,null);assert.match(ui.text(),/已更新/);
+ ui.setRead(async()=>value({...initial,id:2,cooldownUntil:stamp+30}));await ui.panel.refreshGlobalReset();
+ assert.match(ui.text(),/30 秒后可刷新/);
+});
+
+test('reset outlook switches at local midnight and prioritizes announcements',async()=>{
+ const ui=fixture(),base=ui.value(),now=ui.now(),midnight=new Date(now);midnight.setHours(24,0,0,0);
+ const forecast={state:'ready',source:'https://codex-reset.com/',lastResetAt:now/1000,updatedAt:now/1000,probabilities:{h24:49,h48:74}};
+ ui.panel.accept({...base,resetDynamicEnabled:true,globalReset:forecast});
+ assert.match(ui.text(),/今日已全局重置/);assert.doesNotMatch(ui.text(),/24 小时内|当前暂无官方预告/);assert.match(ui.text(),/来源 codex-reset.com ↗/);
+ const delay=midnight.getTime()-now;ui.advance(delay);await ui.fireTimer(delay);
+ assert.match(ui.text(),/上次全局重置 · 昨天 /);assert.match(ui.text(),/24 小时内\n49%/);
+ ui.panel.accept({...base,resetDynamicEnabled:true,globalReset:{...forecast,officialSignal:{summary:'官方公告'}}});
+ assert.match(ui.text(),/上次全局重置/);assert.match(ui.text(),/官方已预告/);assert.doesNotMatch(ui.text(),/24 小时内/);
+ ui.panel.accept({...base,resetDynamicEnabled:true,globalReset:{...forecast,state:'error',stale:true}});
+ assert.match(ui.text(),/上次全局重置/);assert.match(ui.text(),/数据延迟/);assert.doesNotMatch(ui.text(),/24 小时内/);
+});
+
+test('reset relative time omits duplicate date while account timestamps retain dates',()=>{
+ const ui=fixture(),now=new Date(ui.now()),yesterday=new Date(now);yesterday.setDate(now.getDate()-1);const stamp=yesterday.getTime()/1000;
+ const relative=ui.panel.globalTime(stamp),account=ui.panel.shortTime(stamp,true);
+ assert.match(relative,/^昨天 /);assert.doesNotMatch(relative,/月|日/);assert.match(account,/月/);
+});
+
+test('reset outlook follows current connection and its status on both hosts',()=>{
+ for(const desktop of [false,true]){
+  const ui=fixture(desktop),nodes=ui.root.children;
+  assert.ok(nodes.indexOf(ui.panel.managementNotice)<nodes.indexOf(ui.panel.current));
+  assert.ok(nodes.indexOf(ui.panel.current)<nodes.indexOf(ui.panel.globalReset));
+  assert.ok(nodes.indexOf(ui.panel.blocked)<nodes.indexOf(ui.panel.globalReset));
+  assert.ok(nodes.indexOf(ui.panel.globalReset)<nodes.indexOf(ui.panel.rows));
+ }
+});
+
+test('account actions and model control share one footer on both hosts',async()=>{
+ for(const desktop of [false,true]){
+  const ui=fixture(desktop);await ui.panel.refresh();
+  const choose=ui.all().find(n=>n.textContent==='切换到此接入'),models=ui.all().find(n=>n.textContent==='查看可用模型');
+  assert.equal(choose.parent,models.parent);assert.equal(models.parent.className,'accounts-card-footer');
+ }
 });

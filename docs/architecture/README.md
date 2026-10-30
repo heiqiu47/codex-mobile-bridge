@@ -18,6 +18,7 @@
 | CLI 原生接入与 SSH 发现 | `bridge/clients/codex/app_server.py`、`cli_session.py`、`remote.py` | `features/sessions/store.py`、`app/service.py`；[接入边界](../codex-cli.md) |
 | 会话历史、审批、计划/目标、侧边聊天 | `bridge/features/sessions/` | `bridge/app/service.py`，`web/features/chat/` |
 | 各接入的新建项目、目录浏览与登记 | `bridge/features/sessions/create.py`、`projects.py`、`bridge/clients/manager.py` | `web/shared/project-picker.js`、[新建项目聊天](../project-chats.md) |
+| 共用会话菜单、原生改名与项目、Bridge 显示分类 | `web/features/chat/session-menu.js`、`bridge/features/sessions/organization.py`、`display_metadata.py` | `app/service.py`、`features/endpoints/wsl.py`；`sessions/store.py` 读取原生项目归属 |
 | 文件、图片、上传下载、Git | `bridge/features/workspace/` | `web/features/workspace/`、`web/shared/image-viewer.js` |
 | 源码高亮、PDF/HTML 预览与全屏、目录返回 | `web/features/workspace/` | `bridge/api/html_preview.py`、`httpd.py`、原生手机导航；[模块约定](../../web/README.md#文件阅读模块) |
 | 聊天与 Markdown 文件中的 Mermaid 图表、源码和全屏 | `web/shared/mermaid-*.js`、`markdown.js` | `bridge/api/mermaid_render.py`、中继与 iOS 子页面导航；[模块约定](../../web/README.md#mermaid-preview) |
@@ -86,6 +87,8 @@ flowchart TD
 
 **Claude/DSH 会话操作：**共享页面模块 `web/features/clients/desktop-sessions.js` 调用 HTTP，`clients/manager.py` 处理客户端启用状态、并发只读合并及写入记录，再调用对应 `adapter.py`。Claude 的 mailbox 与 `connector.js`、DSH 的 `host.mjs` 是实际连接协议边界。某种模型或权限差异应在其客户端适配器内处理。
 
+**新增 Agent 的共用边界：**消息展示、任务状态、附件预览和文件定位优先复用 `web/features/chat/`、`web/shared/` 与 `bridge/features/` 中的现有功能。适配器转换原生数据、报告已核验能力并执行原生操作；共享组件依据能力与规范化数据工作，不按 Agent 名称复制流程。已有共享任务状态入口是 `renderChatProgress`，规则见 [共用原生任务状态提示](../../.agents/notes/implemented/feature/2026-10-29-shared-chat-progress.md)。尚未核验的原生能力必须保留限制，不能由共享层推测实现。
+
 消息排队、旧版未确认记录恢复和各接入支持范围见 [消息管理](../message-management.md)。
 
 历史首屏与实时控制的拆分、各接入分页能力及本地验证范围见 [历史与控制拆分](history-control-separation.md)。
@@ -124,6 +127,8 @@ flowchart TD
 - 资源路径回归会在无本地 `bridge` 包的隔离 Python 中执行 SSH 源码定义；这不等于真实 SSH、冻结程序或原生助手已验证。
 
 ## 本轮保留的边界
+
+依赖方向由 `scripts/check-boundaries.py` 和 `tests/test_module_boundaries.py` 自动检查。平台禁止反向依赖；功能和客户端层不得新增应用/HTTP 依赖，provider 不得新增相互引用。既有 22 条边保存在 `dependency-exceptions.json`，每条带文件、符号和原因；新增违规或遗留无效例外都会失败。此门禁控制依赖增长，不代表既有耦合已消失。开发流程见 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
 
 这次整理已经拆出可独立维护的系统实现，重排了功能与客户端模块。`app/service.py`、`api/httpd.py` 和部分页面组织文件仍较大，保留既有业务入口有助于控制回归。后续应沿真实功能需求逐块抽取，避免单纯按行数切文件。
 

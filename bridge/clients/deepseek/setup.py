@@ -52,6 +52,22 @@ PREVIOUS_DISCONNECT_SOURCES = ('b8b05cd4d93af60913b505c842dc6b74d2860199980bab07
                                '95451e5ff26ba7e0e5f139a1109ceeaaf3dba1a51b169d3e5d5207d5ef29873b')
 
 
+# Revision 7 before per-message model metadata, LF and Windows CRLF.
+PREVIOUS_MESSAGE_MODEL_SOURCES = ('74c6a26a7a8eca9a6dfe5e6256f595a174c58b3645d3bd15497c9877d1422938',
+                                  '740533827d3817803605c490bd95f3ffbff1bc841cf14f99820ebcf0db14ab4b')
+
+# Revision 8 before guarded native rename and project membership, LF and CRLF.
+PREVIOUS_SESSION_METADATA_SOURCES = ('78b87c8f6f5b4633067d4c75fd50b8f006042bc1dc0aba26130e662748006911',
+                                     '87ab2a8dedbde1661c1f325b9371711704caaa140e3e4209ae71801d1c78bf6d')
+
+# Revision 9 predecessors remain usable; history-image reads require the newer host.
+COMPATIBLE_OFFICIAL_SOURCES = ('31ee82718e131d43c60202261d531195af9257e9a375ce0c6b9ff4edf5de8d5a',
+                               'f3ce3350a32ece209415418e798e2a5d348276081bd15c671552456c18576bb5',
+                               '14ca377eecc7b714e9c059b026181164c3cb21166d315a6d9ef9d16327bda815',
+                               '9c8da5a761588f5f91d5696e938ff2bd927412a2e56367e08aeabeabc6a42ec2',
+                               '80cc10b76e18621b90dbdd5675ce8dd3932eb381a3380f0a538a76b4bcc77ebf',
+                               '2ffbe404b5251cd5fb26da5ffa44a8f3ba4ed2c3c91f80c57ad9f299d62c0741')
+
 def insertion(text):
     """Read only our JSON flow insertion, including Harness's line wrapping.
 
@@ -166,11 +182,12 @@ def verified_directory(entry, home):
         current_lf = current_source.replace(b'\r\n', b'\n')
         current_sources = {hashlib.sha256(content).hexdigest() for content in
                            (current_lf, current_lf.replace(b'\n', b'\r\n'))}
+        current_sources.update(COMPATIBLE_OFFICIAL_SOURCES)
         if digest not in current_sources and digest not in (
                 LEGACY_SOURCE, PREVIOUS_SOURCE, PREVIOUS_CLEANUP_SOURCE, PREVIOUS_CATALOG_SOURCE,
                 *PREVIOUS_QUIT_SOURCES, *PREVIOUS_CONTEXT_SOURCES, *PREVIOUS_HISTORY_SOURCES,
                 *PREVIOUS_PROJECT_SOURCES, *PREVIOUS_WORKSPACE_SOURCES, *PREVIOUS_ARCHIVE_SOURCES,
-                *PREVIOUS_DISCONNECT_SOURCES):
+                *PREVIOUS_DISCONNECT_SOURCES, *PREVIOUS_MESSAGE_MODEL_SOURCES, *PREVIOUS_SESSION_METADATA_SOURCES):
             return None
         return directory, digest not in current_sources
     except (OSError, ValueError, KeyError, TypeError, IndexError):

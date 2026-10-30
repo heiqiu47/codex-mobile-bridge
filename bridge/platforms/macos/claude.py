@@ -39,7 +39,10 @@ def running_profiles(app):
             if path.parts[-len(parts):] == parts:
                 profiles.add(path.parents[len(parts) - 1].resolve())
                 break
-    return profiles
+    # A preview partition is storage within an observed profile, not another
+    # account root. Never infer a parent profile without its own open storage.
+    return {profile for profile in profiles
+            if not (profile.parent.name == 'Partitions' and profile.parent.parent in profiles)}
 
 
 def start(executable):

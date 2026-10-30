@@ -27,13 +27,13 @@ class DeepSeekTransportTests(unittest.TestCase):
         (ROOT/'.tmp').mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=ROOT/'.tmp')
         self.addCleanup(self.temp.cleanup)
-        self.received, self.forwarded = [], []
+        self.received, self.forwarded, self.bodies = [], [], []
         self.status = 200
         owner = self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args): pass
             def do_POST(self):
-                self.rfile.read(int(self.headers.get('Content-Length', '0')))
+                owner.bodies.append(json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0')))))
                 owner.received.append((self.path, self.headers.get('Authorization')))
                 data = json.dumps({'sessions': [], 'error': 'Fixture rejected'}).encode()
                 self.send_response(owner.status)
@@ -78,6 +78,14 @@ class DeepSeekTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(BridgeUnavailable, 'Fixture rejected'):
             self.adapter.call('list')
         self.assertEqual(self.forwarded, [])
+
+    def test_native_project_mentions_keep_the_existing_plugin_protocol(self):
+        body = {'id': 'fixture-id', 'text': '检查文件', 'resolvedReferences': [
+            {'path': '/project/中文 文件.md', 'kind': 'file'}, {'path': '/project/folder', 'kind': 'directory'}]}
+        self.adapter.call('send', 'native-chat', body)
+        self.assertEqual(self.bodies, [{'action': 'send', 'sid': 'native-chat', 'body': {
+            'id': 'fixture-id', 'text': '检查文件\n\n@"/project/中文 文件.md"\n@/project/folder/'}}])
+        self.assertIn('resolvedReferences', body)
 
 
 if __name__ == '__main__': unittest.main()

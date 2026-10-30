@@ -23,3 +23,12 @@ test('a changed workspace cannot copy a stale target path',async()=>{
   await assert.rejects(c.document.body.children[0].children.find(n=>n.tag==='button').onclick());
   assert.equal(c.copied,undefined);
 });
+
+test('reference waits for authorized info and a changed session cannot receive it',async()=>{
+ const c=fixture(),session={},references=[],composer={disabled:false},workbench={composer,current:session,url:()=>'/workspace/info',notify(){},request:async()=>({name:'file',path:'file',kind:'file'}),referenceFile:(s,info)=>{references.push(info);return true;}};
+ c.window.BridgeFileActions.menu(workbench,session,{kind:'file',name:'file',path:'file'});
+ const button=c.document.body.children[0].children.find(n=>n.textContent==='引用到消息');await button.onclick();assert.equal(references.length,1);
+ workbench.current=session;c.window.BridgeFileActions.menu(workbench,session,{kind:'file',name:'file',path:'file'});
+ workbench.request=async()=>{workbench.current={};return {name:'secret',path:'secret',kind:'file'};};
+ await c.document.body.children[1].children.find(n=>n.textContent==='引用到消息').onclick();assert.equal(references.length,1);
+});
