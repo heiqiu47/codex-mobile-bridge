@@ -630,6 +630,8 @@ class RelayIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_real_range_resume_changed_content_and_empty_file(self):
         from bridge.features.workspace.workspace import operate
+        # This checks real file/range semantics, not the short timeout fixture.
+        self.state.timeout = 5
         a = await self.device('Alice'); connector = await self.real_connector(a); p = await self.phone(a)
         root = Path(self.temp.name) / 'download-workspace'; root.mkdir()
         file = root / 'example.bin'
