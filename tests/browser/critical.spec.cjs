@@ -33,6 +33,65 @@ test('Markdown, literal code and math rendering', async ({page}, testInfo) => {
   }
 });
 
+test('code syntax labels, safe highlighting, exact copy and shared lazy loading', async ({page}, testInfo) => {
+  await ready(page);
+  const requests=[];page.on('request',request=>{if(request.url().includes('/vendor/prism/'))requests.push(request.url());});
+  const before=await page.evaluate(async()=>{
+    await BridgeFeatures.load('chat');
+    const host=document.createElement('div');host.id='syntax-test';host.style.width='300px';document.body.append(host);
+    const plain=document.createElement('div');host.append(plain);renderMarkdown(plain,'```\nabc\n```\n\n```unknown\n<script>literal</script>\n```');
+    return [...plain.querySelectorAll('.code-language')].map(node=>node.textContent);
+  });
+  expect(before).toEqual(['纯文本','纯文本']);expect(requests).toHaveLength(0);
+  const result=await page.evaluate(async()=>{
+    const host=document.getElementById('syntax-test'),node=document.createElement('div');host.append(node);
+    const source='from copy import deepcopy\na = "abc"\nprint(deepcopy(a))\n';
+    const start=performance.now();renderMarkdown(node,'```py title=test.py\n'+source+'```\n\n```html\n<img src=x onerror=alert(1)>\n```');
+    await BridgeFeatures.load('syntax');await Promise.resolve();
+    const firstMs=performance.now()-start,code=node.querySelector('pre code'),header=node.querySelector('.code-header');
+    const clipboard=window.BridgeClipboard,copied=[];
+    try {window.BridgeClipboard={copy:getSource=>copied.push(getSource())};node.querySelector('.code-copy').click();}
+    finally {window.BridgeClipboard=clipboard;}
+    const light=getComputedStyle(code.querySelector('.token.keyword')).color;
+    document.documentElement.dataset.theme='dark';
+    const dark=getComputedStyle(code.querySelector('.token.keyword')).color;
+    document.documentElement.dataset.theme='light';
+    await BridgeFeatures.load('files');
+    const preview=BridgeSourceView.create({name:'same.py',text:source});host.append(preview);
+    return {firstMs,source,text:code.textContent,copied,labels:[...node.querySelectorAll('.code-language')].map(n=>n.textContent),
+      tokens:code.querySelectorAll('.token').length,hostileElements:node.querySelectorAll('img,script').length,
+      ordered:header.firstElementChild.className==='code-language' && header.lastElementChild.classList.contains('code-copy'),
+      fits:host.scrollWidth<=301,light,dark,previewText:preview.querySelector('code').textContent,previewTokens:preview.querySelectorAll('.token').length};
+  });
+  expect(result.labels).toEqual(['Python','HTML']);expect(result.tokens).toBeGreaterThan(0);
+  expect(result.text).toBe(result.source);expect(result.copied).toEqual([result.source]);expect(result.hostileElements).toBe(0);
+  expect(result.ordered).toBe(true);expect(result.fits).toBe(true);expect(result.light).not.toBe(result.dark);
+  expect(result.previewText).toBe(result.source);expect(result.previewTokens).toBeGreaterThan(0);expect(requests).toHaveLength(1);
+  await testInfo.attach('syntax-result',{body:JSON.stringify(result),contentType:'application/json'});
+  await testInfo.attach('syntax-preview',{body:await page.locator('#syntax-test').screenshot(),contentType:'image/png'});
+});
+
+test('code syntax leaves large, incomplete and unavailable code readable without replaying loads',async({page})=>{
+  await ready(page);await page.evaluate(()=>BridgeFeatures.load('chat'));
+  const requests=[];page.on('request',request=>{if(request.url().includes('/vendor/prism/'))requests.push(request.url());});
+  const large=await page.evaluate(()=>{
+    const node=document.createElement('div');document.body.append(node);
+    const text='print("x")\n'.repeat(6500);renderMarkdown(node,'```python\n'+text+'```');
+    return {same:node.querySelector('code').textContent===text,tokens:node.querySelectorAll('.token').length,label:node.querySelector('.code-language').textContent};
+  });
+  expect(large).toEqual({same:true,tokens:0,label:'Python'});expect(requests).toHaveLength(0);
+  await page.route('**/vendor/prism/**',route=>route.abort());
+  const failed=await page.evaluate(async()=>{
+    const node=document.createElement('div');document.body.append(node);
+    renderMarkdown(node,'```js\nconst first = 1;');
+    node.replaceChildren();
+    renderMarkdown(node,'```js\nconst current = 2;');
+    try {await BridgeFeatures.load('syntax');}catch(_){}
+    return {text:node.querySelector('code').textContent,label:node.querySelector('.code-language').textContent};
+  });
+  expect(failed).toEqual({text:'const current = 2;',label:'JavaScript'});expect(requests).toHaveLength(1);
+});
+
 test('answering one pending card leaves the other independently answerable', async ({page}) => {
   await ready(page);
   const result = await page.evaluate(async () => {
@@ -218,6 +277,31 @@ for(const provider of ['Codex','Claude','DSH']){
  });
 }
 
+test('SSH retry lives in accounts and preserves other controls',async({page},testInfo)=>{
+  await ready(page);
+  await page.evaluate(()=>{
+    const value={accounts:[],reminders:{},current:{status:'ready',name:'Local account'},switch:{phase:'idle'},
+      sshHosts:[{host:'remote:fixture',label:'Offline SSH',state:'offline',nextRetryAt:Date.now()/1000+60}]};
+    window.__sshRetryCalls=[];
+    accountsPanel.read=async()=>value;
+    accountsPanel.request=async request=>{
+      window.__sshRetryCalls.push(request);
+      value.sshHosts[0].state='checking';return value;
+    };
+    accountsPanel.accept(value);document.getElementById('accounts-dialog').showModal();
+  });
+  const dialog=page.locator('#accounts-dialog');
+  const retry=dialog.getByRole('button',{name:'重试 SSH 连接',exact:true});
+  await expect(retry).toBeEnabled();
+  await expect(dialog.getByText('Offline SSH',{exact:true})).toBeVisible();
+  await expect(dialog.getByText(/下次自动重试/)).toBeVisible();
+  await retry.scrollIntoViewIfNeeded();
+  await page.screenshot({path:testInfo.outputPath('ssh-accounts-retry.png')});
+  await retry.click();await expect(retry).toBeDisabled();
+  expect(await page.evaluate(()=>window.__sshRetryCalls)).toEqual([{action:'retrySsh',host:'remote:fixture'}]);
+  await expect(dialog.getByRole('button',{name:'刷新',exact:true})).toBeEnabled();
+});
+
 test('reset outlook is opt-in and fits both themes',async({page},testInfo)=>{
   await ready(page);
   await page.evaluate(()=>{
@@ -299,4 +383,41 @@ test('Codex project trust cancellation prevents creation and confirmation stays 
  expect(result.cancelled).toBe(true);expect(result.confirmed).toBe(true);
  expect(result.calls.map(c=>c.url)).toEqual(['/api/projects/trust','/api/projects/trust','/api/sessions']);
  expect(result.calls[1].body).toEqual({key:'synthetic-key',confirmed:true,confirmation:'bound-to-selection'});
+});
+
+test('lost send response reconciles once and preserves newer composer edits', async ({page}) => {
+  await ready(page);
+  const results = await page.evaluate(async () => {
+    await BridgeFeatures.load('chat');
+    const originalFetch = window.fetch, results = [];
+    try {
+      draftGateway = 'receipt-fixture-' + crypto.randomUUID();currentHost = 'local';
+      for (const edit of [false, true]) {
+        currentId = crypto.randomUUID();codexDraftScope = null;codexDraftTouched = false;$('message').value = '';
+        bindCodexDraft({draftAccountIdentity:'receipt-account'});
+        state = {status:'idle',access:{source:'desktop',canSend:true}};
+        let writes = 0, reads = 0, submitted;
+        window.fetch = async (url, options) => {
+          if (String(url).includes('/api/sessions/' + currentId + '/send?')) {
+            writes++;submitted = JSON.parse(options.body);
+            if (edit) {$('message').value = 'newer draft';$('message').dispatchEvent(new Event('input',{bubbles:true}));}
+            throw new TypeError('Failed to fetch');
+          }
+          if (String(url).includes('/api/sessions/' + currentId + '/message-management?')) {
+            reads++;return {ok:true,status:200,json:async()=>({draftAccountIdentity:'receipt-account',receipts:[{id:submitted.id,status:'accepted'}],queue:[],unknown:[]})};
+          }
+          return originalFetch.call(window,url,options);
+        };
+        $('message').value = 'submitted once';$('message').dispatchEvent(new Event('input',{bubbles:true}));
+        await $('composer').onsubmit({preventDefault(){}});
+        results.push({edit,writes,reads,text:$('message').value,draft:composerDrafts.load(codexDraftScope)?.text||'',pending:composerDrafts.pendingSend(codexDraftScope),error:$('send-error').textContent});
+      }
+      return results;
+    } finally {window.fetch = originalFetch;}
+  });
+  for (const row of results) {
+    expect(row.writes).toBe(1);expect(row.reads).toBe(1);expect(row.pending).toBeNull();
+    expect(row.text).toBe(row.edit?'newer draft':'');expect(row.draft).toBe(row.edit?'newer draft':'');
+    expect(row.error).toBe('');
+  }
 });

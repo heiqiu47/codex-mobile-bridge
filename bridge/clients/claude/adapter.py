@@ -13,6 +13,7 @@ import bridge.clients.claude.model as model
 from bridge.clients.claude.context import context_fields
 from bridge.clients.claude.setup import inspect_installation, console_source, developer_mode_enabled, native_action, running_app, claude_data_home, background_running_app
 from bridge.clients.errors import BridgeUnavailable
+from bridge.clients.file_mentions import file_mentions
 from bridge.features.sessions.create import ArchiveNotSent
 from bridge.clients.claude.mailbox import FileDesktop, MAX_REQUEST, CONNECTOR_REVISION, workspace_trust_rejection
 from bridge.clients.claude.cli_session import ClaudeCli, project_account_identity
@@ -886,7 +887,9 @@ class Claude:
                                      'manualModels': native['models'], 'manualEffort': native['effort']}
             return value
         if action == 'send':
-            text = body.get('text', '')
+            # Cowork maps @host paths through its existing selected-folder mounts.
+            # Code uses the CLI's quoted @file grammar for whitespace paths.
+            text = file_mentions(body.get('text', ''), body.get('resolvedReferences', []), quote=kind != 'cowork')
             if body.get('plugins'):
                 catalog = await self.desktop.call(kind, 'mobileCatalog', native)
                 offered = {skill['id'] for skill in catalog.get('skills', []) if skill.get('selectable') is not False}

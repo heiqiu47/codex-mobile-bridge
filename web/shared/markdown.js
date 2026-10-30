@@ -118,9 +118,17 @@
             const pre = document.createElement('pre');
             pre.append(code);
             const wrapper=document.createElement('div');wrapper.className='code-block';
+            const syntax=window.BridgeCodeSyntax, language=syntax.languageFor(token.info);
+            const header=document.createElement('div');header.className='code-header';
+            const label=document.createElement('span');label.className='code-language';label.dataset.language=language || '';label.textContent=syntax.label(language);
             const button=document.createElement('button');button.className='plain code-copy';button.type='button';button.textContent=typeof BridgeI18n==='undefined'?'复制代码':BridgeI18n.t('复制代码');
             button.onclick=()=>window.BridgeClipboard?.copy(getSource,button);
-            wrapper.append(button,pre);parent.append(wrapper);
+            header.append(label,button);wrapper.append(header,pre);parent.append(wrapper);
+            if(language && syntax.eligible(token.content)){
+              const highlight=()=>{code.replaceChildren();syntax.append(code,syntax.tokenize(token.content,language));};
+              if(window.Prism)highlight();
+              else window.BridgeFeatures?.load('syntax').then(()=>{if(code.isConnected)highlight();}).catch(()=>{});
+            }
           }
         } else if (token.type === 'image') {
           const destination = target(token.attrGet('src') || '');

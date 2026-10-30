@@ -131,6 +131,7 @@ class GatewayServer(ThreadingHTTPServer):
 
     def process_request(self, request, client_address):
         if not self.slots.acquire(blocking=False):
+            LOG.warning("HTTP transport stage=admission outcome=capacity_rejected")
             request.close()
             return
         try:
@@ -182,6 +183,8 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def headers_common(self, cache_control="no-store", preview_shell=False, style_nonce=None, mermaid_shell=False):
+        if getattr(self, '_transport_trace', None):
+            self.send_header('X-Bridge-Request-Id', self._transport_trace['id'])
         self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -211,6 +214,7 @@ class Handler(BaseHTTPRequestHandler):
             candidate = gzip.compress(body, compresslevel=5, mtime=0)
             if len(candidate) < len(body):
                 body, compressed = candidate, True
+        self._transport_status = status
         self.send_response(status)
         self.headers_common(preview_shell=preview_shell, style_nonce=style_nonce, mermaid_shell=mermaid_shell)
         self.send_header("Content-Type", content_type)
@@ -226,6 +230,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(body)
+        self._transport_written = True
 
     def static_output(self, path, content_type):
         data = served_asset_bytes(self.server.web_dir, path)
@@ -243,6 +248,7 @@ class Handler(BaseHTTPRequestHandler):
         validators = self.headers.get('If-None-Match', '')
         matches = any(tag.strip() == '*' or tag.strip().removeprefix('W/') == etag
                       for tag in validators.split(','))
+        self._transport_status = 304 if matches else 200
         self.send_response(304 if matches else 200)
         self.headers_common(cache_control=cache_control)
         self.send_header('Content-Type', content_type)
@@ -257,6 +263,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if not matches:
             self.wfile.write(data)
+        self._transport_written = True
 
     def cookie(self, token, clear=False):
         secure = "; Secure" if self.headers.get("Host") in self.server.secure_hosts else ""
@@ -360,6 +367,29 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(405)
 
     def handle_method(self, write):
+        # Correlate transport boundaries without recording identities, URLs,
+        # credentials or message contents. Reset for each keep-alive request.
+        path = urlsplit(self.path).path
+        route = THREAD_ROUTE.fullmatch(path)
+        operation = route[2] if route else None
+        ray = self.headers.get('CF-Ray', '')
+        ray = ray if re.fullmatch(r'[a-fA-F0-9]{16,32}(?:-[A-Z]{3})?', ray) else '-'
+        traced = operation in ('send', 'reconnect', 'message-management') or ray != '-' and path in STATIC
+        self._transport_trace = {'id': secrets.token_hex(8), 'ray': ray} if traced else None
+        self._transport_status, self._transport_written = 0, False
+        started = time.monotonic()
+        if traced:
+            LOG.info('HTTP transport id=%s ray=%s route=%s stage=received',
+                     self._transport_trace['id'], ray, operation or 'static')
+        try:
+            return self._handle_method(write)
+        finally:
+            if traced:
+                LOG.info('HTTP transport id=%s ray=%s stage=response status=%d written=%s elapsed_ms=%.1f',
+                         self._transport_trace['id'], ray, self._transport_status,
+                         self._transport_written, (time.monotonic() - started) * 1000)
+
+    def _handle_method(self, write):
         try:
             if urlsplit(self.path).path == '/harness' or urlsplit(self.path).path.startswith('/harness/'):
                 return harness_proxy(self)
@@ -535,7 +565,7 @@ class Handler(BaseHTTPRequestHandler):
                     value = self.read_json()
                     if value == {'action': 'scan-wsl'}:
                         return self.output(200, manager.scan_wsl())
-                    if not isinstance(value, dict) or not {'provider', 'enabled'} <= set(value) or set(value) - {'provider', 'enabled', 'quitDesktop', 'initializeDesktop', 'forceDesktop', 'forceConfirmed'}:
+                    if not isinstance(value, dict) or not {'provider', 'enabled'} <= set(value) or set(value) - {'provider', 'enabled', 'quitDesktop', 'initializeDesktop', 'forceDesktop', 'forceConfirmed', 'acknowledgeUnavailable'}:
                         raise ValueError('应用开关无效')
                     return self.output(200, manager.toggle_client(value))
                 return self.output(200, manager.clients_status())
@@ -645,7 +675,7 @@ class Handler(BaseHTTPRequestHandler):
                         if len(before) > 16384:
                             raise ValueError('历史游标过长')
                         body['historyBefore'] = before
-                if write and any(key in body for key in ('resolvedImages', 'resolvedFiles')):
+                if write and any(key in body for key in ('resolvedImages', 'resolvedFiles', 'resolvedReferences')):
                     raise ValueError('附件格式无效')
                 if write and parts[3] == 'send' and 'attachments' in body:
                     if self.server.desktop_uploads is None:
@@ -760,6 +790,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.output(200, manager.public())
             if write and path.startswith('/api/account') and query.get('entry', ['desktop'])[0] != 'desktop':
                 raise ValueError('WSL 接入由原环境管理，不能对它执行桌面账号操作')
+            if write and path == '/api/accounts/ssh-retry':
+                body = self.read_json()
+                if not isinstance(body, dict) or set(body) != {'host'}:
+                    raise ValueError('SSH 重试请求包含不支持的字段')
+                self.server.bridge.retry_ssh(body['host'])
+                return self.output(202, self.server.bridge.accounts.public())
             if not write and path == '/api/accounts':
                 entry = query.get('entry', ['desktop'])[0]
                 if entry != 'desktop':
@@ -940,7 +976,10 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError('项目目录请求无效')
                     options = {'kind': body['kind']} if 'kind' in body else {}
                     return self.output(200, {'project': target.register_project(body['path'], body['createDirectory'], body['host'], **options)})
-                return self.output(200, {'projects': target.projects(),
+                project_host = query.get('host', [None])[0]
+                if project_host is not None and entry != 'desktop':
+                    raise ValueError('项目环境请求无效')
+                return self.output(200, {'projects': target.projects(host=project_host) if project_host is not None else target.projects(),
                     'environments': target.project_environments() if hasattr(target, 'project_environments') else []})
             if write and path == '/api/activity':
                 groups = self.read_json().get('hosts')
@@ -1276,8 +1315,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("请求回应格式不正确")
                 result = bridge.respond(thread_id, body.get("requestId"), response)
             elif action == "reconnect":
+                if 'rebuild' in body and (body.get('rebuild') is not True or body.get('activate') is not True or set(body) != {'activate', 'rebuild'}):
+                    raise ValueError('重建连接请求无效')
                 if body.get('activate') is True:
-                    session = bridge.activate(thread_id)
+                    session = bridge.rebuild_connection(thread_id) if body.get('rebuild') else bridge.activate(thread_id)
                     result = {'ok': True, 'connected': session.connected}
                 elif body.get('progressive'):
                     bridge.session(thread_id, background=True, force=True)

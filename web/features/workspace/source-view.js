@@ -42,9 +42,7 @@ const BridgeSourceView = (() => {
     const pre = document.createElement('pre'); pre.className = 'wb-source-code';
     const code = document.createElement('code');
     const language = languageFor(name);
-    const grammar = !large && language && window.Prism?.languages[language];
-    let tokens = text;
-    if (grammar) try { tokens = window.Prism.tokenize(text, grammar); } catch (_) { /* Preserve the original source. */ }
+    const tokens = window.BridgeCodeSyntax.tokenize(text, language);
     if (language) code.className = 'language-' + language;
     if (lines <= 10000) {
       const gutter = document.createElement('pre'); gutter.className = 'wb-source-gutter';

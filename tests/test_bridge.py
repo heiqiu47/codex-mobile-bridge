@@ -160,6 +160,47 @@ class IntegrationTests(unittest.TestCase):
         self.assertNotIn('modelProvider', request)
         self.assertTrue(call['params']['turnStart']['context']['inheritThreadSettings'])
 
+    def test_desktop_router_restart_rediscovers_owner_without_restarting_gateway(self):
+        session = self.bridge.session(THREAD)
+        self.assertTrue(session.connected)
+        original_socket = self.bridge.ipc.socket
+        self.fixture.close()
+        with session.condition:
+            self.assertTrue(session.condition.wait_for(lambda: not session.connected, timeout=3))
+        if os.name != 'nt':
+            Path(self.fixture.path).unlink()
+        (self.root / 'ipc').rmdir()
+
+        class RestartedDesktop(DesktopFixture):
+            def send(self, message):
+                message = copy.deepcopy(message)
+                if message.get('sourceClientId') == 'owner':
+                    message['sourceClientId'] = 'new-owner'
+                if message.get('handledByClientId') == 'owner':
+                    message['handledByClientId'] = 'new-owner'
+                if message.get('method') == 'initialize':
+                    message['result']['clientId'] = 'new-gateway'
+                super().send(message)
+
+        self.fixture = RestartedDesktop(self.root)
+        self.bridge.ipc.path = self.fixture.path
+        self.fixture.state['title'] = 'After desktop restart'
+        with patch('bridge.app.service.open_in_desktop') as activate:
+            self.bridge._refresh_async(session)
+            with session.condition:
+                self.assertTrue(session.condition.wait_for(lambda: session.connected, timeout=5))
+            activate.assert_not_called()
+        self.assertIsNot(self.bridge.ipc.socket, original_socket)
+        self.assertEqual(self.bridge.ipc.client_id, 'new-gateway')
+        self.assertEqual(session.owner, 'new-owner')
+        self.assertEqual(session.state['title'], 'After desktop restart')
+        self.assertEqual(session.state['modelProvider'], 'custom-api')
+        self.bridge.send(THREAD, 'after restart', str(uuid.uuid4()))
+        sends = [r for r in self.fixture.requests if r['method'] == 'thread-follower-start-turn']
+        self.assertEqual(len(sends), 1)
+        self.assertEqual(sends[0]['targetClientId'], 'new-owner')
+        self.assertEqual(sends[0]['params']['conversationId'], THREAD)
+
     def test_external_provider_change_does_not_use_stale_managed_account_to_block_send(self):
         from bridge.features.accounts.accounts import Accounts
         manager = Accounts(self.bridge)
@@ -201,6 +242,40 @@ class IntegrationTests(unittest.TestCase):
         rows, sources = self.bridge.list(include_sources=True, local_only=True)
         self.assertEqual([row['id'] for row in rows], [THREAD])
         self.assertEqual(sources, ['desktop'])
+
+    def test_local_native_reconnect_completes_while_ssh_activation_is_blocked(self):
+        from concurrent.futures import Future
+        from unittest.mock import patch
+        from bridge.clients.codex.remote import RemoteUnavailable
+        entered, release = threading.Event(), threading.Event()
+        self.bridge.hosts.hosts = lambda **kw: {'remote:offline': {'alias': 'fixture-offline'}}
+        remote = self.bridge.for_host('remote:offline')
+        result = Future()
+        def offline(*args):
+            entered.set(); release.wait(5)
+            raise RemoteUnavailable('offline')
+        def reconnect_remote():
+            try:
+                remote.activate(THREAD)
+            except RemoteUnavailable:
+                pass
+        def reconnect_local():
+            try:
+                result.set_result(self.bridge.activate(THREAD).connected)
+            except BaseException as exc:
+                result.set_exception(exc)
+        with patch.object(remote.store, 'get', side_effect=offline):
+            worker = threading.Thread(target=reconnect_remote);worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                reader = threading.Thread(target=reconnect_local);reader.start()
+                self.assertTrue(result.result(timeout=2))
+                self.assertFalse(release.is_set())
+                self.assertEqual(self.bridge.live[THREAD].owner, 'owner')
+                self.assertFalse(any(row['method']=='thread-follower-start-turn' for row in self.fixture.requests))
+            finally:
+                release.set();worker.join(2)
+                if 'reader' in locals():reader.join(2)
 
     def test_unified_codex_list_separates_wsl_category_from_cli_source(self):
         from types import SimpleNamespace
@@ -1692,6 +1767,14 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(result['id'],THREAD)
         self.assertEqual(calls,[(body['project'],body['title'],body['id'])])
 
+    def test_selected_project_host_is_forwarded_only_after_authentication(self):
+        calls = []
+        self.server.bridge.projects = lambda **options: calls.append(options) or []
+        self.assertEqual(self.request('GET', '/api/projects?host=ssh')[0], 401)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.request('GET', '/api/projects?host=ssh', headers=self.login())[0], 200)
+        self.assertEqual(calls, [{'host': 'ssh'}])
+
     def test_explicit_reconnect_requires_auth_csrf_and_activation_flag(self):
         from types import SimpleNamespace
         calls = []
@@ -1716,6 +1799,21 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertIn('retry', body['error'])
         self.assertNotIn('日志', body['error'])
+
+    def test_remote_transport_rebuild_requires_auth_csrf_and_explicit_flags(self):
+        from types import SimpleNamespace
+        calls = []
+        self.server.bridge.rebuild_connection = lambda tid: calls.append(tid) or SimpleNamespace(connected=True)
+        path = '/api/sessions/' + THREAD + '/reconnect'
+        body = {'activate': True, 'rebuild': True}
+        self.assertEqual(self.request('POST', path, body)[0], 401)
+        headers = self.login()
+        self.assertEqual(self.request('POST', path, body, {'Cookie': headers['Cookie']})[0], 403)
+        for invalid in ({'rebuild': True}, {'activate': True, 'rebuild': 1}, {**body, 'force': True}):
+            self.assertEqual(self.request('POST', path, invalid, headers)[0], 400)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.request('POST', path, body, headers)[0], 200)
+        self.assertEqual(calls, [THREAD])
 
     def test_reverse_proxy_preserved_host_keeps_secure_login(self):
         origin='https://codex.example.test:9443'

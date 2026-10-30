@@ -89,6 +89,18 @@ class ClaudeContract(unittest.IsolatedAsyncioTestCase):
             await self.adapter.dispatch('send', self.sid('cowork'), {**body, 'mode': 'steer'})
         self.assertFalse(any(method == 'sendMessage' for _, method, _ in self.calls))
 
+    async def test_project_references_use_native_mentions_without_upload_bytes(self):
+        for kind in ('code', 'cowork'):
+            self.calls.clear()
+            body = {'text': '检查文件', 'id': str(uuid.uuid4()), 'resolvedReferences': [
+                {'path': '/host/project/中文 文件.md', 'name': '中文 文件.md', 'kind': 'file'}]}
+            await self.adapter.dispatch('send', self.sid(kind), body)
+            args = next(args for _, method, args in self.calls if method == 'sendMessage')
+            mention = '@"/host/project/中文 文件.md"' if kind == 'code' else '@/host/project/中文 文件.md'
+            self.assertEqual(args[1], '检查文件\n\n' + mention)
+            self.assertIsNone(args[2]); self.assertIsNone(args[4] if kind == 'code' else args[3])
+            self.assertEqual(body['text'], '检查文件')
+
     async def test_invalid_effort_cannot_partially_change_model(self):
         async def call(kind, method, *args, **kwargs):
             if method == 'mobileCatalog':

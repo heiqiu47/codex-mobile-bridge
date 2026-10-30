@@ -18,6 +18,8 @@ from bridge.clients.claude.cli_session import (_Owned, _message_content, _skill_
                                                 PERMISSION_OPTIONS, ResumePreflightBlocked)
 from bridge.clients.codex.remote import ssh_command
 from bridge.clients.errors import BridgeUnavailable
+from bridge.features.network.retry import ConnectionUnavailable, TransportUnavailable, ssh_connection
+from bridge.features.network.stdio import run_with_input
 from bridge.clients.uploads import DesktopUploads
 from bridge.resources import source_text
 import ast
@@ -43,15 +45,21 @@ def _command(alias):
 
 def _remote(alias, request, timeout=30):
     try:
-        result = subprocess.run(_command(alias), input=json.dumps(request, ensure_ascii=False)+'\n',
-                                capture_output=True, text=True, encoding='utf-8', timeout=timeout)
+        with ssh_connection(alias).attempt():
+            try:
+                result = run_with_input(_command(alias), json.dumps(request, ensure_ascii=False)+'\n',
+                                        capture_output=True, text=True, encoding='utf-8', timeout=timeout)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise TransportUnavailable('SSH Claude Code 主机不可用，请检查连接') from exc
+            if result.returncode == 255:
+                raise TransportUnavailable('SSH Claude Code 主机不可用，请检查连接')
         if result.returncode != 0:
             raise BridgeUnavailable('SSH Claude Code 主机不可用，请检查连接')
         value = json.loads(result.stdout.strip())
         if value.get('ok') is not True:
             raise BridgeUnavailable(value.get('message') or 'SSH Claude Code 读取失败')
         return value['value']
-    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError) as exc:
+    except (ConnectionUnavailable, OSError, subprocess.TimeoutExpired, ValueError, KeyError) as exc:
         raise BridgeUnavailable('SSH Claude Code 主机不可用，请检查连接') from exc
 
 

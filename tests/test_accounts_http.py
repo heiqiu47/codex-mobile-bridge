@@ -46,6 +46,20 @@ class AccountsHttpTests(unittest.TestCase):
         self.assertEqual(self.request('POST','/api/accounts/switch',value,headers)[0],202)
         manager.switch.assert_called_once_with(value)
 
+    def test_ssh_retry_requires_auth_csrf_and_registered_host(self):
+        self.manager()
+        self.server.bridge.retry_ssh = Mock()
+        path = '/api/accounts/ssh-retry'
+        value = {'host': 'remote:fixture'}
+        self.assertEqual(self.request('POST', path, value)[0], 401)
+        headers = self.login()
+        self.assertEqual(self.request('POST', path, value, {'Cookie': headers['Cookie']})[0], 403)
+        self.assertEqual(self.request('POST', path, {**value, 'alias': 'arbitrary'}, headers)[0], 400)
+        self.assertEqual(self.request('POST', path, value, headers)[0], 202)
+        self.server.bridge.retry_ssh.assert_called_once_with('remote:fixture')
+        self.server.bridge.retry_ssh.side_effect = ValueError('请选择已登记的 SSH 主机')
+        self.assertEqual(self.request('POST', path, {'host': 'unknown'}, headers)[0], 400)
+
     def test_enrollment_and_mutation_routes_do_not_exist_on_web(self):
         manager = self.manager(); headers = self.login()
         for path in ['/api/accounts/add','/api/accounts/login','/api/accounts/delete','/api/accounts/configure','/api/accounts/recover','/api/accounts/scan','/api/accounts/import','/api/accounts/models']:

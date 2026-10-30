@@ -41,6 +41,7 @@ class AccountsPanel {
     this.currentReset=this.button('查看并使用重置卡',()=>this.onReset?.());this.currentReset.hidden=true;
     this.current=this.node('p',undefined,'accounts-current');this.blocked=this.node('div',undefined,'account-muted');this.root.append(this.current,this.status,this.error,this.currentReset,this.blocked,this.globalReset,this.rows);
     this.management=this.node('div',undefined,'accounts-management');this.root.append(this.management);
+    this.sshHosts=this.node('section');this.sshHosts.hidden=true;this.root.append(this.sshHosts);
     this.tools=this.node('details');this.tools.append(this.node('summary','提醒与 Codex Desktop 更新'));
     this.reminders=this.node('div');this.updates=this.node('section');this.tools.append(this.reminders,this.updates);this.management.append(this.tools);
     if(!this.desktop){this.root.append(this.node('p','官方账号登录请在电脑端完成。','account-muted'));return;}
@@ -116,8 +117,9 @@ class AccountsPanel {
     clearTimeout(this.timer);this.timer=null;if(!this.visible())return;
     const value=this.value;if(!value&&!this.readFailed)return;
     const phase=value?.switch?.phase||'idle',enrollment=value?.enrollment?.phase,update=value?.desktopUpdate?.state;
-    const pending=!['idle','complete','restored','failed','interrupted'].includes(phase)||['starting','waiting'].includes(enrollment)||['checking','requesting','needsDesktop'].includes(update)||value?.current?.status==='checking'||['idle','loading'].includes(value?.globalReset?.state)||value?.globalReset?.refresh?.checking||this.globalResetRefreshIntent||this.accountRows().some(row=>row.details?.usage?.status==='loading'||row.details?.models?.status==='loading');
-    this.timer=setTimeout(()=>{if(this.visible())return this.refresh();},this.readFailed?10000:pending?2000:300000);
+    const pending=value?.sshHosts?.some(host=>host.state==='checking')||!['idle','complete','restored','failed','interrupted'].includes(phase)||['starting','waiting'].includes(enrollment)||['checking','requesting','needsDesktop'].includes(update)||value?.current?.status==='checking'||['idle','loading'].includes(value?.globalReset?.state)||value?.globalReset?.refresh?.checking||this.globalResetRefreshIntent||this.accountRows().some(row=>row.details?.usage?.status==='loading'||row.details?.models?.status==='loading');
+    const sshRetry=Math.min(300000,...(value?.sshHosts||[]).filter(host=>host.state==='offline'&&host.nextRetryAt).map(host=>Math.max(5000,host.nextRetryAt*1000-Date.now()+1000)));
+    this.timer=setTimeout(()=>{if(this.visible())return this.refresh();},this.readFailed?10000:pending?2000:sshRetry);
   }
   visible(){const dialog=this.root.closest('dialog');return !this.root.closest('[hidden],.client-config-hidden')&&!document.hidden&&(!dialog||dialog.open);}
   resume(){
@@ -237,7 +239,7 @@ class AccountsPanel {
     controls.append(refresh);return controls;
   }
   accept(value){const old=this.value;if(!this.desktop&&old?.canSwitch===false&&value.canSwitch===undefined)value={...value,canSwitch:false};this.value=value;if(!value.resetDynamicEnabled)this.globalResetRefreshIntent=null;this.finishGlobalResetRefresh(value.globalReset);if(old&&(old.activeId!==value.activeId||old.current?.kind!==value.current?.kind||old.current?.name!==value.current?.name||old.switch?.phase!==value.switch?.phase))this.onChanged(value);this.onUpdate(value);this.render();}
-  clear(){clearTimeout(this.resetMidnightTimer);this.resetMidnightTimer=null;this.globalResetRefreshIntent=null;this.globalResetMessage='';this.globalResetKey=null;this.globalReset.hidden=true;this.resetDialog?.close();clearTimeout(this.timer);this.generation++;this.value=null;this.loading=false;this.busy=false;this.readFailed=false;this.resumePending=false;this.operationError=false;this.modelBoxes.clear();this.error.textContent='';this.rows.replaceChildren();}
+  clear(){clearTimeout(this.resetMidnightTimer);this.resetMidnightTimer=null;this.globalResetRefreshIntent=null;this.globalResetMessage='';this.globalResetKey=null;this.globalReset.hidden=true;this.resetDialog?.close();clearTimeout(this.timer);this.generation++;this.value=null;this.loading=false;this.busy=false;this.readFailed=false;this.resumePending=false;this.operationError=false;this.modelBoxes.clear();this.error.textContent='';this.rows.replaceChildren();this.sshHosts.replaceChildren();this.sshHosts.hidden=true;}
   requestId(){
     if(typeof crypto.randomUUID==='function')return crypto.randomUUID();
     const bytes=crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
@@ -402,9 +404,23 @@ class AccountsPanel {
     const prefix=date.toDateString()===today.toDateString()?this.text('今天 '):date.toDateString()===yesterday.toDateString()?this.text('昨天 '):'';
     return prefix+(prefix?date.toLocaleString(BridgeI18n.locale(),{hour:'2-digit',minute:'2-digit'}):this.shortTime(stamp));
   }
+  renderSshHosts(){
+    const hosts=this.value?.sshHosts||[];this.sshHosts.hidden=!hosts.length;this.sshHosts.replaceChildren();
+    if(!hosts.length)return;
+    this.sshHosts.append(this.node('h3','SSH 连接'));
+    for(const host of hosts){
+      const row=this.node('div',undefined,'account-bucket'),name=this.node('strong');name.textContent=host.label;
+      const status=this.node('p',undefined,'account-muted'),labels={online:'可连接',offline:'连接不可用',checking:'正在重试连接…',unknown:'尚未检查'};
+      status.textContent=this.text(labels[host.state]||labels.unknown);
+      if(host.state==='offline'&&host.nextRetryAt)status.textContent+=' · '+this.text('下次自动重试：')+this.shortTime(host.nextRetryAt,true);
+      const retry=this.button('重试 SSH 连接',()=>this.perform({action:'retrySsh',host:host.host}));retry.disabled=this.busy||host.state==='checking';
+      row.append(name,status,retry);this.sshHosts.append(row);
+    }
+  }
   render(){
     const value=this.value;if(!value)return;
     this.renderGlobalReset();
+    this.renderSshHosts();
     const external=value.management?.external===true;
     this.switchHint.hidden=external;
     this.tools.hidden=value.scope==='wsl';

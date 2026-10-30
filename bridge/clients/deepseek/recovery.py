@@ -1,5 +1,6 @@
 """Desktop-only recovery of verified Harness processes, with an explicit preview."""
 import hashlib
+from http.client import HTTPException
 import json
 import os
 import re
@@ -124,7 +125,7 @@ def _evidence(adapter, snapshot):
                 found = True
                 try:
                     detail = _query(adapter, port, 'lifecycle')
-                except (OSError, ValueError):
+                except (OSError, ValueError, HTTPException):
                     # Legacy lists can prove work is active, but cannot prove idle:
                     # they may omit child agents. Inactive contexts stay unknown.
                     detail = _query(adapter, port, 'list')
@@ -140,7 +141,7 @@ def _evidence(adapter, snapshot):
                 unknown = unknown or not complete
                 if complete: verified.append(pid)
                 break
-            except (OSError, ValueError, KeyError):
+            except (OSError, ValueError, KeyError, HTTPException):
                 if found: unknown = True
                 continue
         if not found: unknown = True

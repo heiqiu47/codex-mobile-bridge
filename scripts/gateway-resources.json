@@ -40,6 +40,8 @@
   "bridge/clients/deepseek/plugin/README.md",
   "bridge/clients/LICENSE.coding-mobile",
   "web/features/workspace/source-view.js",
+  "web/shared/code-syntax.js",
+  "web/shared/code-syntax.css",
   "web/vendor/prism/source-view.min.js",
   "web/vendor/prism/LICENSE",
   "web/features/workspace/pdf-preview.js",

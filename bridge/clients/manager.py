@@ -15,10 +15,9 @@ from contextlib import closing, contextmanager, nullcontext
 from concurrent.futures import Future
 
 from bridge.clients.claude.adapter import Claude
-from bridge.clients.claude.cli_session import ResumePreflightBlocked
 from bridge.clients.claude.remote_worker import draft_account_identity as claude_draft_account_identity
 from bridge.clients.deepseek.adapter import DeepSeek, BRIDGE_REVISION, LIFECYCLE_REVISIONS, UPDATE_REASON
-from bridge.clients.errors import BridgeUnavailable
+from bridge.clients.errors import BridgeUnavailable, TaskStateUnavailable, ResumePreflightBlocked
 from bridge.clients.codex.catalog import ModelStore, MODEL_REFRESH_SECONDS
 from bridge.features.accounts.draft_identity import draft_identity
 from bridge.app.lifecycle import private_json
@@ -34,10 +33,6 @@ from bridge.resources import source_text
 
 READS = {'list', 'detail', 'catalog', 'projects', 'account', 'access', 'organization'}
 WRITES = {'send', 'stop', 'settings', 'respond', 'create', 'access', 'resume', 'fork', 'pin', 'archive', 'rename', 'organization'}
-
-
-class TaskStateUnavailable(ValueError):
-    """No task evidence; distinct from known busy tasks or ambiguous processes."""
 
 
 CLAUDE_HISTORY_NOTICE = '客户端尚未提供当前可选模型，历史模型仅供查看'
@@ -1033,9 +1028,8 @@ class DesktopSessions:
             try:
                 dispatched = body
                 if action == 'send' and reference_files:
-                    from bridge.features.sessions.model import attachment_prompt
                     dispatched = {key: value for key, value in body.items() if key != 'references'}
-                    dispatched['text'] = attachment_prompt(body['text'], reference_files)
+                    dispatched['resolvedReferences'] = reference_files
                 if action == 'create':
                     project = self.directory_projects.get(body.get('projectKey'))
                     if project and project.get('provider') == provider:
@@ -1326,7 +1320,7 @@ class DesktopSessions:
                     row.get('runtimeKnown') is not True for row in sessions)):
             raise TaskStateUnavailable(unknown)
 
-    def _stop_client(self, provider, descriptor, state, *, native_confirmation=False, force=False):
+    def _stop_client(self, provider, descriptor, state, *, native_confirmation=False, force=False, acknowledge_unavailable=False):
         from bridge.clients.lifecycle import stop_client, stop_deepseek
         native_confirmation = native_confirmation and provider == 'claude' and sys.platform == 'win32'
         if not state['running'] and not force:
@@ -1337,9 +1331,10 @@ class DesktopSessions:
             if not force:
                 self._assert_idle(provider, state, native_confirmation=native_confirmation)
         except TaskStateUnavailable:
-            # Only explicit user-requested quit can defer unavailable task evidence
-            # to Claude's own normal exit confirmation. Account changes cannot.
-            if not (native_confirmation and provider == 'claude' and sys.platform == 'win32'):
+            # Only explicitly confirmed normal quit may accept unavailable task
+            # evidence. Known activity, writes and ambiguous identities still block.
+            if not (acknowledge_unavailable and provider == 'codex' or
+                    native_confirmation and provider == 'claude' and sys.platform == 'win32'):
                 raise
         if provider == 'claude':
             # Cancel the monitor before native quit, so it cannot relaunch Claude.
@@ -1784,6 +1779,8 @@ class DesktopSessions:
                                          else '已选择，启动网关后自动接入')
             entries = getattr(self.bridge, 'entries', None)
             codex = rows[0]
+            codex['desktopRestartRecommended'] = bool(self.bridge and
+                getattr(self.bridge, 'desktop_restart_recommended', lambda: False)())
             native = {**codex, 'id': 'desktop', 'kind': 'desktop'}
             codex_entries = [native, *(entries.applications() if entries is not None else [])]
             codex.update(entries=codex_entries, desktopEnabled=native['enabled'],
@@ -1970,6 +1967,13 @@ class DesktopSessions:
         if 'initializeDesktop' in value and (type(value['initializeDesktop']) is not bool
                 or provider != 'claude' or enabled is not True):
             raise ValueError('应用初始化请求无效')
+        acknowledge_unavailable = value.get('acknowledgeUnavailable', False)
+        if 'acknowledgeUnavailable' in value and (acknowledge_unavailable is not True or
+                provider != 'codex' or enabled or value.get('quitDesktop') is not True or
+                value.get('forceDesktop') or sys.platform not in ('darwin', 'win32') or
+                not self.gateway_running or not self.bridge or
+                not self.bridge.desktop_restart_recommended()):
+            raise ValueError('桌面恢复退出确认无效，请重新检查连接状态')
         # Older clients use disabling as native quit. New clients choose explicitly.
         quit_desktop = value.get('quitDesktop', True)
         if provider == 'deepseek' and self.config.get('deepseekManualBinding'):
@@ -2034,7 +2038,8 @@ class DesktopSessions:
                     raise ValueError('有 Claude Code 任务运行或等待确认，请先结束任务再关闭客户端')
                 self._stop_client(provider, descriptor, inspect_client(descriptor),
                                   native_confirmation=value.get('quitDesktop') is True,
-                                  force=value.get('forceDesktop') is True)
+                                  force=value.get('forceDesktop') is True,
+                                  **({'acknowledge_unavailable': True} if acknowledge_unavailable else {}))
             # Persist only after the native lifecycle operation succeeds.
             self.config.setdefault('enabled', {})[provider] = enabled
             private_json(self.config_path, self.config)

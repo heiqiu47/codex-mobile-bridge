@@ -102,6 +102,23 @@ class RecoveryConfirmationTests(unittest.TestCase):
 
 
 class RecoveryEvidenceTests(unittest.TestCase):
+    def test_non_http_runtime_port_does_not_abort_other_port_evidence(self):
+        from http.client import BadStatusLine
+        def query(adapter, port, action):
+            if port == 111:
+                raise BadStatusLine('not an HTTP endpoint')
+            if action == 'status': return {'connected': True}
+            return {'bridgeRevision': 9, 'complete': True, 'sessions': []}
+        with patch('bridge.clients.deepseek.recovery._ports', return_value=[111, 112]), \
+                patch('bridge.clients.deepseek.recovery._query', side_effect=query):
+            self.assertEqual(_evidence(Mock(), snapshot()), {'busy': False, 'unknown': False, 'verifiedIdle': [12]})
+
+    def test_only_non_http_ports_remain_unknown(self):
+        from http.client import BadStatusLine
+        with patch('bridge.clients.deepseek.recovery._ports', return_value=[111]), \
+                patch('bridge.clients.deepseek.recovery._query', side_effect=BadStatusLine('not HTTP')):
+            self.assertEqual(_evidence(Mock(), snapshot()), {'busy': False, 'unknown': True, 'verifiedIdle': []})
+
     def test_each_host_requires_complete_native_evidence(self):
         def query(adapter, port, action):
             if action == 'status': return {'connected': True}

@@ -1,5 +1,6 @@
 """Read-only discovery and history for existing Codex chats."""
 import copy
+import uuid
 import re
 import os
 import threading
@@ -22,6 +23,29 @@ def items_array(items):
             return [entities[e["value"]] for island in items.get("islands", []) for e in island.get("entries", []) if e.get("value") in entities]
         return list(items.get("items", []))
     return []
+
+
+def persisted_submission_ids(state, thread_id):
+    """Positive receipt evidence from saved native history, never prepared UI turns."""
+    if not state or state.get('id') != thread_id:
+        return set()
+    identifiers = list(state.get('persistedUserMessageIds', []))
+    for turn in state.get('turns', []):
+        if not turn.get('turnId'):
+            continue
+        for item in items_array(turn.get('items')):
+            if item.get('type') == 'userMessage':
+                identifiers.append(item.get('clientId') or item.get('client_id'))
+    result = set()
+    for identifier in identifiers:
+        if not isinstance(identifier, str):
+            continue
+        try:
+            if str(uuid.UUID(identifier)) == identifier:
+                result.add(identifier)
+        except ValueError:
+            pass
+    return result
 
 
 def native_patch_counts(diff):
@@ -625,6 +649,7 @@ class SessionStore:
                 return result
         raw, complete = self._recent_lines(resolved, turn_limit)
         items, turns, current = [], [], None
+        persisted_user_ids = []
         token_usage = None
         for line in raw.splitlines():
             try:
@@ -650,6 +675,11 @@ class SessionStore:
                     current["status"] = "completed" if payload["type"] == "task_complete" else "interrupted"
             elif record.get("type") == "event_msg" and payload.get("type") == "item_completed":
                 item = payload.get("item", {})
+                if (isinstance(item, dict) and item.get('type') == 'UserMessage' and current is not None and
+                        payload.get('thread_id') == thread_id and payload.get('turn_id') == current.get('turnId')):
+                    # The response_item supplies display text; this separate
+                    # persisted event supplies the native acceptance identity.
+                    persisted_user_ids.append(item.get('client_id'))
                 if isinstance(item, dict) and item.get("type") in ("ImageView", "imageView"):
                     # ImageView evidence only exists in event records. Preserve it
                     # so saved history can still render the image after restart.
@@ -685,6 +715,7 @@ class SessionStore:
                 "latestReasoningEffort": next((t['params']['effort'] for t in reversed(turns) if (t.get('params') or {}).get('effort')), None),
                 "modelProvider": meta.get("model_provider"),
                 "latestTokenUsageInfo": token_usage, "tokenUsageFromHistory": True,
+                "persistedUserMessageIds": persisted_user_ids,
                 "turns": turns, "turnsPagination": {"hasLoadedOldest": complete}, "requests": [], "threadRuntimeStatus": {"type": "notLoaded"}}
         with self.history_lock:
             if len(raw) <= 4 * 1024 * 1024:

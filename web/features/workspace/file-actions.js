@@ -8,12 +8,12 @@ window.BridgeFileActions = (() => {
   function attach(anchor,upload,reference){
     const box=node('dialog',undefined,'attachment-menu');box.setAttribute('aria-label',t('添加附件'));
     document.body.append(box);box.addEventListener('close',()=>box.remove());
-    const uploads=!upload?[]:window.BridgeUploadSource?[['照片图库',()=>upload('photos')],['拍照或录像',()=>upload('camera')],['选择手机文件',()=>upload('files')]]:[['从本机上传',upload]];
+    const uploads=!upload?[]:window.BridgeUploadSource?[['照片图库',()=>upload('photos')],['选择手机文件',()=>upload('files')]]:[['从本机上传',upload]];
     for(const [label,action] of [...uploads,['引用宿主机项目文件',reference]]){
       const button=node('button',t(label),'plain');button.type='button';button.onclick=()=>{box.close();action();};box.append(button);
     }
     box.addEventListener('click',event=>{if(event.target===box)box.close();});
-    box.showModal();
+    box.showModal();box.focus();
     const rect=anchor.getBoundingClientRect(),bounds=box.getBoundingClientRect(),viewport=window.visualViewport;
     const left=viewport?.offsetLeft||0,top=viewport?.offsetTop||0,width=viewport?.width||innerWidth;
     box.style.left=Math.max(left+8,Math.min(rect.left,left+width-bounds.width-8))+'px';

@@ -16,7 +16,7 @@ function fixture({durable=true,request,local=storage(),temporary=storage(),coord
     codexQuotes:null,sending:false,currentId:'fixture',currentHost:'local',state:{},currentAccess:()=>({canSend:true}),
     attachments:{ready:()=>true,ids:()=>['attachment'],references:()=>[],rows:[{id:'attachment'}],setLocked(){},clear(){}},
     workModes:{value:()=> 'default',render(){},submitted(){}},invalidSkills:new Set(),selectedSkills:new Set(['skill']),
-    codexProvisionalDrafts:new Map(),composerDrafts:drafts,codexDraftScope:durable?scope:null,
+    codexProvisionalDrafts:new Map(),composerDrafts:drafts,codexDraftScope:durable?scope:null,messageManagement:null,renderQueue(){},
     sessionStorage:temporary,draftGateway:'gateway',chatKey:()=> 'local|fixture',uuid:()=> 'submission-'+tab+'-'+(++sequence),
     saveDraft:()=>drafts.save(scope,{text:nodes.message.value,sendMode:nodes['send-mode'].value,skills:['skill'],quotes:context.codexQuotes?.quotes||[]}),
     bumpRecency(){},renderSkillPills(){},restoringComposer:false,window:{BridgePresentation:{showError(){}}},sessionUrl:()=> '/synthetic/send',toast(){},

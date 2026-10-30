@@ -17,7 +17,7 @@ from bridge.clients.claude import model, file_archive
 from bridge.clients.claude.history import file_stamp, page as history_page, image_event
 from bridge.clients.claude.context import context_fields
 from bridge.clients.claude.session_registry import assert_session_closed
-from bridge.clients.errors import BridgeUnavailable
+from bridge.clients.errors import BridgeUnavailable, ResumePreflightBlocked
 from bridge.clients.uploads import DesktopUploads
 
 
@@ -196,10 +196,6 @@ def _set_cli_settings(owned, body):
 IMAGE_URL = re.compile(r'data:(image/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]+={0,2})\Z')
 
 
-class ResumePreflightBlocked(BridgeUnavailable):
-    """The resume process has definitely not been started."""
-
-
 def _profile():
     binary = shutil.which('claude')
     if not binary:
@@ -273,11 +269,12 @@ def _text(content):
 
 def _message_content(body):
     """Build the CLI's native stream-json user content from server-resolved uploads."""
+    from bridge.clients.file_mentions import file_mentions
+    text = body['text']
     images = body.get('resolvedImages') or []
     files = body.get('resolvedFiles') or []
     if not images and not files:
-        return body['text']
-    text = body['text']
+        return file_mentions(text, body.get('resolvedReferences', []))
     if files:
         references = []
         for item in files:
@@ -287,6 +284,7 @@ def _message_content(body):
         text += ('\n\n' if text.strip() else '') + '请读取并参考这些已上传的本机文件：\n' + json.dumps(references, ensure_ascii=False)
     # Claude parses slash invocations from a single text block. Keep file
     # references with that text so adding an attachment preserves the Skill.
+    text = file_mentions(text, body.get('resolvedReferences', []))
     blocks = [{'type': 'text', 'text': text}] if text.strip() else []
     for image in images:
         match = IMAGE_URL.fullmatch(image.get('url', '')) if isinstance(image, dict) else None

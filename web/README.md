@@ -52,6 +52,7 @@ Codex 的 MCP、动态工具及保存历史中的工具输出，共用 `bridge/f
 ## 文件阅读模块
 
 - `source-view.js` 用本地 Prism 词元生成只读源码节点，行号独立，复制取原文；软换行与原始行宽可切换。超过 65,536 字符或 4,000 行不高亮，超过 10,000 行省略行号，仍遵守 512 KiB 文本预览上限。见[源码约定](../.agents/notes/implemented/feature/2026-10-13-source-code-view.md)。
+- `shared/code-syntax.js` 和共享词元样式用于聊天代码块与文件预览；Prism 通过 `syntax` 组按需加载。代码块左侧显示明确标注的语言，未知类型为纯文本，复制仍取原文。见[共享高亮约定](../.agents/notes/implemented/feature/2026-10-30-shared-code-block-syntax.md)。
 - `pdf-preview.js` 使用随网关分发的 PDF.js legacy 模块、worker、CMap 和字体。沿用鉴权下载与 Range，并加 `preview=1`：服务端逐次检查实际大小不超过 `min(20 MiB, clickDownloadMiB)`，不能与显式下载或目录归档混用。可见页按需绘制，预算内保留至多两张邻近完成画布；缩放保留旧画布，单个离屏绘制完成后替换，文本层独立更新。已显示画布最多约 12 MP，替换缓冲另限约 4 MP；这是单个阅读器的画布预算，不是所有标签的总内存预算。
 - `html-preview.js` 只把文本交给已鉴权的 `/html-preview-shell`。父页核验消息来源与壳实例；壳的 CSP 与 iframe sandbox 隔离内联脚本，不授同源、网络、表单、弹窗或导航权限。Android/iOS 原生壳仅放行预期的预览子页面，拒绝其余高权限操作。关闭或切换到源码时销毁 iframe，标签返回重新握手。见[PDF/HTML 约定](../.agents/notes/implemented/feature/2026-10-13-pdf-html-preview-and-source-mode.md)。
 - `workbench.js` 持有目录返回、阅读位置和全屏状态。聊天左上角返回直接进入聊天列表，保留文件标签、目录与阅读位置。文件面板的上一级按钮负责目录导航；手机系统返回先退出预览全屏、关闭浮层，再处理当前文件目录，文件子目录先回父级，根目录后回聊天。全屏沿用同一预览实例，不重新创建 PDF 或 HTML。聊天文件链接的“定位并打开所在文件夹”会在文件列表中定位文件或文件夹；离屏目标约 300 毫秒滚到中央，已可见时保持原位，并高亮约 3 秒；减少动态效果时立即定位并保持高亮 3 秒。

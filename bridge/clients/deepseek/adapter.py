@@ -10,6 +10,7 @@ from pathlib import Path
 from bridge.features.accounts.models import NoRedirect
 from bridge.app.lifecycle import private_json
 from bridge.clients.errors import BridgeUnavailable
+from bridge.clients.file_mentions import file_mentions, display_file_mentions
 from bridge.features.sessions.create import ArchiveNotSent
 from bridge.clients.deepseek.setup import MARKER, insertion, verified_directory, legacy_account_configured
 
@@ -174,6 +175,9 @@ class DeepSeek:
         return {'installed': False, 'restartRequired': True}
 
     def call(self, action, sid=None, body=None):
+        if action == 'send' and body and body.get('resolvedReferences'):
+            body = {**body, 'text': file_mentions(body.get('text', ''), body['resolvedReferences'])}
+            body.pop('resolvedReferences')
         if action == 'create' and body and body.get('directoryProject'):
             project = body['directoryProject']
             body = {**body, 'projectDirectory': project['directoryIdentity']}
@@ -310,4 +314,6 @@ def messages(records):
                         final_assistant = result[-1]
         elif kind in ('tool/call', 'tool/result', 'todo/write'):
             result.append({'id': str(event.get('seq')), 'role': 'activity', 'title': data.get('name') or data.get('toolName') or kind, 'text': json.dumps(data, ensure_ascii=False, indent=2)})
+    for message in result:
+        display_file_mentions(message)
     return result

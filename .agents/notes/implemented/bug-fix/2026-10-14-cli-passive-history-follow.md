@@ -21,3 +21,5 @@ Status: implemented
 ## 影响
 
 真实隔离原生写入者验收中，仅通过 GET 网关轮询，在 2.354 秒内显示后续回复，模型正确且 connected=false。SSH 保持原有间隔，不承诺两秒内更新。
+
+后续[SSH 离线隔离与退避](2026-10-30-ssh-offline-isolation-and-backoff.md)将同一只读刷新扩展至断连的本机 Desktop，并为 SSH 增加主机级退避；不改变本篇保存历史不能作为可写证据的边界。

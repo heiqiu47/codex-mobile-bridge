@@ -3,6 +3,7 @@
 import uuid
 import json
 import re
+from bridge.clients.file_mentions import display_file_mentions
 
 NAMESPACE = uuid.UUID('6b9ab66b-a02a-4074-a7d6-fde5a3115173')
 EMPTY_RETRY = '[Your previous response had no visible output. Please continue and produce a user-visible response.]'
@@ -167,6 +168,8 @@ def transcript(value):
                 summary=block.get('text') or block.get('summary')
                 if summary:result.append({'id':str(event_id)+':thinking:'+str(part),'role':'reasoning','kind':'reasoning','title':'思考摘要','text':str(summary)})
         flush()
+    for message in result:
+        display_file_mentions(message)
     return result
 
 

@@ -26,6 +26,8 @@ Mac Test 已编译、签名验证并覆盖安装，版本 `2.1.6-test.20261028.7
 
 ## 风险
 
+后续[SSH 离线隔离与退避](2026-10-30-ssh-offline-isolation-and-backoff.md)为目录等 SSH 请求增加共用传输退避，不改变本篇模型与 Skill 分锁及身份规则。
+
 首次无缓存的 Skill 扫描仍受原生运行时耗时影响。已有目录结果仅用于显示，不能替代发送时校验。首次模型强制刷新仍受原生目录加载耗时影响，不宣称所有查询均为亚秒。
 
 协议依据：[原生认证模式处理](https://github.com/openai/codex/blob/main/codex-rs/app-server/src/request_processors/account_processor.rs)、[account/read 的工作区路由发现](https://github.com/openai/codex/blob/main/codex-rs/app-server/src/request_processors/account_processor/workspace_routing.rs)。文档说明与真实分项结果共同支持定位；不声称单凭当前主分支源码解释远端所有内部等待。

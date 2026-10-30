@@ -22,9 +22,8 @@ class Adapters(unittest.TestCase):
         self.manager = DesktopSessions(self.root)
         self.addCleanup(self.manager.close)
 
-    def test_host_references_reuse_prompt_contract_and_history_attachment_actions(self):
+    def test_host_references_are_resolved_once_and_left_to_native_adapters(self):
         from bridge.features.workspace.workspace import operate
-        from bridge.features.sessions.model import desktop_file_attachments
         file = self.root / '中文.txt'; file.write_text('fixture')
         for provider in ['claude', 'deepseek']:
             adapter = Mock(); adapter.receipts_path = None
@@ -38,8 +37,9 @@ class Adapters(unittest.TestCase):
             self.assertEqual(adapter.call.call_count, 1)
             dispatched = adapter.call.call_args.args[2]
             self.assertNotIn('references', dispatched)
-            self.assertEqual(desktop_file_attachments(dispatched['text']), [{'type': 'file', 'path': str(file), 'name': file.name}])
-            adapter.call.return_value = {'session': {'cwd': str(self.root)}, 'messages': [{'id': 'message', 'role': 'user', 'text': dispatched['text']}]}
+            self.assertEqual(dispatched['text'], '')
+            self.assertEqual(dispatched['resolvedReferences'], [{'path': str(file), 'name': file.name, 'kind': 'file', 'size': 7, 'image': None}])
+            adapter.call.return_value = {'session': {'cwd': str(self.root)}, 'messages': [{'id': 'message', 'role': 'user', 'text': '', 'attachments': [{'type': 'file', 'path': str(file), 'name': file.name}]}]}
             detail = self.manager._read(provider, 'detail', 'chat')
             self.assertEqual(detail['messages'][0]['text'], '')
             self.assertEqual(detail['files'][0]['path'], file.name)
@@ -447,6 +447,15 @@ class HttpAdapters(unittest.TestCase):
     tearDown = test_bridge.HttpTests.tearDown
     request = test_bridge.HttpTests.request
     login = test_bridge.HttpTests.login
+
+    def test_client_cannot_supply_resolved_host_references(self):
+        manager = self.server.desktop_sessions = Mock()
+        headers = self.login()
+        body = {'sessionId': 'native-id', 'text': 'test', 'resolvedReferences': [{'path': '/outside/project'}]}
+        response = self.request('POST', '/api/desktop-sessions/claude/send', body, headers)
+        self.assertEqual(response[0], 400)
+        manager.call.assert_not_called()
+
     def test_client_get_uses_nonblocking_status_path(self):
         manager = self.server.desktop_sessions = Mock()
         manager.clients_status.return_value = {'clients': [], 'pending': True}

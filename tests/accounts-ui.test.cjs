@@ -35,6 +35,16 @@ test('web exposes saved account selection without enrollment or credential input
  ui.confirm(true);await ui.panel.choose(ui.value().accounts[0]);assert.deepEqual(Object.keys(ui.requests[0]).sort(),['action','confirmed','id','requestId','syncLocalCli','tasksConfirmed']);
  assert.equal(ui.requests[0].tasksConfirmed,true);assert.match(ui.prompts[0],/未在网页显示/);
 });
+
+for(const desktop of [false,true])test(`${desktop?'desktop':'web'} retries the selected offline SSH host from accounts`,async()=>{
+ const ui=fixture(desktop);ui.setValue({...ui.value(),sshHosts:[{host:'remote:one',label:'Offline server',state:'offline',nextRetryAt:ui.now()/1000+60}]});await ui.panel.refresh();
+ assert.match(ui.text(),/SSH 连接/);assert.match(ui.text(),/下次自动重试/);
+ await ui.all().find(n=>n.textContent==='重试 SSH 连接').onclick();
+ assert.deepEqual({...ui.requests[0]},{action:'retrySsh',host:'remote:one'});
+ ui.panel.accept({...ui.value(),sshHosts:[{host:'remote:one',label:'Offline server',state:'checking'}]});
+ assert.equal(ui.all().find(n=>n.textContent==='重试 SSH 连接').disabled,true);
+ ui.panel.clear();assert.equal(ui.panel.sshHosts.hidden,true);assert.equal(ui.panel.sshHosts.children.length,0);
+});
 test('Codex switch always requests CLI verification without an opt-in checkbox',async()=>{
  const ui=fixture();await ui.panel.refresh();
  assert.match(ui.text(),/Desktop 与 CLI 共用接入/);

@@ -17,6 +17,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class CreationTests(unittest.TestCase):
+    def test_local_creation_never_reads_unrelated_ssh_projects(self):
+        self.bridge.hosts.hosts = lambda: {'ssh:offline': {'alias': 'fixture-offline'}}
+        original = self.bridge.for_host
+        def selected(host):
+            self.assertEqual(host, 'local', 'Local creation must not access SSH')
+            return original(host)
+        with patch.object(self.bridge, 'for_host', side_effect=selected), \
+             patch('bridge.app.service.create_empty', return_value=self.tid):
+            self.bridge.create_chat('local|p', 'Local', str(uuid.uuid4()))
+
     def test_new_directory_can_create_cli_without_existing_cli_history(self):
         self.bridge.store.list = lambda **kwargs: []
         root = str(self.root.resolve())

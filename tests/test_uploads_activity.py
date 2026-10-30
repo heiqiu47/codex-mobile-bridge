@@ -65,6 +65,8 @@ class UploadActivityTests(unittest.TestCase):
             self.assertEqual(len(self.calls()), 1)
             context = self.calls()[0]['params']['turnStart']['context']
             self.assertEqual(context['fileAttachments'], [{'path': str(p), 'label': p.name} for p in [file, directory]])
+            self.assertEqual(context['attachments'], [{'path': str(p), 'fsPath': str(p), 'label': p.name} for p in [file, directory]])
+            self.assertEqual(context['localTurnMetadata'], {'fileAttachmentCount': 2})
             prompt = self.calls()[0]['params']['turnStart']['request']['input'][0]['text']
             self.assertIn(str(file), prompt)
             self.assertNotIn('[中文 file.txt]', prompt)
@@ -91,6 +93,8 @@ class UploadActivityTests(unittest.TestCase):
             {'path': self.bridge.uploads.get(THREAD, image['id'])['path'], 'label': 'photo.png'},
         ])
         self.assertTrue(turn['context']['inheritThreadSettings'])
+        self.assertEqual(turn['context']['attachments'][1]['isImageAttachment'], True)
+        self.assertEqual(turn['context']['localTurnMetadata']['fileAttachmentCount'], 1)
         self.bridge.send(THREAD, '', identifier, attachments=[file['id'], image['id']])
         self.assertEqual(len(self.calls()), 1)
         with self.assertRaises(ValueError): self.bridge.send(THREAD, '', identifier, attachments=[file['id']])
@@ -107,6 +111,7 @@ class UploadActivityTests(unittest.TestCase):
         self.assertTrue(steer_text.endswith('steer'))
         self.assertIn('## 报告.txt: ', steer_text)
         self.assertIn('报告.txt', json.dumps(self.calls('thread-follower-steer-turn')[0]['params']['restoreMessage']['context'], ensure_ascii=False))
+        self.assertEqual(self.calls('thread-follower-steer-turn')[0]['params']['attachments'][0]['label'], '报告.txt')
         session.state['threadRuntimeStatus']['type'] = 'idle'
         key = THREAD+':'+identifier
         self.bridge._send_queued(session, key, self.bridge.submissions[key])

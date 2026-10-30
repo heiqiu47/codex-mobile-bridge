@@ -193,3 +193,22 @@ test('Claude explains its native quit menu while other clients retain the idle r
   dialog.close();assert.equal(await result,null);
  }
 });
+
+
+test('failed Codex rebuild exposes a cancellable normal-exit risk confirmation on both surfaces',async()=>{
+ for(const surface of ['web','desktop'])for(const language of ['zh','en'])for(const accepted of [false,true]){
+  const ui=fixture(language),file=surface==='desktop'?'desktop/features/clients/desktop-sessions.js':'web/features/clients/client-navigation.js';
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),ui.context);
+  const Class=vm.runInContext(surface==='desktop'?'DesktopConnectionsPanel':'ClientNavigation',ui.context),controller=Object.create(Class.prototype),client={id:'codex',name:'Codex',enabled:true,running:true,desktopRestartRecommended:true},calls=[];
+  Object.assign(controller,{clients:[client],clientsRevision:0,statusRevision:0,revision:0,pending:new Set(),provider:'codex',renderClients(){},renderScan(){},paint(){},refreshClients:async()=>{},applyClients(value){this.clients=value.clients;},api:{desktopSessions:async body=>{calls.push(body);return {clients:[{...client,enabled:false,running:false}]};}},request:async(url,body)=>{calls.push(body);return {clients:[{...client,enabled:false,running:false}]};}});
+  const pending=surface==='desktop'?controller.toggleClient('codex',false):controller.toggle('codex',false);
+  ui.dialog().children.at(-1).children[1].onclick();await Promise.resolve();
+  const confirmation=ui.dialog(),buttons=confirmation.children.at(-1).children;
+  assert.equal(calls.length,0);assert.equal(ui.document.activeElement,buttons[1]);
+  assert.match(confirmation.textContent,language==='zh'?/正常退出仍可能中断.*已知运行任务会阻止退出/:/Normal exit may interrupt.*known active tasks will still block exit/);
+  if(language==='en')assert.doesNotMatch(confirmation.textContent,/[\u4e00-\u9fff]/);
+  buttons[accepted?0:1].onclick();await pending;
+  assert.equal(calls.length,accepted?1:0);
+  if(accepted){assert.equal(calls[0].quitDesktop,true);assert.equal(calls[0].acknowledgeUnavailable,true);assert.equal(calls[0].forceDesktop,undefined);}
+ }
+});

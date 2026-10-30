@@ -38,15 +38,18 @@ class MessageManagementBinding {
       }
       result=result?{...response,receipts:[...result.receipts,...response.receipts]}:response;
     }
-    await target.drafts.reconcilePending(scope,{scope,receipts:result.receipts},this.options(target,records));
-    this.current(scope);this.onChanged?.();return result;
+    const recovery=await target.drafts.reconcilePending(scope,{scope,receipts:result.receipts},this.options(target,records));
+    this.current(scope);this.onChanged?.(recovery);return result;
   }
   reconcile(){
     let target;try{target=this.current();}catch{return Promise.resolve(null);}
     if(!target.url||!this.records(target).length)return Promise.resolve(null);
     const key=target.drafts.key(target.scope);
     if(this.reads.has(key))return this.reads.get(key);
-    const task=this.load(target.scope).catch(()=>null).finally(()=>this.reads.delete(key));
+    const identity=key+JSON.stringify(this.records(target).map(row=>[row.source,row.id,row.version]));
+    if(this.retry?.identity===identity&&Date.now()<this.retry.at)return Promise.resolve(null);
+    const delay=this.retry?.identity===identity?Math.min(30000,this.retry.delay*2):1000;
+    const task=this.load(target.scope).catch(()=>null).finally(()=>{this.reads.delete(key);this.retry={identity,delay,at:Date.now()+delay};});
     this.reads.set(key,task);return task;
   }
   async change(scope,action,value){

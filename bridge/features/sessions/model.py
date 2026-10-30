@@ -122,8 +122,8 @@ def desktop_file_attachments(text):
 def attachment_prompt(text, files):
     """Wrap non-image uploads so the desktop runtime can access their paths.
 
-    ``context.fileAttachments`` is desktop UI metadata; the model only reliably
-    sees a non-image upload when its path is part of the user prompt.
+    Prepared native turns also need ``context.attachments`` for their UI;
+    non-image paths remain in the prompt for model input and saved history.
     """
     context_files = [file for file in files
                      if not file.get("image") and isinstance(file.get("path"), str) and file["path"]]
@@ -155,7 +155,7 @@ def normalize_item(item, *, image_cache=None):
         if kind == "steeringUserMessage":
             item = {**item, "content": item.get("input", [])}
         submission_request_id = request_id(item)
-        if request_id:
+        if submission_request_id:
             row["requestId"] = str(submission_request_id)
         raw_text = text_content(item.get("content", []))
         text = user_display_text(raw_text)

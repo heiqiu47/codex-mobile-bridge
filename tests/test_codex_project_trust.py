@@ -69,13 +69,27 @@ class ProjectTrust(unittest.TestCase):
         bridge = Bridge(self.root, self.root/'data'); self.addCleanup(bridge.close)
         bridge.hosts.hosts = lambda: {'ssh': {'alias': 'chosen', 'displayName': 'Chosen'}}
         project = bridge.directory_projects.save('ssh', 'Chosen', self.identity, type='desktop', hostIdentity='chosen')
-        with patch('bridge.app.service.ssh_read', return_value={'trusted': False, 'path': str(self.cwd)}) as rpc:
+        with patch.object(bridge, 'projects', side_effect=AssertionError('Trust must not enumerate hosts')), \
+             patch('bridge.app.service.ssh_read', return_value={'trusted': False, 'path': str(self.cwd)}) as rpc:
             state = bridge.project_trust(project['key'])
             self.assertTrue(state['required']); self.assertEqual(rpc.call_args.args[0], 'chosen')
             bridge.project_trust(project['key'], True, state['confirmation'])
             with self.assertRaisesRegex(ValueError, '已变化'): bridge.project_trust(project['key'], True, 'stale')
             bridge.hosts.hosts = lambda: {'ssh': {'alias': 'different'}}
             with self.assertRaisesRegex(ValueError, '主机配置已变化'): bridge.project_trust(project['key'])
+
+    def test_project_host_uses_exact_metadata_not_ambiguous_prefix(self):
+        bridge = Bridge(self.root, self.root/'data'); self.addCleanup(bridge.close)
+        hosts = {'local|backup': {'alias': 'backup'}, 'ssh:a': {'alias': 'a'}, 'ssh:a|b': {'alias': 'b'}}
+        bridge.hosts.hosts = lambda: hosts
+        bridge.hosts.projects = lambda: [{'key': 'ssh:a|b|native', 'host': 'ssh:a|b'}]
+        for host in hosts:
+            project = bridge.directory_projects.save(host, host, self.identity, type='desktop')
+            self.assertEqual(bridge.project_host(project['key']), host)
+            self.assertEqual(bridge.project_host('cli|' + host + '|' + 'a' * 20), host)
+        self.assertEqual(bridge.project_host('ssh:a|b|native'), 'ssh:a|b')
+        for key in ('ssh:a|missing', 'cli|unknown|' + 'a' * 20, 'cli|ssh:a|bad-hash'):
+            with self.assertRaises(ValueError): bridge.project_host(key)
 
 
 class NativeImport(unittest.TestCase):

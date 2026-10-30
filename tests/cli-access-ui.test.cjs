@@ -175,3 +175,13 @@ test('switching from a restricted WSL chat restores APP controls and queue avail
   ctx.renderState({host:'local',access:{source:'desktop'},connected:true,status:'idle',requests:[],submissions:[],historyComplete:true});
   assert.equal($('skills-button').hidden,false);assert.equal($('permissions-button').hidden,false);assert.equal($('notify-button').hidden,false);assert.equal($('work-mode').hidden,false);assert.equal(queue.disabled,false);
 });
+
+test('desktop router failure offers explicit rebuild and keeps failure plus draft visible',async()=>{
+  const {ctx,$}=fixture(),view={host:'local',connected:false,status:'idle',requests:[],submissions:[],historyComplete:true,rebuildRecommended:true,access:{source:'desktop',canReconnect:true}};
+  $('message').value='unsent draft';ctx.renderState(view);
+  assert.equal($('reconnect').textContent,'重建连接');assert.match($('notice-text').textContent,/建议重建连接/);
+  const calls=[];ctx.sessionUrl=(id,action,host)=>`${host}/${id}/${action}`;ctx.api=async(url,body)=>{calls.push({url,body});throw Error('桌面执行连接尚未恢复');};
+  vm.runInContext(reconnectCode,ctx);await $('reconnect').onclick();ctx.renderState(view);
+  assert.equal(JSON.stringify(calls),JSON.stringify([{url:'local/a/reconnect',body:{activate:true,rebuild:true}}]));
+  assert.equal($('reconnect').disabled,false);assert.match($('notice-text').textContent,/尚未恢复/);assert.equal($('message').value,'unsent draft');
+});

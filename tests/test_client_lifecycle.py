@@ -1026,6 +1026,31 @@ class ClientLifecycleTests(unittest.TestCase):
             self.toggle('deepseek', False)
         self.stop.assert_not_called()
 
+    def test_recovery_normal_exit_requires_server_rebuild_failure_and_explicit_ack(self):
+        from bridge.clients.errors import TaskStateUnavailable
+        self.bridge.desktop_restart_recommended = Mock(return_value=True)
+        self.bridge.assert_desktop_idle.side_effect = TaskStateUnavailable('无法确认')
+        with patch('bridge.clients.manager.sys.platform', 'darwin'):
+            with self.assertRaises(TaskStateUnavailable):
+                self.manager.toggle_client({'provider': 'codex', 'enabled': False, 'quitDesktop': True})
+            self.stop.assert_not_called()
+            self.manager.toggle_client({'provider': 'codex', 'enabled': False, 'quitDesktop': True,
+                                        'acknowledgeUnavailable': True})
+        self.stop.assert_called_once()
+
+    def test_recovery_confirmation_never_bypasses_known_busy_or_unrelated_exit(self):
+        self.bridge.desktop_restart_recommended = Mock(return_value=True)
+        self.bridge.assert_desktop_idle.side_effect = ValueError('有任务运行')
+        with patch('bridge.clients.manager.sys.platform', 'darwin'):
+            with self.assertRaisesRegex(ValueError, '任务运行'):
+                self.manager.toggle_client({'provider': 'codex', 'enabled': False, 'quitDesktop': True,
+                                            'acknowledgeUnavailable': True})
+            self.bridge.desktop_restart_recommended.return_value = False
+            with self.assertRaisesRegex(ValueError, '退出确认无效'):
+                self.manager.toggle_client({'provider': 'codex', 'enabled': False, 'quitDesktop': True,
+                                            'acknowledgeUnavailable': True})
+        self.stop.assert_not_called()
+
     def test_busy_codex_not_currently_followed_blocks_exit(self):
         self.bridge.assert_desktop_idle.side_effect = ValueError('有任务运行或等待确认')
         with self.assertRaises(ValueError): self.toggle('codex', False)

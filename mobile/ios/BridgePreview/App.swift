@@ -158,7 +158,7 @@ final class GatewayReachability: NSObject, URLSessionDataDelegate {
     }
 }
 
-final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelegate, UIDocumentPickerDelegate, UIDocumentInteractionControllerDelegate, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelegate, UIDocumentPickerDelegate, UIDocumentInteractionControllerDelegate, PHPickerViewControllerDelegate, UIAdaptivePresentationControllerDelegate {
     private var web: WKWebView?
     private var nativeMainNavigation: (web: WKWebView, generation: Int, url: String)?
     private var origin = ""
@@ -799,7 +799,7 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
             guard webView === web, connectionError == nil, UIApplication.shared.applicationState == .active,
                   frame.isMainFrame, let source = frame.request.url, GatewayURL.same(source, origin),
                   let current = webView.url, GatewayURL.same(current, origin), presentedViewController == nil,
-                  let value = defaultText, ["photos", "camera", "files", "photos-images", "camera-images"].contains(value) else { completionHandler(nil); return }
+                  let value = defaultText, ["photos", "files", "photos-images"].contains(value) else { completionHandler(nil); return }
             uploadSource = (value, Date()); completionHandler("selected"); return
         }
         if prompt == "codexbridge-theme:" + clipboardToken {
@@ -920,23 +920,21 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
         if uploadKind == "photos" || uploadKind == "photos-images" {
             var config = PHPickerConfiguration(); config.preferredAssetRepresentationMode = .compatible; if uploadKind == "photos-images" { config.filter = .images }; config.selectionLimit = parameters.allowsMultipleSelection ? 10 : 1
             let picker = PHPickerViewController(configuration: config); picker.delegate = self
-            mediaPicker = picker; present(picker, animated: true); return
-        }
-        if uploadKind == "camera" || uploadKind == "camera-images" {
-            guard UIImagePickerController.isSourceTypeAvailable(.camera) else { finishUpload(nil); info(MobileStrings.text("此设备无法使用相机")); return }
-            let picker = UIImagePickerController(); picker.sourceType = .camera
-            picker.mediaTypes = uploadKind == "camera-images" ? [UTType.image.identifier] : [UTType.image.identifier, UTType.movie.identifier]; picker.delegate = self
-            mediaPicker = picker; present(picker, animated: true); return
+            mediaPicker = picker; present(picker, animated: true); picker.presentationController?.delegate = self; return
         }
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
         picker.allowsMultipleSelection = parameters.allowsMultipleSelection; picker.delegate = self
         uploadPicker = picker; uploadCompletion = completionHandler; uploadGeneration = generation
-        present(picker, animated: true)
+        present(picker, animated: true); picker.presentationController?.delegate = self
     }
     #endif
     private func finishUpload(_ urls: [URL]?) {
         let completion = uploadCompletion; uploadCompletion = nil; uploadPicker = nil; mediaPicker = nil; uploadSource = nil; uploadTicket = UUID()
         completion?(urls)
+    }
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        let picker = presentationController.presentedViewController
+        if picker === uploadPicker || picker === mediaPicker { finishUpload(nil) }
     }
     private func mediaUploadFolder() throws -> URL {
         if let folder = mediaUploadDirectory { return folder }
@@ -947,8 +945,10 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         guard picker === mediaPicker else { picker.dismiss(animated: true); return }
         let ticket = uploadTicket
+        guard !results.isEmpty, let folder = try? mediaUploadFolder() else {
+            picker.dismiss(animated: true) { if ticket == self.uploadTicket { self.finishUpload(nil) } }; return
+        }
         picker.dismiss(animated: true)
-        guard !results.isEmpty, let folder = try? mediaUploadFolder() else { finishUpload(nil); return }
         Task { @MainActor in
             var urls = [URL]()
             for result in results {
@@ -970,25 +970,6 @@ final class BridgeController: UIViewController, WKNavigationDelegate, WKUIDelega
             if urls.count == results.count { finishUpload(urls) }
             else { for url in urls { try? FileManager.default.removeItem(at: url) }; finishUpload(nil); info(MobileStrings.text("无法读取所选文件，请从系统文件选择器重新选择。")) }
         }
-    }
-    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-        guard picker === mediaPicker else { return }
-        picker.dismiss(animated: true); finishUpload(nil)
-    }
-    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo values: [UIImagePickerController.InfoKey: Any]) {
-        guard picker === mediaPicker, uploadGeneration == generation, let current = web?.url, GatewayURL.same(current, origin) else { picker.dismiss(animated: true); return }
-        var saved: URL?
-        do {
-            let folder = try mediaUploadFolder()
-            if let movie = values[.mediaURL] as? URL {
-                let destination = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension(movie.pathExtension)
-                try FileManager.default.copyItem(at: movie, to: destination); saved = destination
-            } else if let image = values[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.95) {
-                let destination = folder.appendingPathComponent(UUID().uuidString + ".jpg")
-                try data.write(to: destination, options: .atomic); saved = destination
-            }
-        } catch { saved = nil }
-        picker.dismiss(animated: true); finishUpload(saved.map { [$0] })
     }
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         if controller === exportPicker { exportPicker = nil; if !urls.isEmpty { downloads.markSaved() }; return }

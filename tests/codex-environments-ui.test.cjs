@@ -137,3 +137,24 @@ test('non-Windows gateway omits WSL form controls and does not load or query WSL
  assert.equal(ui.$('new-chat-type').options.some(option=>option.value==='wsl'),false);assert.equal(ui.run('accountEntryControls'),null);assert.equal(ui.run('codexWslAccounts'),null);
  assert.equal(ui.calls.some(call=>call.feature==='wsl'||call.url?.includes('wsl')||call.url?.includes('entry=')),false);
 });
+
+test('selecting an SSH environment reads only its projects and ignores a late response after switching local',async()=>{
+ const ui=fixture({listSource:'cli'}),environments=[{key:'cli|local',type:'cli',host:'local',name:'Local'},{key:'cli|ssh',type:'cli',host:'ssh',name:'SSH'}];
+ let remote;
+ ui.setHandler(url=>url==='/api/projects'?Promise.resolve({projects:[project('local','local-project')],environments}):new Promise(resolve=>{assert.equal(url,'/api/projects?host=ssh');remote=resolve;}));
+ await ui.$('new-chat').onclick();assert.equal(ui.calls.length,1);
+ ui.$('new-chat-entry').value='cli|ssh';const loading=ui.$('new-chat-entry').onchange();
+ assert.equal(ui.$('new-chat-project').disabled,true);
+ remote({projects:[project('ssh','discovered-ssh-project')]});await loading;
+ assert.equal(ui.$('new-chat-project').value,'discovered-ssh-project');assert.equal(ui.$('new-chat-project').disabled,false);
+ const second=ui.$('new-chat-entry').onchange();ui.$('new-chat-entry').value='cli|local';await ui.$('new-chat-entry').onchange();
+ remote({projects:[project('ssh','stale-project')]});await second;
+ assert.equal(ui.$('new-chat-project').value,'local-project');assert.equal(ui.$('new-chat-submit').disabled,false);
+ assert.deepEqual(ui.calls.map(row=>row.url),['/api/projects','/api/projects?host=ssh','/api/projects?host=ssh']);
+});
+test('opening new CLI chat from an SSH conversation completes its selected project inventory once',async()=>{
+ const ui=fixture({listSource:'cli',host:'ssh'});
+ ui.setHandler(async url=>url==='/api/projects'?{projects:[],environments:[{key:'cli|ssh',type:'cli',host:'ssh',name:'SSH'}]}:{projects:[project('ssh','first-ssh-project')]});
+ await ui.$('new-chat').onclick();assert.equal(ui.$('new-chat-project').value,'first-ssh-project');
+ assert.deepEqual(ui.calls.map(row=>row.url),['/api/projects','/api/projects?host=ssh']);
+});

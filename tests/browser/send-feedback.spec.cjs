@@ -71,7 +71,15 @@ for(const [provider,backend] of [['claude','code'],['claude','cowork'],['deepsee
    v.workbench.request=async()=>({project:'/fixture',entries:Array.from({length:60},(_,i)=>({name:`file-${i}.txt`,path:`file-${i}.txt`,kind:'file',size:10})),nextOffset:null});
   });
   await composer.locator('.attach-button').click();
-  await expect(page.locator('.attachment-menu button')).toHaveCount(4);
+  await expect(page.locator('.attachment-menu button')).toHaveCount(3);
+  await expect(page.getByRole('button',{name:'拍照或录像',exact:true})).toHaveCount(0);
+  // Opening the sheet by touch/pointer must not paint a keyboard focus ring
+  // on Photos; keyboard navigation still reaches every action.
+  expect(await page.locator('.attachment-menu').evaluate(node=>document.activeElement===node)).toBe(true);
+  await page.keyboard.press(process.platform==='darwin'&&testInfo.project.name.startsWith('webkit')?'Alt+Tab':'Tab');
+  await expect(page.getByRole('button',{name:'照片图库',exact:true})).toBeFocused();
+  await page.keyboard.press('Escape');
+  await composer.locator('.attach-button').click();
   await page.screenshot({path:testInfo.outputPath('attachment-menu-chat.png')});
   await page.getByRole('button',{name:'引用宿主机项目文件',exact:true}).click();
   const picker=page.locator('.host-file-picker'),list=picker.locator('.wb-file-list'),search=picker.getByRole('searchbox');

@@ -12,11 +12,10 @@ import time
 from pathlib import Path
 
 from bridge.clients.codex.catalog import CatalogError
+from bridge.features.network.retry import (
+    ConnectionUnavailable as RemoteUnavailable, TransportUnavailable as SshTransportUnavailable, ssh_connection)
+from bridge.features.network.stdio import run_with_input
 from bridge.resources import source_text
-
-
-class RemoteUnavailable(RuntimeError):
-    pass
 
 
 def ssh_command(alias):
@@ -29,24 +28,59 @@ def ssh_command(alias):
 
 
 def ssh_read(alias, source, timeout=18):
+    with ssh_connection(alias).attempt():
+        return _ssh_read(alias, source, timeout)
+
+
+def _ssh_read(alias, source, timeout=18):
     command = ssh_command(alias)
     try:
-        result = subprocess.run(command, input=source, text=True, encoding='utf-8', capture_output=True, timeout=timeout)
+        result = run_with_input(command, source, text=True, encoding='utf-8', capture_output=True, timeout=timeout)
+        if result.returncode == 255:
+            raise SshTransportUnavailable('SSH 主机暂不可用，请检查电脑上的连接')
         if result.returncode:
             raise RemoteUnavailable('SSH 读取失败，请检查电脑上该主机的 SSH 连接')
         return json.loads(result.stdout)
-    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SshTransportUnavailable('SSH 主机暂不可用，请检查电脑上的连接') from exc
+    except ValueError as exc:
         raise RemoteUnavailable('SSH 主机暂不可用，请检查电脑上的连接') from exc
+
+
+def retry_ssh(alias, *, manual=True):
+    connection = ssh_connection(alias)
+    status = connection.status()
+    if not manual and (not status['failures'] or status['retryAfterSeconds']):
+        return
+    # Reserve the one probe before returning to HTTP; repeated clicks coalesce.
+    attempt = connection.attempt(manual=manual)
+    try:
+        attempt.__enter__()
+    except RemoteUnavailable:
+        return
+    # The context is already entered above; exit it exactly once in the worker.
+    def run():
+        try:
+            _ssh_read(alias, 'import json\nprint(json.dumps({"available": True}))\n')
+        except BaseException as exc:
+            attempt.__exit__(type(exc), exc, exc.__traceback__)
+            if not isinstance(exc, RemoteUnavailable):
+                raise
+        else:
+            attempt.__exit__(None, None, None)
+    threading.Thread(target=run, daemon=True, name='ssh-manual-retry').start()
 
 
 @contextmanager
 def ssh_download(alias, source):
     """Keep remote binary output on disk, including full-response fallbacks."""
     command = ssh_command(alias)
-    with tempfile.TemporaryFile(prefix='bridge-ssh-download-') as stream:
+    with ssh_connection(alias).attempt(), tempfile.TemporaryFile(prefix='bridge-ssh-download-') as stream:
         try:
-            result = subprocess.run(command, input=source.encode('utf-8'), stdout=stream,
+            result = run_with_input(command, source, stdout=stream,
                                     stderr=subprocess.DEVNULL, timeout=60)
+            if result.returncode == 255:
+                raise SshTransportUnavailable('SSH 主机暂不可用，请检查电脑上的连接')
             if result.returncode:
                 raise RemoteUnavailable('SSH 下载失败，请检查电脑上该主机的 SSH 连接')
             length = stream.tell()
@@ -64,7 +98,7 @@ def ssh_download(alias, source):
         except PermissionError:
             raise
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise RemoteUnavailable('SSH 主机暂不可用，请检查电脑上的连接') from exc
+            raise SshTransportUnavailable('SSH 主机暂不可用，请检查电脑上的连接') from exc
         yield metadata, stream
 
 
@@ -81,6 +115,36 @@ class RemoteStore:
         self.sources_cache = None
         self.kind_caches = {}
         self.lock = threading.Lock()
+        self.poll_lock = threading.Lock()
+        self.poll_results = {}
+        self.poll_pending = set()
+
+    def poll(self, method, args, ttl=15):
+        """Passive discovery returns promptly even during the first SSH timeout."""
+        key = json.dumps(args, sort_keys=True)
+        with self.poll_lock:
+            previous = self.poll_results.get(method)
+            matches = previous is not None and previous[0] == key
+            if matches and time.monotonic() - previous[1] < ttl:
+                if previous[3]:
+                    raise RemoteUnavailable(previous[3])
+                return copy.deepcopy(previous[2])
+            if method not in self.poll_pending:
+                self.poll_pending.add(method)
+                def update():
+                    result, error = None, None
+                    try:
+                        result = self.call(method, args)
+                    except (RemoteUnavailable, OSError, ValueError) as exc:
+                        error = str(exc)
+                    finally:
+                        with self.poll_lock:
+                            self.poll_results[method] = key, time.monotonic(), result, error
+                            self.poll_pending.discard(method)
+                threading.Thread(target=update, daemon=True, name='ssh-passive-read').start()
+            if matches and not previous[3]:
+                return copy.deepcopy(previous[2])
+        raise RemoteUnavailable('正在后台读取 SSH 主机；本机会话可正常使用。')
 
     def call(self, method, args):
         source = source_text('features/sessions/store.py')

@@ -1,0 +1,125 @@
+"""A live but retired router must not trap the gateway after explicit recovery."""
+import os
+import threading
+from pathlib import Path
+import unittest
+from unittest.mock import patch
+
+from bridge.clients.codex.ipc import DesktopIPC, IPCError
+import test_bridge
+from test_bridge import DesktopFixture, THREAD
+
+
+class RecoveryTests(unittest.TestCase):
+    setUp = test_bridge.IntegrationTests.setUp
+    tearDown = test_bridge.IntegrationTests.tearDown
+
+    def test_close_interrupts_blocked_write_even_while_reader_holds_event_lock(self):
+        started, released, finished = threading.Event(), threading.Event(), threading.Event()
+        class BlockedStream:
+            def sendall(self, data):
+                started.set()
+                released.wait(3)
+                raise OSError('closed')
+            def shutdown(self, how):
+                released.set()
+            def close(self):
+                released.set()
+        ipc = DesktopIPC('unused')
+        ipc.socket = BlockedStream()
+        def write():
+            with ipc.event_lock:
+                try:
+                    ipc._send({'text': 'blocked discovery reply'})
+                except IPCError:
+                    pass
+                finally:
+                    finished.set()
+        writer = threading.Thread(target=write, daemon=True)
+        writer.start()
+        self.assertTrue(started.wait(1))
+        self.assertFalse(finished.is_set())
+        closer = threading.Thread(target=ipc.close, daemon=True)
+        closer.start()
+        try:
+            closer.join(1)
+            self.assertFalse(closer.is_alive(), 'Closing must interrupt the blocked send before waiting on its locks')
+            writer.join(1)
+            self.assertTrue(finished.is_set())
+            self.assertIsNone(ipc.socket)
+        finally:
+            released.set()
+            writer.join(1)
+            closer.join(1)
+
+    def test_rebuild_leaves_native_running_and_uses_replacement_router(self):
+        if os.name == 'nt':
+            self.skipTest('Unix pathname replacement; Windows reconnect covered separately')
+        session = self.bridge.session(THREAD)
+        old = self.fixture
+        old.loaded = False
+        self.bridge._disconnected()
+        Path(old.path).unlink()  # Old server and its accepted connection stay alive.
+        alternate = self.root / 'replacement'
+        alternate.mkdir()
+        fresh = DesktopFixture(alternate)
+        fresh.state['title'] = 'Current router'
+        Path(fresh.path).rename(old.path)
+        self.addCleanup(fresh.close)
+        original_socket = self.bridge.ipc.socket
+        self.bridge._attach(session, timeout=.01)
+        self.assertFalse(session.connected, 'Existing connection still reaches retired router')
+        with patch('bridge.app.service.open_in_desktop') as navigate:
+            result = self.bridge.rebuild_connection(THREAD)
+        self.assertTrue(result.connected)
+        self.assertIsNot(self.bridge.ipc.socket, original_socket)
+        self.assertEqual(result.state['title'], 'Current router')
+        self.assertTrue(old.worker.is_alive(), 'No native shutdown')
+        self.assertFalse(navigate.called, 'Available owner needs no navigation')
+        self.assertFalse(any(r['method'].startswith('thread-follower-') for r in fresh.requests))
+
+    def test_disconnection_recommends_remote_rebuild_and_snapshot_clears_it(self):
+        session = self.bridge.session(THREAD)
+        self.bridge._disconnected()
+        self.assertTrue(session.view()['rebuildRecommended'])
+        session.desktop_restart_recommended = True
+        self.fixture.snapshot()
+        with session.condition:
+            self.assertTrue(session.condition.wait_for(lambda: session.connected, timeout=2))
+        self.assertFalse(session.view()['rebuildRecommended'])
+        self.assertFalse(self.bridge.desktop_restart_recommended())
+
+    def test_reconnect_clears_old_transport_synchronously(self):
+        ipc = self.bridge.ipc
+        ipc.connect()
+        old = ipc.socket
+        ipc.reconnect()
+        self.assertIsNot(ipc.socket, old)
+        self.assertTrue(ipc.client_id)
+        client_id = ipc.client_id
+        ipc._disconnect(old)  # A delayed old reader must not invalidate the replacement.
+        self.assertEqual(ipc.client_id, client_id)
+
+    def test_unreachable_owner_finishes_with_remote_rebuild_available(self):
+        session = self.bridge.session(THREAD)
+        self.bridge._disconnected()
+        with patch.object(self.bridge, '_attach'), patch('bridge.app.service.open_in_desktop', side_effect=OSError('unavailable')):
+            with self.assertRaisesRegex(IPCError, '应用管理'):
+                self.bridge.rebuild_connection(THREAD)
+        self.assertTrue(session.view()['desktopRestartRecommended'])
+        self.assertTrue(self.bridge.desktop_restart_recommended())
+        self.assertFalse(session.activating)
+        self.assertFalse(session.connected)
+        self.assertTrue(session.view()['rebuildRecommended'])
+
+    def test_missing_owner_invalidates_control_without_replaying_write(self):
+        session = self.bridge.session(THREAD)
+        with patch.object(self.bridge.ipc, 'request', side_effect=IPCError('no-client-found')) as request:
+            with self.assertRaises(IPCError):
+                self.bridge._call(session, 'thread-follower-start-turn', {'text': 'only once'})
+        self.assertEqual(request.call_count, 1)
+        self.assertFalse(session.connected)
+        self.assertTrue(session.view()['rebuildRecommended'])
+
+if __name__ == '__main__':
+    unittest.main()
